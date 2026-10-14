@@ -8,22 +8,14 @@ import Testing
 /// every suite that needs a mocked ``VMLibraryViewModel`` to build an app
 /// component over.
 
-/// Stands in for `AppDelegate` as the menu's host, answering with one fixed VM
-/// and sidebar.
-///
-/// The sender is ignored: the `representedObject` rule that makes a sidebar
-/// context-menu item name its own row lives with the actions on `AppDelegate`.
+/// The app's window registry over `viewModel`, saving no window frames.
 @MainActor
-final class StubMenuHost: MainMenuHosting {
-    var instance: VMInstance?
-    var librarySidebar: SidebarViewController?
-
-    init(instance: VMInstance? = nil, librarySidebar: SidebarViewController? = nil) {
-        self.instance = instance
-        self.librarySidebar = librarySidebar
-    }
-
-    func menuCommandTarget(of sender: Any?) -> VMInstance? { instance }
+func makeWindowRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
+    let autosave = WindowAutosaveScope.unsaved()
+    return AppWindowRegistry(
+        viewModel: viewModel,
+        displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+        autosaveScope: autosave)
 }
 
 @MainActor
@@ -44,17 +36,24 @@ func makeLibraryViewModel(
         fileSystem: MockFileSystem(),
         downloadsDirectory: nil,
         preferences: preferences,
-        vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+        vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
         organization: organization
     )
 }
 
+/// A VM in `viewModel`'s library, selected in its sidebar, so a menu command
+/// no key window answers for acts on it.
 @MainActor
+@discardableResult
 func makeMenuInstance(
+    in viewModel: VMLibraryViewModel,
     guestOS: VMGuestOS = .macOS, name: String = "Menu VM",
     phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
 ) -> VMInstance {
-    VMInstanceFixture.make(name: name, guestOS: guestOS, phase: phase, mutate: mutate)
+    let instance = viewModel.library.admitFixture(
+        name: name, guestOS: guestOS, phase: phase, mutate: mutate)
+    viewModel.library.selection = .library(instance.id)
+    return instance
 }
 
 /// One menu item carrying `action`, as the menu bar builds it.

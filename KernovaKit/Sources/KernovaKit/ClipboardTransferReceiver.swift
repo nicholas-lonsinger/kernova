@@ -96,7 +96,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     private let socketTimeout: TimeInterval
     private let plan: Plan
     private let staging: ClipboardFileStaging
-    private let clock: any EngineClock
+    private let clock = makePlatformEngineClock()
     private let maxResidentInlineBytes: Int
     private let minimumExtractAllowance: Int
     private let extractPacingBytes: Int
@@ -115,7 +115,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     ///   - source: how the connection is obtained.
     ///   - plan: what the pull expects to receive.
     ///   - staging: where an archived payload is extracted.
-    ///   - clock: the timeline the stage timings are measured on.
     ///   - socketTimeout: the connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`; a read
     ///     that reaches it is the stall.
     ///   - maxResidentInlineBytes: the most a raw payload may declare.
@@ -131,7 +130,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         source: Source,
         plan: Plan,
         staging: ClipboardFileStaging,
-        clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
@@ -143,7 +141,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         self.source = source
         self.plan = plan
         self.staging = staging
-        self.clock = clock
         self.socketTimeout = socketTimeout
         self.maxResidentInlineBytes = max(0, maxResidentInlineBytes)
         self.minimumExtractAllowance = max(1, minimumExtractAllowance)

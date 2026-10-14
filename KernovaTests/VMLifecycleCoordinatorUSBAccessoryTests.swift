@@ -41,8 +41,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     private func makeLibrary(on coordinator: VMLifecycleCoordinator) -> VMLibrary {
         let library = makeWiredLibrary(lifecycle: coordinator)
         let router = USBAccessoryCoordinator(
-            lifecycle: coordinator, roster: library, holders: library.accessoryHolders,
-            pairings: library)
+            lifecycle: coordinator, library: library)
         library.onSessionBecameAttachable = { [weak router] instance in
             router?.sessionBecameAttachable(instance) ?? []
         }

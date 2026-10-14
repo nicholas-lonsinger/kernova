@@ -29,9 +29,9 @@ struct ConfigurationBuilderTests {
         return tempDir
     }
 
-    /// A builder over a mock vmnet provider.
+    /// A builder over `vmnetNetworks`, a service over a scripted operator by default.
     private func makeBuilder(
-        vmnetNetworks: any VmnetNetworkProviding = MockVmnetNetworkProvider(),
+        vmnetNetworks: VmnetNetworkService = .scripted(),
         entitlements: EntitlementService = .unentitled
     ) -> ConfigurationBuilder {
         ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
@@ -1095,8 +1095,8 @@ struct ConfigurationBuilderTests {
     func natModeAttachesNAT() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let networks = MockVmnetNetworkProvider()
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .unentitled)
+        let networks = ScriptedVmnetNetworks()
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .unentitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
@@ -1104,31 +1104,32 @@ struct ConfigurationBuilderTests {
         #expect(devices.count == 1)
         let device = try #require(devices.first as? VZVirtioNetworkDeviceConfiguration)
         #expect(device.attachment is VZNATNetworkDeviceAttachment)
-        #expect(networks.requestedNetworks.isEmpty)
+        #expect(networks.operations.createdKinds.isEmpty)
     }
 
     @Test("NAT with the entitlement attaches the app-managed NAT network")
     func entitledNATModeAttachesTheManagedNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let networks = MockVmnetNetworkProvider()
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        let networks = ScriptedVmnetNetworks()
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
-        #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedNetworks == [.common(.nat)])
+        #expect(devices[0].attachment === networks.operations.attachments.last)
+        #expect(networks.operations.createdKinds == [.nat])
+        #expect(networks.service.ipv4Subnet(for: .common(.nat)) != nil)
     }
 
     @Test("A NAT network that cannot be materialized builds the device detached")
     func entitledNATModeWithoutANetworkBuildsDetached() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let networks = MockVmnetNetworkProvider()
-        networks.attachmentError = TestFailure("vmnet refused")
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        let networks = ScriptedVmnetNetworks()
+        networks.operations.createNetworkError = TestFailure("vmnet refused")
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.
@@ -1192,23 +1193,24 @@ struct ConfigurationBuilderTests {
     func hostOnlyModeAttachesTheManagedNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let networks = MockVmnetNetworkProvider()
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        let networks = ScriptedVmnetNetworks()
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
-        #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedNetworks == [.common(.hostOnly)])
+        #expect(devices[0].attachment === networks.operations.attachments.last)
+        #expect(networks.operations.createdKinds == [.hostOnly])
+        #expect(networks.service.ipv4Subnet(for: .common(.hostOnly)) != nil)
     }
 
     @Test("Host Only mode in a build without the entitlement names the entitlement")
     func hostOnlyModeWithoutTheEntitlementThrows() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let networks = MockVmnetNetworkProvider()
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .unentitled)
+        let networks = ScriptedVmnetNetworks()
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .unentitled)
 
         #expect {
             try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
@@ -1219,27 +1221,27 @@ struct ConfigurationBuilderTests {
             return true
         }
         // The entitlement is checked before the network is asked for.
-        #expect(networks.requestedNetworks.isEmpty)
+        #expect(networks.operations.createdKinds.isEmpty)
     }
 
     @Test("An isolated VM attaches its own network of its mode, through a view opened for it")
     func isolatedModesAttachTheVMsOwnNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
-        let networks = MockVmnetNetworkProvider()
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        let networks = ScriptedVmnetNetworks()
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
 
         var nat = makeLinuxConfig()
         nat.networkMembership = .isolated
         var hostOnly = makeHostOnlyConfig()
         hostOnly.networkMembership = .isolated
-        for config in [nat, hostOnly] {
-            let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-                .configuration.networkDevices
-            #expect(devices[0].attachment === networks.scriptedAttachment)
+        for (config, kind) in [(nat, VmnetNetworkKind.nat), (hostOnly, .hostOnly)] {
+            let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+            #expect(result.configuration.networkDevices[0].attachment === networks.operations.attachments.last)
+            #expect(result.vmnetNetworks.owner == config.id)
+            #expect(networks.service.ipv4Subnet(for: VmnetNetworkID(kind: kind, scope: .vm(config.id))) != nil)
         }
 
-        #expect(networks.requestedNetworks == [.own(.nat), .own(.hostOnly)])
-        #expect(networks.openedOwners == [nat.id, hostOnly.id])
+        #expect(networks.operations.createdKinds == [.nat, .hostOnly])
     }
 
     @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
@@ -1258,52 +1260,58 @@ struct ConfigurationBuilderTests {
             #expect(config.joinedNetwork == .vmnet(id))
 
             // The build asks the VM's own session view for its own network.
-            let networks = MockVmnetNetworkProvider()
-            _ = try makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+            let networks = ScriptedVmnetNetworks()
+            networks.operations.subnet = .scripted("192.168.70.0")
+            let result = try makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
                 .assemble(from: config, bundleURL: bundleURL, validate: false)
-            #expect(networks.openedOwners == [config.id])
-            #expect(networks.requestedNetworks == [.own(kind)])
+            #expect(result.vmnetNetworks.owner == config.id)
+            #expect(networks.operations.createdKinds == [kind])
 
-            // Recovery attaches the same network.
+            // Recovery, through the session's view, attaches the same network
+            // without creating another.
             let device = MockNetworkDeviceControl()
             let coordinator = NetworkAttachmentCoordinator(
                 vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
-                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: networks,
-                entitlements: .entitled, choice: { config.networkChoice }, onPendingChange: { _ in })
+                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: result.vmnetNetworks,
+                entitlements: .entitled, isEligible: { true }, choice: { config.networkChoice },
+                onPendingChange: { _ in })
             coordinator.activate()
             #expect(device.appliedPlans == [.vmnet(.own(kind))])
+            #expect(networks.operations.createdKinds == [kind])
             coordinator.stop()
 
             // The observer reads that network's subnet and nothing else.
-            let observerNetworks = MockVmnetNetworkProvider()
-            observerNetworks.scriptedSubnets = [id: .scripted("192.168.70.0")]
             let observer = GuestAddressObserver(
                 reader: ScriptedARPTable([
                     .scripted("192.168.70.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
                     .scripted("192.168.64.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
                 ]),
-                vmnetNetworks: observerNetworks, entitlements: .entitled)
+                vmnetNetworks: networks.service, entitlements: .entitled)
             let roster = StubVMInstanceRoster()
             roster.instances = [instance]
             observer.roster = roster
             await observer.readForTesting()
             #expect(observer.address(for: instance) == .observed("192.168.70.5"))
+            // The session's view holds the VM's own network; the read above
+            // needs it alive.
+            withExtendedLifetime(result) {}
         }
     }
 
     @Test("An isolated VM whose own network cannot be materialized builds detached, never on the common one")
     func isolatedModeWithoutItsNetworkBuildsDetached() throws {
         let bundleURL = try makeBundle(withDisk: true)
-        let networks = MockVmnetNetworkProvider()
-        networks.attachmentError = TestFailure("network limit reached")
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        let networks = ScriptedVmnetNetworks()
+        networks.operations.createNetworkError = TestFailure("network limit reached")
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
         var config = makeLinuxConfig()
         config.networkMembership = .isolated
 
         let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
             .configuration.networkDevices
         #expect(devices[0].attachment == nil)
-        #expect(networks.requestedNetworks == [.own(.nat)])
+        #expect(networks.operations.createdKinds == [.nat])
+        #expect(networks.service.ipv4Subnet(for: .common(.nat)) == nil)
     }
 
     @Test("An isolated NAT VM in a build without the entitlement is refused, not put on system NAT")
@@ -1327,9 +1335,9 @@ struct ConfigurationBuilderTests {
     func hostOnlyModeWithoutANetworkBuildsDetached() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let networks = MockVmnetNetworkProvider()
-        networks.attachmentError = TestFailure("vmnet refused")
-        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        let networks = ScriptedVmnetNetworks()
+        networks.operations.createNetworkError = TestFailure("vmnet refused")
+        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.

@@ -28,7 +28,6 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private let progressIdleGap: TimeInterval
     private let downloadsDirectory: URL
     private let staging: ClipboardFileStaging
-    private let pullTimeout: TimeInterval
     private let revealInFinder: @Sendable ([URL]) -> Void
 
     /// Opens one item's data connection to the host; tests hand over a
@@ -108,7 +107,6 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             .appendingPathComponent("Downloads", isDirectory: true),
         stagingRoot: ProcessStagingRoot,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        pullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         dataDialer: @escaping @Sendable (UInt32) throws -> Int32 = {
             try VsockGuestDataDialer.connect(port: $0)
         },
@@ -122,7 +120,6 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         self.downloadsDirectory = downloadsDirectory
-        self.pullTimeout = pullTimeout
         self.revealInFinder = revealInFinder
         self.staging = ClipboardFileStaging(
             label: "agent-drop", root: stagingRoot, freeSpaceProvider: freeSpaceProvider)
@@ -203,7 +200,6 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                     // paste deadline bounds it and nothing is capped.
                     maxPasteBytes: { .max },
                     staging: self.staging,
-                    lazyPullTimeout: self.pullTimeout,
                     progressRevealDelay: self.progressRevealDelay,
                     progressIdleGap: self.progressIdleGap,
                     dataLink: .dials(

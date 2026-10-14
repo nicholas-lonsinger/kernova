@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Kernova
 
@@ -11,10 +12,13 @@ struct VZNetworkDeviceHandleTests {
 
     private func makeHarness(initialPlan: NetworkAttachmentPlan? = nil) -> Harness {
         let install = MockNetworkAttachmentInstall()
+        let vmnet = ScriptedVmnetNetworks()
+        let sessionNetworks = vmnet.service.sessionNetworks(ownedBy: UUID())
+        // Up before any apply, so one onto it attaches straight away.
+        vmnet.materialize(.common(.hostOnly), through: sessionNetworks)
         return Harness(
             handle: VZNetworkDeviceHandle(
-                session: install, initialPlan: initialPlan,
-                vmnetNetworks: MockVmnetNetworkProvider()),
+                session: install, initialPlan: initialPlan, vmnetNetworks: sessionNetworks),
             install: install)
     }
 

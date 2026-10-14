@@ -5,7 +5,7 @@ import Foundation
 /// removable-media reconcile and the guest-address watch a moved
 /// configuration starts.
 @MainActor
-final class VMLibraryConfigurationPolicy: VMConfigurationPolicy {
+final class VMLibraryConfigurationPolicy {
     private let macAddresses: VMMACAddressRegistry
     private let removableMedia: VMRemovableMediaReconciler
     private let guestAddresses: GuestAddressObserver
@@ -25,6 +25,8 @@ final class VMLibraryConfigurationPolicy: VMConfigurationPolicy {
     /// A revert refuses nothing: the snapshot's saved state restores only
     /// under the address it was taken with, which ``VMMACAddressRegistry``
     /// keeps for this VM while the snapshot is listed.
+    ///
+    /// Runs inside the coordinated write, so it must be pure.
     func refusal(
         on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration,
         under authority: VMEditPermit.Authority

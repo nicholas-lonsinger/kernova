@@ -5,10 +5,9 @@ import KernovaKit
 /// In-memory `ClipboardWritePasteboard` recording every promised write, with a
 /// seam that fires a promise's provider the way the OS does.
 ///
-/// `NSPasteboard` is a class cluster with no public initializer, so a real one's
-/// write can never be made to fail and its promises can only be fired by an
-/// actual paste; this stands in for both sides of the write half on either end
-/// of the wire.
+/// A test fires a promise when it chooses rather than when a paste asks, and
+/// makes a write fail on request; it stands in for the write half on either
+/// end of the wire.
 ///
 /// Thread-safe: ``invokeProvider(forType:itemIndex:)`` blocks its calling thread
 /// until the lazy pull behind the promise resolves, so it runs off the test's

@@ -739,7 +739,7 @@ final class VMInstance {
     /// prior one.
     private func setupNetworkAttachmentCoordinator(
         for session: VMSession, in context: VMSessionContext,
-        vmnetNetworks networks: any VmnetSessionNetworking, entitlements: EntitlementService
+        vmnetNetworks networks: VmnetSessionNetworks, entitlements: EntitlementService
     ) async {
         context.networkAttachmentCoordinator?.stop()
         context.networkAttachmentCoordinator = nil

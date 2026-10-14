@@ -52,7 +52,7 @@ struct DetailAlertsPresenterTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         return (DetailAlertsPresenter(viewModel: viewModel), viewModel)
     }

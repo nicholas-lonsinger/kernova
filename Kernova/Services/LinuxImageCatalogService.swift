@@ -7,19 +7,25 @@ import KernovaLogging
 /// generation-time snapshot, so the picker opens instantly and offline. Only
 /// the chosen distribution's checksum manifest and ISO come off the network,
 /// from the distribution's own mirror.
-struct LinuxImageCatalogService: LinuxImageCatalogProviding {
+struct LinuxImageCatalogService {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "LinuxImageCatalogService")
 
     private static let resourceName = "LinuxImageCatalog"
     private static let resourceExtension = "json"
 
+    /// Every usable image, in catalog display order.
+    ///
+    /// Empty when the catalog resource is missing or unreadable — the wizard
+    /// then offers no distributions, and the bring-your-own-ISO source still
+    /// works.
     let entries: [LinuxImageCatalogEntry]
+    /// `yyyy-MM-dd` the catalog was generated, or `nil` when it did not load.
     let generatedAt: String?
 
-    init(bundle: Bundle = .main) {
+    init() {
         guard
-            let url = bundle.url(
+            let url = Bundle.main.url(
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {
@@ -84,7 +90,7 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
     /// Decodes and validates catalog JSON, dropping unusable entries rather
     /// than failing the whole document.
     ///
-    /// Pure and non-asserting so the drop paths are testable; ``init(bundle:)``
+    /// Pure and non-asserting so the drop paths are testable; ``init()``
     /// is what turns a rejection into a fault, because a rejection in the
     /// *shipped* resource is a build-time mistake.
     ///

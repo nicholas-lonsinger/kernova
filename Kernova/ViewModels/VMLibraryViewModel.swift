@@ -28,7 +28,6 @@ final class VMLibraryViewModel {
     let commands: VMCommandCore
 
     let storageService: any VMStorageProviding
-    let diskImageService: any DiskImageProviding
     let lifecycle: VMLifecycleCoordinator
 
     /// Pauses running VMs for system sleep and resumes them on wake.
@@ -675,8 +674,10 @@ final class VMLibraryViewModel {
     }
 
     /// Measures the window or screen a starting VM's display will occupy, for
-    /// `displaySizesToWindow`.
-    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
+    /// `displaySizesToWindow` — `nil` when it can't be measured, and the VM
+    /// then boots at its persisted resolution. The window layer sets it: only
+    /// it knows which window or screen a VM's `displayPreference` resolves to.
+    @ObservationIgnored var displayBootSurface: ((VMInstance) -> DisplayBootSurface?)?
 
     // MARK: - Initialization
 
@@ -711,14 +712,13 @@ final class VMLibraryViewModel {
         fileSystem: any FileSystemOperating,
         downloadsDirectory: URL?,
         preferences: AppPreferences,
-        vmnetNetworks: any VmnetNetworkProviding,
+        vmnetNetworks: VmnetNetworkService,
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
         networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
     ) {
         self.storageService = storageService
-        self.diskImageService = diskImageService
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
@@ -750,8 +750,7 @@ final class VMLibraryViewModel {
             lifecycle: lifecycle, roster: library, systemSleep: systemSleep)
         self.sleepWake = sleepWake
         let usbAccessories = USBAccessoryCoordinator(
-            lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
-            pairings: library)
+            lifecycle: lifecycle, library: library)
         self.usbAccessories = usbAccessories
         let commands = VMCommandCore(
             library: library,
@@ -799,10 +798,8 @@ final class VMLibraryViewModel {
         commands.requestQuit = { [weak self] in
             self?.onRequestQuit?()
         }
-        // Through this adapter rather than handed over, so the core retains
-        // neither the view model nor the app delegate behind it.
         commands.displayBootSurface = { [weak self] instance in
-            self?.displayBootGeometryProvider?.displayBootSurface(for: instance)
+            self?.displayBootSurface?(instance)
         }
         // What the user's own attach and detach mean for what a guest takes
         // back on its own. Both hang off the verb rather than the surface, so

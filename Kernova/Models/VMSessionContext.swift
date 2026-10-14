@@ -121,7 +121,7 @@ final class VMSessionContext {
     /// This session's view of the app-managed vmnet networks, adopted from
     /// the configuration build and held until ``tearDown()``: the VM's own
     /// networks live exactly as long as a view of its own does.
-    @ObservationIgnored var vmnetNetworks: (any VmnetSessionNetworking)?
+    @ObservationIgnored var vmnetNetworks: VmnetSessionNetworks?
 
     /// Keeps the live network attachment realizing the configured mode;
     /// created with the `VZVirtualMachine` for network-enabled VMs, activated

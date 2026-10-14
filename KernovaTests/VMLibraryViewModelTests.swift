@@ -27,8 +27,7 @@ struct VMLibraryViewModelTests {
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
-        downloadsDirectory: URL? = nil,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
+        downloadsDirectory: URL? = nil
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any RemovableMediaAttaching
@@ -45,7 +44,7 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: downloadsDirectory,
             preferences: preferences,
-            vmnetNetworks: vmnetNetworks,
+            vmnetNetworks: .scripted(),
             arpTable: ScriptedARPTable(),
             entitlements: .entitled
         )
@@ -69,7 +68,7 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         vm.presenter = presenter
         return (vm, suspending)
@@ -668,7 +667,7 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         vm.presenter = presenter
         return vm
@@ -2199,26 +2198,6 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Match-Window Boot Resolution
 
-    /// Hands `start` a fixed surface, standing in for the window/screen geometry
-    /// `AppDelegate` measures.
-    @MainActor
-    private final class FakeDisplayBootGeometryProvider: DisplayBootGeometryProviding {
-        var surface: DisplayBootSurface?
-        private(set) var callCount = 0
-        /// The operation holding the VM when its surface was measured.
-        private(set) var operationAtMeasure: VMOperationKind?
-
-        init(surface: DisplayBootSurface?) {
-            self.surface = surface
-        }
-
-        func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
-            callCount += 1
-            operationAtMeasure = instance.phase.operation?.kind
-            return surface
-        }
-    }
-
     /// A VM whose display is sized to its window at every cold start, at the
     /// screen's scale — both defaults.
     private func makeMatchWindowInstance(
@@ -2235,15 +2214,18 @@ struct VMLibraryViewModelTests {
     @Test("A match-window cold boot persists the computed resolution before starting")
     func matchWindowWritesResolutionBeforeStart() async {
         let (viewModel, storage, _, virtService, _) = makeViewModel()
-        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
-        viewModel.displayBootGeometryProvider = provider
+        var measured: [VMOperationKind?] = []
+        viewModel.displayBootSurface = {
+            measured.append($0.phase.operation?.kind)
+            return Self.retinaSurface
+        }
         let instance = makeMatchWindowInstance(in: viewModel.library, files: storage.files)
 
         await viewModel.start(instance)
 
-        #expect(provider.callCount == 1)
+        #expect(measured.count == 1)
         // Measured and written as the start's own write, once it holds the VM.
-        #expect(provider.operationAtMeasure == .bringUp(.guestStart(.starting(recovery: false))))
+        #expect(measured == [.bringUp(.guestStart(.starting(recovery: false)))])
         // The VZ configuration is built inside `start`, so the values must
         // already be on the instance when the service is called.
         #expect(virtService.configurationAtStart?.displayWidth == 2800)
@@ -2257,8 +2239,7 @@ struct VMLibraryViewModelTests {
     @Test("A match-window boot with HiDPI off fills the window at 1×")
     func matchWindowAtStandardDensityWhenHiDPIOff() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
-        viewModel.displayBootGeometryProvider = provider
+        viewModel.displayBootSurface = { _ in Self.retinaSurface }
         let instance = makeMatchWindowInstance(in: viewModel.library) { $0.displayHiDPI = false }
 
         await viewModel.start(instance)
@@ -2273,9 +2254,7 @@ struct VMLibraryViewModelTests {
     @Test("A Linux match-window boot ignores the screen scale")
     func matchWindowIsOneToOneForLinux() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        // Held in a local: the view model's reference is weak.
-        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
-        viewModel.displayBootGeometryProvider = provider
+        viewModel.displayBootSurface = { _ in Self.retinaSurface }
         let instance = makeMatchWindowInstance(in: viewModel.library, guestOS: .linux)
 
         await viewModel.start(instance)
@@ -2289,8 +2268,11 @@ struct VMLibraryViewModelTests {
     @Test("A saved-state VM keeps its resolution so the restore stays valid")
     func matchWindowSkippedWhenSaveFileExists() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
-        viewModel.displayBootGeometryProvider = provider
+        var measured: [VMOperationKind?] = []
+        viewModel.displayBootSurface = {
+            measured.append($0.phase.operation?.kind)
+            return Self.retinaSurface
+        }
         let instance = makeMatchWindowInstance(in: viewModel.library)
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
@@ -2299,7 +2281,7 @@ struct VMLibraryViewModelTests {
         await viewModel.start(instance)
 
         // The surface is never even measured — the save file settles it.
-        #expect(provider.callCount == 0)
+        #expect(measured.isEmpty)
         #expect(virtService.configurationAtStart?.displayWidth == 1920)
         #expect(virtService.configurationAtStart?.displayHeight == 1200)
     }
@@ -2307,13 +2289,16 @@ struct VMLibraryViewModelTests {
     @Test("A VM with match-window off boots at its configured resolution")
     func matchWindowOffLeavesResolutionAlone() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
-        viewModel.displayBootGeometryProvider = provider
+        var measured: [VMOperationKind?] = []
+        viewModel.displayBootSurface = {
+            measured.append($0.phase.operation?.kind)
+            return Self.retinaSurface
+        }
         let instance = viewModel.library.admitFixture { $0.displaySizesToWindow = false }
 
         await viewModel.start(instance)
 
-        #expect(provider.callCount == 0)
+        #expect(measured.isEmpty)
         #expect(virtService.configurationAtStart?.displayWidth == 1920)
         #expect(virtService.configurationAtStart?.displayHeight == 1200)
     }
@@ -2321,8 +2306,7 @@ struct VMLibraryViewModelTests {
     @Test("A match-window resolution that can't be persisted is rolled back before the boot")
     func matchWindowRollsBackWhenPersistFails() async {
         let (viewModel, storage, _, virtService, _) = makeViewModel()
-        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
-        viewModel.displayBootGeometryProvider = provider
+        viewModel.displayBootSurface = { _ in Self.retinaSurface }
         let instance = makeMatchWindowInstance(in: viewModel.library, files: storage.files)
         let original = instance.configuration.displayResolution
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
@@ -2343,13 +2327,16 @@ struct VMLibraryViewModelTests {
     @Test("An unmeasurable surface boots at the configured resolution")
     func matchWindowWithoutSurfaceStillStarts() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let provider = FakeDisplayBootGeometryProvider(surface: nil)
-        viewModel.displayBootGeometryProvider = provider
+        var measured: [VMOperationKind?] = []
+        viewModel.displayBootSurface = {
+            measured.append($0.phase.operation?.kind)
+            return nil
+        }
         let instance = makeMatchWindowInstance(in: viewModel.library)
 
         await viewModel.start(instance)
 
-        #expect(provider.callCount == 1)
+        #expect(measured.count == 1)
         #expect(virtService.startCallCount == 1)
         #expect(instance.status == .running)
         #expect(instance.configuration.displayWidth == 1920)
@@ -3028,7 +3015,7 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(name: "Sequoia", guestOS: .macOS) {
@@ -3280,11 +3267,11 @@ struct VMLibraryViewModelTests {
     /// A library holding one VM on `held` and one on `editing`, both on the
     /// NAT network — the starting point for every uniqueness assertion.
     private func makeLibrarySharingNoAddress(
-        using vmnet: MockVmnetNetworkProvider, held: String, editing: String,
+        held: String, editing: String,
         storage: MockVMStorageService = MockVMStorageService()
     ) -> (VMLibraryViewModel, VMInstance, VMInstance) {
         let (viewModel, _, _, _, _) = makeViewModel(
-            storageService: storage, vmnetNetworks: vmnet)
+            storageService: storage)
         let holder = makeNetworkedInstance(in: viewModel, mac: held, name: "Holder")
         let editor = makeNetworkedInstance(
             in: viewModel, mac: editing, name: "Editing VM")
@@ -3293,10 +3280,9 @@ struct VMLibraryViewModelTests {
 
     @Test("A MAC address another VM holds is refused, changing nothing")
     func duplicateMACAddressIsRefused() throws {
-        let vmnet = MockVmnetNetworkProvider()
         let storage = MockVMStorageService()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
+            held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
             storage: storage)
 
         let outcome = viewModel.setConfiguration(
@@ -3313,9 +3299,8 @@ struct VMLibraryViewModelTests {
 
     @Test("The refusal matches the held address regardless of case")
     func duplicateMACAddressRefusalIgnoresCase() throws {
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "AA:BB:CC:DD:EE:0F", editing: "aa:bb:cc:dd:ee:10")
+            held: "AA:BB:CC:DD:EE:0F", editing: "aa:bb:cc:dd:ee:10")
 
         let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
@@ -3327,9 +3312,8 @@ struct VMLibraryViewModelTests {
 
     @Test("A VM with networking off still holds its address")
     func aVMWithNetworkingOffStillHoldsItsAddress() throws {
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+            held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
         viewModel.library.editConfiguration(of: holder, as: .machineKeys) { $0.networkEnabled = false }
 
         let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
@@ -3342,9 +3326,8 @@ struct VMLibraryViewModelTests {
 
     @Test("A refused mutation drops the fields it also set")
     func aRefusedMutationDropsItsOtherFields() throws {
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+            held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
         let accepted = try viewModel.library.updateConfiguration(
             of: editor, as: [.rename, .machineKeys]
@@ -3360,9 +3343,8 @@ struct VMLibraryViewModelTests {
 
     @Test("A VM keeping an address that arrived shared still accepts other edits")
     func aVMSharingAnAddressFromDiskStillAcceptsEdits() throws {
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:0f")
+            held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:0f")
 
         // Only a change of address is refused, so a pair that arrived from disk
         // sharing one stays editable in every other respect.
@@ -3377,9 +3359,8 @@ struct VMLibraryViewModelTests {
 
     @Test("Moving the holder off an address frees it for another VM")
     func editingTheHolderFreesItsAddress() throws {
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+            held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
         try viewModel.library.updateConfiguration(of: holder, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:11"
@@ -3395,9 +3376,8 @@ struct VMLibraryViewModelTests {
 
     @Test("Deleting the holder frees its address for another VM")
     func deletingTheHolderFreesItsAddress() async throws {
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
-            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+            held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
         await viewModel.delete(holder)
         let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
@@ -3865,7 +3845,7 @@ struct VMLibraryViewModelTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(name: "Race VM") {
@@ -5975,7 +5955,7 @@ struct VMLibraryViewModelTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -6065,7 +6045,7 @@ struct VMLibraryViewModelTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -6456,7 +6436,7 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         let instance = viewModel.library.admitFixture(name: "Work")

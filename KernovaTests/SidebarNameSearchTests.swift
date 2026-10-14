@@ -376,11 +376,7 @@ struct SidebarNameSearchTests {
     func libraryOpensWithTheOutlineFocused() throws {
         let viewModel = makeViewModel()
         viewModel.library.admitFixture(name: "Ubuntu")
-        let autosave = WindowAutosaveScope.unsaved()
-        let registry = AppWindowRegistry(
-            viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-            autosaveScope: autosave)
+        let registry = makeWindowRegistry(viewModel)
 
         registry.showLibrary(bringToFront: true)
 
@@ -529,9 +525,8 @@ struct SidebarNameSearchTests {
     @Test("Find VM is ⌘F, enabled with no library window, and opens the window with its field shown and focused")
     func findVMOpensTheLibrary() throws {
         let viewModel = makeViewModel()
-        let menuController = MainMenuController(viewModel: viewModel)
-        let host = StubMenuHost()
-        menuController.host = host
+        let registry = makeWindowRegistry(viewModel)
+        let menuController = MainMenuController(viewModel: viewModel, windows: registry)
         let edit = try #require(menuController.makeMainMenu().items.first { $0.submenu?.title == "Edit" }?.submenu)
         let find = try #require(edit.items.first { $0.title == "Find VM\u{2026}" })
         #expect(find.keyEquivalent == "f")
@@ -540,11 +535,6 @@ struct SidebarNameSearchTests {
         #expect(menuController.validate(find))
 
         // What `AppDelegate.findVM(_:)` runs.
-        let autosave = WindowAutosaveScope.unsaved()
-        let registry = AppWindowRegistry(
-            viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-            autosaveScope: autosave)
         #expect(registry.libraryWindow == nil)
 
         registry.focusLibrarySearch()

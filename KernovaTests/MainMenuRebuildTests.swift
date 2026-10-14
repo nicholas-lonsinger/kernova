@@ -14,23 +14,27 @@ import Testing
 struct MainMenuRebuildTests {
     private let preferences = makeTestPreferences()
 
+    /// The controller under test, over a library a test selects the VM in
+    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``) and windows it
+    /// opens none of.
     private struct Fixture {
         let controller: MainMenuController
-        let host: StubMenuHost
         let viewModel: VMLibraryViewModel
         let mainMenu: NSMenu
     }
 
-    private func makeFixture(instance: VMInstance?, keepInMenuBar: Bool = false) -> Fixture {
+    /// `populate` runs before the menu bar is built, so a VM it selects is the
+    /// one the menus are first built for.
+    private func makeFixture(
+        keepInMenuBar: Bool = false, populate: (VMLibraryViewModel) -> Void = { _ in }
+    ) -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
+        populate(viewModel)
         let controller = MainMenuController(
-            viewModel: viewModel, hasBundledGuestAgentDisk: true)
-        let host = StubMenuHost(instance: instance)
-        controller.host = host
+            viewModel: viewModel, windows: makeWindowRegistry(viewModel), hasBundledGuestAgentDisk: true)
         return Fixture(
-            controller: controller, host: host, viewModel: viewModel,
-            mainMenu: controller.makeMainMenu())
+            controller: controller, viewModel: viewModel, mainMenu: controller.makeMainMenu())
     }
 
     /// The quit section: the trailing items the rebuild owns, matched by count
@@ -43,7 +47,7 @@ struct MainMenuRebuildTests {
 
     @Test("The quit section is built from the model for the current mode")
     func quitSectionMatchesModel() throws {
-        let fixture = makeFixture(instance: nil)
+        let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: false)
 
@@ -54,7 +58,7 @@ struct MainMenuRebuildTests {
 
     @Test("An update with the preference unchanged keeps the same items")
     func unchangedModelKeepsItems() throws {
-        let fixture = makeFixture(instance: nil)
+        let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let before = quitItems(in: appMenu, count: 1)
 
@@ -67,7 +71,7 @@ struct MainMenuRebuildTests {
 
     @Test("Flipping the residency preference replaces exactly the quit section")
     func flippedPreferenceReplacesQuitSection() throws {
-        let fixture = makeFixture(instance: nil)
+        let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let before = quitItems(in: appMenu, count: 1)
         let itemCountBefore = appMenu.items.count
@@ -87,7 +91,7 @@ struct MainMenuRebuildTests {
 
     @Test("A foreign item in the quit section does not survive a rebuild")
     func foreignQuitSectionItemDoesNotSurviveARebuild() throws {
-        let fixture = makeFixture(instance: nil)
+        let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         // Stands in for the alternate AppKit injects beside a `terminate:` item:
         // the rebuild never created it, so only a positional sweep clears it.
@@ -112,7 +116,7 @@ struct MainMenuRebuildTests {
 
     @Test("An item injected into the quit section is swept even with the model unchanged")
     func injectedItemIsSweptWithoutAModelChange() throws {
-        let fixture = makeFixture(instance: nil, keepInMenuBar: true)
+        let fixture = makeFixture(keepInMenuBar: true)
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
         let before = quitItems(in: appMenu, count: model.count)
@@ -144,7 +148,7 @@ struct MainMenuRebuildTests {
 
     @Test("A split quit section that already is the model is left untouched")
     func matchingSplitSectionIsNotMutated() throws {
-        let fixture = makeFixture(instance: nil, keepInMenuBar: true)
+        let fixture = makeFixture(keepInMenuBar: true)
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
         let before = quitItems(in: appMenu, count: model.count)
@@ -163,7 +167,7 @@ struct MainMenuRebuildTests {
 
     @Test("Only the full-quit item claims ⌥⌘Q after a toggle")
     func optionCommandQIsOwnedByTheFullQuit() throws {
-        let fixture = makeFixture(instance: nil)
+        let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let intruder = NSMenuItem(
             title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
@@ -183,7 +187,7 @@ struct MainMenuRebuildTests {
 
     @Test("A toggled menu matches one freshly built in the same mode")
     func toggledMenuMatchesAFreshlyBuiltOne() throws {
-        let fixture = makeFixture(instance: nil)
+        let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let intruder = NSMenuItem(
             title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
@@ -194,7 +198,7 @@ struct MainMenuRebuildTests {
         fixture.viewModel.keepInMenuBarOnQuit = true
         fixture.controller.menuNeedsUpdate(appMenu)
 
-        let fresh = makeFixture(instance: nil, keepInMenuBar: true)
+        let fresh = makeFixture(keepInMenuBar: true)
         let freshAppMenu = try #require(fresh.mainMenu.items.first?.submenu)
         #expect(appMenu.items.count == freshAppMenu.items.count)
         #expect(appMenu.items.map(\.title) == freshAppMenu.items.map(\.title))
@@ -204,8 +208,7 @@ struct MainMenuRebuildTests {
 
     @Test("An update with the same snapshots keeps the same items")
     func revertSubmenuUnchangedModel() throws {
-        let instance = makeMenuInstance()
-        let fixture = makeFixture(instance: instance)
+        let fixture = makeFixture { makeMenuInstance(in: $0) }
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
         let before = revertMenu.items
 
@@ -218,8 +221,8 @@ struct MainMenuRebuildTests {
 
     @Test("A snapshot taken since the last open rebuilds the submenu")
     func revertSubmenuFollowsManifest() throws {
-        let instance = makeMenuInstance()
-        let fixture = makeFixture(instance: instance)
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel)
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Clean", macAddress: nil)]))
@@ -233,8 +236,8 @@ struct MainMenuRebuildTests {
 
     @Test("Opening the Virtual Machine menu rebuilds the revert submenu")
     func parentMenuRebuildsRevertSubmenu() throws {
-        let instance = makeMenuInstance()
-        let fixture = makeFixture(instance: instance)
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel)
         let vmMenu = try #require(submenu(titled: "Virtual Machine", in: fixture.mainMenu))
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
@@ -249,17 +252,17 @@ struct MainMenuRebuildTests {
 
     @Test("The clipboard item follows the active VM's clipboard availability")
     func clipboardItemFollowsActiveInstance() throws {
-        let instance = makeMenuInstance(guestOS: .linux, phase: .running(sessionID: UUID())) {
+        let fixture = makeFixture()
+        makeMenuInstance(in: fixture.viewModel, guestOS: .linux, phase: .running(sessionID: UUID())) {
             $0.clipboardSharingEnabled = true
         }
-        let fixture = makeFixture(instance: instance)
         let windowMenu = try #require(submenu(titled: "Window", in: fixture.mainMenu))
         let clipboardItem = try #require(windowMenu.items.first { $0.title == "Clipboard" })
 
         fixture.controller.menuNeedsUpdate(windowMenu)
         #expect(clipboardItem.isEnabled)
 
-        fixture.host.instance = nil
+        fixture.viewModel.library.selection = nil
         fixture.controller.menuNeedsUpdate(windowMenu)
         #expect(!clipboardItem.isEnabled)
     }

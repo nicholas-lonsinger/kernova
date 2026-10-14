@@ -14,7 +14,6 @@ import Testing
 @MainActor
 struct AppResidencySummonTests {
     private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.unsaved()
 
     /// Stands in for `NSApp`'s hidden state and activation, recording each call
     /// in order.
@@ -69,10 +68,7 @@ struct AppResidencySummonTests {
         foreground: RecordingForeground
     ) -> (AppResidencyController, AppWindowRegistry, VMLibraryViewModel) {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let registry = AppWindowRegistry(
-            viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-            autosaveScope: autosave)
+        let registry = makeWindowRegistry(viewModel)
         foreground.registry = registry
         let controller = AppResidencyController(
             viewModel: viewModel, windows: registry, foreground: foreground.control)

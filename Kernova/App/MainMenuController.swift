@@ -2,27 +2,13 @@ import Cocoa
 import KernovaKit
 import KernovaLogging
 
-/// The application-level seam a ``MainMenuController`` needs but cannot own:
-/// which VM a command acts on, and which sidebar the View menu mirrors.
-@MainActor
-protocol MainMenuHosting: AnyObject {
-    /// The VM a menu command acts on: the one the sending item names, else the
-    /// key window's VM, else the sidebar selection. A `nil` sender asks for the
-    /// active instance.
-    func menuCommandTarget(of sender: Any?) -> VMInstance?
-
-    /// The sidebar the View menu's section items read and act on: the library
-    /// window's, while that window is on screen.
-    var librarySidebar: SidebarViewController? { get }
-}
-
 /// The one owner of the menu bar: its construction, the rebuilds an opening menu
 /// asks for, and the validation that decides every VM command's title and
 /// enablement.
 ///
 /// The `@objc` actions the items name stay on `AppDelegate` — every call site
 /// dispatches them nil-target down the responder chain, which this controller is
-/// not part of. It reaches the app through ``MainMenuHosting``.
+/// not part of. Those actions act on the VM ``target(of:)`` names.
 @MainActor
 final class MainMenuController: NSObject, NSMenuDelegate {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MainMenu")
@@ -33,7 +19,10 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Whether this build carries the guest-agent installer disk image the
     /// guest-agent item mounts.
     private let hasBundledGuestAgentDisk: Bool
-    weak var host: (any MainMenuHosting)?
+    /// The app's windows: the key window's VM, and the library window whose
+    /// sidebar the View menu's section items read and act on while it is on
+    /// screen.
+    private let windows: AppWindowRegistry
 
     /// The application menu, retained so its quit section can be rebuilt when it opens.
     private var appMenu: NSMenu?
@@ -73,7 +62,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         if case .editOptions(let edit) = command {
             viewModel.library.editSidebarOptions(edit)
         } else {
-            host?.librarySidebar?.perform(command)
+            windows.librarySidebar?.perform(command)
         }
     }
     /// The separator closing the View menu's sidebar items, which are every
@@ -107,10 +96,31 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     init(
         viewModel: VMLibraryViewModel,
+        windows: AppWindowRegistry,
         hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
     ) {
         self.viewModel = viewModel
+        self.windows = windows
         self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
+    }
+
+    // MARK: - Command Target
+
+    /// The VM a command no item names acts on: the key window's, else the
+    /// sidebar selection.
+    var activeInstance: VMInstance? {
+        NSApp.keyWindow.flatMap(windows.instance(forKeyWindow:)) ?? viewModel.selectedInstance
+    }
+
+    /// The VM a nil-target action acts on: the one the sending item names, else
+    /// ``activeInstance``.
+    ///
+    /// The sidebar's context menu dispatches its display toggles down the
+    /// responder chain, and its row is not always the key window's VM — naming
+    /// the VM on the item is what keeps the click acting on the row it came
+    /// from. Every other sender carries none and gets the key-window rule.
+    func target(of sender: Any?) -> VMInstance? {
+        (sender as? NSMenuItem)?.representedObject as? VMInstance ?? activeInstance
     }
 
     // MARK: - Quit Section
@@ -195,7 +205,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === windowsMenu {
             clipboardMenuItem?.isEnabled =
-                host?.menuCommandTarget(of: nil).map {
+                target(of: nil).map {
                     viewModel.capabilities.isAvailable(.showClipboard, on: $0)
                 } ?? false
         } else if menu === viewMenu {
@@ -227,7 +237,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             return
         }
         for _ in 0..<end { viewMenu.removeItem(at: 0) }
-        let sidebar = host?.librarySidebar
+        let sidebar = windows.librarySidebar
         let expansion = sidebar?.sectionExpansion ?? []
         let values = SidebarViewMenu.values(of: viewModel)
         let items = sidebarMenu.menuBarItems(
@@ -241,8 +251,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Kernova and the ones the selected VM already holds, unless they are
     /// what it already lists.
     private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
-        guard let host else { return }
-        let instance = host.menuCommandTarget(of: nil)
+        let instance = activeInstance
         // Both listings come from the command core, so the menu offers exactly
         // what an attach would accept — the held-accessory filter lives at the
         // enforcement point, not here.
@@ -272,9 +281,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// this rebuild wrote — AppKit injects nothing into a submenu it does not
     /// own.
     private func rebuildRevertSnapshotMenu(_ menu: NSMenu) {
-        // No host means the app is tearing down, and the submenu goes with it.
-        guard let host else { return }
-        let instance = host.menuCommandTarget(of: nil)
+        let instance = activeInstance
         let model = RevertSnapshotMenuModel(
             instanceID: instance?.id,
             snapshots: instance?.snapshotManifest.ordered ?? [],
@@ -408,7 +415,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // selection guard so none strands the last selection's wording: the
         // guest-agent item's title is part of what it reports (see
         // `unavailableTitle`), and the Clone items name the preference.
-        let target = host?.menuCommandTarget(of: menuItem)
+        let target = self.target(of: menuItem)
         switch menuItem.action {
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             menuItem.title = GuestAgentDiskControl.unavailableTitle

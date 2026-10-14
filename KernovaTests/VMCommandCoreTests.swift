@@ -22,7 +22,7 @@ struct VMCommandCoreTests {
         let virtualization: MockVirtualizationService
         let snapshots: MockVMBundleMachineFiles
         let fileSystem: MockFileSystem
-        let vmnet: MockVmnetNetworkProvider
+        let vmnet: ScriptedVmnetNetworks
         let arpTable: ScriptedARPTable
         let authority: MockSandboxSourceAuthority
         /// The library's password store, read by identifier — the one way to
@@ -39,7 +39,7 @@ struct VMCommandCoreTests {
         let storage = MockVMStorageService()
         let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let fileSystem = MockFileSystem()
-        let vmnet = MockVmnetNetworkProvider()
+        let vmnet = ScriptedVmnetNetworks()
         let arpTable = ScriptedARPTable()
         let passwords = InMemoryGuestAccountPasswordStore()
         let lifecycle = makeTestLifecycle(
@@ -52,7 +52,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: vmnet,
+            vmnetNetworks: vmnet.service,
             arpTable: arpTable,
             guestAccountPasswords: passwords)
         let core = VMCommandCore(
@@ -277,7 +277,7 @@ struct VMCommandCoreTests {
     @Test("A running VM's observed address answers info and the ip verb alike")
     func theObservedAddressAnswersEveryHeadlessRead() async throws {
         let harness = makeHarness()
-        harness.vmnet.scriptedSubnets = [.common(.nat): .scripted("192.168.64.0")]
+        harness.vmnet.materialize(.common(.nat), on: "192.168.64.0")
         let instance = makeInstance(
             in: harness, name: "Addressed", phase: .running(sessionID: UUID())
         ) {

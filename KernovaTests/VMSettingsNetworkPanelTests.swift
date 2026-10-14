@@ -14,7 +14,7 @@ struct VMSettingsNetworkPanelTests {
     private let scratch = TestScratchDirectory(prefix: "VMSettingsNetworkPanelTests")
 
     private func makeViewModel(
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        vmnetNetworks: VmnetNetworkService = .scripted(),
         arpTable: ScriptedARPTable = ScriptedARPTable(),
         entitled: Bool = true
     ) -> VMLibraryViewModel {
@@ -26,11 +26,10 @@ struct VMSettingsNetworkPanelTests {
     /// A library whose NAT and Host Only networks stand on known subnets,
     /// over `arpTable` as the host's table.
     private func makeAddressedViewModel(_ arpTable: ScriptedARPTable) -> VMLibraryViewModel {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [
-            .common(.nat): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
-        ]
-        return makeViewModel(vmnetNetworks: vmnet, arpTable: arpTable)
+        let vmnet = ScriptedVmnetNetworks()
+        vmnet.materialize(.common(.nat), on: "192.168.64.0")
+        vmnet.materialize(.common(.hostOnly), on: "192.168.128.0")
+        return makeViewModel(vmnetNetworks: vmnet.service, arpTable: arpTable)
     }
 
     // MARK: - Network mode picker
@@ -71,7 +70,7 @@ struct VMSettingsNetworkPanelTests {
         isReadOnly: Bool = false,
         phase: VMLifecyclePhase = .stopped,
         holdsSavedState: Bool = false,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        vmnetNetworks: VmnetNetworkService = .scripted(),
         viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
         // The pane always shows a VM the library holds, and the library is what

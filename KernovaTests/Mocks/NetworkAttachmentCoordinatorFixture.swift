@@ -13,7 +13,6 @@ func attachNetworkCoordinator(
     device: MockNetworkDeviceControl,
     provider: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
     linkObserver: MockNetworkLinkObserver = MockNetworkLinkObserver(),
-    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     // Pinned rather than read from the test host's signature, so the plans
     // these tests assert on don't vary with how it was signed.
     entitlements: EntitlementService = .unentitled,
@@ -25,7 +24,7 @@ func attachNetworkCoordinator(
         device: device,
         interfaces: provider,
         linkObserver: linkObserver,
-        vmnetNetworks: vmnetNetworks,
+        vmnetNetworks: VmnetNetworkService.scripted().sessionNetworks(ownedBy: instance.id),
         entitlements: entitlements,
         retryDelays: retryDelays,
         vmnetRematerializeDelays: vmnetRematerializeDelays,

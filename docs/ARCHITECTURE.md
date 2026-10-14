@@ -20,8 +20,7 @@ UI: `VMLifecycleCoordinator` over the services, `VMLibrary`,
 session.
 
 The seams between the App-layer owners are protocols: `AppLaunchHosting`,
-`WindowResidencyHosting`, `SoftQuitHosting`, `MainMenuHosting`,
-`VMDisplayPlacementHosting`, `DisplayBootGeometryProviding`.
+`WindowResidencyHosting`, `SoftQuitHosting`, `VMDisplayPlacementHosting`.
 
 ## Front doors
 

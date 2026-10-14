@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 @testable import Kernova
 
@@ -28,12 +29,28 @@ struct NetworkAttachmentCoordinatorTests {
         let coordinator: NetworkAttachmentCoordinator
         let device: MockNetworkDeviceControl
         let provider: MockBridgedInterfaceProvider
-        let vmnet: MockVmnetNetworkProvider
+        let vmnet: ScriptedVmnetNetworks
+        /// The VM the coordinator's session view is for.
+        let owner: UUID
         let observer: MockNetworkLinkObserver
         let clock: TestEngineClock
         let eligibility: EligibilityBox
         let choiceBox: ChoiceBox
         let pendingChanges: PendingRecorder
+        /// How many networks the harness stood up before the coordinator ran.
+        let preMaterialized: Int
+
+        /// The kind of every network created since the harness stood its own
+        /// up, failed creates included, in call order.
+        var materializeRequests: [VmnetNetworkKind] {
+            Array(vmnet.operations.createdKinds.dropFirst(preMaterialized))
+        }
+
+        /// The subnet the `kind` network in `scope` hands out, `nil` while it
+        /// is not materialized.
+        func subnet(_ kind: VmnetNetworkKind, _ scope: VmnetNetworkID.Scope) -> IPv4Subnet? {
+            vmnet.service.ipv4Subnet(for: VmnetNetworkID(kind: kind, scope: scope))
+        }
     }
 
     /// Records every pending-state callback, standing in for
@@ -50,11 +67,16 @@ struct NetworkAttachmentCoordinatorTests {
         available: [BridgedInterface] = [],
         primary: String? = nil,
         entitled: Bool = false,
-        retryDelays: [TimeInterval] = []
+        retryDelays: [TimeInterval] = [],
+        materialized: [VmnetNetworkSelection] = [.common(.nat), .common(.hostOnly)]
     ) -> Harness {
         let device = MockNetworkDeviceControl(plan: devicePlan)
         let provider = MockBridgedInterfaceProvider(available: available, primary: primary)
-        let vmnet = MockVmnetNetworkProvider()
+        let vmnet = ScriptedVmnetNetworks()
+        let owner = UUID()
+        let sessionNetworks = vmnet.service.sessionNetworks(ownedBy: owner)
+        // In order: joining a network takes the VM off the one before it.
+        for network in materialized { vmnet.materialize(network, through: sessionNetworks) }
         let observer = MockNetworkLinkObserver()
         let clock = TestEngineClock()
         let eligibility = EligibilityBox()
@@ -65,7 +87,7 @@ struct NetworkAttachmentCoordinatorTests {
             device: device,
             interfaces: provider,
             linkObserver: observer,
-            vmnetNetworks: vmnet,
+            vmnetNetworks: sessionNetworks,
             entitlements: entitled ? .entitled : .unentitled,
             retryDelays: retryDelays,
             clock: clock,
@@ -74,8 +96,9 @@ struct NetworkAttachmentCoordinatorTests {
             onPendingChange: { pendingChanges.record($0) })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
-            vmnet: vmnet, observer: observer, clock: clock, eligibility: eligibility,
-            choiceBox: choiceBox, pendingChanges: pendingChanges)
+            vmnet: vmnet, owner: owner, observer: observer, clock: clock, eligibility: eligibility,
+            choiceBox: choiceBox, pendingChanges: pendingChanges,
+            preMaterialized: vmnet.operations.createdKinds.count)
     }
 
     // MARK: - Session start
@@ -146,7 +169,8 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil, membership: .isolated),
             devicePlan: .vmnet(.common(.nat)),
-            entitled: true)
+            entitled: true,
+            materialized: [.common(.nat), .own(.nat)])
 
         h.coordinator.activate()
 
@@ -159,8 +183,8 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, membership: .isolated),
             devicePlan: .vmnet(.common(.hostOnly)),
-            entitled: true)
-        h.vmnet.materializedNetworks = [.common(.hostOnly)]
+            entitled: true,
+            materialized: [.common(.hostOnly)])
         h.device.refusedPlans = [.vmnet(.own(.hostOnly))]
 
         h.coordinator.activate()
@@ -173,7 +197,8 @@ struct NetworkAttachmentCoordinatorTests {
         h.device.refusedPlans = []
         await h.coordinator.vmnetMaterializationTaskForTesting?.value
 
-        #expect(h.vmnet.materializeRequestedNetworks == [.own(.hostOnly)])
+        #expect(h.materializeRequests == [.hostOnly])
+        #expect(h.subnet(.hostOnly, .vm(h.owner)) != nil)
         #expect(h.device.currentPlan == .vmnet(.own(.hostOnly)))
         #expect(!h.coordinator.isPending)
         h.coordinator.stop()
@@ -198,9 +223,9 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             entitled: true,
-            retryDelays: [])
-        h.vmnet.materializedNetworks = []
-        h.vmnet.materializeFails = true
+            retryDelays: [],
+            materialized: [])
+        h.vmnet.operations.createNetworkError = TestFailure("vmnet refused")
         h.device.refusedPlans = [.vmnet(.common(.hostOnly)), .vmnet(.common(.nat))]
 
         h.coordinator.activate()
@@ -212,13 +237,14 @@ struct NetworkAttachmentCoordinatorTests {
         // the VM detached with no wake-up signal for the new kind. The
         // refusals lift only after the switch, so the supersede path (not a
         // direct attach) is what recovers the session.
-        h.vmnet.materializeFails = false
+        h.vmnet.operations.createNetworkError = nil
         h.choiceBox.choice = NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil)
         h.coordinator.configurationChanged()
         h.device.refusedPlans = []
 
         await h.coordinator.vmnetMaterializationTaskForTesting?.value
-        #expect(h.vmnet.materializeRequestedNetworks.contains(.common(.nat)))
+        #expect(h.materializeRequests.contains(.nat))
+        #expect(h.subnet(.nat, .common) != nil)
         #expect(h.device.appliedPlans.last == .vmnet(.common(.nat)))
         #expect(!h.coordinator.isPending)
         h.coordinator.stop()
@@ -252,8 +278,8 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             entitled: true,
-            retryDelays: [])
-        h.vmnet.materializedNetworks = []
+            retryDelays: [],
+            materialized: [])
         h.device.refusedPlans = [.vmnet(.common(.hostOnly))]
 
         h.coordinator.activate()
@@ -267,7 +293,7 @@ struct NetworkAttachmentCoordinatorTests {
 
         #expect(h.device.appliedPlans == [.vmnet(.common(.hostOnly))])
         #expect(!h.coordinator.isPending)
-        #expect(h.vmnet.materializeCount == 1)
+        #expect(h.materializeRequests == [.hostOnly])
     }
 
     @Test("A bridged VM with no usable interface goes pending, then a link event reattaches it")
@@ -359,7 +385,7 @@ struct NetworkAttachmentCoordinatorTests {
             #expect(h.device.appliedPlans.count == round)
             // The attachment holds long enough to outlive the burst window, so
             // the next disconnect is a fresh link event, not a failure report.
-            h.clock.advance(seconds: NetworkAttachmentCoordinator.defaultDisconnectBurstWindow + 1)
+            h.clock.advance(seconds: NetworkAttachmentCoordinator.disconnectBurstWindow + 1)
         }
 
         #expect(h.device.appliedPlans == [.nat, .nat, .nat])
@@ -648,7 +674,7 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
         #expect(h.coordinator.retryTaskForTesting == nil)
         #expect(h.coordinator.vmnetMaterializationTaskForTesting == nil)
-        #expect(h.vmnet.materializeCount == 0)
+        #expect(h.materializeRequests.isEmpty)
         #expect(h.device.appliedPlans.count == 2)
         #expect(h.coordinator.isPending)
 

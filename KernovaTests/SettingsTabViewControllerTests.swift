@@ -29,7 +29,7 @@ struct SettingsTabViewControllerTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         for index in 1...vmCount {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
@@ -137,14 +137,6 @@ struct SettingsTabViewControllerTests {
 
     // MARK: - Destinations
 
-    private func makeRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
-        let autosave = WindowAutosaveScope.unsaved()
-        return AppWindowRegistry(
-            viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-            autosaveScope: autosave)
-    }
-
     private func tabs(of registry: AppWindowRegistry) throws -> SettingsTabViewController {
         let window = try #require(registry.settingsWindow)
         adoptAppWindow(window)
@@ -160,7 +152,7 @@ struct SettingsTabViewControllerTests {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         _ = try viewModel.networks.create(name: "Other", kind: .nat, verb: .createNetwork)
         let lab = try viewModel.networks.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
-        let registry = makeRegistry(viewModel)
+        let registry = makeWindowRegistry(viewModel)
 
         registry.showSettings(at: .network(lab.id))
 
@@ -173,7 +165,7 @@ struct SettingsTabViewControllerTests {
     func openWindowSwitchesToTheNetwork() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
-        let registry = makeRegistry(viewModel)
+        let registry = makeWindowRegistry(viewModel)
         registry.showSettings(at: .pane(.clipboard))
         let tabs = try tabs(of: registry)
         #expect(tabs.selectedPaneForTesting == .clipboard)
@@ -191,14 +183,15 @@ struct SettingsTabViewControllerTests {
     @Test("⌘, opens Settings through the app's own action, which names no destination and keeps the last pane")
     func commandCommaKeepsTheLastPane() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let controller = MainMenuController(viewModel: viewModel, hasBundledGuestAgentDisk: true)
+        let registry = makeWindowRegistry(viewModel)
+        let controller = MainMenuController(
+            viewModel: viewModel, windows: registry, hasBundledGuestAgentDisk: true)
         let appMenu = try #require(controller.makeMainMenu().items.first?.submenu)
         let settings = try #require(appMenu.items.first { $0.keyEquivalent == "," })
         #expect(settings.keyEquivalentModifierMask == [.command])
         #expect(settings.action == #selector(AppDelegate.showSettings(_:)))
         #expect(settings.representedObject == nil)
 
-        let registry = makeRegistry(viewModel)
         registry.showSettings(at: .pane(.tags))
         registry.showSettings()
         #expect(try tabs(of: registry).selectedPaneForTesting == .tags)

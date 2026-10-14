@@ -23,7 +23,6 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     }
 
     private let staging: ClipboardFileStaging
-    private let clock: any EngineClock
     private let socketTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
     private let minimumExtractAllowance: Int
@@ -49,7 +48,6 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - staging: where archived payloads are extracted.
-    ///   - clock: the timeline stage timings are measured on.
     ///   - socketTimeout: each connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`.
     ///   - maxResidentInlineBytes: the most a raw payload may declare.
     ///   - minimumExtractAllowance: floor on what a streamed folder may
@@ -58,7 +56,6 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     ///   - onTransferTimed: fired once per successful transfer.
     init(
         staging: ClipboardFileStaging,
-        clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
@@ -66,7 +63,6 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
     ) {
         self.staging = staging
-        self.clock = clock
         self.socketTimeout = socketTimeout
         self.maxResidentInlineBytes = maxResidentInlineBytes
         self.minimumExtractAllowance = minimumExtractAllowance
@@ -183,7 +179,7 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     ) {
         let receiver = ClipboardTransferReceiver(
             transferID: transferID, generation: generation, source: source, plan: plan,
-            staging: staging, clock: clock, socketTimeout: socketTimeout,
+            staging: staging, socketTimeout: socketTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             minimumExtractAllowance: minimumExtractAllowance,
             extractPacingBytes: extractPacingBytes, onTransferTimed: onTransferTimed)

@@ -20,10 +20,6 @@ public protocol ClipboardPasteboardItemReading {
 extension NSPasteboardItem: ClipboardPasteboardItemReading {}
 
 /// The read half of an `NSPasteboard`, paired with ``ClipboardWritePasteboard``.
-///
-/// `NSPasteboard` is a class cluster with no public initializer and cannot be
-/// subclassed, so a snapshot can only be staged on a real one by writing to a
-/// named board; this is the seam a test substitutes to stage one directly.
 public protocol ClipboardReadPasteboard: AnyObject {
     /// Monotonically increasing count of pasteboard changes — what a poll
     /// compares to know a new snapshot is standing.

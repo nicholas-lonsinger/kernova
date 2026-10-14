@@ -189,36 +189,6 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     }
 }
 
-/// App-managed vmnet networks, as the app at large reads them.
-protocol VmnetNetworkProviding: Sendable {
-    /// The view one session of the VM `owner` attaches through. A network
-    /// other than a common one exists only while a view opened for a VM that
-    /// joined it lives.
-    func sessionNetworks(ownedBy owner: UUID) -> any VmnetSessionNetworking
-    /// The IPv4 subnet `network` hands its guests, `nil` while it is not
-    /// materialized. Cheap and non-blocking — safe from the main actor.
-    func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet?
-}
-
-/// App-managed vmnet networks as one VM session's attachment construction and
-/// attachment recovery consume them.
-protocol VmnetSessionNetworking: Sendable {
-    /// A VZ attachment joining `network`, materializing it first when it is
-    /// not. Blocks for the vmnet XPC round-trip — never call on the main
-    /// actor; config assembly runs off-main. Throws when the network cannot be
-    /// materialized.
-    func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment
-    /// The non-blocking variant for the main-actor live-attach path: an
-    /// attachment when the network is already materialized, `nil` otherwise.
-    func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment?
-    /// Materializes `network` off the caller's actor. `true` on success (or
-    /// when already materialized); failures are logged here.
-    func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool
-    /// The selection `network` is for this session, `nil` for a network it
-    /// cannot attach to — one the service does not hold, or another VM's own.
-    func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection?
-}
-
 /// Owns the app's managed vmnet networks: the common Host Only and NAT
 /// networks, each VM's networks of its own, and the named networks VMs join
 /// together.
@@ -389,11 +359,16 @@ final class VmnetNetworkService: @unchecked Sendable {
     }
 }
 
-extension VmnetNetworkService: VmnetNetworkProviding {
-    func sessionNetworks(ownedBy owner: UUID) -> any VmnetSessionNetworking {
+extension VmnetNetworkService {
+    /// The view one session of the VM `owner` attaches through. A network
+    /// other than a common one exists only while a view opened for a VM that
+    /// joined it lives.
+    func sessionNetworks(ownedBy owner: UUID) -> VmnetSessionNetworks {
         VmnetSessionNetworks(service: self, owner: owner)
     }
 
+    /// The IPv4 subnet `network` hands its guests, `nil` while it is not
+    /// materialized. Cheap and non-blocking — safe from the main actor.
     func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet? {
         stateLock.withLock { networks[network]?.subnet }
     }
@@ -416,7 +391,7 @@ extension VmnetNetworkSelection {
 ///
 /// The session context holds it for the session's whole life, and anything
 /// still materializing through it holds it until that finishes.
-final class VmnetSessionNetworks: VmnetSessionNetworking {
+final class VmnetSessionNetworks: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetSessionNetworks")
 
     private let service: VmnetNetworkService
@@ -442,10 +417,16 @@ final class VmnetSessionNetworks: VmnetSessionNetworking {
         return VmnetNetworkID(kind: selection.kind, scope: scope)
     }
 
+    /// A VZ attachment joining `network`, materializing it first when it is
+    /// not. Blocks for the vmnet XPC round-trip — never call on the main
+    /// actor; config assembly runs off-main. Throws when the network cannot be
+    /// materialized.
     func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment {
         service.attachment(joining: try service.network(for: id(network), member: owner))
     }
 
+    /// The non-blocking variant for the main-actor live-attach path: an
+    /// attachment when the network is already materialized, `nil` otherwise.
     func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment? {
         service.cachedHandle(for: id(network), member: owner).map(service.attachment(joining:))
     }
@@ -453,6 +434,8 @@ final class VmnetSessionNetworks: VmnetSessionNetworking {
     // A nonisolated async method runs off the caller's actor, so the blocking
     // vmnet round-trip inside `network(for:member:)` never lands on the main
     // thread.
+    /// Materializes `network` off the caller's actor. `true` on success (or
+    /// when already materialized); failures are logged here.
     func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool {
         do {
             _ = try service.network(for: id(network), member: owner)
@@ -466,6 +449,8 @@ final class VmnetSessionNetworks: VmnetSessionNetworking {
         }
     }
 
+    /// The selection `network` is for this session, `nil` for a network it
+    /// cannot attach to — one the service does not hold, or another VM's own.
     func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection? {
         guard let id = service.id(ofNetwork: network) else { return nil }
         if case .vm(let networkOwner) = id.scope, networkOwner != owner { return nil }

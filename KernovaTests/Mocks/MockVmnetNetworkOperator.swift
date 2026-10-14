@@ -1,5 +1,6 @@
 import KernovaKit
 import Foundation
+import Testing
 import Virtualization
 import vmnet
 
@@ -21,6 +22,8 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     private(set) var createdKinds: [VmnetNetworkKind] = []
     /// The network each attachment was built to join, in call order.
     private(set) var attachedNetworks: [OpaquePointer] = []
+    /// Every attachment built, in call order.
+    private(set) var attachments: [VZNetworkDeviceAttachment] = []
     /// Every network given back, in call order.
     private(set) var releasedNetworks: [OpaquePointer] = []
 
@@ -42,7 +45,9 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     /// fabricated pointer as a real network.
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
         attachedNetworks.append(handle.network)
-        return VZNATNetworkDeviceAttachment()
+        let attachment = VZNATNetworkDeviceAttachment()
+        attachments.append(attachment)
+        return attachment
     }
 
     /// Records the release; the fabricated pointer is freed with the mock.
@@ -51,68 +56,49 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     }
 }
 
-/// Scripted stand-in for both vmnet provider seams, so attachment-building and
-/// recovery tests name a vmnet attachment without materializing a network.
-/// Every session view it opens is itself.
-///
-/// `scriptedAttachment` is a NAT attachment purely as a stand-in object —
-/// callers only compare its identity.
-final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetSessionNetworking, @unchecked Sendable {
-    var scriptedAttachment: VZNetworkDeviceAttachment = VZNATNetworkDeviceAttachment()
-    /// The networks counting as materialized. `attachmentIfMaterialized` and
-    /// `ipv4Subnet` answer `nil` for one not in it, and `materializeNetwork`
-    /// inserts.
-    var materializedNetworks: Set<VmnetNetworkSelection> = Set(
-        VmnetNetworkKind.allCases.flatMap { [.common($0), .own($0)] })
-    /// When `true`, `materializeNetwork` fails and leaves `materializedNetworks` as is.
-    var materializeFails = false
-    /// The subnet each network hands its guests, which `ipv4Subnet(for:)`
-    /// serves only while it is materialized, as the service does.
-    var scriptedSubnets: [VmnetNetworkID: IPv4Subnet] = [
-        .common(.nat): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
-    ]
+extension VmnetNetworkService {
+    /// The real service over a fresh `MockVmnetNetworkOperator`, for a test
+    /// that never reads what vmnet was asked.
+    static func scripted() -> VmnetNetworkService {
+        VmnetNetworkService(operations: MockVmnetNetworkOperator())
+    }
+}
 
-    var attachmentError: (any Error)?
+/// The real `VmnetNetworkService` over a `MockVmnetNetworkOperator`, with the
+/// networks a test needs stood up on known subnets before the code under test
+/// runs.
+final class ScriptedVmnetNetworks: @unchecked Sendable {
+    let operations = MockVmnetNetworkOperator()
+    let service: VmnetNetworkService
+    /// The views `materialize(_:on:owner:)` opened. A network other than a
+    /// common one exists only while a view of one of its members lives.
+    private var heldViews: [VmnetSessionNetworks] = []
 
-    /// The VM each session view was opened for, in call order.
-    private(set) var openedOwners: [UUID] = []
-    private(set) var requestedNetworks: [VmnetNetworkSelection] = []
-    private(set) var materializeCount = 0
-    /// Every `materializeNetwork` call, in order — failures included.
-    private(set) var materializeRequestedNetworks: [VmnetNetworkSelection] = []
-
-    func sessionNetworks(ownedBy owner: UUID) -> any VmnetSessionNetworking {
-        openedOwners.append(owner)
-        return self
+    init() {
+        service = VmnetNetworkService(operations: operations)
     }
 
-    func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet? {
-        guard materializedNetworks.contains(VmnetNetworkSelection(network)) else { return nil }
-        return scriptedSubnets[network]
+    /// Materializes `network` on the /24 at `subnet`, joined by `owner`
+    /// through a view this fixture keeps open.
+    func materialize(_ network: VmnetNetworkSelection, on subnet: String, owner: UUID = UUID()) {
+        let view = service.sessionNetworks(ownedBy: owner)
+        materialize(network, on: subnet, through: view)
+        heldViews.append(view)
     }
 
-    func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment {
-        requestedNetworks.append(network)
-        if let attachmentError { throw attachmentError }
-        return scriptedAttachment
-    }
-
-    func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment? {
-        requestedNetworks.append(network)
-        guard materializedNetworks.contains(network), attachmentError == nil else { return nil }
-        return scriptedAttachment
-    }
-
-    func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool {
-        materializeCount += 1
-        materializeRequestedNetworks.append(network)
-        guard !materializeFails else { return false }
-        materializedNetworks.insert(network)
-        return true
-    }
-
-    func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection? {
-        nil
+    /// Materializes `network` through `view`, on the /24 at `subnet` when
+    /// given. A VM is on one network at a time, so this takes `view`'s VM off
+    /// the network it joined before — releasing it when the VM was its last
+    /// member.
+    func materialize(
+        _ network: VmnetNetworkSelection, on subnet: String? = nil, through view: VmnetSessionNetworks
+    ) {
+        if let subnet { operations.subnet = .scripted(subnet) }
+        do {
+            _ = try view.attachment(for: network)
+        } catch {
+            Issue.record(error, "The scripted operator refused \(network.logDescription)")
+        }
     }
 }
 

@@ -104,3 +104,20 @@ enum VMInstanceFixture {
         try Data("suspend slot".utf8).write(to: instance.bundleLayout.saveFileURL)
     }
 }
+
+extension VMBundle.Factory {
+    /// A factory for fixture bundles no library holds: their configuration
+    /// policy is a library's, over parts no library wires, so it has no VMs
+    /// to refuse a MAC address against or to watch.
+    @MainActor
+    init(machineFiles: any VMBundleMachineFileWorking) {
+        let guestAddresses = GuestAddressObserver(
+            reader: ScriptedARPTable(), vmnetNetworks: .scripted(), entitlements: .entitled)
+        self.init(
+            machineFiles: machineFiles,
+            configurationPolicy: VMLibraryConfigurationPolicy(
+                macAddresses: VMMACAddressRegistry(),
+                removableMedia: VMRemovableMediaReconciler(lifecycle: makeTestLifecycle()),
+                guestAddresses: guestAddresses))
+    }
+}

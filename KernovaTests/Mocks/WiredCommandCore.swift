@@ -16,7 +16,7 @@ final class WiredCommandCore {
     let storage: MockVMStorageService
     let machineFiles: MockVMBundleMachineFiles
     let fileSystem: MockFileSystem
-    let vmnet: MockVmnetNetworkProvider
+    let vmnet: ScriptedVmnetNetworks
     let arpTable: ScriptedARPTable
     let authority: MockSandboxSourceAuthority
     let preferences: AppPreferences
@@ -55,7 +55,7 @@ final class WiredCommandCore {
         let storage = MockVMStorageService()
         let machineFiles = MockVMBundleMachineFiles(files: storage.files)
         let fileSystem = MockFileSystem()
-        let vmnet = MockVmnetNetworkProvider()
+        let vmnet = ScriptedVmnetNetworks()
         let arpTable = ScriptedARPTable()
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization,
@@ -68,7 +68,7 @@ final class WiredCommandCore {
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: vmnet,
+            vmnetNetworks: vmnet.service,
             arpTable: arpTable,
             networks: networks,
             organization: organization)
@@ -96,8 +96,7 @@ final class WiredCommandCore {
 
         if usbAccessoryService != nil {
             let pairingCoordinator = USBAccessoryCoordinator(
-                lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
-                pairings: library)
+                lifecycle: lifecycle, library: library)
             core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
                 try pairingCoordinator?.userAttached(accessory, permit)
             }

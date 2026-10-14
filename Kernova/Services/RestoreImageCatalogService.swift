@@ -6,19 +6,24 @@ import KernovaLogging
 /// The shipped app fetches nothing to build this list: the resource is a
 /// generation-time snapshot, so the picker opens instantly and offline. Only the
 /// chosen image's bytes come off the network, from Apple.
-struct RestoreImageCatalogService: RestoreImageCatalogProviding {
+struct RestoreImageCatalogService {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RestoreImageCatalogService")
 
     private static let resourceName = "RestoreImageCatalog"
     private static let resourceExtension = "json"
 
+    /// Every usable image, newest first.
+    ///
+    /// Empty when the catalog resource is missing or unreadable — the picker
+    /// then has nothing to offer, and the other two IPSW sources still work.
     let entries: [RestoreImageCatalogEntry]
+    /// `yyyy-MM-dd` the catalog was generated, or `nil` when it did not load.
     let generatedAt: String?
 
-    init(bundle: Bundle = .main) {
+    init() {
         guard
-            let url = bundle.url(
+            let url = Bundle.main.url(
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {
@@ -83,7 +88,7 @@ struct RestoreImageCatalogService: RestoreImageCatalogProviding {
     /// Decodes and validates catalog JSON, dropping unusable entries rather than
     /// failing the whole document.
     ///
-    /// Pure and non-asserting so the drop paths are testable; ``init(bundle:)``
+    /// Pure and non-asserting so the drop paths are testable; ``init()``
     /// is what turns a rejection into a fault, because a rejection in the
     /// *shipped* resource is a build-time mistake.
     static func parse(_ data: Data) -> ParseResult {

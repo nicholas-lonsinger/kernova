@@ -90,7 +90,7 @@ final class VMCreationViewModel {
     ///
     /// Read only while that source is selected; the other two sources never
     /// touch it.
-    let catalogService: any RestoreImageCatalogProviding
+    let catalogService = RestoreImageCatalogService()
 
     /// Backs the "Paste an IPSW URL…" sheet's pre-download check; its size read
     /// alone also sizes the image "Download Latest" would fetch.
@@ -103,7 +103,7 @@ final class VMCreationViewModel {
     let ipswService: any IPSWProviding
 
     /// Backs the Linux "Choose a Distribution…" picker.
-    let linuxCatalogService: any LinuxImageCatalogProviding
+    let linuxCatalogService = LinuxImageCatalogService()
 
     /// Backs the Linux "Image URL…" sheet's pre-download check — the same
     /// service the install pipeline resolves through, so a URL is admitted on
@@ -111,18 +111,14 @@ final class VMCreationViewModel {
     let linuxImageResolveService: any LinuxImageResolving
 
     init(
-        catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
         localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector(),
         ipswService: any IPSWProviding = IPSWService(),
-        linuxCatalogService: any LinuxImageCatalogProviding = LinuxImageCatalogService(),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService()
     ) {
-        self.catalogService = catalogService
         self.probeService = probeService
         self.localImageInspector = localImageInspector
         self.ipswService = ipswService
-        self.linuxCatalogService = linuxCatalogService
         self.linuxImageResolveService = linuxImageResolveService
     }
 

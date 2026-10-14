@@ -494,7 +494,7 @@ struct VMSettingsSystemPanelTests {
             installService: MockMacOSInstallService(), ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(),
             entitlements: .entitled)
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(guestOS: .macOS) {

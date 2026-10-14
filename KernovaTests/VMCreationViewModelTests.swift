@@ -407,17 +407,6 @@ struct VMCreationViewModelTests {
 
     // MARK: - Linux Image Selection
 
-    @Test("The distribution picker reads the injected catalog, not the bundled resource")
-    func linuxCatalogServiceIsInjectable() {
-        let vm = VMCreationViewModel(
-            linuxCatalogService: MockLinuxImageCatalogService(
-                entries: [makeLinuxCatalogEntry(id: "fedora-workstation-44")],
-                generatedAt: "2026-01-01"))
-
-        #expect(vm.linuxCatalogService.entries.map(\.id) == ["fedora-workstation-44"])
-        #expect(vm.linuxCatalogService.generatedAt == "2026-01-01")
-    }
-
     @Test("Each Linux source replaces the last, so only one pick is ever current")
     func linuxSourcesReplaceEachOther() {
         let vm = VMCreationViewModel()

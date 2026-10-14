@@ -16,12 +16,11 @@ struct GuestAddressObserverTests {
 
     private static let mac = "aa:bb:cc:dd:ee:01"
 
-    /// A provider whose NAT and Host Only networks stand on known subnets.
-    private static func subnetted() -> MockVmnetNetworkProvider {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [
-            .common(.nat): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
-        ]
+    /// Networks whose common NAT and Host Only ones stand on known subnets.
+    private static func subnetted() -> ScriptedVmnetNetworks {
+        let vmnet = ScriptedVmnetNetworks()
+        vmnet.materialize(.common(.nat), on: "192.168.64.0")
+        vmnet.materialize(.common(.hostOnly), on: "192.168.128.0")
         return vmnet
     }
 
@@ -30,13 +29,13 @@ struct GuestAddressObserverTests {
         clock: any EngineClock = GatedEngineClock(),
         canObserve: Bool = true,
         entitled: Bool = true,
-        vmnet: MockVmnetNetworkProvider = Self.subnetted()
+        vmnet: ScriptedVmnetNetworks = Self.subnetted()
     ) -> GuestAddressObserver {
         var granted: Set<String> = []
         if canObserve { granted.insert("com.apple.developer.networking.topology-observation") }
         if entitled { granted.insert("com.apple.vm.networking") }
         let observer = GuestAddressObserver(
-            reader: table, vmnetNetworks: vmnet,
+            reader: table, vmnetNetworks: vmnet.service,
             entitlements: EntitlementService(reader: MockEntitlementReader(granted: granted)),
             clock: clock, now: { Self.now })
         observer.roster = roster
@@ -139,8 +138,7 @@ struct GuestAddressObserverTests {
         let common = vm(.nat)
         let isolated = vm(.nat, isolated: true)
         let vmnet = Self.subnetted()
-        vmnet.scriptedSubnets[VmnetNetworkID(kind: .nat, scope: .vm(isolated.configuration.id))] =
-            .scripted("192.168.65.0")
+        vmnet.materialize(.own(.nat), on: "192.168.65.0", owner: isolated.configuration.id)
         let observer = makeObserver(
             ScriptedARPTable([Self.entry("192.168.64.5"), Self.entry("192.168.65.27")]), vmnet: vmnet)
         roster.instances = [common, isolated]
@@ -149,6 +147,9 @@ struct GuestAddressObserverTests {
 
         #expect(observer.address(for: common) == .observed("192.168.64.5"))
         #expect(observer.address(for: isolated) == .observed("192.168.65.27"))
+        // The fixture's view holds the VM's own network; the read above needs
+        // it alive.
+        withExtendedLifetime(vmnet) {}
     }
 
     // MARK: - What states nothing
@@ -208,7 +209,7 @@ struct GuestAddressObserverTests {
         observer.watch()
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
         #expect(table.readCount == 1)
-        #expect(clock.requestedSeconds == [GuestAddressObserver.defaultPollInterval])
+        #expect(clock.requestedSeconds == [GuestAddressObserver.pollInterval])
         #expect(observer.address(for: guest) == .observed("192.168.64.5"))
 
         // One loop, however many times it is asked for.

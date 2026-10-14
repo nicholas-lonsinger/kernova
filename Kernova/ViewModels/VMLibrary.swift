@@ -22,7 +22,7 @@ import KernovaLogging
 /// wires them all.
 @MainActor
 @Observable
-final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmissionPeers {
+final class VMLibrary: VMInstanceRoster, VMAdmissionPeers {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
@@ -506,7 +506,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         machineFiles: any VMBundleMachineFileWorking,
         lifecycle: VMLifecycleCoordinator,
         preferences: AppPreferences,
-        vmnetNetworks: any VmnetNetworkProviding,
+        vmnetNetworks: VmnetNetworkService,
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
         networks: VMNetworkDirectory,

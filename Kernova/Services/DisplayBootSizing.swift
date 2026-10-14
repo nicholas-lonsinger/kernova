@@ -1,6 +1,14 @@
 import CoreGraphics
 import Foundation
 
+/// The on-screen area a VM's display is about to occupy.
+struct DisplayBootSurface: Equatable, Sendable {
+    /// Size of the area in points.
+    var pointSize: CGSize
+    /// Backing scale of the screen hosting it.
+    var backingScaleFactor: CGFloat
+}
+
 /// Pixel math for a VM's boot resolution: fitting a display to an on-screen
 /// surface, and the HiDPI ⇄ standard rewrite the settings switch performs.
 ///

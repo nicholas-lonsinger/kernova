@@ -15,7 +15,7 @@ import Testing
 func makeSettingsViewModel(
     preferences: AppPreferences,
     storage: MockVMStorageService = MockVMStorageService(),
-    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    vmnetNetworks: VmnetNetworkService = .scripted(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitled: Bool = true,
     machineFiles: (any VMBundleMachineFileWorking)? = nil,
