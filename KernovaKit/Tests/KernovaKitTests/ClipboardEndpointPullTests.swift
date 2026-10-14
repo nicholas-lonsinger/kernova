@@ -68,6 +68,102 @@ struct ClipboardEndpointPullTests {
         #expect(try await harness.refusesTransfer(generation: 1, repIndex: 0))
     }
 
+    // MARK: - A gesture landing while a join settles
+
+    /// Starts a preview join for `(generation, repIndex)`, answers its pull
+    /// with `payload`, and returns once the join holds the delivered bytes,
+    /// parked on `gate` before it settles them.
+    private func joinParkedBeforeSettle(
+        _ harness: RawPeerHarness, gate: GatedStep, generation: UInt64, repIndex: Int,
+        payload: Data, operation: ClipboardTransferOperation
+    ) async throws -> Task<ClipboardContent.Representation?, Never> {
+        let endpoint = harness.endpoint
+        endpoint.afterInboundPullForTesting = { try? await gate.pass() }
+        let join = Task {
+            await endpoint.join(generation: generation, repIndex: repIndex, operation: operation)
+        }
+        try await harness.waitForRequest(generation: generation, repIndex: repIndex)
+        try harness.streamInline(generation: generation, repIndex: repIndex, payload: payload)
+        try await gate.waitUntilEntered()
+        return join
+    }
+
+    @Test("a newer offer landing while a join settles leaves the join nothing to answer")
+    func supersessionUnderASettlingJoinAnswersNothing() async throws {
+        let harness = try RawPeerHarness()
+        defer { harness.tearDown() }
+        try harness.send(makeTextOfferFrame(generation: 1, text: "stale"))
+        try await harness.side.recorder.waitForOffer()
+
+        let gate = GatedStep()
+        let join = try await joinParkedBeforeSettle(
+            harness, gate: gate, generation: 1, repIndex: 0, payload: Data("stale".utf8),
+            operation: harness.side.makeOperation(gesture: .preview, direction: .inbound))
+        try harness.send(
+            makeOfferFrame(
+                generation: 2,
+                reps: [RepInfo(uti: "public.png", byteCount: 64, filename: "new.png", isInline: false)]))
+        try await harness.side.recorder.waitForOffer(count: 2)
+        gate.release()
+
+        // The bytes arrived for an offer nothing shows any more, so an owner
+        // republishing on what the join answers has nothing to put over the
+        // newer offer's placeholder.
+        #expect(await join.value == nil)
+        #expect(harness.endpoint.inboundOffer?.generation == 2)
+        #expect(harness.endpoint.materialized(generation: 1, repIndex: 0) == nil)
+        #expect(harness.endpoint.materialized(generation: 2, repIndex: 0) == nil)
+    }
+
+    @Test("stop() landing while a join settles keeps the rep: cached, answered, and servable after")
+    func stopUnderASettlingJoinKeepsTheRep() async throws {
+        let harness = try RawPeerHarness()
+        defer { harness.tearDown() }
+        let payload = Data("kept".utf8)
+        try harness.send(makeTextOfferFrame(generation: 1, text: "kept"))
+        try await harness.side.recorder.waitForOffer()
+
+        let gate = GatedStep()
+        let join = try await joinParkedBeforeSettle(
+            harness, gate: gate, generation: 1, repIndex: 0, payload: payload,
+            operation: harness.side.makeOperation(gesture: .preview, direction: .inbound))
+        harness.endpoint.stop()
+        gate.release()
+
+        // The session's end keeps a clipboard offer and its cache, so a rep in
+        // hand by the time the VM stops lands and stays servable.
+        #expect(await join.value?.inMemoryData == payload)
+        #expect(harness.endpoint.inboundOffer?.generation == 1)
+        #expect(harness.endpoint.materialized(generation: 1, repIndex: 0)?.inMemoryData == payload)
+        #expect(
+            await harness.side.serveDataOffMain(generation: 1, repIndex: 0, uti: textUTI) == payload)
+    }
+
+    @Test("a join for a rep a paste fire already pulled answers from the cache without requesting it (#656)")
+    func joinAnswersARepAFirePulledFromTheCache() async throws {
+        let harness = try RawPeerHarness(lazyPullTimeout: testWaitBackstop)
+        defer { harness.tearDown() }
+        let rtf = Data(repeating: 0x41, count: 8_192)
+        try harness.send(
+            makeOfferFrame(
+                generation: 7,
+                reps: [RepInfo(uti: "public.rtf", byteCount: UInt64(rtf.count), isInline: true)]))
+        try await harness.side.recorder.waitForOffer()
+
+        let fire = harness.side.startDataServe(generation: 7, repIndex: 0, uti: "public.rtf")
+        try await harness.waitForRequest(generation: 7, repIndex: 0)
+        try harness.streamInline(generation: 7, repIndex: 0, payload: rtf)
+        #expect(await fire.value == rtf)
+
+        let operation = harness.side.makeOperation(gesture: .preview, direction: .inbound)
+        let joined = await harness.endpoint.join(generation: 7, repIndex: 0, operation: operation)
+
+        #expect(joined?.inMemoryData == rtf)
+        #expect(
+            harness.recorder.requests.map(\.transferID)
+                == [harness.transferID(generation: 7, repIndex: 0)])
+    }
+
     // MARK: - A gesture retiring under a parked fire
 
     @Test("a newer offer landing under a parked fire resolves it silently")

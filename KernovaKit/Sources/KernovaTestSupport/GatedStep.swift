@@ -4,15 +4,19 @@ import Foundation
 /// body: it parks until ``release(throwing:)``, the way an uninterruptible
 /// copy runs to its end whether or not anything was cancelled meanwhile.
 @MainActor
-final class GatedStep {
+public final class GatedStep {
     /// Fires as the step begins parking.
-    let entered = AsyncGate()
-    private(set) var hasEntered = false
+    public let entered = AsyncGate()
+    /// Whether the step has begun parking.
+    public private(set) var hasEntered = false
     private var outcome: Result<Void, any Error>?
     private var parked: [CheckedContinuation<Void, any Error>] = []
 
+    /// Creates a step nothing has entered.
+    public init() {}
+
     /// Lets the step finish — or throw `error`.
-    func release(throwing error: (any Error)? = nil) {
+    public func release(throwing error: (any Error)? = nil) {
         let result: Result<Void, any Error> = error.map { .failure($0) } ?? .success(())
         outcome = result
         let waiting = parked
@@ -21,7 +25,7 @@ final class GatedStep {
     }
 
     /// Parks until released, answering what the release carried.
-    func pass() async throws {
+    public func pass() async throws {
         hasEntered = true
         entered.notify()
         if let outcome { return try outcome.get() }
@@ -29,7 +33,7 @@ final class GatedStep {
     }
 
     /// Waits until the step has begun parking.
-    func waitUntilEntered() async throws {
+    public func waitUntilEntered() async throws {
         try await entered.wait { hasEntered }
     }
 }

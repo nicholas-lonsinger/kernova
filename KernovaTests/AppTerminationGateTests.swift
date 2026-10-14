@@ -7,21 +7,14 @@ import Testing
 /// terminate the agent and which downgrade to a GUI close — and the latch
 /// discipline behind ``AppTerminationController/shouldTerminateOnQuit``.
 ///
-/// Safe in a shared test host because a case whose library holds anything a quit
-/// saves or waits out sets `terminationEndingForTesting` first, so the
-/// `.saveThenTerminate` branch never reaches
-/// `reply(toApplicationShouldTerminate:)` and takes the process down. For the
-/// same reason no case delivers a quit Apple Event, and every
-/// `requestFullQuit()` goes through that seam: both call `NSApp.terminate`.
+/// Safe in a shared test host because every controller here ends its
+/// termination into an ``EndingSpy`` and reads its quit event from the case, so
+/// neither `NSApp.terminate` nor `reply(toApplicationShouldTerminate:)` reaches
+/// the shared host, and no case delivers a quit Apple Event.
 ///
 /// The `.closeGUI` branch is exercised against a spy rather than a real
 /// ``AppResidencyController``, whose `closeGUIForSoftQuit()` reaches
 /// `syncActivationPolicy()` and can terminate.
-///
-/// ``AppTerminationController/requestFullQuit()`` is driven through its
-/// `terminationEndingForTesting` seam, so the two-phase order is observable
-/// without the real `NSApp.terminate` — or an unmatched
-/// `reply(toApplicationShouldTerminate:)` — reaching the shared host.
 @Suite("AppTerminationController gate", .serialized, .caseScoped)
 @MainActor
 struct AppTerminationGateTests {
@@ -39,14 +32,20 @@ struct AppTerminationGateTests {
         }
     }
 
+    /// A controller whose terminations end into `endings`, and whose pending
+    /// quit was delivered by `quitEvent`.
     private func makeController(
         residency: any SoftQuitHosting = SoftQuitSpy(),
-        diskImages: MockDiskImageService = MockDiskImageService()
+        diskImages: MockDiskImageService = MockDiskImageService(),
+        endings: EndingSpy = EndingSpy(),
+        quitEvent: AppTerminationController.QuitEvent? = nil
     ) -> (AppTerminationController, VMLibraryViewModel) {
         let viewModel = makeLibraryViewModel(preferences: preferences, diskImageService: diskImages)
-        return (
-            AppTerminationController(viewModel: viewModel, residency: residency), viewModel
-        )
+        let controller = AppTerminationController(
+            viewModel: viewModel, residency: residency,
+            pendingQuitEvent: { quitEvent },
+            endTermination: { ending in endings.record(ending) })
+        return (controller, viewModel)
     }
 
     /// An Apple event of `eventClass`/`eventID`, as one arrives.
@@ -63,27 +62,24 @@ struct AppTerminationGateTests {
     private final class EndingSpy {
         let ended = AsyncGate()
         private(set) var endings: [AppTerminationController.TerminationEnding] = []
+        /// The controller whose gate is asked from inside each ending, if any.
+        weak var gate: AppTerminationController?
         /// The gate's reply, read from inside the ending the pass performs.
         private(set) var replyWhenEnded: NSApplication.TerminateReply?
 
-        func record(
-            _ ending: AppTerminationController.TerminationEnding,
-            reply: NSApplication.TerminateReply?
-        ) {
+        func record(_ ending: AppTerminationController.TerminationEnding) {
             endings.append(ending)
-            replyWhenEnded = reply
+            replyWhenEnded = gate?.handleTerminationRequest()
             ended.notify()
         }
     }
 
     @Test("A full quit saves first and asks to terminate second")
     func fullQuitSavesBeforeTerminating() async throws {
-        let (controller, viewModel) = makeController()
-        viewModel.keepInMenuBarOnQuit = true
         let spy = EndingSpy()
-        controller.terminationEndingForTesting = { [weak controller] ending in
-            spy.record(ending, reply: controller?.handleTerminationRequest())
-        }
+        let (controller, viewModel) = makeController(endings: spy)
+        viewModel.keepInMenuBarOnQuit = true
+        spy.gate = controller
 
         controller.requestFullQuit()
         // The save pass is a `Task`, so nothing has ended on the turn the
@@ -101,10 +97,9 @@ struct AppTerminationGateTests {
 
     @Test("A second full quit joins the pass already running rather than starting another")
     func secondFullQuitJoinsTheFirst() async throws {
-        let (controller, viewModel) = makeController()
-        viewModel.keepInMenuBarOnQuit = true
         let spy = EndingSpy()
-        controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
+        let (controller, viewModel) = makeController(endings: spy)
+        viewModel.keepInMenuBarOnQuit = true
 
         controller.requestFullQuit()
         controller.requestFullQuit()
@@ -118,10 +113,9 @@ struct AppTerminationGateTests {
 
     @Test("A quit AppKit begins while the pass runs is answered by the pass, not left waiting")
     func deferredQuitIsAnsweredByThePass() async throws {
-        let (controller, viewModel) = makeController()
-        viewModel.keepInMenuBarOnQuit = true
         let spy = EndingSpy()
-        controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
+        let (controller, viewModel) = makeController(endings: spy)
+        viewModel.keepInMenuBarOnQuit = true
 
         controller.requestFullQuit()
         // A quit Apple Event, a logout, or a TCC revocation landing while the
@@ -141,10 +135,9 @@ struct AppTerminationGateTests {
     private func makeFullQuit(
         diskImages: MockDiskImageService = MockDiskImageService()
     ) -> (AppTerminationController, VMLibraryViewModel, EndingSpy) {
-        let (controller, viewModel) = makeController(diskImages: diskImages)
-        viewModel.keepInMenuBarOnQuit = true
         let spy = EndingSpy()
-        controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
+        let (controller, viewModel) = makeController(diskImages: diskImages, endings: spy)
+        viewModel.keepInMenuBarOnQuit = true
         return (controller, viewModel, spy)
     }
 
@@ -321,10 +314,10 @@ struct AppTerminationGateTests {
     @Test("A quit a script sent terminates and saves, whichever handler delivered it")
     func scriptedQuitTerminates() {
         let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(residency: spy)
-        viewModel.keepInMenuBarOnQuit = true
         // launchd: alive, and no application — the shape of `osascript`'s quit.
-        controller.quitSenderPIDForTesting = { 1 }
+        let (controller, viewModel) = makeController(
+            residency: spy, quitEvent: .init(senderPID: 1))
+        viewModel.keepInMenuBarOnQuit = true
 
         #expect(controller.handleTerminationRequest() == .terminateNow)
         #expect(controller.shouldTerminateOnQuit)
@@ -334,9 +327,9 @@ struct AppTerminationGateTests {
     @Test("A quit the app sent itself stays resident")
     func selfSentQuitStaysResident() async throws {
         let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(residency: spy)
+        let (controller, viewModel) = makeController(
+            residency: spy, quitEvent: .init(senderPID: getpid()))
         viewModel.keepInMenuBarOnQuit = true
-        controller.quitSenderPIDForTesting = { getpid() }
 
         #expect(controller.handleTerminationRequest() == .terminateCancel)
         #expect(!controller.shouldTerminateOnQuit)

@@ -67,11 +67,12 @@ struct VMScriptingGatewayTests {
     private func makeGateway(
         _ commands: MockVMCommanding,
         awaitReady: @escaping @Sendable () async -> Void = {},
-        prepareToSurface: @escaping @MainActor @Sendable () -> Void = {}
+        prepareToSurface: @escaping @MainActor @Sendable () -> Void = {},
+        currentCommand: @escaping @MainActor () -> NSScriptCommand? = { NSScriptCommand.current() }
     ) -> VMScriptingGateway {
         VMScriptingGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: awaitReady),
-            prepareToSurface: prepareToSurface)
+            prepareToSurface: prepareToSurface, currentCommand: currentCommand)
     }
 
     /// Cocoa's own `get`, as the command a property read is answered for.
@@ -451,9 +452,9 @@ struct VMScriptingGatewayTests {
         // landed on a backstop instead re-issued this one on the main actor —
         // Cocoa threw, HIToolbox swallowed it, and every main-actor test after
         // it froze (#1196).
-        let gateway = makeGateway(commands, awaitReady: { await Self.parkForever() })
         let command = try makeGetCommand()
-        gateway.currentCommandForTesting = { command }
+        let gateway = makeGateway(
+            commands, awaitReady: { await Self.parkForever() }, currentCommand: { command })
 
         #expect(gateway.virtualMachines().isEmpty)
         #expect(gateway.virtualMachine(named: "Alpha") == nil)

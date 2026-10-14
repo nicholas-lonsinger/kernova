@@ -143,16 +143,6 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     @ObservationIgnored
     private var hasStopped = false
 
-    #if DEBUG
-    /// Test seam: awaited inside `materialize` in the window between a pull
-    /// resolving and the supersession re-check, so a test can drive a newer
-    /// offer / `stop()` into that exact gap deterministically.
-    var afterInboundPullForTesting: (@MainActor () async -> Void)? {
-        get { endpoint.afterInboundPullForTesting }
-        set { endpoint.afterInboundPullForTesting = newValue }
-    }
-    #endif
-
     // `nonisolated` because a `Logger` needs no actor; it is Sendable.
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VsockClipboardService")
@@ -576,21 +566,16 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
 
     /// Pulls representation `index`, republishing once its bytes are cached.
     ///
-    /// A rep a paste fire already has in flight is not re-requested: the pull
-    /// joins that transfer and both callers take its bytes.
+    /// A rep a paste fire already pulled or has in flight is not re-requested:
+    /// the join answers from the cache or joins that transfer.
     private func materialize(
         index: Int, offer: ClipboardEndpoint.InboundOffer,
         operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
-        // The cache read moves no byte on this operation's behalf, so it begins no
-        // transfer: one declared but never fed would sit in the denominator
-        // waiting on events that never arrive.
-        if let cached = endpoint.materialized(generation: offer.generation, repIndex: index) {
-            return cached
-        }
-        let rep = await endpoint.join(
-            generation: offer.generation, repIndex: index, operation: operation)
-        guard rep != nil, endpoint.inboundOffer?.generation == offer.generation else { return rep }
+        guard
+            let rep = await endpoint.join(
+                generation: offer.generation, repIndex: index, operation: operation)
+        else { return nil }
         await republishOffActor(offer)
         return rep
     }

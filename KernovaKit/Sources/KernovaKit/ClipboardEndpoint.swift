@@ -395,7 +395,7 @@ public final class ClipboardEndpoint {
     }
 
     /// Starts or joins the pull for one representation without holding a thread,
-    /// caching what it delivers.
+    /// caching what it delivers — see ``ClipboardInboundOffers/join(generation:repIndex:operation:)``.
     public func join(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
@@ -638,7 +638,7 @@ public final class ClipboardEndpoint {
     #if DEBUG
     /// Test seam: awaited between a join's pull resolving and the supersession
     /// re-check that decides whether to cache it.
-    public var afterInboundPullForTesting: (@MainActor () async -> Void)? {
+    var afterInboundPullForTesting: (@MainActor () async -> Void)? {
         get { inbound?.afterInboundPullForTesting }
         set { inbound?.afterInboundPullForTesting = newValue }
     }

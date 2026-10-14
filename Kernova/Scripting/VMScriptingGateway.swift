@@ -44,19 +44,18 @@ final class VMScriptingGateway {
     /// current command.
     var answeringCommand: NSScriptCommand?
 
-    #if DEBUG
-    /// What stands in for `NSScriptCommand.current()`. Tests only, which have
-    /// no command in flight.
-    var currentCommandForTesting: (@MainActor () -> NSScriptCommand?)?
-    #endif
+    /// Reads the command Cocoa is executing on this thread, if any.
+    private let currentCommand: @MainActor () -> NSScriptCommand?
 
     init(
         commands: any VMCommanding, readiness: LibraryReadiness,
-        prepareToSurface: @escaping @MainActor @Sendable () -> Void
+        prepareToSurface: @escaping @MainActor @Sendable () -> Void,
+        currentCommand: @escaping @MainActor () -> NSScriptCommand? = { NSScriptCommand.current() }
     ) {
         self.commands = commands
         self.readiness = readiness
         self.prepareToSurface = prepareToSurface
+        self.currentCommand = currentCommand
     }
 
     // MARK: - Reads
@@ -109,13 +108,7 @@ final class VMScriptingGateway {
     }
 
     /// The command Cocoa is executing on this thread, if any.
-    private var executing: NSScriptCommand? {
-        #if DEBUG
-        return currentCommandForTesting?() ?? NSScriptCommand.current()
-        #else
-        return NSScriptCommand.current()
-        #endif
-    }
+    private var executing: NSScriptCommand? { currentCommand() }
 
     /// The command a read is being answered for: the one Cocoa is executing,
     /// or the one an evaluation of this gateway's own is answering.

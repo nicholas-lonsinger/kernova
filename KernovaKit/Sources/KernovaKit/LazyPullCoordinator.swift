@@ -142,8 +142,15 @@ final class LazyPullCoordinator: @unchecked Sendable {
     /// themselves hold.
     private let backstopQueue = DispatchQueue(label: "app.kernova.lazy-pull-backstop")
 
-    /// Creates an idle coordinator.
-    init() {}
+    /// Vends the event-loop wait a synchronous pull on the calling thread runs,
+    /// or `nil` where that caller must park — refused on the main thread.
+    private let eventLoopWait: @Sendable () -> NestedEventLoopWait?
+
+    /// Creates an idle coordinator whose synchronous pulls take their wait from
+    /// `eventLoopWait`.
+    init(eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait? = NestedEventLoopWait.current) {
+        self.eventLoopWait = eventLoopWait
+    }
 
     /// Starts or joins the pull for `transferID`, holding the calling thread
     /// until it resolves.
@@ -179,13 +186,14 @@ final class LazyPullCoordinator: @unchecked Sendable {
         start: () -> Void
     ) -> LazyPullOutcome {
         // Decided before registration, so a resolve that races `start` finds it.
-        let eventLoop = NestedEventLoopWait.current()
-        // The main thread is never parked. `current()` declines only inside a
-        // tracking or modal loop, which owns the events a nested wait would have
-        // to dispatch; the semaphore below is the off-main branch, and taking it
-        // here would freeze the app for the length of the transfer. Refusing
-        // costs this one fire, which the caller reports; parking would cost
-        // every frame until the pull resolved.
+        let eventLoop = eventLoopWait()
+        // The main thread is never parked. A wait source vends no wait on the
+        // main thread where a nested wait would have to dispatch events another
+        // loop owns — the live one, inside a tracking or modal loop. The
+        // semaphore below is the off-main branch, and taking it here would
+        // freeze the app for the length of the transfer. Refusing costs this
+        // one fire, which the caller reports; parking would cost every frame
+        // until the pull resolved.
         guard eventLoop != nil || !Thread.isMainThread else { return .mainThreadUnavailable }
         let semaphore = DispatchSemaphore(value: 0)
         let waiter = Waiter(

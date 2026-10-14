@@ -60,11 +60,24 @@ final class AppTerminationController: NSObject {
     /// fails toward saving state rather than vetoing a possible power-off.
     private var externalQuitRequiresTermination = false
 
+    /// Reads the quit Apple Event being handled — `nil` when the pending quit
+    /// was not delivered by one.
+    private let pendingQuitEvent: @MainActor () -> QuitEvent?
+
+    /// Ends the termination a finished save pass ran for.
+    private let endTermination: @MainActor (TerminationEnding) -> Void
+
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppTermination")
 
-    init(viewModel: VMLibraryViewModel, residency: any SoftQuitHosting) {
+    init(
+        viewModel: VMLibraryViewModel, residency: any SoftQuitHosting,
+        pendingQuitEvent: @escaping @MainActor () -> QuitEvent? = AppTerminationController.currentQuitEvent,
+        endTermination: @escaping @MainActor (TerminationEnding) -> Void = AppTerminationController.end
+    ) {
         self.viewModel = viewModel
         self.residency = residency
+        self.pendingQuitEvent = pendingQuitEvent
+        self.endTermination = endTermination
     }
 
     // MARK: - Quit Classification
@@ -162,17 +175,27 @@ final class AppTerminationController: NSObject {
         }
     }
 
-    #if DEBUG
-    /// What the gate reads as the pending quit's sender, in place of the quit
-    /// Apple Event `NSAppleEventManager` is handling. Tests only: a sender PID
-    /// is stamped on an event as it is received, never on one built locally.
-    var quitSenderPIDForTesting: (@MainActor () -> pid_t?)?
-    #endif
+    /// A quit Apple Event, as the gate classifies it.
+    struct QuitEvent: Equatable {
+        /// The sender's PID, as the event carries it — `nil` when it names none.
+        var senderPID: pid_t?
+    }
 
     /// Whether `event` is the Standard Suite's quit.
     nonisolated static func isQuitEvent(_ event: NSAppleEventDescriptor) -> Bool {
         event.eventClass == AEEventClass(kCoreEventClass)
             && event.eventID == AEEventID(kAEQuitApplication)
+    }
+
+    /// The quit Apple Event `NSAppleEventManager` is handling, if the event it
+    /// is handling is the Standard Suite's quit.
+    ///
+    /// A sender PID is stamped on an event as it is received, never on one
+    /// built locally.
+    static func currentQuitEvent() -> QuitEvent? {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent, isQuitEvent(event)
+        else { return nil }
+        return QuitEvent(senderPID: event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value)
     }
 
     /// Latches what the quit Apple Event being handled demands, if the pending
@@ -187,17 +210,8 @@ final class AppTerminationController: NSObject {
     /// them calls `terminate:` inside the event's callout, where the event is
     /// `currentAppleEvent`.
     private func latchClassificationOfQuitEvent() {
-        #if DEBUG
-        if let quitSenderPIDForTesting {
-            latchClassificationOfQuit(senderPID: quitSenderPIDForTesting())
-            return
-        }
-        #endif
-        guard let event = NSAppleEventManager.shared().currentAppleEvent,
-            Self.isQuitEvent(event)
-        else { return }
-        latchClassificationOfQuit(
-            senderPID: event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value)
+        guard let event = pendingQuitEvent() else { return }
+        latchClassificationOfQuit(senderPID: event.senderPID)
     }
 
     /// Latches what a quit delivered by `senderPID` demands.
@@ -410,20 +424,14 @@ final class AppTerminationController: NSObject {
             // staged tree waits for the next launch's reclaim.
             self.viewModel.abandonArrivalsForTermination()
             self.hasCompletedTerminationSavePass = true
-            self.endTermination()
+            let ending: TerminationEnding = self.owesDeferredTerminationReply ? .deferredReply : .terminate
+            self.owesDeferredTerminationReply = false
+            self.endTermination(ending)
         }
     }
 
-    /// Ends the termination the finished pass ran for.
-    private func endTermination() {
-        let ending: TerminationEnding = owesDeferredTerminationReply ? .deferredReply : .terminate
-        owesDeferredTerminationReply = false
-        #if DEBUG
-        if let terminationEndingForTesting {
-            terminationEndingForTesting(ending)
-            return
-        }
-        #endif
+    /// Ends a termination the way `ending` names, through AppKit.
+    static func end(_ ending: TerminationEnding) {
         switch ending {
         case .deferredReply:
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
@@ -431,12 +439,6 @@ final class AppTerminationController: NSObject {
             NSApp.terminate(nil)
         }
     }
-
-    #if DEBUG
-    /// Stands in for the AppKit call that ends the process, so a test can drive
-    /// a full pass without taking the shared test host down.
-    var terminationEndingForTesting: (@MainActor (TerminationEnding) -> Void)?
-    #endif
 
     // MARK: - Save Pass
 

@@ -137,7 +137,7 @@ public final class ClipboardInboundOffers {
     /// Test seam: awaited between a join's pull resolving and the supersession
     /// re-check that decides whether to cache it, so a test can drive a newer
     /// offer or a teardown into that exact gap.
-    public var afterInboundPullForTesting: (@MainActor () async -> Void)?
+    var afterInboundPullForTesting: (@MainActor () async -> Void)?
     #endif
 
     nonisolated private static let logger = KernovaLogger(
@@ -475,7 +475,13 @@ public final class ClipboardInboundOffers {
     /// caching what it delivers.
     ///
     /// `operation` is the caller's readout, which a failure finishes with the
-    /// reason for it.
+    /// reason for it. A representation already cached is answered from the
+    /// cache and begins no transfer on `operation`: one declared but never fed
+    /// would sit in its denominator waiting on events that never arrive.
+    ///
+    /// - Returns: the representation, now in `generation`'s cache — or `nil`
+    ///   when nothing was delivered, or the offer was retired (superseded or
+    ///   released) before the delivery settled, so nothing is cached for it.
     public func join(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
@@ -505,7 +511,9 @@ public final class ClipboardInboundOffers {
         #if DEBUG
         await afterInboundPullForTesting?()
         #endif
-        return settle(outcome, plan: plan, operation: operation, caller: .join)
+        let representation = settle(outcome, plan: plan, operation: operation, caller: .join)
+        guard entries[generation] != nil else { return nil }
+        return representation
     }
 
     /// Starts or joins the pull for one representation, holding the calling

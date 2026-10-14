@@ -41,20 +41,11 @@ final class NestedEventLoopWait: @unchecked Sendable {
     /// Imperceptible on a paste, coarse enough not to spin.
     private static let sliceSeconds: TimeInterval = 0.1
 
-    #if DEBUG
-    /// Test seam: makes `current()` decline on the main thread, standing in for
-    /// the tracking or modal loop a test bundle has no way to enter.
-    @MainActor static var declinesForTesting = false
-    #endif
-
     private init() {}
 
     /// The wait for the calling thread, or `nil` where the caller must park.
     static func current() -> NestedEventLoopWait? {
         guard Thread.isMainThread else { return nil }
-        #if DEBUG
-        guard !MainActor.assumeIsolated({ declinesForTesting }) else { return nil }
-        #endif
         guard MainActor.assumeIsolated({ NSApp != nil }) else { return nil }
         let mode = RunLoop.current.currentMode
         guard mode == nil || mode == .default else { return nil }
