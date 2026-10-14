@@ -802,7 +802,6 @@ extension VMCommandCore {
         }
     }
 
-    /// The refusal a force stop raises, worded for what it actually discards.
     /// What discarding an Ephemeral Mode VM's saved state does — a revert to
     /// `baseline` — in the words every refusal or question naming it uses.
     static func ephemeralDiscardSentences(_ instance: VMInstance, baseline: VMSnapshot) -> String {
@@ -813,6 +812,7 @@ extension VMCommandCore {
     private static let suspendedSessionLost =
         "The suspended session, and everything changed inside the guest during it, are discarded."
 
+    /// The refusal a force stop raises, worded for what it actually discards.
     static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
         // of here ends in a power-off, and `onPoweredOff` runs the baseline
