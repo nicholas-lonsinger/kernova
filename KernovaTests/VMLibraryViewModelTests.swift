@@ -1310,18 +1310,20 @@ struct VMLibraryViewModelTests {
     }
 
     @Test(
-        "start beside a running twin sharing its machine ID and MAC address is refused on the address, asking nothing")
+        "start beside a running Exact Copy asks about the machine ID first, then is refused on the address")
     func startBlockedByRunningExactCopy() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel, exactCopies: true)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .answered(true)
 
         await viewModel.start(starting)
 
         #expect(virtService.startCallCount == 0)
-        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(presenter.confirmationRequests.map(\.prompt.kind) == [.startBesideSharedMachineIdentity])
+        #expect(presenter.stepRouteRequests.count == 1)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
     }
 
@@ -1617,24 +1619,24 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test(
-        "Resume beside a MAC address twin through a discarding route starts the VM it leaves stopped"
-    )
-    func resumeTakesADiscardingRouteThenStarts() async throws {
+    @Test("Resume beside a MAC address twin offers no route that would leave nothing to resume")
+    func resumeOffersNoDiscardingRoute() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMACAddressPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         resuming.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: resuming)
-        presenter.choosesRouteTitled = "Use a New MAC Address"
+        presenter.choosesRouteTitled = "Move to a Network of Its Own"
 
         await viewModel.resume(resuming)
 
-        #expect(presenter.stepRouteRequests.map(\.verbTitle) == ["Resume"])
-        #expect(resuming.configuration.macAddress != other.configuration.macAddress)
-        #expect(!resuming.hasSaveFile)
-        #expect(virtService.lastStartRoute == .coldBoot)
+        let request = presenter.stepRouteRequests.first
+        #expect(presenter.stepRouteRequests.count == 1)
+        #expect(request?.verbTitle == "Resume")
+        #expect(request?.requirement.routes.map(\.title) == ["Move to a Network of Its Own"])
+        #expect(resuming.configuration.networkMembership == .isolated)
+        #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(presenter.errors.isEmpty)
     }
 

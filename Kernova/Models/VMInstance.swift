@@ -635,6 +635,14 @@ final class VMInstance {
         return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
     }
 
+    /// What the stop verb does to the saved state this VM holds, `nil` when
+    /// it holds none — the one answer the stop and every judgment of where it
+    /// leaves the VM read.
+    var savedStateDiscard: VMSavedStateDiscard? {
+        guard holdsSuspendedSession else { return nil }
+        return ephemeralBaselineSnapshot.map { .revertsToBaseline($0) } ?? .deletesSaveFile
+    }
+
     /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline, which
     /// the snapshot delete refuses until the mode is off.
     func isEphemeralBaseline(_ snapshot: VMSnapshot) -> Bool {
@@ -1238,5 +1246,24 @@ final class VMInstance {
             Self.logger, .notice,
             "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
         )
+    }
+}
+
+/// What discarding a VM's saved state does, and where it leaves the VM.
+enum VMSavedStateDiscard: Equatable {
+    /// Deletes the save file, leaving the VM stopped on its disks as they are.
+    case deletesSaveFile
+    /// Reverts the VM to its Ephemeral Mode baseline, which lands it as the
+    /// baseline holds it: the session's changes to its disks go too.
+    case revertsToBaseline(VMSnapshot)
+
+    /// The phase the VM rests at once the discard lands, and whether it holds
+    /// a saved state there — a warm baseline's own.
+    var landing: (phase: VMLifecyclePhase, holdsSaveFile: Bool) {
+        switch self {
+        case .deletesSaveFile: (.stopped, false)
+        case .revertsToBaseline(let baseline):
+            baseline.kind == .warm ? (.suspended, true) : (.stopped, false)
+        }
     }
 }

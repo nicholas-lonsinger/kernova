@@ -129,13 +129,6 @@ enum VMAdmission {
         /// Another running copy of Kernova holds the bundle of this VM, which
         /// is at rest here.
         var heldByAnotherCopy: Bool
-
-        /// These facts as they will stand once the saved state is discarded.
-        func discardingSavedState() -> Facts {
-            var facts = self
-            facts.hasSaveFile = false
-            return facts
-        }
     }
 
     // MARK: - Decide

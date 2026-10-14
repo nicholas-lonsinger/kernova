@@ -358,17 +358,21 @@ final class VMActivity {
             request, origin: origin, posture: posture, phase: phase, facts: facts)
     }
 
-    /// How `request` would be decided once the saved state is discarded — so
-    /// work that follows a discard is known to be admitted before the
-    /// irreversible step is taken.
-    func decideAsIfSavedStateDiscarded(
-        _ request: VMAdmission.Request, posture: VMAdmission.Posture
+    /// How `request` would be decided once `discard` lands — so work that
+    /// follows a discard is known to be admitted before the irreversible step
+    /// is taken. Only the phase and the saved state the discard leaves are
+    /// lifted; every other term answers as it does now, and no identity is
+    /// judged.
+    func decide(
+        _ request: VMAdmission.Request, posture: VMAdmission.Posture,
+        after discard: VMSavedStateDiscard
     ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
-        let counterfactual: VMLifecyclePhase = phase == .suspended ? .stopped : phase
+        let landing = discard.landing
+        var facts = owner.admissionFacts
+        facts.hasSaveFile = landing.holdsSaveFile
         return VMAdmission.decide(
-            request, posture: posture, phase: counterfactual,
-            facts: owner.admissionFacts.discardingSavedState())
+            request, posture: posture, phase: phase.isAtRest ? landing.phase : phase, facts: facts)
     }
 
     /// Throws the refusal unless `request` is admitted outright, answering the

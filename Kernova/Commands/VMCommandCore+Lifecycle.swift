@@ -721,16 +721,15 @@ extension VMCommandCore {
             guard consent.covers(.forceStop) || !instance.holdsSuspendedSession else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
-            if try await discardedSavedStateAsEphemeralRevert(instance) { return }
-            do {
-                if instance.holdsSuspendedSession {
-                    try lifecycle.discardSavedState(instance)
-                } else {
+            guard let discard = instance.savedStateDiscard else {
+                do {
                     try await lifecycle.requestStop(instance)
+                } catch {
+                    throw failure(error, verb: .stop, on: instance)
                 }
-            } catch {
-                throw failure(error, verb: .stop, on: instance)
+                return
             }
+            try await discardSavedState(instance, discard)
         case .force:
             // Both capabilities, for the reason the graceful branch states: a
             // VM resting on a slot has nothing to terminate and this deletes
@@ -741,16 +740,41 @@ extension VMCommandCore {
             guard consent.covers(.forceStop) else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
-            if try await discardedSavedStateAsEphemeralRevert(instance) { return }
-            do {
-                if instance.holdsSuspendedSession {
-                    try lifecycle.discardSavedState(instance)
-                } else {
+            guard let discard = instance.savedStateDiscard else {
+                do {
                     try await lifecycle.forceStop(instance)
+                } catch {
+                    throw failure(error, verb: .stop, on: instance)
                 }
+                return
+            }
+            try await discardSavedState(instance, discard)
+        }
+    }
+
+    /// Takes the stop's `discard` of the saved state `instance` holds.
+    ///
+    /// An Ephemeral Mode VM's is the revert to its baseline: deleting the save
+    /// file alone would leave the guest's disks as the session left them — the
+    /// opposite of what the mode promises. Throws what the revert failed with:
+    /// the caller asked for a stop, and a baseline that did not come back is
+    /// not one.
+    private func discardSavedState(
+        _ instance: VMInstance, _ discard: VMSavedStateDiscard
+    ) async throws {
+        switch discard {
+        case .deletesSaveFile:
+            do {
+                try lifecycle.discardSavedState(instance)
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
+        case .revertsToBaseline(let baseline):
+            #log(
+                Self.logger, .notice,
+                "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
+            )
+            try await awaitRevert(instance, startRevert(instance, to: baseline))
         }
     }
 
@@ -779,6 +803,16 @@ extension VMCommandCore {
     }
 
     /// The refusal a force stop raises, worded for what it actually discards.
+    /// What discarding an Ephemeral Mode VM's saved state does — a revert to
+    /// `baseline` — in the words every refusal or question naming it uses.
+    static func ephemeralDiscardSentences(_ instance: VMInstance, baseline: VMSnapshot) -> String {
+        "\u{201C}\(instance.name)\u{201D} is ephemeral, so it returns to "
+            + "\u{201C}\(baseline.name)\u{201D}. \(suspendedSessionLost)"
+    }
+
+    private static let suspendedSessionLost =
+        "The suspended session, and everything changed inside the guest during it, are discarded."
+
     static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
         // of here ends in a power-off, and `onPoweredOff` runs the baseline
@@ -798,17 +832,14 @@ extension VMCommandCore {
         // and the VM does come back on it
         // (``VMActivity/restingPhase(withoutSlot:)``).
         let keepsSuspendedSession = instance.hasSaveFile
-        let suspendedSessionLost =
-            "The suspended session, and everything changed inside the guest during it, are discarded."
+        let suspendedSessionLost = Self.suspendedSessionLost
         let guestDataLost = "Any unsaved data inside the guest will be lost."
         let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
 
         let message: String
         switch (discardsSavedState, ephemeralBaseline) {
         case (true, let baseline?):
-            message =
-                "\u{201C}\(instance.name)\u{201D} is ephemeral, so it returns to "
-                + "\u{201C}\(baseline.name)\u{201D}. \(suspendedSessionLost)"
+            message = ephemeralDiscardSentences(instance, baseline: baseline)
         case (true, nil):
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."

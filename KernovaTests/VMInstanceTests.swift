@@ -293,13 +293,19 @@ struct VMInstanceTests {
     }
 
     @Test("A VM answers admission as it will stand once its saved state is discarded")
-    func decideAsIfSavedStateDiscardedLiftsOnlyThatTerm() throws {
+    func decideAfterTheSaveFileIsDeletedLiftsOnlyThatTerm() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
         let edit = VMAdmission.Request.edit(.machineKeys)
 
         #expect(!instance.activity.admits(edit))
-        #expect(instance.activity.decideAsIfSavedStateDiscarded(edit, posture: .commit) == .admit)
+        #expect(instance.activity.decide(edit, posture: .commit, after: .deletesSaveFile) == .admit)
+        // A revert to a cold baseline lands it stopped too; a warm baseline's
+        // lands it suspended on the baseline's own saved state.
+        let cold = VMSnapshot(name: "Cold", kind: .cold, macAddress: nil)
+        let warm = VMSnapshot(name: "Warm", kind: .warm, macAddress: nil)
+        #expect(instance.activity.decide(edit, posture: .commit, after: .revertsToBaseline(cold)) == .admit)
+        #expect(instance.activity.decide(edit, posture: .commit, after: .revertsToBaseline(warm)) != .admit)
         // The file is untouched, and the answer goes on reading it.
         #expect(instance.hasSaveFile)
         #expect(!instance.activity.admits(edit))
@@ -307,7 +313,7 @@ struct VMInstanceTests {
         // Only that term is lifted: a VM no phase admits the edit in stays
         // refused.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        #expect(instance.activity.decideAsIfSavedStateDiscarded(edit, posture: .commit) != .admit)
+        #expect(instance.activity.decide(edit, posture: .commit, after: .deletesSaveFile) != .admit)
     }
 
     // MARK: - isSuspended

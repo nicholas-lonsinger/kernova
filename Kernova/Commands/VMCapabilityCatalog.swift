@@ -555,15 +555,15 @@ struct VMCapabilityCatalog {
         return isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)
     }
 
-    /// Whether a commit of `capability` would be taken once the VM's saved
-    /// state is discarded — so work that follows a discard is known to be
-    /// admitted before the irreversible step is taken, with every other
-    /// blocker answering exactly as it will answer the verb.
-    func acceptsAsIfSavedStateDiscarded(
-        _ capability: VMCapability, on instance: VMInstance
+    /// Whether a commit of `capability` would be taken once `discard` lands —
+    /// so work that follows a discard is known to be admitted before the
+    /// irreversible step is taken, with every other blocker answering exactly
+    /// as it will answer the verb.
+    func accepts(
+        _ capability: VMCapability, on instance: VMInstance, after discard: VMSavedStateDiscard
     ) -> Bool {
         guard let request = capability.request(on: instance) else { return false }
-        switch instance.activity.decideAsIfSavedStateDiscarded(request, posture: .commit) {
+        switch instance.activity.decide(request, posture: .commit, after: discard) {
         case .admit, .join: return true
         case .refuse: return false
         }

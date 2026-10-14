@@ -60,9 +60,9 @@ struct VMLiveIdentitiesTests {
         Row(allowsOverride: true, override: .unavailable, sharesMAC: false, expected: (.machineIdentity, false)),
         Row(allowsOverride: true, override: .askable, sharesMAC: false, expected: (.machineIdentity, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: false, expected: nil),
-        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (.macAddress, false)),
-        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.macAddress, false)),
-        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.macAddress, false)),
+        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (.machineIdentity, false)),
+        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.machineIdentity, false)),
+        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.machineIdentity, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: true, expected: (.macAddress, false)),
         // A boot chained after the call that asked keeps the confirmation and asks nothing.
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: false, expected: nil),
@@ -71,7 +71,7 @@ struct VMLiveIdentitiesTests {
     ]
 
     @Test(
-        "A shared machine ID is waived only by a confirmed override the setting allows; a MAC address never, and never asks",
+        "A shared machine ID is answered first and waived only by a confirmed override the setting allows; a MAC address after it, never waived",
         arguments: rows)
     func decisionTable(row: Row) {
         let preferences = makeTestPreferences()

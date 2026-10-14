@@ -41,10 +41,10 @@ enum VMConsentPolicy {
     /// `choosingRoute`, each step of the route it answers goes to `taking` in
     /// order, and `body` then runs again with every consent given so far.
     ///
-    /// One loop rather than two nested ones, because the answers arrive in
-    /// either order — a route can uncover a machine identity to confirm, and
-    /// a confirmation can be asked before the step refusal is reached — and
-    /// each re-run has to carry the consents. One route per run: a second
+    /// One loop rather than two nested ones, because a confirmation can be
+    /// asked before the step refusal is reached — a shared machine identity
+    /// is answered before a MAC address — and each re-run has to carry the
+    /// consents. One route per run: a second
     /// step refusal is the route not having taken, and is rethrown, as is a
     /// step refusal naming no route. What `choosingRoute` or `taking` throws
     /// ends the run: how a door says nobody chose, and a step that failed.

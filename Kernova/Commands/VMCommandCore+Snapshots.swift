@@ -239,7 +239,7 @@ extension VMCommandCore {
     }
 
     /// Waits for the revert `outcome` belongs to and throws how it failed.
-    private func awaitRevert(_ instance: VMInstance, _ outcome: VMOutcome) async throws {
+    func awaitRevert(_ instance: VMInstance, _ outcome: VMOutcome) async throws {
         do {
             try await outcome.value()
         } catch {
@@ -275,25 +275,6 @@ extension VMCommandCore {
             guard let self else { return }
             self.report(self.failure(error, verb: .revertToSnapshot, on: instance), on: instance)
         }
-    }
-
-    /// Routes an ephemeral VM's Discard Saved State through the baseline revert
-    /// instead, and reports whether it took the request.
-    ///
-    /// Discarding alone would drop the suspended session and leave the guest's
-    /// disks as the session left them — the opposite of what the mode promises.
-    ///
-    /// Throws what the revert failed with: the caller asked for a stop, and a
-    /// baseline that did not come back is not one.
-    func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async throws -> Bool {
-        guard instance.holdsSuspendedSession, let baseline = instance.ephemeralBaselineSnapshot
-        else { return false }
-        #log(
-            Self.logger, .notice,
-            "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
-        )
-        try await awaitRevert(instance, startRevert(instance, to: baseline))
-        return true
     }
 
     // MARK: - Delete

@@ -126,22 +126,34 @@ struct VMCommandCoreMACConflictTests {
         #expect(harness.virtualization.startCallCount == 0)
     }
 
-    @Test("A suspended NAT VM keeps its saved state only on a network of its own, and is told so")
+    private static let discardSentence =
+        " A saved state does not restore under a new MAC address or without its network device, "
+        + "so those changes discard \u{201C}Clone\u{201D}\u{2019}s saved state"
+
+    private static let everyChange =
+        " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
+        + "move it to a network of its own, give it a new MAC address, or turn its networking off."
+
+    private static let ownNetworkOnly =
+        " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
+        + "move it to a network of its own."
+
+    private static let startsRatherThanResumes =
+        " A new MAC address or no network device discards \u{201C}Clone\u{201D}\u{2019}s saved state, "
+        + "so it then starts rather than resumes."
+
+    @Test("A suspended NAT VM's start keeps its saved state only on a network of its own, and is told so")
     func suspendedNATVMIsToldWhatDiscards() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
 
         let refused = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
         let clone = harness.core.summary(vm)
 
         #expect(
             refused.message
-                == Self.shared
-                + " A saved state does not restore under a new MAC address or without its network device, "
-                + "so those changes discard \u{201C}Clone\u{201D}\u{2019}s saved state; a network of its own keeps it."
-                + " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
-                + "move it to a network of its own, give it a new MAC address, or turn its networking off.")
+                == Self.shared + Self.discardSentence + "; a network of its own keeps it." + Self.everyChange)
         #expect(
             refused.routes.map(\.steps) == [
                 [.setConfiguration(vm: clone, assignments: [Self.ownNetwork])],
@@ -151,21 +163,39 @@ struct VMCommandCoreMACConflictTests {
         #expect(refused.routes.map(\.discardsSavedState) == [false, true, true])
     }
 
+    @Test("A suspended NAT VM's resume is routed only where a saved state is left to resume")
+    func suspendedNATResumeOffersNoDiscardingRoute() async throws {
+        let harness = makeHarness()
+        let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
+
+        let refused = try requirement(
+            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+
+        #expect(refused.routes.map(\.title) == ["Move to a Network of Its Own"])
+        #expect(refused.message == Self.shared + Self.startsRatherThanResumes + Self.ownNetworkOnly)
+    }
+
     @Test("A suspended Host Only VM is not routed to a network of its own, which no restore was measured on")
     func suspendedHostOnlyVMIsNotRoutedToItsOwnNetwork() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, mode: .hostOnly, phase: .suspended, savedState: true)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
-
-        #expect(refused.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
-        #expect(refused.routes.allSatisfy { $0.discardsSavedState })
+        let started = try requirement(
+            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        #expect(started.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
+        #expect(started.routes.allSatisfy { $0.discardsSavedState })
         #expect(
-            refused.message.hasSuffix(
-                "so those changes discard \u{201C}Clone\u{201D}\u{2019}s saved state. "
-                    + "Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
-                    + "give it a new MAC address or turn its networking off."))
+            started.message
+                == Self.shared + Self.discardSentence + "."
+                + " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
+                + "give it a new MAC address or turn its networking off.")
+
+        let resumed = try requirement(
+            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        #expect(resumed.routes.isEmpty)
+        #expect(
+            resumed.message
+                == Self.shared + Self.startsRatherThanResumes + " Stop \u{201C}Source\u{201D} first.")
     }
 
     @Test("A stopped Host Only VM, holding no saved state, is routed to a network of its own")
@@ -214,7 +244,7 @@ struct VMCommandCoreMACConflictTests {
         #expect(vm.ephemeralBaselineSnapshot?.kind == .warm)
 
         let refused = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
 
         // Its discard is a revert to the baseline, which lands it suspended on
         // a saved state again, beside which the address and mode stay pinned.
@@ -222,8 +252,95 @@ struct VMCommandCoreMACConflictTests {
         #expect(
             refused.message
                 == Self.shared
-                + " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
-                + "move it to a network of its own.")
+                + " \u{201C}Clone\u{201D} is ephemeral, and discarding its saved state returns it to "
+                + "\u{201C}Baseline\u{201D}, which holds one too, so a new MAC address or no network "
+                + "device needs Ephemeral Mode turned off first."
+                + Self.ownNetworkOnly)
+    }
+
+    @Test("A warm-baseline Ephemeral VM with no network of its own to move to is told what stands in the way")
+    func warmBaselineHostOnlyNamesEphemeralMode() async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Baseline", kind: .warm, macAddress: Self.sharedMAC)
+        let (vm, _) = try makePair(
+            in: harness, mode: .hostOnly, phase: .suspended, savedState: true, snapshots: [baseline],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
+
+        let refused = try requirement(
+            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+
+        #expect(refused.routes.isEmpty)
+        #expect(
+            refused.message
+                == Self.shared
+                + " \u{201C}Clone\u{201D} is ephemeral, and discarding its saved state returns it to "
+                + "\u{201C}Baseline\u{201D}, which holds one too, so a new MAC address or no network "
+                + "device needs Ephemeral Mode turned off first. Stop \u{201C}Source\u{201D} first.")
+    }
+
+    @Test("A cold-baseline Ephemeral VM's discarding routes say the session's changes go with its saved state")
+    func coldBaselineDisclosesTheRevert() async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Baseline", kind: .cold, macAddress: Self.sharedMAC)
+        let (vm, _) = try makePair(
+            in: harness, phase: .suspended, savedState: true, snapshots: [baseline],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
+        let clone = harness.core.summary(vm)
+        let ephemeral =
+            " \u{201C}Clone\u{201D} is ephemeral, so it returns to \u{201C}Baseline\u{201D}. "
+            + "The suspended session, and everything changed inside the guest during it, are discarded."
+
+        let resumed = try requirement(
+            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        #expect(resumed.routes.map(\.title) == ["Move to a Network of Its Own"])
+        #expect(resumed.message == Self.shared + Self.startsRatherThanResumes + Self.ownNetworkOnly)
+
+        let started = try requirement(
+            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        #expect(
+            started.message
+                == Self.shared + Self.discardSentence + "; a network of its own keeps it." + ephemeral
+                + Self.everyChange)
+        #expect(
+            started.routes.map(\.steps) == [
+                [.setConfiguration(vm: clone, assignments: [Self.ownNetwork])],
+                [.discardSavedState(vm: clone), .setConfiguration(vm: clone, assignments: [Self.newAddress])],
+                [.discardSavedState(vm: clone), .setConfiguration(vm: clone, assignments: [Self.noNetwork])],
+            ])
+    }
+
+    @Test("A machine ID shared alongside the MAC address is answered first, so no route discards before it")
+    func sharedMachineIdentityIsAnsweredBeforeTheRoute() async throws {
+        let harness = makeHarness()
+        let (vm, _) = try makePair(
+            in: harness, phase: .suspended, savedState: true, identity: Data([3, 1, 4]))
+
+        // The setting off: the machine ID refuses outright, and nothing is
+        // routed or written.
+        let refused = await refusal {
+            try await harness.core.start(.id(vm.id), recovery: false, consent: .all)
+        }
+        guard case .conflict(_, _, .machineIdentity) = refused else {
+            Issue.record("refused as \(String(describing: refused))")
+            return
+        }
+        #expect(vm.hasSaveFile)
+        #expect(vm.configuration.macAddress == Self.sharedMAC)
+
+        // The setting on: the confirmation comes first, then the route.
+        preferences.allowsDuplicateMachineIDOverride = true
+        let asked = await refusal {
+            try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+        }
+        #expect(asked?.confirmationPrompt?.kind == .startBesideSharedMachineIdentity)
+        let routed = try requirement(
+            await refusal {
+                try await harness.core.start(
+                    .id(vm.id), recovery: false, consent: Consent([.startBesideSharedMachineIdentity]))
+            })
+        #expect(routed.routes.count == 3)
+        #expect(vm.hasSaveFile)
+        #expect(harness.virtualization.startCallCount == 0)
     }
 
     @Test("A bring-up nobody can be asked about is refused with the same routes")
@@ -277,12 +394,12 @@ struct VMCommandCoreMACConflictTests {
         #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
     }
 
-    @Test("A route that discards the saved state leaves the VM stopped, and a start boots it")
+    @Test("A route that discards the saved state leaves the VM stopped, and the start asked again boots it")
     func discardingRouteLeavesTheVMStopped() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
         let refused = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
 
         for step in refused.routes[1].steps { try await harness.core.take(step) }
 
@@ -336,8 +453,8 @@ struct VMCommandCoreMACConflictTests {
         #expect(
             refused.message
                 == Self.shared
-                + " Stop \u{201C}Source\u{201D} first, or change \u{201C}Clone\u{201D}\u{2019}s network or MAC address."
-        )
+                + " \u{201C}Clone\u{201D} is ephemeral, so a restart returns it to \u{201C}Baseline\u{201D}, "
+                + "network included, before it starts again. Stop \u{201C}Source\u{201D} first.")
         #expect(harness.virtualization.stopCallCount == 0)
     }
 

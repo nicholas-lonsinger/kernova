@@ -1103,7 +1103,7 @@ final class VMLibraryViewModel {
     /// asks, and a resume that does not happen stops nothing.
     func resumeAndStop(_ instance: VMInstance) async {
         let resumed = await runAsking(on: instance, then: "Resume") { consent in
-            try await self.bringUpResuming(instance, consent: consent)
+            try await self.commands.resume(.id(instance.id), consent: consent)
         }
         guard resumed else { return }
         await run(on: instance) {
@@ -1139,18 +1139,7 @@ final class VMLibraryViewModel {
     func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
         await runAsking(on: instance, then: "Resume") { consent in
-            try await self.bringUpResuming(instance, consent: consent)
-        }
-    }
-
-    /// The bring-up a Resume asks for, as the VM's state names it on each run:
-    /// a resume while it holds a session to resume, and a start once a route
-    /// discarded its saved state.
-    private func bringUpResuming(_ instance: VMInstance, consent: Consent) async throws {
-        if instance.holdsSuspendedSession || instance.isLivePaused {
-            try await commands.resume(.id(instance.id), consent: consent)
-        } else {
-            try await commands.start(.id(instance.id), recovery: false, consent: consent)
+            try await self.commands.resume(.id(instance.id), consent: consent)
         }
     }
 
