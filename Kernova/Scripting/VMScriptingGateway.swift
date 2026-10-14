@@ -391,10 +391,6 @@ final class VMScriptingGateway {
     /// `removeFromNetworksAtIndex:` then `insertInNetworks:atIndex:`), and
     /// that removal would delete the network. The networks are ordered by
     /// name, so there is no move to make: only a delete reaches the core.
-    ///
-    /// A delete addressing several networks stops at the first refusal, as a
-    /// verb addressing several VMs does: Cocoa carries on removing the rest,
-    /// and a script could not tell how far it got.
     func removeNetwork(at index: Int) {
         guard let command = answering, command is NSDeleteCommand else {
             answering?.refuse(
@@ -402,9 +398,7 @@ final class VMScriptingGateway {
                 "Kernova orders networks by name, so a script can\u{2019}t move one.")
             return
         }
-        guard command.scriptErrorNumber == 0,
-            let listed = run(.deleteNetwork, on: nil, { try commands.networks() })
-        else { return }
+        guard let listed = run(.deleteNetwork, on: nil, { try commands.networks() }) else { return }
         // Cocoa evaluated the index against this same list on this turn.
         guard listed.indices.contains(index) else {
             #log(
@@ -422,9 +416,15 @@ final class VMScriptingGateway {
     /// evaluation, where nothing can suspend — logging and recording any
     /// refusal on the command being answered.
     ///
+    /// Runs nothing once that command already carries a refusal, so a command
+    /// addressing several elements stops at the first, as ``perform(_:on:_:)``
+    /// does: Cocoa carries on setting or removing the rest, a later refusal
+    /// would overwrite the first, and a script could not tell how far it got.
+    ///
     /// `id` names the network or VM the verb addresses, `nil` for a create.
     @discardableResult
     private func run<T>(_ verb: VMVerb, on id: UUID?, _ body: () throws -> T) -> T? {
+        if let answering, answering.scriptErrorNumber != 0 { return nil }
         do {
             return try body()
         } catch let refusal as CommandError {

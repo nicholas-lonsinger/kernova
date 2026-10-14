@@ -354,9 +354,21 @@ final class VMIntentGateway {
     // MARK: - Configuration
 
     /// Every configuration key, in presentation order.
-    func configurationKeys() async -> [ConfigurationKeyDescriptor] {
+    func configurationKeys() async -> [VMSettingKeyEntity] {
         await ready()
-        return commands.configurationKeys()
+        return commands.configurationKeys().map(VMSettingKeyEntity.init)
+    }
+
+    /// The keys `names` names, in presentation order, skipping any the
+    /// keyspace no longer holds.
+    func configurationKeys(named names: [String]) async -> [VMSettingKeyEntity] {
+        let wanted = Set(names)
+        return await configurationKeys().filter { wanted.contains($0.id) }
+    }
+
+    /// Every key whose name contains `text`, ignoring case.
+    func configurationKeys(matching text: String) async -> [VMSettingKeyEntity] {
+        await configurationKeys().filter { $0.id.localizedCaseInsensitiveContains(text) }
     }
 
     /// Writes `value` to `key` of the VM, answering the value the key ended up

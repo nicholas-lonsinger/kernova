@@ -294,18 +294,23 @@ struct VMScriptingGatewayTests {
         #expect(commands.setConfigurationCalls.allSatisfy { $0.consent == .none })
     }
 
-    @Test("Setting a VM's network mode to missing value turns its networking off")
-    func missingNetworkModeIsNone() throws {
+    @Test("Missing value writes none to a VM's network mode, and empty to its membership and MAC address")
+    func missingValueWrites() throws {
         let commands = MockVMCommanding()
         commands.library = [makeSummary(name: "Alpha")]
         let gateway = makeGateway(commands)
         let vm = try #require(gateway.virtualMachines().first)
 
         vm.networkMode = nil
+        vm.networkMembership = nil
+        vm.macAddress = nil
 
         #expect(
-            commands.setConfigurationCalls.map(\.assignments)
-                == [[VMConfigurationKeyRegistry.networkMode.assigning(VMConfigurationKeyRegistry.noNetworkValue)]])
+            commands.setConfigurationCalls.map(\.assignments) == [
+                [VMConfigurationKeyRegistry.networkMode.assigning(VMConfigurationKeyRegistry.noNetworkValue)],
+                [VMConfigurationKeyRegistry.networkMembership.assigning("")],
+                [VMConfigurationKeyRegistry.networkMAC.assigning("")],
+            ])
     }
 
     @Test("A refused setting is recorded on the set command")
@@ -322,6 +327,24 @@ struct VMScriptingGatewayTests {
         vm.networkMembership = "Nowhere"
 
         #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)
+        #expect(command.scriptErrorString == refusal.message)
+    }
+
+    @Test("A set addressing several VMs stops at the first refusal, which stands")
+    func aRefusedSettingStopsTheRun() throws {
+        let commands = MockVMCommanding()
+        let alpha = makeSummary(name: "Alpha")
+        commands.library = [alpha, makeSummary(name: "Beta")]
+        let refusal = CommandError.invalidArgument("network.membership takes common, isolated, or a network.")
+        commands.setConfigurationError = refusal
+        let gateway = makeGateway(commands)
+        let command = try makeSetCommand()
+        let vms = gateway.virtualMachines()
+        gateway.answeringCommand = command
+
+        for vm in vms { vm.networkMembership = "Nowhere" }
+
+        #expect(commands.setConfigurationCalls.map(\.selector) == [.id(alpha.id)])
         #expect(command.scriptErrorString == refusal.message)
     }
 

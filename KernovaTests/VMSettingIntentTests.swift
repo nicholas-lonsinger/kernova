@@ -34,13 +34,27 @@ struct VMSettingIntentTests {
         let commands = MockVMCommanding()
         commands.configurationKeyDescriptors = VMConfigurationKeyRegistry.keys.map(\.descriptor)
 
-        let settings = await makeGateway(commands).configurationKeys().map(VMSettingKeyEntity.init)
+        let settings = await makeGateway(commands).configurationKeys()
 
         #expect(settings.map(\.id) == VMConfigurationKeyRegistry.keys.map(\.name))
         let mac = try #require(settings.first { $0.id == VMConfigurationKeyRegistry.networkMAC.name })
         #expect(String(localized: mac.displayRepresentation.title) == "network.mac")
         let subtitle = try #require(mac.displayRepresentation.subtitle)
         #expect(String(localized: subtitle) == VMConfigurationKeyRegistry.networkMAC.summary)
+    }
+
+    @Test("Resolving by name, or by a typed fragment, answers only the settings asked for, in registry order")
+    func lookupFilters() async throws {
+        let commands = MockVMCommanding()
+        commands.configurationKeyDescriptors = VMConfigurationKeyRegistry.keys.map(\.descriptor)
+        let gateway = makeGateway(commands)
+
+        #expect(
+            await gateway.configurationKeys(named: ["network.mac", "nonsense", "cpus"]).map(\.id)
+                == ["cpus", "network.mac"])
+        #expect(
+            await gateway.configurationKeys(matching: "NETWORK.M").map(\.id)
+                == ["network.mode", "network.membership", "network.mac"])
     }
 
     @Test("A write assigns the value to the key, addressing the VM by identifier")
