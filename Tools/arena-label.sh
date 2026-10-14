@@ -19,12 +19,15 @@
 #   main checkout                   the primary checkout
 #   other checkout: <dir>           a different clone or project entirely
 #   other checkout: <dir>, removed  …one that is no longer on disk
+#   packages only, no checkout here an arena that only ever resolved packages,
+#                                   named for none of this clone's checkouts
 #
 # Both `, removed` forms say the same thing: the arena outlived the checkout it
 # belongs to.
 #
 # With --status, prints the machine-readable kind instead — one of
-# `worktree-live`, `worktree-removed`, `main`, `other`, `other-removed`. Callers
+# `worktree-live`, `worktree-removed`, `main`, `other`, `other-removed`,
+# `unclaimed`. Callers
 # branch on this rather than on the human label: matching the label is a format
 # dependency, and the `, removed` suffix is presentation.
 #
@@ -166,4 +169,26 @@ while [ -n "$dir" ] && [ "$dir" != "/" ]; do
     dir=$(dirname "$dir")
 done
 
-exit 1
+# An arena that has only resolved packages — `xcodebuild -showBuildSettings`
+# does that, and worktree setup runs it through `xcode-build-server config` —
+# carries neither record. Its name is still a pure function of its project's
+# path (Tools/derived-data-path.sh), so it is matched forwards against every
+# checkout this clone registers.
+[[ ${target##*/} =~ ^Kernova-[a-z]{28}$ ]] && [ -d "$target" ] || exit 1
+while IFS= read -r checkout; do
+    [ -n "$checkout" ] || continue
+    [ "$("$REPO_ROOT/Tools/derived-data-path.sh" "$checkout/Kernova.xcodeproj" 2>/dev/null)" = "$target" ] || continue
+    label_for_checkout "$checkout" && exit 0
+done <<<"$worktree_paths"
+
+# Matching none, it can only belong to a checkout outside this clone. Holding
+# nothing but that resolution, it costs such a checkout one re-resolve at most.
+for entry in "$target"/* "$target"/.[!.]*; do
+    [ -e "$entry" ] || continue
+    case "${entry##*/}" in
+        Logs | SourcePackages) ;;
+        *) exit 1 ;;
+    esac
+done
+if [ "$STATUS_ONLY" = 1 ]; then printf 'unclaimed'; else printf 'packages only, no checkout here'; fi
+exit 0
