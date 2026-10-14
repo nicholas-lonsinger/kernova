@@ -1233,6 +1233,7 @@ struct VMSettingsNetworkPanelTests {
         // generated address has to survive the edit it interrupts.
         let mac = try #require(instance.configuration.macAddress)
         #expect(mac != "aa:bb:cc:dd:ee:01")
+        #expect(GuestMACAddress.normalized(mac) == mac)
         #expect(field.stringValue == mac)
         #expect(window.makeFirstResponder(nil))
         #expect(instance.configuration.macAddress == mac)

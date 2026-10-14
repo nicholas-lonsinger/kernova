@@ -679,6 +679,67 @@ struct VMCommandCoreConfigurationTests {
         #expect(alpha.configuration == before)
     }
 
+    @Test("network.mac=new lands a fresh unicast address, which a read answers in place of new")
+    func newMACAddressIsMinted() throws {
+        let harness = makeHarness()
+        let old = "02:00:00:00:00:01"
+        let instance = makeInstance(in: harness) { $0.macAddress = old }
+        let key = VMConfigurationKeyRegistry.networkMAC
+
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"), assignments: [key.assigning(" NEW ")], consent: .none)
+
+        let minted = try #require(instance.configuration.macAddress)
+        #expect(minted != old)
+        #expect(GuestMACAddress.normalized(minted) == minted)
+        #expect(try value(answered, key.name) == minted)
+        #expect(
+            try value(try harness.core.configuration(.name("Alpha"), keys: [key.name]), key.name) == minted)
+        #expect(
+            key.accepts(
+                VMConfigurationKeyRegistry.newMACAddressValue, for: instance,
+                entitlements: harness.library.entitlements, networks: harness.library.networks.state))
+    }
+
+    @Test("network.mac=new is refused on a suspended VM, as any address is")
+    func newMACAddressIsRefusedWhileSuspended() throws {
+        let harness = makeHarness()
+        let old = "02:00:00:00:00:01"
+        let instance = makeInstance(in: harness, phase: .suspended) { $0.macAddress = old }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let assignment = VMConfigurationKeyRegistry.networkMAC.assigning(
+            VMConfigurationKeyRegistry.newMACAddressValue)
+
+        do {
+            try harness.core.setConfiguration(.name("Alpha"), assignments: [assignment], consent: .none)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                return
+            }
+            #expect(settings == [assignment])
+        }
+        #expect(instance.configuration.macAddress == old)
+    }
+
+    @Test("An address no guest can send from is refused naming both spellings the key takes")
+    func anUnusableMACAddressNamesNew() throws {
+        let harness = makeHarness()
+        makeInstance(in: harness)
+
+        #expect(
+            throws: CommandError.invalidArgument(
+                "\u{201C}ff:ff:ff:ff:ff:ff\u{201D} is not a MAC address a guest can send from. "
+                    + "Give six colon-separated hex pairs, unicast and not all zero, or new for a fresh one.")
+        ) {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: [ConfigurationEntry(key: "network.mac", value: "ff:ff:ff:ff:ff:ff")],
+                consent: .none)
+        }
+    }
+
     @Test("Turning passthrough on refuses without consent, and takes it as a parameter")
     func passthroughEnableAsksForConsent() throws {
         let harness = makeHarness()

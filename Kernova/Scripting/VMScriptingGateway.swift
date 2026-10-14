@@ -80,7 +80,7 @@ final class VMScriptingGateway {
     func virtualMachine(named name: String) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
         do {
-            return VMScriptObject(try commands.info(.name(name)))
+            return VMScriptObject(try commands.info(.name(name)), gateway: self)
         } catch let refusal as CommandError {
             answering?.refuse(refusal)
             return nil
@@ -97,7 +97,7 @@ final class VMScriptingGateway {
     /// and then fails to read is a programming error, not a race.
     private func object(for id: UUID) -> VMScriptObject? {
         do {
-            return VMScriptObject(try commands.info(.id(id)))
+            return VMScriptObject(try commands.info(.id(id)), gateway: self)
         } catch {
             #log(
                 Self.logger, .fault,
@@ -312,6 +312,19 @@ final class VMScriptingGateway {
         }
     }
 
+    // MARK: - Configuration
+
+    /// Sets `key` of the VM `id` identifies to `value` — a script's `set` of a
+    /// writable `virtual machine` property.
+    ///
+    /// A script's `set` carries no `with confirmation`, so nothing it writes
+    /// is given consent.
+    func setConfiguration(_ id: UUID, key: VMConfigurationKey, value: String) {
+        run(.setConfiguration, on: id) {
+            try commands.setConfiguration(.id(id), assignments: [key.assigning(value)], consent: .none)
+        }
+    }
+
     // MARK: - Networks
 
     /// What a script that asks to make a virtual machine reads back.
@@ -378,10 +391,6 @@ final class VMScriptingGateway {
     /// `removeFromNetworksAtIndex:` then `insertInNetworks:atIndex:`), and
     /// that removal would delete the network. The networks are ordered by
     /// name, so there is no move to make: only a delete reaches the core.
-    ///
-    /// A delete addressing several networks stops at the first refusal, as a
-    /// verb addressing several VMs does: Cocoa carries on removing the rest,
-    /// and a script could not tell how far it got.
     func removeNetwork(at index: Int) {
         guard let command = answering, command is NSDeleteCommand else {
             answering?.refuse(
@@ -389,9 +398,7 @@ final class VMScriptingGateway {
                 "Kernova orders networks by name, so a script can\u{2019}t move one.")
             return
         }
-        guard command.scriptErrorNumber == 0,
-            let listed = run(.deleteNetwork, on: nil, { try commands.networks() })
-        else { return }
+        guard let listed = run(.deleteNetwork, on: nil, { try commands.networks() }) else { return }
         // Cocoa evaluated the index against this same list on this turn.
         guard listed.indices.contains(index) else {
             #log(
@@ -409,9 +416,15 @@ final class VMScriptingGateway {
     /// evaluation, where nothing can suspend — logging and recording any
     /// refusal on the command being answered.
     ///
-    /// `id` names the network the verb addresses, `nil` for a create.
+    /// Runs nothing once that command already carries a refusal, so a command
+    /// addressing several elements stops at the first, as ``perform(_:on:_:)``
+    /// does: Cocoa carries on setting or removing the rest, a later refusal
+    /// would overwrite the first, and a script could not tell how far it got.
+    ///
+    /// `id` names the network or VM the verb addresses, `nil` for a create.
     @discardableResult
     private func run<T>(_ verb: VMVerb, on id: UUID?, _ body: () throws -> T) -> T? {
+        if let answering, answering.scriptErrorNumber != 0 { return nil }
         do {
             return try body()
         } catch let refusal as CommandError {

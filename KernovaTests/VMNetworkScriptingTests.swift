@@ -169,6 +169,26 @@ struct VMNetworkScriptingTests {
         #expect(command.scriptErrorString == refusal.message)
     }
 
+    @Test("A set of the name of several networks stops at the first refusal")
+    func aRefusedRenameStopsTheRun() throws {
+        let commands = MockVMCommanding()
+        commands.networksToReturn = [
+            NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: []),
+            NetworkSummary(id: UUID(), name: "Test", kind: .nat, members: []),
+        ]
+        let refusal = CommandError.invalidArgument("A network named “Shared” already exists.")
+        commands.networkError = refusal
+        let gateway = makeGateway(commands)
+        let command = try makeCommand("setd")
+        let networks = gateway.networks()
+        gateway.answeringCommand = command
+
+        for network in networks { network.name = "Shared" }
+
+        #expect(commands.renameNetworkCalls.map(\.network) == [networks[0].uniqueID])
+        #expect(command.scriptErrorString == refusal.message)
+    }
+
     // MARK: - Delete
 
     @Test("A delete removes the network at the index Cocoa evaluated, by identifier")

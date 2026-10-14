@@ -152,6 +152,31 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
+    @Test("A virtual machine's network membership, network mode and MAC address are writable; the rest read only")
+    func theNetworkPropertiesAreWritable() throws {
+        let classes = try loadSuite().nodes(forXPath: "class[@name='virtual machine']")
+        let vm = try #require(classes.first as? XMLElement)
+        let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
+        let writable: Set = ["network membership", "network mode", "MAC address"]
+
+        for property in properties {
+            let name = try #require(property.attribute(forName: "name")?.stringValue)
+            let access = property.attribute(forName: "access")?.stringValue
+            if writable.contains(name) {
+                #expect(access == nil, "\(name) is read only")
+                let key = try #require(try values("cocoa", "key", in: property).first)
+                let setter = "set" + key.prefix(1).uppercased() + key.dropFirst() + ":"
+                #expect(
+                    VMScriptObject.instancesRespond(to: NSSelectorFromString(setter)),
+                    "VMScriptObject answers to no \(setter)")
+            } else {
+                #expect(access == "r", "\(name) is writable")
+            }
+        }
+        let names = Set(properties.compactMap { $0.attribute(forName: "name")?.stringValue })
+        #expect(writable.isSubset(of: names))
+    }
+
     @Test("The application's virtual machines element reads the key the delegate handles")
     func theElementKeyIsTheDelegateKey() throws {
         let extensions = try loadSuite().nodes(
