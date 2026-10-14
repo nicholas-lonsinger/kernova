@@ -1403,8 +1403,10 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .all) })
-        let prompt = try #require(error.macAddressRemedyPrompt)
-        #expect(prompt.vm.id == twin.id)
+        let requirement = try #require(error.stepRequirement)
+        #expect(requirement.title == "Duplicate MAC Address")
+        #expect(requirement.routes.allSatisfy { $0.steps.allSatisfy { $0.vm.id == twin.id } })
+        #expect(!requirement.routes.isEmpty)
         #expect(harness.virtualization.startCallCount == 0)
     }
 
@@ -1422,8 +1424,8 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .none) })
-        let prompt = try #require(error.macAddressRemedyPrompt)
-        #expect(prompt.other.id == live.id)
+        let requirement = try #require(error.stepRequirement)
+        #expect(requirement.message.contains("\u{201C}\(live.name)\u{201D}"))
         #expect(harness.virtualization.startCallCount == 0)
         #expect(twin.phase == .stopped)
     }
@@ -1459,9 +1461,10 @@ struct VMCommandCoreTests {
                     .id(reverting.id), snapshot: snapshot.id, consent: .all)
             })
 
-        let prompt = try #require(error.macAddressRemedyPrompt)
-        #expect(prompt.vm.id == reverting.id)
-        #expect(prompt.other.id == holder.id)
+        let requirement = try #require(error.stepRequirement)
+        #expect(requirement.title == "Duplicate MAC Address")
+        #expect(requirement.routes.isEmpty)
+        #expect(requirement.message.contains("\u{201C}\(holder.name)\u{201D}"))
         // Refused before the live guest was torn down or a file moved.
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
         #expect(reverting.status == .running)
@@ -1533,9 +1536,9 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 0)
         #expect(pending.status == .initialBoot)
         #expect(reported.isEmpty)
-        let prompt = try #require(error.macAddressRemedyPrompt)
-        #expect(prompt.vm.id == pending.id)
-        #expect(prompt.other.id == holder.id)
+        let requirement = try #require(error.stepRequirement)
+        #expect(requirement.message.hasPrefix("\u{201C}\(pending.name)\u{201D}"))
+        #expect(requirement.message.contains("\u{201C}\(holder.name)\u{201D}"))
     }
 
     @Test("A force stop with no consent refuses, describing what confirming does")
@@ -1609,7 +1612,7 @@ struct VMCommandCoreTests {
                         "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
                     routes: [
                         StepRoute(
-                            title: "Resume", steps: [.resume(vm: harness.core.summary(instance))])
+                            title: "Resume", steps: [.resume(vm: harness.core.summary(instance))], ending: .refusedVerb)
                     ]))
         #expect(harness.virtualization.resumeCallCount == 0)
         #expect(harness.virtualization.stopCallCount == 0)
@@ -2184,7 +2187,7 @@ struct VMCommandCoreTests {
                             .setConfiguration(
                                 vm: harness.core.summary(instance),
                                 assignments: [ConfigurationEntry(key: "ephemeral", value: "false")])
-                        ])
+                        ], ending: .refusedVerb)
                 ]))
 
         await #expect(throws: refusal) {

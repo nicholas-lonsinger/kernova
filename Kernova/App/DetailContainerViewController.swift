@@ -453,8 +453,8 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentConfirmationRequest(request)
     }
 
-    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest) {
-        alertsPresenter.presentMACAddressRemedy(request)
+    func presentStepRoutes(_ request: StepRouteRequest) {
+        alertsPresenter.presentStepRoutes(request)
     }
 
     func focusGuestDisplay(for instance: VMInstance) {

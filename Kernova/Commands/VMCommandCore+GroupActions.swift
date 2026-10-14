@@ -141,7 +141,7 @@ extension VMCommandCore {
 
     /// What `action` does to `instance`, decided now: the step its standing
     /// names, run as a ``StartPolicy/group`` bring-up or the plain suspend or
-    /// graceful stop, with no consent and no remedy.
+    /// graceful stop, with no consent.
     private func outcome(of action: VMGroupAction, on instance: VMInstance) async -> VMGroupActionOutcome {
         let step: VMCapabilityCatalog.GroupActionStep
         switch turn(of: action, on: instance) {
@@ -153,9 +153,9 @@ extension VMCommandCore {
         do {
             switch step {
             case .start:
-                try await start(instance, recovery: false, policy: .group, macAddressRemedy: nil)
+                try await startNow(instance, recovery: false, policy: .group).value()
             case .resume:
-                try await resume(instance, policy: .group, macAddressRemedy: nil)
+                try await resume(instance, policy: .group)
             case .suspend:
                 try await suspend(instance)
             case .stop:
@@ -178,7 +178,7 @@ extension VMCommandCore {
     /// held at its turn is; anything else failed.
     static func outcome(of refusal: CommandError, takenBy verb: VMVerb) -> VMGroupActionOutcome {
         switch refusal {
-        case .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired:
+        case .confirmationRequired, .guestAccountPasswordRequired:
             .needsAnswer(verb: verb, question: refusal.dto)
         case .heldByAnotherCopy:
             .passedOver(reason: .state)

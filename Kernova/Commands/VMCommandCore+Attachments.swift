@@ -755,7 +755,7 @@ extension VMCommandCore {
     /// with it no other way.
     ///
     /// A storage disk or a shared folder takes the VM's saved state with it
-    /// (``removeStartFailedEntryDiscardingSavedState(_:from:as:removal:)``).
+    /// (``removeStartFailedEntryDeletingSaveFile(_:from:as:removal:)``).
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -786,20 +786,20 @@ extension VMCommandCore {
             // The public verb's removal on `trashFile: false`, already
             // confirmed and with the entry re-checked above: it adds nothing
             // else.
-            try removeStartFailedEntryDiscardingSavedState(
+            try removeStartFailedEntryDeletingSaveFile(
                 failure, from: instance, as: .editStorageDisks,
                 removal: Self.dropStorageDisk(
                     failure.id, layout: VMBundleLayout(bundleURL: instance.bundleURL)))
         case .sharedDirectory:
-            try removeStartFailedEntryDiscardingSavedState(
+            try removeStartFailedEntryDeletingSaveFile(
                 failure, from: instance, as: .editSharedDirectories,
                 removal: Self.dropSharedDirectory(failure.id))
         }
     }
 
     /// ``removeStartFailedAttachment(_:attachment:)``'s half for an entry whose
-    /// removal discards a saved state the VM holds: `removal`, admitted as
-    /// `capability`.
+    /// removal deletes the save file the VM holds — the file alone, whatever
+    /// the stop's own discard would do: `removal`, admitted as `capability`.
     ///
     /// A save file does not restore with a storage disk removed, and a share
     /// edit inside a macOS guest's one directory-sharing device was observed
@@ -818,8 +818,8 @@ extension VMCommandCore {
     /// alert was up — gets the plain edit.
     ///
     /// The edit's gate refuses while a saved state is on disk, so it is asked
-    /// of the VM as it will stand once the discard lands.
-    private func removeStartFailedEntryDiscardingSavedState(
+    /// of the VM as it will stand once the file is deleted.
+    private func removeStartFailedEntryDeletingSaveFile(
         _ failure: StartFailedAttachment, from instance: VMInstance,
         as capability: VMCapability, removal: @escaping (inout VMConfiguration) -> Void
     ) throws {
@@ -829,7 +829,7 @@ extension VMCommandCore {
         // the verb.
         // The refusal names what this VM really accepts rather than what it
         // would accept after a discard that is not going to happen.
-        guard capabilities.acceptsAsIfSavedStateDiscarded(capability, on: instance) else {
+        guard capabilities.accepts(capability, on: instance, after: .deletesSaveFile) else {
             throw refusal(for: [capability], on: instance)
         }
         guard instance.holdsSuspendedSession else {

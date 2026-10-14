@@ -115,4 +115,10 @@ enum DataFormatters {
     static func quotedList(_ items: [String]) -> String {
         ListFormatter.localizedString(byJoining: items.map { "\u{201C}\($0)\u{201D}" })
     }
+
+    /// Joins `items` as alternatives: "A", "A or B", "A, B, or C".
+    static func alternatives(_ items: [String]) -> String {
+        guard items.count > 2 else { return items.joined(separator: " or ") }
+        return items.dropLast().joined(separator: ", ") + ", or " + items[items.count - 1]
+    }
 }

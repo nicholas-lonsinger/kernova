@@ -1143,7 +1143,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(item(.nat, in: popUp)?.state == .off)
         // The offer could not be shown here, so the refusal it stood for is.
         try await waitForChange { presenter.errorTitle != nil }
-        #expect(presenter.macAddressRemedyRequests.map(\.prompt.offers.count) == [1])
+        #expect(presenter.stepRouteRequests.map(\.requirement.routes.count) == [1])
         #expect(presenter.errorTitles == ["Duplicate MAC Address"])
     }
 

@@ -7,36 +7,15 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Start
 
-    func start(
-        _ selector: VMSelector, recovery: Bool, consent: Consent,
-        macAddressRemedy: MACAddressRemedy? = nil
-    ) async throws {
+    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
-            try await start(
-                instance, recovery: recovery, policy: .command(VMIdentityOverride(consent)),
-                macAddressRemedy: macAddressRemedy)
+            try await startNow(
+                instance, recovery: recovery, policy: .command(VMIdentityOverride(consent))
+            ).value()
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
-    }
-
-    /// Starts `instance` under `policy`, taking the remedy a MAC address
-    /// conflict asks for first — throwing what the bring-up threw, unmapped.
-    func start(
-        _ instance: VMInstance, recovery: Bool, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?
-    ) async throws {
-        let identity = policy.identity
-        if let remedy = try macAddressRemedyToTake(
-            macAddressRemedy,
-            answering: instance.activity.decide(
-                .start(recovery: recovery), posture: .commit, identity: identity),
-            on: instance, identity: identity, holdingSavedState: instance.hasSaveFile,
-            accountFor: recovery, verb: .start)
-        {
-            try takeMACAddressRemedy(remedy, on: instance, verb: .start)
-        }
-        try await startNow(instance, recovery: recovery, policy: policy).value()
     }
 
     /// What a start may begin beyond the bring-up itself: two independent
@@ -742,16 +721,15 @@ extension VMCommandCore {
             guard consent.covers(.forceStop) || !instance.holdsSuspendedSession else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
-            if try await discardedSavedStateAsEphemeralRevert(instance) { return }
-            do {
-                if instance.holdsSuspendedSession {
-                    try lifecycle.discardSavedState(instance)
-                } else {
+            guard let discard = instance.savedStateDiscard else {
+                do {
                     try await lifecycle.requestStop(instance)
+                } catch {
+                    throw failure(error, verb: .stop, on: instance)
                 }
-            } catch {
-                throw failure(error, verb: .stop, on: instance)
+                return
             }
+            try await discardSavedState(instance, discard)
         case .force:
             // Both capabilities, for the reason the graceful branch states: a
             // VM resting on a slot has nothing to terminate and this deletes
@@ -762,16 +740,41 @@ extension VMCommandCore {
             guard consent.covers(.forceStop) else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
-            if try await discardedSavedStateAsEphemeralRevert(instance) { return }
-            do {
-                if instance.holdsSuspendedSession {
-                    try lifecycle.discardSavedState(instance)
-                } else {
+            guard let discard = instance.savedStateDiscard else {
+                do {
                     try await lifecycle.forceStop(instance)
+                } catch {
+                    throw failure(error, verb: .stop, on: instance)
                 }
+                return
+            }
+            try await discardSavedState(instance, discard)
+        }
+    }
+
+    /// Takes the stop's `discard` of the saved state `instance` holds.
+    ///
+    /// An Ephemeral Mode VM's is the revert to its baseline: deleting the save
+    /// file alone would leave the guest's disks as the session left them — the
+    /// opposite of what the mode promises. Throws what the revert failed with:
+    /// the caller asked for a stop, and a baseline that did not come back is
+    /// not one.
+    private func discardSavedState(
+        _ instance: VMInstance, _ discard: VMSavedStateDiscard
+    ) async throws {
+        switch discard {
+        case .deletesSaveFile:
+            do {
+                try lifecycle.discardSavedState(instance)
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
+        case .revertsToBaseline(let baseline):
+            #log(
+                Self.logger, .notice,
+                "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
+            )
+            try await awaitRevert(instance, startRevert(instance, to: baseline))
         }
     }
 
@@ -782,7 +785,7 @@ extension VMCommandCore {
         StepRequirement(
             message:
                 "\u{201C}\(instance.name)\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
-            routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))])])
+            routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))], ending: .refusedVerb)])
     }
 
     /// Requests a graceful shutdown of a live guest, resuming it first when it
@@ -798,6 +801,16 @@ extension VMCommandCore {
             throw failure(error, verb: .stop, on: instance)
         }
     }
+
+    /// What discarding an Ephemeral Mode VM's saved state does — a revert to
+    /// `baseline` — in the words every refusal or question naming it uses.
+    static func ephemeralDiscardSentences(_ instance: VMInstance, baseline: VMSnapshot) -> String {
+        "\u{201C}\(instance.name)\u{201D} is ephemeral, so it returns to "
+            + "\u{201C}\(baseline.name)\u{201D}. \(suspendedSessionLost)"
+    }
+
+    private static let suspendedSessionLost =
+        "The suspended session, and everything changed inside the guest during it, are discarded."
 
     /// The refusal a force stop raises, worded for what it actually discards.
     static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
@@ -819,17 +832,14 @@ extension VMCommandCore {
         // and the VM does come back on it
         // (``VMActivity/restingPhase(withoutSlot:)``).
         let keepsSuspendedSession = instance.hasSaveFile
-        let suspendedSessionLost =
-            "The suspended session, and everything changed inside the guest during it, are discarded."
+        let suspendedSessionLost = Self.suspendedSessionLost
         let guestDataLost = "Any unsaved data inside the guest will be lost."
         let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
 
         let message: String
         switch (discardsSavedState, ephemeralBaseline) {
         case (true, let baseline?):
-            message =
-                "\u{201C}\(instance.name)\u{201D} is ephemeral, so it returns to "
-                + "\u{201C}\(baseline.name)\u{201D}. \(suspendedSessionLost)"
+            message = ephemeralDiscardSentences(instance, baseline: baseline)
         case (true, nil):
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
@@ -899,17 +909,10 @@ extension VMCommandCore {
 
     /// A hot resume of a live-paused VM, or the restore of the saved state one
     /// holds — joining a restore already in flight.
-    ///
-    /// A remedy the caller chose for a MAC address conflict lands first, and
-    /// the bring-up is then the start the VM's state names: a restore while
-    /// the saved state survives it, a boot once it was discarded.
-    func resume(
-        _ selector: VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy? = nil
-    ) async throws {
+    func resume(_ selector: VMSelector, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
-            try await resume(
-                instance, policy: .command(VMIdentityOverride(consent)), macAddressRemedy: macAddressRemedy)
+            try await resume(instance, policy: .command(VMIdentityOverride(consent)))
         } catch {
             throw bringUpFailure(error, verb: .resume, on: instance)
         }
@@ -917,19 +920,8 @@ extension VMCommandCore {
 
     /// Resumes `instance` under `policy` — throwing what the bring-up threw,
     /// unmapped, but for a refusal, which is raised in the command vocabulary.
-    func resume(
-        _ instance: VMInstance, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?
-    ) async throws {
-        let identity = policy.identity
-        let decision = instance.activity.decide(.resume, posture: .commit, identity: identity)
-        if let remedy = try macAddressRemedyToTake(
-            macAddressRemedy, answering: decision, on: instance, identity: identity,
-            holdingSavedState: instance.hasSaveFile, accountFor: false, verb: .resume)
-        {
-            try takeMACAddressRemedy(remedy, on: instance, verb: .resume)
-            try await startNow(instance, policy: policy).value()
-            return
-        }
+    func resume(_ instance: VMInstance, policy: StartPolicy) async throws {
+        let decision = instance.activity.decide(.resume, posture: .commit, identity: policy.identity)
         switch decision {
         case .refuse(let reason):
             throw admissionRefusal(reason, on: instance, verb: .resume)
@@ -1006,14 +998,10 @@ extension VMCommandCore {
     /// VM powered off half way through a restart. Another active VM sharing
     /// the machine identity the boot would claim is refused, or asked about,
     /// before the stop for the same reason; `consent` answers it, and the boot
-    /// carries that answer.
-    ///
-    /// A remedy the caller chose for a MAC address conflict is decided before
-    /// the stop, on the same terms, and lands between the power-off and the
-    /// boot.
+    /// carries that answer. A MAC address another active VM uses on the
+    /// network is refused there too.
     func restart(
-        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent,
-        macAddressRemedy: MACAddressRemedy? = nil
+        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent
     ) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
@@ -1026,12 +1014,7 @@ extension VMCommandCore {
         let identity = VMIdentityOverride(consent)
         let conflict = instance.identityConflict(
             for: .guestStart(.starting(recovery: false)), override: identity)
-        let remedy = try macAddressRemedyToTake(
-            macAddressRemedy, answering: conflict.map { .refuse(.identityConflict($0)) } ?? .admit,
-            on: instance, identity: identity,
-            holdingSavedState: instance.ephemeralBaselineSnapshot?.kind == .warm,
-            accountFor: nil, verb: .restart)
-        if let conflict, remedy == nil {
+        if let conflict {
             throw admissionRefusal(.identityConflict(conflict), on: instance, verb: .restart)
         }
         guard let sessionID = instance.activity.liveSessionID else {
@@ -1043,19 +1026,8 @@ extension VMCommandCore {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             // Asks nobody: the boot runs once the guest is down, after the
-            // call that asked has moved on. The remedy is decided again
-            // against where the power-off left the VM.
-            let bootIdentity = identity.unattended
-            if let taken = try self.macAddressRemedyToTake(
-                remedy,
-                answering: instance.activity.decide(
-                    .start(recovery: false), posture: .commit, identity: bootIdentity),
-                on: instance, identity: bootIdentity, holdingSavedState: instance.hasSaveFile,
-                accountFor: false, verb: .restart)
-            {
-                try self.takeMACAddressRemedy(taken, on: instance, verb: .restart)
-            }
-            try self.startNow(instance, policy: .command(bootIdentity), resolving: outcome)
+            // call that asked has moved on.
+            try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
         instance.activity.follow(boot, whenSessionEnds: sessionID)
         do {

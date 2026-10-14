@@ -45,9 +45,8 @@ struct RevertToSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runBringUpWithConsent { consent, remedy in
-            try await gateway.revertToSnapshot(
-                vm.id, snapshot: snapshot.id, consent: consent, macAddressRemedy: remedy)
+        try await runWithConsent { consent in
+            try await gateway.revertToSnapshot(vm.id, snapshot: snapshot.id, consent: consent)
         }
         return .result()
     }

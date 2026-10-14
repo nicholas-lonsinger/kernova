@@ -376,11 +376,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         attributes(of: filter, values: values).filter(\.isActive).flatMap { attribute in
             let on = attribute.choices.filter(\.isOn).map(\.title)
             guard attribute.isPredicate else { return on }
-            let either =
-                on.count <= 2
-                ? on.joined(separator: " or ")
-                : on.dropLast().joined(separator: ", ") + ", or " + (on.last ?? "")
-            return ["\(attribute.conditionTitle ?? attribute.title) is \(either)"]
+            return ["\(attribute.conditionTitle ?? attribute.title) is \(DataFormatters.alternatives(on))"]
         }
     }
 

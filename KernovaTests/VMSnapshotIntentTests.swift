@@ -127,15 +127,13 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
-            vm, snapshot: picked, consent: .all,
-            macAddressRemedy: .newAddress)
+            vm, snapshot: picked, consent: .all)
         try await gateway.deleteSnapshot(vm, snapshot: picked, consent: .all)
         try await gateway.renameSnapshot(vm, snapshot: picked, to: "Renamed")
         try await gateway.setSnapshotNotes(vm, snapshot: picked, notes: "a note")
 
         #expect(commands.revertCalls.map(\.selector) == [.id(vm)])
         #expect(commands.revertCalls.map(\.snapshot) == [snapshot])
-        #expect(commands.revertRemedies == [.newAddress])
         #expect(commands.deleteSnapshotCalls.map(\.selector) == [.id(vm)])
         #expect(commands.deleteSnapshotCalls.map(\.snapshot) == [snapshot])
         #expect(commands.renameSnapshotCalls.map(\.selector) == [.id(vm)])
@@ -160,8 +158,7 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: CommandError.self) {
             try await gateway.revertToSnapshot(
-                named, snapshot: stale, consent: .all,
-                macAddressRemedy: nil)
+                named, snapshot: stale, consent: .all)
         }
         await #expect(throws: CommandError.self) {
             try await gateway.deleteSnapshot(named, snapshot: stale, consent: .all)
@@ -290,7 +287,7 @@ struct VMSnapshotIntentTests {
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
             try await gateway.revertToSnapshot(
-                vm, snapshot: snapshot, consent: consent, macAddressRemedy: nil)
+                vm, snapshot: snapshot, consent: consent)
         }
 
         #expect(asked.map(\.kind) == [.revertToSnapshot])
@@ -312,8 +309,7 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: refusal) {
             try await gateway.revertToSnapshot(
-                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), consent: .all,
-                macAddressRemedy: nil)
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), consent: .all)
         }
     }
 

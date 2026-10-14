@@ -19,7 +19,7 @@ extension CommandError {
             Int(errAETimeout)
         case .invalidState, .changeTakesStoppedVM, .stepRequired, .unsupported, .unsupportedByBuild,
             .conflict,
-            .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired, .busy,
+            .confirmationRequired, .guestAccountPasswordRequired, .busy,
             .heldByAnotherCopy,
             .terminating, .operationFailed, .filesKept:
             Int(errAEEventFailed)
@@ -29,19 +29,11 @@ extension CommandError {
     /// What the script reads back, in the same words every other door shows.
     ///
     /// A consent refusal gains the one thing a script can do about it, as the
-    /// `kernova` tool's own refusal names `--yes`. A MAC address refusal names
-    /// the parameter that takes each change it offers.
+    /// `kernova` tool's own refusal names `--yes`.
     var appleEventErrorString: String {
         switch self {
         case .confirmationRequired:
             return message + "\n\nAdd `with confirmation` to do it anyway."
-        case .macAddressRemedyRequired(let prompt) where !prompt.offers.isEmpty:
-            let terms = prompt.offers.map { "`resolving MAC conflict by \(VMScriptMACConflictRemedy($0.remedy).term)`" }
-            let choices =
-                terms.count > 1
-                ? terms.dropLast().joined(separator: ", ") + " or " + terms[terms.count - 1]
-                : terms.joined()
-            return message + "\n\nAdd \(choices) to change \u{201C}\(prompt.vm.name)\u{201D}\u{2019}s network first."
         default:
             return message
         }

@@ -92,7 +92,7 @@ struct VMCommandCoreNetworkTests {
                         steps: [
                             .setConfiguration(vm: harness.core.summary(member), assignments: isolated),
                             .setConfiguration(vm: harness.core.summary(bridged), assignments: isolated),
-                        ])
+                        ], ending: .refusedVerb)
                 ]))
         #expect(throws: refusal) { try harness.core.deleteNetwork(lab.id.uuidString) }
         #expect(try harness.core.networks().map(\.id) == [lab.id])

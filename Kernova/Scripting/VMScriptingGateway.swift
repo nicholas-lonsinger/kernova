@@ -226,16 +226,10 @@ final class VMScriptingGateway {
 
     // MARK: - Lifecycle
 
-    /// `remedy` is the change to each VM's network a MAC address conflict
-    /// takes, `nil` for none — the script's `resolving MAC conflict by`.
-    func start(
-        _ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool,
-        resolvingMACConflictBy remedy: MACAddressRemedy? = nil
-    ) async throws {
+    func start(_ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool) async throws {
         try await perform(.start, on: selectors) { selector in
             try await Self.consenting(confirmation) { consent in
-                try await self.commands.start(
-                    selector, recovery: recoveryMode, consent: consent, macAddressRemedy: remedy)
+                try await self.commands.start(selector, recovery: recoveryMode, consent: consent)
             }
         }
     }
@@ -272,13 +266,11 @@ final class VMScriptingGateway {
     }
 
     func restart(
-        _ selectors: [VMSelector], confirmation: Bool, givingUpAfter timeout: TimeInterval?,
-        resolvingMACConflictBy remedy: MACAddressRemedy? = nil
+        _ selectors: [VMSelector], confirmation: Bool, givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.restart, on: selectors) { selector in
             try await Self.consenting(confirmation) { consent in
-                try await self.commands.restart(
-                    selector, timeout: timeout, consent: consent, macAddressRemedy: remedy)
+                try await self.commands.restart(selector, timeout: timeout, consent: consent)
             }
         }
     }
@@ -289,13 +281,10 @@ final class VMScriptingGateway {
         }
     }
 
-    func resume(
-        _ selectors: [VMSelector], confirmation: Bool,
-        resolvingMACConflictBy remedy: MACAddressRemedy? = nil
-    ) async throws {
+    func resume(_ selectors: [VMSelector], confirmation: Bool) async throws {
         try await perform(.resume, on: selectors) { selector in
             try await Self.consenting(confirmation) { consent in
-                try await self.commands.resume(selector, consent: consent, macAddressRemedy: remedy)
+                try await self.commands.resume(selector, consent: consent)
             }
         }
     }

@@ -55,12 +55,15 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// What this mock answers a confirmation with, answered on the spot for the
     /// reason ``guestAccountPasswordAnswer`` is.
     var confirmationAnswer: PresenterAnswer<Bool> = .answered(false)
-    /// MAC address remedy questions a bring-up asked, in order.
-    private(set) var macAddressRemedyRequests: [MACAddressRemedyRequest] = []
-    /// What this mock answers a remedy question with, answered on the spot for
+    /// Route questions a verb asked, in order.
+    private(set) var stepRouteRequests: [StepRouteRequest] = []
+    /// What this mock answers a route question with, answered on the spot for
     /// the reason ``guestAccountPasswordAnswer`` is; unasked by default, which
     /// leaves the refusal to the error path.
-    var macAddressRemedyAnswer: PresenterAnswer<MACAddressRemedy?> = .unasked
+    var stepRouteAnswer: PresenterAnswer<StepRoute?> = .unasked
+    /// The title of the route this mock chooses instead, when set — the routes
+    /// a real refusal names are the core's to build.
+    var choosesRouteTitled: String?
 
     func presentError(_ message: String, title: String) {
         errors.append(message)
@@ -108,9 +111,13 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         confirmationRequests.append(request)
         request.answer(confirmationAnswer)
     }
-    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest) {
-        macAddressRemedyRequests.append(request)
-        request.answer(macAddressRemedyAnswer)
+    func presentStepRoutes(_ request: StepRouteRequest) {
+        stepRouteRequests.append(request)
+        if let choosesRouteTitled {
+            request.answer(.answered(request.requirement.routes.first { $0.title == choosesRouteTitled }))
+        } else {
+            request.answer(stepRouteAnswer)
+        }
     }
     func presentCreationWizard() { creationWizardCount += 1 }
     func focusGuestDisplay(for instance: VMInstance) {

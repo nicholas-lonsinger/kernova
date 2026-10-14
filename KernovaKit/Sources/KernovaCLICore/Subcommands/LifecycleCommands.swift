@@ -44,12 +44,11 @@ extension KernovaCommand {
                 + "machine with the same machine ID as one that is active is refused. With Offer "
                 + "to start duplicate machine IDs anyway on in Kernova\u{2019}s Settings, --yes "
                 + "starts it anyway.\n\nA virtual machine whose MAC address another active one "
-                + "uses on the same network is refused; --resolve-mac-conflict changes its "
-                + "network first and starts it.\n\nWith --smart-group or --folder, starts each "
+                + "uses on the same network is refused, printing the commands that change its "
+                + "network first where it can take them.\n\nWith --smart-group or --folder, starts each "
                 + "virtual machine in the group that can be started or resumed, one after another, "
                 + "and prints a line for each. One whose start would ask something — a "
-                + "confirmation, its account's password, a change to its network — or would begin "
-                + "its guest setup is skipped, and a group start exits 10 when it leaves any it "
+                + "confirmation or its account's password — or would begin its guest setup is skipped, and a group start exits 10 when it leaves any it "
                 + "could act on undone.")
 
         /// Which virtual machine, by name or identifier; `nil` for a group.
@@ -65,9 +64,6 @@ extension KernovaCommand {
         @Flag(name: .long, help: "Cold-boot a macOS guest into Recovery.")
         var recovery = false
 
-        /// The change a MAC address conflict takes.
-        @OptionGroup var macConflict: MACConflictOption
-
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
@@ -77,7 +73,7 @@ extension KernovaCommand {
             try groups.validateTarget(
                 vm: vm,
                 singleVMFlags: [
-                    recovery ? "--recovery" : nil, macConflict.spelling != nil ? "--resolve-mac-conflict" : nil,
+                    recovery ? "--recovery" : nil,
                     options.yes ? "--yes" : nil,
                 ].compactMap(\.self))
         }
@@ -87,8 +83,7 @@ extension KernovaCommand {
             if let group = groups.target { return .groupAction(.start, group: group) }
             return .start(
                 try SelectorParsing.selector(from: vm ?? "", forcingID: options.id),
-                recovery: recovery, consent: options.consent,
-                macAddressRemedy: macConflict.remedy)
+                recovery: recovery, consent: options.consent)
         }
 
         /// Starts the VM, or every one in the group.
@@ -240,9 +235,6 @@ extension KernovaCommand {
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         var vm: String
 
-        /// The change a MAC address conflict takes.
-        @OptionGroup var macConflict: MACConflictOption
-
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
@@ -250,7 +242,7 @@ extension KernovaCommand {
         func verb() throws -> VMCommandRequest.Verb {
             .resume(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                consent: options.consent, macAddressRemedy: macConflict.remedy)
+                consent: options.consent)
         }
 
         /// Resumes the VM.
@@ -271,7 +263,8 @@ extension KernovaCommand {
                 + "machine with the same machine ID as one that is active is refused before the "
                 + "guest goes down, unless --yes starts it anyway where Kernova's Settings allow. "
                 + "One whose MAC address another active one uses on the same network is refused "
-                + "there too, unless --resolve-mac-conflict changes its network before it starts again.")
+                + "there too, printing the command that moves it to a network of its own where it "
+                + "can take it.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -281,9 +274,6 @@ extension KernovaCommand {
         /// long as it takes.
         @Option(name: .long, help: "Seconds to wait for the guest to shut down before giving up.")
         var timeout: Double?
-
-        /// The change a MAC address conflict takes.
-        @OptionGroup var macConflict: MACConflictOption
 
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
@@ -297,7 +287,7 @@ extension KernovaCommand {
         func verb() throws -> VMCommandRequest.Verb {
             .restart(
                 try SelectorParsing.selector(from: vm, forcingID: options.id), timeout: timeout,
-                consent: options.consent, macAddressRemedy: macConflict.remedy)
+                consent: options.consent)
         }
 
         /// Restarts the VM.

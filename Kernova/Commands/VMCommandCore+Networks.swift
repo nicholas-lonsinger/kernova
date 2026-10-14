@@ -91,7 +91,7 @@ extension VMCommandCore {
                             steps: joining.map {
                                 .setConfiguration(
                                     vm: summary($0), assignments: [key.assigning(isolated)])
-                            })
+                            }, ending: .refusedVerb)
                     ]))
         }
         // A filter naming the network keeps naming it, and admits no VM from

@@ -894,18 +894,6 @@ struct VMAdmissionTests {
                 == .refuse(.invalidState))
     }
 
-    @Test("Discarding the saved state reopens the edits the slot pinned")
-    func discardingSavedStateCounterfactual() {
-        let facts = Self.facts(slot: true)
-        #expect(
-            VMAdmission.decide(.edit(.machineKeys), posture: .commit, phase: .failed(message: "x"), facts: facts)
-                == .refuse(.invalidState))
-        #expect(
-            VMAdmission.decide(
-                .edit(.machineKeys), posture: .commit, phase: .failed(message: "x"),
-                facts: facts.discardingSavedState()) == .admit)
-    }
-
     @Test("Once an operation's session ended, a request is classified against where that end rests the VM")
     func endedSessionIsClassifiedAtRest() {
         let phase = VMLifecyclePhase.operating(

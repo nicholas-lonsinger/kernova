@@ -52,59 +52,6 @@ enum VMScriptStopMethod: CaseIterable {
     }
 }
 
-/// The dictionary's `MAC conflict remedy` enumeration, in Swift — the other
-/// half of its enumerators in `Kernova.sdef`, which
-/// `KernovaScriptingDefinitionTests` checks.
-enum VMScriptMACConflictRemedy: CaseIterable {
-    case ownNetwork
-    case newAddress
-    case noNetwork
-
-    /// The term `remedy` is named by. Exhaustive, so a new remedy has to be
-    /// given a term before it compiles.
-    init(_ remedy: MACAddressRemedy) {
-        switch remedy {
-        case .ownNetwork: self = .ownNetwork
-        case .newAddress: self = .newAddress
-        case .noNetwork: self = .noNetwork
-        }
-    }
-
-    /// The remedy an Apple event naming `code` asked for, `nil` for a code
-    /// from no vocabulary this app writes.
-    init?(code: FourCharCode) {
-        guard let match = Self.allCases.first(where: { $0.code == code }) else { return nil }
-        self = match
-    }
-
-    /// The term the dictionary names this remedy with.
-    var term: String {
-        switch self {
-        case .ownNetwork: "own network"
-        case .newAddress: "new MAC address"
-        case .noNetwork: "no network"
-        }
-    }
-
-    /// The Apple event code the dictionary gives that term.
-    var code: FourCharCode {
-        switch self {
-        case .ownNetwork: FourCharCode(scriptingCode: "KrOn")
-        case .newAddress: FourCharCode(scriptingCode: "KrNa")
-        case .noNetwork: FourCharCode(scriptingCode: "KrNn")
-        }
-    }
-
-    /// The change to the VM's network this term names.
-    var remedy: MACAddressRemedy {
-        switch self {
-        case .ownNetwork: .ownNetwork
-        case .newAddress: .newAddress
-        case .noNetwork: .noNetwork
-        }
-    }
-}
-
 // MARK: - The shape every VM verb takes
 
 /// What every Kernova verb an Apple event can ask for is built out of: take
@@ -209,30 +156,16 @@ class VMScriptCommand: NSScriptCommand {
         guard let number = arguments?[key] as? NSNumber else { return nil }
         return number.doubleValue
     }
-
-    /// The change the `resolving MAC conflict by` parameter names, `nil` when
-    /// the script named none, refusing a code from no vocabulary this app
-    /// writes.
-    func macConflictRemedy() throws -> MACAddressRemedy? {
-        guard let named = arguments?["MACConflictRemedy"] as? NSNumber else { return nil }
-        guard let term = VMScriptMACConflictRemedy(code: named.uint32Value) else {
-            throw CommandError.invalidArgument(
-                "That is not a change Kernova can make to a virtual machine\u{2019}s network.")
-        }
-        return term.remedy
-    }
 }
 
 // MARK: - Commands
 
-/// `start virtual machine … [with recovery mode] [with confirmation]
-/// [resolving MAC conflict by <remedy>]`
+/// `start virtual machine … [with recovery mode] [with confirmation]`
 @objc(VMStartScriptCommand)
 final class VMStartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.start(
-            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag("Confirmation"),
-            resolvingMACConflictBy: try macConflictRemedy())
+            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag("Confirmation"))
     }
 }
 
@@ -256,14 +189,12 @@ final class VMStopScriptCommand: VMScriptCommand {
     }
 }
 
-/// `restart virtual machine … [with confirmation] [giving up after <seconds>]
-/// [resolving MAC conflict by <remedy>]`
+/// `restart virtual machine … [with confirmation] [giving up after <seconds>]`
 @objc(VMRestartScriptCommand)
 final class VMRestartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.restart(
-            selectors, confirmation: flag("Confirmation"), givingUpAfter: seconds("GivingUpAfter"),
-            resolvingMACConflictBy: try macConflictRemedy())
+            selectors, confirmation: flag("Confirmation"), givingUpAfter: seconds("GivingUpAfter"))
     }
 }
 
@@ -275,13 +206,11 @@ final class VMPauseScriptCommand: VMScriptCommand {
     }
 }
 
-/// `resume virtual machine … [with confirmation] [resolving MAC conflict by <remedy>]`
+/// `resume virtual machine … [with confirmation]`
 @objc(VMResumeScriptCommand)
 final class VMResumeScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.resume(
-            selectors, confirmation: flag("Confirmation"),
-            resolvingMACConflictBy: try macConflictRemedy())
+        try await gateway.resume(selectors, confirmation: flag("Confirmation"))
     }
 }
 

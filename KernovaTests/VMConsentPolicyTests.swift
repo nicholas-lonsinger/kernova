@@ -67,66 +67,111 @@ struct VMConsentPolicyTests {
         #expect(runs == 1)
     }
 
-    // MARK: - MAC address remedy
+    // MARK: - Step routes
 
-    private func remedyPrompt(offers: [MACAddressRemedy] = MACAddressRemedy.allCases)
-        -> MACAddressRemedyPrompt
-    {
-        let vm = VMSummary(
-            id: UUID(), name: "Clone", status: "stopped", ipAddress: .unavailable,
-            heldByAnotherCopy: false)
-        return MACAddressRemedyPrompt(
-            vm: vm, other: vm, verb: .start, title: "Duplicate MAC Address", message: "Choose:",
-            offers: offers.map { MACAddressRemedyOffer(remedy: $0, title: "\($0)", isDestructive: false) },
-            dismissTitle: "Cancel")
+    private let vm = VMSummary(
+        id: UUID(), name: "Clone", status: "stopped", ipAddress: .unavailable,
+        heldByAnotherCopy: false)
+
+    private func requirement(routes: Int = 2) -> StepRequirement {
+        StepRequirement(
+            title: "Duplicate MAC Address", message: "Change its network first.",
+            routes: (0..<routes).map { index in
+                StepRoute(
+                    title: "Route \(index)",
+                    steps: [
+                        .discardSavedState(vm: vm),
+                        .setConfiguration(
+                            vm: vm, assignments: [ConfigurationEntry(key: "k\(index)", value: "v")]),
+                    ], ending: .refusedVerb)
+            })
     }
 
-    @Test("A remedy chosen rides every re-run beside the consents given, in whichever order they are asked")
-    func remedyRidesBesideConsents() async throws {
-        var given: [(Consent, MACAddressRemedy?)] = []
-        let prompt = remedyPrompt()
+    @Test("A route chosen has its steps taken in order, then the verb runs again with the consents given")
+    func routeStepsRunBeforeTheVerbAgain() async throws {
+        let refused = requirement()
+        var taken: [CommandStep] = []
+        var given: [Consent] = []
 
         try await VMConsentPolicy.run(
-            prompting: { _ in }, choosingMACAddressRemedy: { _ in .ownNetwork }
-        ) { consent, remedy in
-            given.append((consent, remedy))
-            guard remedy != nil else { throw CommandError.macAddressRemedyRequired(prompt) }
+            prompting: { _ in },
+            choosingRoute: { $0.routes[1] },
+            taking: { taken.append($0) }
+        ) { consent, _ in
+            given.append(consent)
+            guard !taken.isEmpty else { throw CommandError.stepRequired(refused) }
             try verb(needing: [.startBesideSharedMachineIdentity])(consent)
         }
 
-        #expect(given.map(\.0) == [.none, .none, Consent([.startBesideSharedMachineIdentity])])
-        #expect(given.map(\.1) == [nil, .ownNetwork, .ownNetwork])
+        #expect(taken == refused.routes[1].steps)
+        #expect(given == [.none, .none, Consent([.startBesideSharedMachineIdentity])])
     }
 
-    @Test("A second MAC address refusal after a remedy is rethrown rather than asked again")
-    func aRepeatedRemedyRefusalIsRethrown() async throws {
+    @Test("A route ending in a start is answered by the start, not the refused verb")
+    func routeEndingInAStartRunsTheStart() async throws {
+        let refused = StepRequirement(
+            message: "M",
+            routes: [StepRoute(title: "New", steps: [.discardSavedState(vm: vm)], ending: .start(vm: vm))])
+        var endings: [StepRoute.Ending] = []
+
+        try await VMConsentPolicy.run(
+            prompting: { _ in }, choosingRoute: { $0.routes[0] }, taking: { _ in }
+        ) { _, ending in
+            endings.append(ending)
+            guard endings.count > 1 else { throw CommandError.stepRequired(refused) }
+        }
+
+        #expect(endings == [.refusedVerb, .start(vm: vm)])
+    }
+
+    @Test("A second step refusal after a route is rethrown rather than asked again")
+    func aRepeatedStepRefusalIsRethrown() async throws {
         var asked = 0
-        let refusal = CommandError.macAddressRemedyRequired(remedyPrompt())
+        let refusal = CommandError.stepRequired(requirement())
 
         await #expect(throws: refusal) {
             try await VMConsentPolicy.run(
                 prompting: { _ in },
-                choosingMACAddressRemedy: { _ in
+                choosingRoute: {
                     asked += 1
-                    return .newAddress
-                }
+                    return $0.routes[0]
+                },
+                taking: { _ in }
             ) { _, _ in throw refusal }
         }
         #expect(asked == 1)
     }
 
-    @Test("A remedy refusal offering nothing, or met by a door that cannot choose, stands")
-    func unanswerableRemedyRefusalStands() async throws {
-        let empty = CommandError.macAddressRemedyRequired(remedyPrompt(offers: []))
+    @Test("A step that fails ends the run before the verb runs again")
+    func aFailedStepEndsTheRun() async throws {
+        struct StepFailed: Error {}
+        var runs = 0
+
+        await #expect(throws: StepFailed.self) {
+            try await VMConsentPolicy.run(
+                prompting: { _ in },
+                choosingRoute: { $0.routes[0] },
+                taking: { _ in throw StepFailed() }
+            ) { _, _ in
+                runs += 1
+                throw CommandError.stepRequired(requirement())
+            }
+        }
+        #expect(runs == 1)
+    }
+
+    @Test("A step refusal naming no route, or met by a door that cannot chain steps, stands")
+    func unroutableStepRefusalStands() async throws {
+        let empty = CommandError.stepRequired(requirement(routes: 0))
         await #expect(throws: empty) {
             try await VMConsentPolicy.run(
-                prompting: { _ in }, choosingMACAddressRemedy: { _ in .noNetwork }
+                prompting: { _ in }, choosingRoute: { $0.routes[0] }, taking: { _ in }
             ) { _, _ in throw empty }
         }
 
-        let offered = CommandError.macAddressRemedyRequired(remedyPrompt())
-        await #expect(throws: offered) {
-            try await VMConsentPolicy.run(prompting: { _ in }) { _ in throw offered }
+        let routed = CommandError.stepRequired(requirement())
+        await #expect(throws: routed) {
+            try await VMConsentPolicy.run(prompting: { _ in }) { _ in throw routed }
         }
     }
 }

@@ -38,11 +38,13 @@ final class VMLiveIdentities {
     ///
     /// Every other VM at rest is first caught up with another copy of
     /// Kernova (``VMActivity/refreshFromBundle()``), so a VM that copy holds
-    /// claims the identity its bundle carries now. A MAC address is checked
-    /// first and never waived; a request that can ask is offered changing the
-    /// VM's network instead. A shared machine identity is waived only by a
-    /// confirmed override while ``AppPreferences/allowsDuplicateMachineIDOverride``
-    /// is on, and is offered for confirmation only to a request that can ask.
+    /// claims the identity its bundle carries now. A shared machine identity
+    /// is answered first: waived only by a confirmed override while
+    /// ``AppPreferences/allowsDuplicateMachineIDOverride`` is on, and offered
+    /// for confirmation only to a request that can ask. A MAC address is
+    /// never waived, and is answered only once nothing else stands in the way,
+    /// so the change of network its refusal routes through is the last step
+    /// the bring-up needs.
     func conflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration,
         override: VMIdentityOverride
@@ -50,29 +52,31 @@ final class VMLiveIdentities {
         for other in instances where other !== instance {
             other.activity.refreshFromBundle()
         }
+        let identityTwin = instances.first {
+            $0 !== instance && $0.claimsIdentity && instance.sharesMachineIdentity(with: $0)
+        }
+        if let identityTwin {
+            guard preferences.allowsDuplicateMachineIDOverride else {
+                return VMIdentityConflict(
+                    vm: instance, other: identityTwin, reason: .machineIdentity,
+                    configuration: configuration)
+            }
+            guard override.confirmed else {
+                return VMIdentityConflict(
+                    vm: instance, other: identityTwin, reason: .machineIdentity,
+                    configuration: configuration, asks: override.canAsk)
+            }
+        }
         if let other = macAddresses.liveMACAddressConflict(for: configuration, excluding: instance) {
             return VMIdentityConflict(
-                vm: instance, other: other, reason: .macAddress, configuration: configuration,
-                asks: override.canAsk)
+                vm: instance, other: other, reason: .macAddress, configuration: configuration)
         }
-        guard
-            let other = instances.first(where: {
-                $0 !== instance && $0.claimsIdentity && instance.sharesMachineIdentity(with: $0)
-            })
-        else { return nil }
-        guard preferences.allowsDuplicateMachineIDOverride else {
-            return VMIdentityConflict(
-                vm: instance, other: other, reason: .machineIdentity, configuration: configuration)
+        if let identityTwin {
+            #log(
+                Self.logger, .notice,
+                "Starting '\(instance.name, privacy: .public)' beside '\(identityTwin.name, privacy: .public)', which has the same machine identity, as the user confirmed"
+            )
         }
-        guard override.confirmed else {
-            return VMIdentityConflict(
-                vm: instance, other: other, reason: .machineIdentity, configuration: configuration,
-                asks: override.canAsk)
-        }
-        #log(
-            Self.logger, .notice,
-            "Starting '\(instance.name, privacy: .public)' beside '\(other.name, privacy: .public)', which has the same machine identity, as the user confirmed"
-        )
         return nil
     }
 }
@@ -87,8 +91,8 @@ final class VMLiveIdentities {
 struct VMIdentityOverride: Sendable, Equatable {
     /// The user confirmed starting beside a VM sharing its machine identity.
     let confirmed: Bool
-    /// Someone is there to answer a question, so a refusal offers its way
-    /// through — starting anyway, or changing the VM's network.
+    /// Someone is there to answer a question, so a shared machine identity's
+    /// refusal offers starting anyway.
     let canAsk: Bool
 
     /// Nobody is there to confirm — a start at launch — so the bring-up is
@@ -126,10 +130,10 @@ struct VMIdentityConflict: LocalizedError {
     let reason: ConflictReason
     /// The configuration the refused bring-up would have put in front of VZ.
     let configuration: VMConfiguration
-    /// Whether the request can be asked a way through: starting anyway
-    /// (``ConfirmationKind/startBesideSharedMachineIdentity``) for a machine
-    /// identity, and a change to the VM's network (``MACAddressRemedy``) for a
-    /// MAC address.
+    /// Whether the request can be asked to start anyway beside a VM sharing
+    /// its machine identity
+    /// (``ConfirmationKind/startBesideSharedMachineIdentity``); always `false`
+    /// for a MAC address, which is never overridden.
     let asks: Bool
     /// The sentence every surface words this refusal in, fixed at the refusal
     /// because the names it carries — and whether the claim is another copy of

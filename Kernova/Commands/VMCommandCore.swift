@@ -343,8 +343,8 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// What `reason` reads as in the command vocabulary, unrecorded — what a
-    /// verb reports goes through ``admissionRefusal(_:on:verb:)``. `verb`
-    /// words the question a conflict the request can be asked about raises.
+    /// verb reports goes through ``admissionRefusal(_:on:verb:)``. `verb` is
+    /// the bring-up an identity conflict's refusal is worded and routed for.
     func commandError(
         for reason: VMAdmission.Refusal, on instance: VMInstance, verb: VMVerb? = nil
     ) -> CommandError {
@@ -357,8 +357,8 @@ final class VMCommandCore: VMCommanding {
             .changeTakesStoppedVM(vm: summary(instance), current: instance.status, change: change)
         case .removed:
             .notFound(.id(instance.id))
-        case .identityConflict(let conflict) where conflict.asks && conflict.reason == .macAddress:
-            .macAddressRemedyRequired(macAddressRemedyPrompt(conflict, on: instance, verb: verb))
+        case .identityConflict(let conflict) where conflict.reason == .macAddress:
+            .stepRequired(duplicateMACAddressRequirement(conflict, on: instance, verb: verb))
         case .identityConflict(let conflict) where conflict.asks:
             .confirmationRequired(
                 Self.startBesideSharedMachineIdentityPrompt(
@@ -408,6 +408,16 @@ final class VMCommandCore: VMCommanding {
                 + "identifier results in undefined behavior in the guest operating system.\u{201D}",
             confirmTitle: "\(verb) Anyway",
             dismissTitle: "Cancel")
+    }
+
+    /// The control a bring-up `verb` performs is named by: the Resume a
+    /// restore performs, the Restart, or the Start.
+    static func bringUpTitle(_ verb: VMVerb?) -> String {
+        switch verb {
+        case .resume, .revertToSnapshot: "Resume"
+        case .restart: "Restart"
+        default: "Start"
+        }
     }
 
     /// What a VM held by an operation of `kind` is busy doing, as a refusal

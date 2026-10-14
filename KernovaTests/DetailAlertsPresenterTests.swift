@@ -935,57 +935,76 @@ struct DetailAlertsPresenterTests {
         #expect(answers.value == [.answered(false)])
     }
 
-    // MARK: - A MAC address conflict's remedies
+    // MARK: - A step refusal's routes
 
-    private func remedyRequest(
-        answers: Box<[PresenterAnswer<MACAddressRemedy?>]>
-    ) -> MACAddressRemedyRequest {
-        let clone = VMSummary(
-            id: UUID(), name: "Clone", status: "suspended", ipAddress: .unavailable,
-            heldByAnotherCopy: false)
-        return MACAddressRemedyRequest(
-            prompt: MACAddressRemedyPrompt(
-                vm: clone, other: clone, verb: .resume, title: "Duplicate MAC Address",
-                message: "Change its network:",
-                offers: [
-                    MACAddressRemedyOffer(
-                        remedy: .ownNetwork, title: "Move to a Network of Its Own and Resume",
-                        isDestructive: false),
-                    MACAddressRemedyOffer(
-                        remedy: .newAddress, title: "Use a New MAC Address and Resume",
-                        isDestructive: true),
-                    MACAddressRemedyOffer(
-                        remedy: .noNetwork, title: "Turn Off Networking and Resume",
-                        isDestructive: true),
-                ],
-                dismissTitle: "Cancel"),
-            answer: { answers.value.append($0) })
+    private static let clone = VMSummary(
+        id: UUID(), name: "Clone", status: "suspended", ipAddress: .unavailable,
+        heldByAnotherCopy: false)
+
+    private static let ownNetwork = ConfigurationEntry(key: "network.membership", value: "isolated")
+
+    private static let routes = [
+        StepRoute(
+            title: "Move to a Network of Its Own",
+            steps: [
+                .setConfiguration(
+                    vm: clone, assignments: [ownNetwork])
+            ], ending: .refusedVerb),
+        StepRoute(
+            title: "Use a New MAC Address",
+            steps: [
+                .discardSavedState(vm: clone),
+                .setConfiguration(vm: clone, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
+            ], ending: .refusedVerb),
+        StepRoute(
+            title: "Turn Off Networking",
+            steps: [
+                .discardSavedState(vm: clone),
+                .setConfiguration(vm: clone, assignments: [ConfigurationEntry(key: "network.mode", value: "none")]),
+            ], ending: .start(vm: clone)),
+    ]
+
+    private func routeRequest(
+        answers: Box<[PresenterAnswer<StepRoute?>]>, then verbTitle: String? = "Resume"
+    ) -> StepRouteRequest {
+        StepRouteRequest(
+            requirement: StepRequirement(
+                title: "Duplicate MAC Address", message: "Change its network first.",
+                routes: Self.routes),
+            verbTitle: verbTitle, answer: { answers.value.append($0) })
     }
 
-    @Test("The remedy alert keeps every change that discards a saved state off Return")
-    func remedyAlertOrdersItsButtons() {
+    @Test("The route alert names each route then the request it ends with, and keeps a discarding route off Return")
+    func routeAlertOrdersItsButtons() {
+        let request = routeRequest(answers: Box([]))
         let alert = AlertConfiguration(
-            offering: remedyRequest(answers: Box([])).prompt, choose: { _ in })
+            offering: request.requirement, then: request.verbTitle, choose: { _ in })
 
+        #expect(alert.title == "Duplicate MAC Address")
+        #expect(alert.message == "Change its network first.")
         #expect(
             alert.buttons.map(\.title) == [
                 "Move to a Network of Its Own and Resume", "Cancel",
-                "Use a New MAC Address and Resume", "Turn Off Networking and Resume",
+                "Use a New MAC Address and Resume", "Turn Off Networking and Start",
             ])
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive, .destructive])
+
+        let edit = AlertConfiguration(
+            offering: request.requirement, then: nil, choose: { _ in })
+        #expect(edit.buttons.first?.title == "Move to a Network of Its Own")
     }
 
-    @Test("Each remedy button answers the bring-up with its change, and Cancel with none")
-    func remedyButtonsAnswerTheBringUp() {
-        for (response, expected): (NSApplication.ModalResponse, MACAddressRemedy?) in [
-            (.alertFirstButtonReturn, .ownNetwork), (.alertSecondButtonReturn, nil),
-            (.alertThirdButtonReturn, .newAddress),
+    @Test("Each route button answers the verb with its route, and Cancel with none")
+    func routeButtonsAnswerTheVerb() {
+        for (response, expected): (NSApplication.ModalResponse, StepRoute?) in [
+            (.alertFirstButtonReturn, Self.routes[0]), (.alertSecondButtonReturn, nil),
+            (.alertThirdButtonReturn, Self.routes[1]),
         ] {
             let (presenter, _) = makePresenter()
             presenter.start(window: showTestWindow(styleMask: [.titled]))
-            let answers = Box<[PresenterAnswer<MACAddressRemedy?>]>([])
+            let answers = Box<[PresenterAnswer<StepRoute?>]>([])
 
-            presenter.presentMACAddressRemedy(remedyRequest(answers: answers))
+            presenter.presentStepRoutes(routeRequest(answers: answers))
             #expect(presenter.dismissShownAlertForTesting(response))
             presenter.stop()
 
@@ -993,16 +1012,16 @@ struct DetailAlertsPresenterTests {
         }
     }
 
-    @Test("A remedy question with nowhere to ask is answered unasked, and one on screen when the window goes")
-    func remedyQuestionWithNowhereToAskIsUnasked() {
+    @Test("A route question with nowhere to ask is answered unasked, and one on screen when the window goes")
+    func routeQuestionWithNowhereToAskIsUnasked() {
         let (presenter, _) = makePresenter()
-        let unshown = Box<[PresenterAnswer<MACAddressRemedy?>]>([])
-        presenter.presentMACAddressRemedy(remedyRequest(answers: unshown))
+        let unshown = Box<[PresenterAnswer<StepRoute?>]>([])
+        presenter.presentStepRoutes(routeRequest(answers: unshown))
         #expect(unshown.value == [.unasked])
 
         presenter.start(window: showTestWindow(styleMask: [.titled]))
-        let shown = Box<[PresenterAnswer<MACAddressRemedy?>]>([])
-        presenter.presentMACAddressRemedy(remedyRequest(answers: shown))
+        let shown = Box<[PresenterAnswer<StepRoute?>]>([])
+        presenter.presentStepRoutes(routeRequest(answers: shown))
         presenter.stop()
         #expect(shown.value == [.unasked])
     }

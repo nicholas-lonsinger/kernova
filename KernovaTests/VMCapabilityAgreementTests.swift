@@ -163,7 +163,7 @@ struct VMCapabilityAgreementTests {
             .unsupportedByBuild, .terminating, .heldByAnotherCopy:
             true
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
-            .guestAccountPasswordRequired, .macAddressRemedyRequired, .invalidArgument, .stepRequired,
+            .guestAccountPasswordRequired, .invalidArgument, .stepRequired,
             .unsupported, .timedOut,
             .operationFailed, .filesKept:
             false

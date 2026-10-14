@@ -106,21 +106,16 @@ protocol VMCommanding: AnyObject {
     /// user allows starting one anyway; `consent` carries that answer.
     ///
     /// Another active VM using the VM's MAC address on the network it would
-    /// join refuses it with ``CommandError/macAddressRemedyRequired(_:)`` where
-    /// someone can be asked, offering changes to the VM's network;
-    /// `macAddressRemedy` carries the one chosen, which lands as a change to
-    /// the VM's configuration before the bring-up — and stays if that fails.
-    func start(
-        _ selector: VMSelector, recovery: Bool, consent: Consent,
-        macAddressRemedy: MACAddressRemedy?
-    ) async throws
+    /// join refuses it with ``CommandError/stepRequired(_:)``, routing through
+    /// the changes to the VM's network it can take first.
+    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws
 
     /// Removes the entry a failed start or resume named — a storage disk, a
     /// removable medium, or a shared folder — leaving the file or folder itself
     /// untouched: the removal half of the start-failed alert's offer.
     ///
     /// Starts nothing: a caller that wants the VM running follows this with
-    /// ``start(_:recovery:consent:macAddressRemedy:)``.
+    /// ``start(_:recovery:consent:)``.
     ///
     /// A VM that has left the library and an entry already gone are both quiet
     /// no-ops: what the removal was for is already true, so neither is a failure
@@ -177,12 +172,10 @@ protocol VMCommanding: AnyObject {
     func pause(_ selector: VMSelector) async throws
 
     /// Resumes the VM, presenting nothing as
-    /// ``start(_:recovery:consent:macAddressRemedy:)`` does — and joining a
-    /// restore already in flight, and asking about a shared machine identity
-    /// and a MAC address, the same way.
-    func resume(
-        _ selector: VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy?
-    ) async throws
+    /// ``start(_:recovery:consent:)`` does — and joining a
+    /// restore already in flight, and refusing a shared machine identity and a
+    /// MAC address, the same way.
+    func resume(_ selector: VMSelector, consent: Consent) async throws
 
     /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws
@@ -191,8 +184,8 @@ protocol VMCommanding: AnyObject {
     /// it did to each.
     ///
     /// Asks nothing and moves nothing on screen: a VM whose own verb would
-    /// raise a question — a confirmation, its account's password, a change to
-    /// its network — is passed by and reported, as is every failure, so the
+    /// raise a question — a confirmation or its account's password — is
+    /// passed by and reported, as is every failure, so the
     /// whole of the outcome is the report. Which VMs the action acts on is
     /// ``VMCapabilityCatalog/groupAction(_:on:)``'s rule. Cancelling the
     /// calling task stops it between VMs, reporting the rest untouched.
@@ -212,7 +205,7 @@ protocol VMCommanding: AnyObject {
     func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int]
 
     /// Shuts the guest down and starts it again once it has powered off,
-    /// bringing it back up the way ``start(_:recovery:consent:macAddressRemedy:)``
+    /// bringing it back up the way ``start(_:recovery:consent:)``
     /// would.
     ///
     /// `timeout` seconds bounds the shutdown half alone. A guest still up when
@@ -220,13 +213,9 @@ protocol VMCommanding: AnyObject {
     /// is not started again; `nil` waits as long as the guest takes.
     ///
     /// Another active VM sharing the machine identity or the MAC address is
-    /// asked about before the guest goes down, as
-    /// ``start(_:recovery:consent:macAddressRemedy:)`` asks; `consent` and
-    /// `macAddressRemedy` carry the answers to the boot.
-    func restart(
-        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent,
-        macAddressRemedy: MACAddressRemedy?
-    ) async throws
+    /// refused before the guest goes down, as ``start(_:recovery:consent:)``
+    /// refuses it; `consent` carries the answer to the boot.
+    func restart(_ selector: VMSelector, timeout: TimeInterval?, consent: Consent) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
@@ -256,12 +245,11 @@ protocol VMCommanding: AnyObject {
 
     /// Returns the VM to a snapshot.
     ///
-    /// A revert that resumes asks about a MAC address as
-    /// ``start(_:recovery:consent:macAddressRemedy:)`` does.
-    func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, consent: Consent,
-        macAddressRemedy: MACAddressRemedy?
-    ) async throws
+    /// A revert that resumes refuses a MAC address another active VM uses on
+    /// the snapshot's network with ``CommandError/stepRequired(_:)`` and no
+    /// route: the revert installs the snapshot's network, overwriting a change
+    /// made before it.
+    func revertToSnapshot(_ selector: VMSelector, snapshot: UUID, consent: Consent) async throws
 
     func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, consent: Consent) async throws
 
@@ -598,7 +586,7 @@ extension VMCommanding {
     func take(_ step: CommandStep) async throws {
         switch step {
         case .resume(let vm):
-            try await resume(.id(vm.id), consent: .none, macAddressRemedy: nil)
+            try await resume(.id(vm.id), consent: .none)
         case .discardSavedState(let vm):
             try await stop(.id(vm.id), disposition: .graceful, consent: Consent([.forceStop]))
         case .setConfiguration(let vm, let assignments):

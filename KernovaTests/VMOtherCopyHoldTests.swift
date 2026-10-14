@@ -174,8 +174,9 @@ struct VMOtherCopyHoldTests {
         case both
 
         /// What the second twin's start is refused on.
+        /// A shared machine identity is answered before a MAC address.
         var reason: ConflictReason {
-            self == .machineIdentity ? .machineIdentity : .macAddress
+            self == .macAddress ? .macAddress : .machineIdentity
         }
 
         var testDescription: String {

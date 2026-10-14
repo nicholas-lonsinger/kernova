@@ -146,14 +146,10 @@ final class MockVMCommanding: VMCommanding {
     private(set) var resumeSelectors: [VMSelector] = []
     /// Each resume's consent, in the order of ``resumeSelectors``.
     private(set) var resumeConsents: [Consent] = []
-    /// The MAC address remedy each bring-up verb carried, per verb, in call
-    /// order.
-    private(set) var startRemedies: [MACAddressRemedy?] = []
-    private(set) var resumeRemedies: [MACAddressRemedy?] = []
-    private(set) var restartRemedies: [MACAddressRemedy?] = []
-    private(set) var revertRemedies: [MACAddressRemedy?] = []
-    /// What a bring-up carrying no remedy refuses with, when set.
-    var macAddressRemedyPrompt: MACAddressRemedyPrompt?
+    /// What every bring-up verb refuses with while set — until a step lands
+    /// (a stop or a configuration write), as the core's MAC address refusal
+    /// stands until the VM's network changes.
+    var bringUpStepRequirement: StepRequirement?
     private(set) var suspendSelectors: [VMSelector] = []
     private(set) var restartCalls: [(selector: VMSelector, timeout: TimeInterval?)] = []
     /// Each restart's consent, in the order of ``restartCalls``.
@@ -425,13 +421,9 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Lifecycle
 
-    func start(
-        _ selector: VMSelector, recovery: Bool, consent: Consent,
-        macAddressRemedy: MACAddressRemedy?
-    ) async throws {
+    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
         startCalls.append((selector, recovery, consent))
-        startRemedies.append(macAddressRemedy)
-        try refuseUnremediedMACAddress(macAddressRemedy)
+        try refuseUntilStepTaken()
         if let startConsentPrompt, !consent.covers(startConsentPrompt.kind) {
             throw CommandError.confirmationRequired(startConsentPrompt)
         }
@@ -474,6 +466,7 @@ final class MockVMCommanding: VMCommanding {
     ) async throws {
         stopCalls.append((selector, disposition, consent, timeout))
         if let stopError { throw stopError }
+        bringUpStepRequirement = nil
         if let stopConsentPrompt, !consent.covers(stopConsentPrompt.kind) {
             throw CommandError.confirmationRequired(stopConsentPrompt)
         }
@@ -484,13 +477,10 @@ final class MockVMCommanding: VMCommanding {
         if let pauseError { throw pauseError }
     }
 
-    func resume(
-        _ selector: VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy?
-    ) async throws {
+    func resume(_ selector: VMSelector, consent: Consent) async throws {
         resumeSelectors.append(selector)
         resumeConsents.append(consent)
-        resumeRemedies.append(macAddressRemedy)
-        try refuseUnremediedMACAddress(macAddressRemedy)
+        try refuseUntilStepTaken()
         if let resumeConsentPrompt, !consent.covers(resumeConsentPrompt.kind) {
             throw CommandError.confirmationRequired(resumeConsentPrompt)
         }
@@ -518,14 +508,10 @@ final class MockVMCommanding: VMCommanding {
                 action: action, groupKind: group.kind, groupID: UUID(), groupName: group.name, results: [])
     }
 
-    func restart(
-        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent,
-        macAddressRemedy: MACAddressRemedy?
-    ) async throws {
+    func restart(_ selector: VMSelector, timeout: TimeInterval?, consent: Consent) async throws {
         restartCalls.append((selector, timeout))
         restartConsents.append(consent)
-        restartRemedies.append(macAddressRemedy)
-        try refuseUnremediedMACAddress(macAddressRemedy)
+        try refuseUntilStepTaken()
         if let restartConsentPrompt, !consent.covers(restartConsentPrompt.kind) {
             throw CommandError.confirmationRequired(restartConsentPrompt)
         }
@@ -565,23 +551,19 @@ final class MockVMCommanding: VMCommanding {
                 isCurrent: true, isEphemeralBaseline: false)
     }
 
-    func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, consent: Consent,
-        macAddressRemedy: MACAddressRemedy?
-    ) async throws {
+    func revertToSnapshot(_ selector: VMSelector, snapshot: UUID, consent: Consent) async throws {
         revertCalls.append((selector, snapshot, consent))
-        revertRemedies.append(macAddressRemedy)
         if let revertError { throw revertError }
         if let revertConsentPrompt, !consent.covers(revertConsentPrompt.kind) {
             throw CommandError.confirmationRequired(revertConsentPrompt)
         }
-        try refuseUnremediedMACAddress(macAddressRemedy)
+        try refuseUntilStepTaken()
     }
 
-    /// Refuses a bring-up carrying no remedy with ``macAddressRemedyPrompt``.
-    private func refuseUnremediedMACAddress(_ remedy: MACAddressRemedy?) throws {
-        guard remedy == nil, let macAddressRemedyPrompt else { return }
-        throw CommandError.macAddressRemedyRequired(macAddressRemedyPrompt)
+    /// Refuses a bring-up with ``bringUpStepRequirement`` while it is set.
+    private func refuseUntilStepTaken() throws {
+        guard let bringUpStepRequirement else { return }
+        throw CommandError.stepRequired(bringUpStepRequirement)
     }
 
     func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, consent: Consent) async throws {
@@ -862,6 +844,7 @@ final class MockVMCommanding: VMCommanding {
         if let setConfigurationConsentPrompt, !consent.covers(setConfigurationConsentPrompt.kind) {
             throw CommandError.confirmationRequired(setConfigurationConsentPrompt)
         }
+        bringUpStepRequirement = nil
         return setConfigurationAnswer ?? assignments
     }
 
