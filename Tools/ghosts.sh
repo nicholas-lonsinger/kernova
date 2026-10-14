@@ -30,9 +30,10 @@
 #     and git, holding no registration for it, never lists it again
 #   - Registered worktrees under .claude/worktrees/ that are abandoned: no
 #     live Claude Code session or subagent holds their lock, no session runs
-#     inside them, nothing is uncommitted, and their content is already on
-#     origin/main — PRs merge by squash, so a finished branch never reads as
-#     merged by ancestry
+#     inside them, nothing is uncommitted, and their HEAD is already on
+#     GitHub: its content on origin/main — PRs merge by squash, so a finished
+#     branch never reads as merged by ancestry — or the commit itself on an
+#     origin branch
 #     (Tools/lib/worktrees.sh has the criteria); one a process still uses is
 #     reported with its holders and never removed
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose

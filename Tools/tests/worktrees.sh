@@ -204,6 +204,14 @@ git -C "$ab" worktree lock --reason "$reused_reason" "$abw/reused-pid"
 # Removed with the worktree, but kept as a branch: only worktree-* is deleted.
 git -C "$ab" worktree add -q -b feature-kept "$abw/feature"
 
+# Content never on main, but the commit itself is on an origin branch (an open
+# PR's head); one commit past its push, it is not.
+git -C "$ab" worktree add -q -b worktree-pushed "$abw/pushed"
+commit_file "$abw/pushed" pushed.txt pushed
+git -C "$ab" update-ref refs/remotes/origin/feat/pushed worktree-pushed
+git -C "$ab" worktree add -q -b worktree-pushed-ahead "$abw/pushed-ahead" worktree-pushed
+commit_file "$abw/pushed-ahead" ahead.txt ahead
+
 git -C "$ab" worktree add -q --detach "$abw/live-lock"
 git -C "$ab" worktree lock --reason "$(claude_lock live-lock "$owner" "$owner_start")" "$abw/live-lock"
 # ps pads a single-digit day; the comparison must not depend on the spacing.
@@ -348,17 +356,19 @@ else
     pass
 fi
 
-abandoned_set=("$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock")
+abandoned_set=("$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pushed" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock")
 expect_abandoned "abandoned, from the primary" "$ab" "${abandoned_set[@]}"
 expect_abandoned "abandoned, from a linked worktree" "$abw/dirty" "${abandoned_set[@]}"
 # The checkout the layout is read from is never abandoned: removing it would
 # delete the script reading it.
 expect_abandoned "abandoned, from an abandoned worktree" "$abw/detached" \
-    "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock"
+    "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pushed" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock"
 
-# A default_ref that does not resolve keeps everything.
+# A default_ref that does not resolve vouches for no content: what stays
+# abandoned is what an origin branch contains — feat/pushed descends from main.
 git -C "$ab" update-ref -d "$default_ref"
-expect_abandoned "no origin/main" "$ab"
+expect_abandoned "no origin/main" "$ab" \
+    "$abw/detached" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pushed" "$abw/reused-pid" "$abw/stale-lock"
 
 
 # The fixture's Trash: dispose moves a worktree here, keeping everything in it.
@@ -394,6 +404,8 @@ git -C "$ab" update-ref "$default_ref" main
 report=$(report_output 0)
 check "with origin/main: report" "$(printf '%s\n' "$report" | sed -n '1p')" \
     "ghost: Abandoned worktree (clean, content on origin/main): $abw/detached"
+check "pushed: report" "$(printf '%s\n' "$report" | grep -F "$abw/pushed")" \
+    "ghost: Abandoned worktree (clean, HEAD on origin/feat/pushed): $abw/pushed"
 
 # The process working in `held` is named, and the worktree is not removable.
 check "in use: report" "$(printf '%s\n' "$report" | grep -A2 -F "$abw/held")" \
@@ -449,6 +461,7 @@ expect_removed "detached at main" "$abw/detached" ''
 expect_removed "stale claude lock" "$abw/stale-lock" worktree-stale-lock
 expect_removed "squash-merged, then edited on main" "$abw/edited-after" worktree-edited-after
 expect_removed "non-worktree branch" "$abw/feature" ''
+expect_removed "pushed" "$abw/pushed" worktree-pushed
 if git -C "$ab" rev-parse -q --verify refs/heads/feature-kept >/dev/null; then
     pass
 else

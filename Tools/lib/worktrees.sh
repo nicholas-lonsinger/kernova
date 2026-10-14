@@ -85,8 +85,9 @@ worktree_field() {
 #
 # A registered worktree directly under worktrees_root is abandoned when no live
 # Claude Code session owns it — none holds its lock and none runs inside it —,
-# it holds no uncommitted work, and its HEAD's content is already on
-# default_ref. Every answer these checks cannot reach reads as "keep". Whether
+# it holds no uncommitted work, and its HEAD is already on the remote: its
+# content on default_ref, or the commit itself on one of the remote's branches.
+# Every answer these checks cannot reach reads as "keep". Whether
 # any other process still uses it is asked separately (holders.sh), so a held
 # worktree can be reported with its holders.
 
@@ -188,6 +189,16 @@ merge_changes_nothing() {
     [ "${merged%%$'\n'*}" = "$tree" ]
 }
 
+# remote_branch_holding <commit> — the first of default_ref's remote's branches
+# whose remote-tracking ref contains <commit>, as `origin/<name>`; returns 1
+# when none does. The refs are as of the last fetch.
+remote_branch_holding() {
+    local ref
+    ref=$(git -C "$main_root" for-each-ref --contains "$1" --count=1 --format='%(refname)' "${default_ref%/*}" 2>/dev/null) || return 1
+    [ -n "$ref" ] || return 1
+    printf '%s' "${ref#refs/remotes/}"
+}
+
 # worktree_unhidden <worktree> — no index entry marked skip-worktree or
 # assume-unchanged, and no sparse checkout: edits behind either are invisible
 # to `git status`.
@@ -202,11 +213,13 @@ worktree_unhidden() {
 # worktree_abandoned <worktree> <own> — never the primary checkout, <own> (the
 # checkout running the scan), or anything not directly under worktrees_root.
 # Sets abandoned_stale_lock to the stale Claude Code lock it looked past, or
-# '', and abandoned_head to the commit whose content it verified.
+# '', abandoned_head to the commit it verified, and abandoned_where to how the
+# remote holds it.
 worktree_abandoned() {
-    local wt=$1 own=$2 reason head
+    local wt=$1 own=$2 reason head branch
     abandoned_stale_lock=''
     abandoned_head=''
+    abandoned_where=''
     [ -n "$worktrees_root" ] && [ -n "$own" ] && [ -d "$wt" ] || return 1
     [ "$wt" -ef "$main_root" ] && return 1
     [ "$wt" -ef "$own" ] && return 1
@@ -217,7 +230,12 @@ worktree_abandoned() {
     fi
     worktree_clean "$wt" && worktree_unhidden "$wt" || return 1
     head=$(git -C "$wt" rev-parse --verify -q HEAD) || return 1
-    content_on_default "$head" || return 1
+    if content_on_default "$head"; then
+        abandoned_where="content on ${default_ref#refs/remotes/}"
+    else
+        branch=$(remote_branch_holding "$head") || return 1
+        abandoned_where="HEAD on $branch"
+    fi
     abandoned_head=$head
 }
 
@@ -236,19 +254,26 @@ claude_session_in() {
 }
 
 # abandoned_worktrees <own> — sets abandoned to the registered worktrees that
-# are abandoned. When any worktree passes worktree_abandoned, it takes the
-# holders snapshot that rules out a running session, and leaves it for the
-# caller's holder queries.
+# are abandoned, and abandoned_wheres to each one's abandoned_where. When any
+# worktree passes worktree_abandoned, it takes the holders snapshot that rules
+# out a running session, and leaves it for the caller's holder queries.
 abandoned_worktrees() {
-    local wt candidates=()
+    local wt i candidates=() wheres=()
     abandoned=()
+    abandoned_wheres=()
     while IFS= read -r wt; do
-        [ -n "$wt" ] && worktree_abandoned "$wt" "$1" && candidates+=("$wt")
+        if [ -n "$wt" ] && worktree_abandoned "$wt" "$1"; then
+            candidates+=("$wt")
+            wheres+=("$abandoned_where")
+        fi
     done <<<"$worktree_paths"
     [ "${#candidates[@]}" -gt 0 ] || return 0
     refresh_holders "$worktrees_root"
-    for wt in "${candidates[@]}"; do
-        claude_session_in "$wt" || abandoned+=("$wt")
+    for i in "${!candidates[@]}"; do
+        if ! claude_session_in "${candidates[$i]}"; then
+            abandoned+=("${candidates[$i]}")
+            abandoned_wheres+=("${wheres[$i]}")
+        fi
     done
 }
 
@@ -279,7 +304,7 @@ worktree_admin_dir() {
 # caller's pass/warn/ghost/fixed/detail/pretty_path. Without default_ref there
 # is nothing to judge content against, so it warns and names nothing.
 report_abandoned_worktrees() {
-    local checkout=$1 fix=$2 holders_of=$3 dispose=$4 own wt held line stopped=0 abandoned
+    local checkout=$1 fix=$2 holders_of=$3 dispose=$4 own wt i held line stopped=0 abandoned abandoned_wheres
     if ! own=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || [ -z "$own" ] ||
         ! read_worktree_layout "$checkout"; then
         warn 'Skipped the abandoned-worktree check: `git worktree list` could not be read'
@@ -294,7 +319,8 @@ report_abandoned_worktrees() {
         pass 'No abandoned worktrees under .claude/worktrees/'
         return 0
     fi
-    for wt in "${abandoned[@]}"; do
+    for i in "${!abandoned[@]}"; do
+        wt=${abandoned[$i]}
         held=$("$holders_of" "$wt")
         if [ -n "$held" ]; then
             ghost "Abandoned worktree, but in use: $(pretty_path "$wt")"
@@ -303,7 +329,7 @@ report_abandoned_worktrees() {
             done <<<"$held"
             continue
         fi
-        ghost "Abandoned worktree (clean, content on ${default_ref#refs/remotes/}): $(pretty_path "$wt")"
+        ghost "Abandoned worktree (clean, ${abandoned_wheres[$i]}): $(pretty_path "$wt")"
         [ "$fix" = 1 ] && [ "$stopped" = 0 ] || continue
         remove_abandoned_worktree "$checkout" "$own" "$wt" "$holders_of" "$dispose"
         case $? in
@@ -324,8 +350,8 @@ report_abandoned_worktrees() {
 # out of place, and deletes git's administrative directory for it — that one,
 # never a repository-wide prune. A stale Claude Code lock is lifted only for
 # the removal, and restored when the directory stays. The worktree's
-# `worktree-*` branch goes too when no other worktree has it checked out, it
-# still points where it did, and its content is on default_ref. Returns 0
+# `worktree-*` branch goes too when no other worktree has it checked out and it
+# points at the verified HEAD or its content is on default_ref. Returns 0
 # removed, 1 kept, 2 moved but its record left, 3 kept because the layout could
 # not be re-read; sets removed_branch to the deleted branch, or ''. Re-reads
 # the layout globals.
