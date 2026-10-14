@@ -13,15 +13,15 @@ import KernovaLogging
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HostAgentStatusItem")
     private static let idleIconSymbol = "macwindow"
-    /// SF Symbols draws no badged variant of `macwindow`, so the failure state
-    /// takes the badged screen glyph — a symbol the set already draws for
+    /// SF Symbols draws no badged variant of `macwindow`, so the undone-start
+    /// state takes the badged screen glyph — a symbol the set already draws for
     /// menu-bar sizes — rather than a composited badge.
-    private static let startFailureIconSymbol = "display.trianglebadge.exclamationmark"
+    private static let undoneStartIconSymbol = "display.trianglebadge.exclamationmark"
 
-    /// The glyph the status item shows, which reports a failed start no window
-    /// was there to present.
-    static func iconSymbol(hasStartFailures: Bool) -> String {
-        hasStartFailures ? startFailureIconSymbol : idleIconSymbol
+    /// The glyph the status item shows, which reports a start left undone that
+    /// no window was there to present.
+    static func iconSymbol(hasUndoneStarts: Bool) -> String {
+        hasUndoneStarts ? undoneStartIconSymbol : idleIconSymbol
     }
 
     private let statusItem: NSStatusItem
@@ -29,10 +29,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// The dropdown's VM rows, edited in place while the menu is on screen.
     private lazy var vmSection = StatusMenuVMSection(
         menu: menu, rowTarget: self, rowAction: #selector(openVMTapped(_:)))
-    /// The dropdown's failed-start line, edited in place the same way.
-    private lazy var startFailureSection = StatusMenuStartFailureSection(
-        menu: menu, target: self, action: #selector(startFailuresTapped))
-    /// The item the failed-start line sits under, so an in-place insertion has
+    /// The dropdown's undone-start line, edited in place the same way.
+    private lazy var undoneStartSection = StatusMenuUndoneStartSection(
+        menu: menu, target: self, action: #selector(undoneStartsTapped))
+    /// The item the undone-start line sits under, so an in-place insertion has
     /// an anchor while the dropdown is open.
     private var openItem: NSMenuItem?
     /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
@@ -75,9 +75,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// it alone doesn't re-run the automatic-open decision.
     private var lastAppliedReadout: ClipboardTransferReport = .idle
 
-    /// The failed-start count the icon was last drawn for, so a library change
+    /// The undone-start count the icon was last drawn for, so a library change
     /// that leaves it alone doesn't redraw the button.
-    private var lastStartFailureCount = 0
+    private var lastUndoneStartCount = 0
 
     /// When each VM's last presented refusal was raised.
     ///
@@ -120,12 +120,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 for instance in self.viewModel.instances {
                     _ = instance.clipboardTransferReport
                 }
-                _ = self.viewModel.bufferedStartFailureCount
+                _ = self.viewModel.bufferedUndoneStartCount
             },
             apply: { [weak self] in
                 guard let self else { return }
                 self.transferReportsChanged()
-                self.startFailuresChanged()
+                self.undoneStartsChanged()
                 self.syncMenuIfOpen()
                 self.presentPendingNotices()
             }
@@ -172,14 +172,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         updateTooltip()
     }
 
-    // MARK: - Failed starts
+    // MARK: - Undone starts
 
-    /// Re-draws the icon when the number of failed starts waiting for a window
+    /// Re-draws the icon when the number of undone starts waiting for a window
     /// changes — the resident app's only way to report one.
-    private func startFailuresChanged() {
-        let count = viewModel.bufferedStartFailureCount
-        guard count != lastStartFailureCount else { return }
-        lastStartFailureCount = count
+    private func undoneStartsChanged() {
+        let count = viewModel.bufferedUndoneStartCount
+        guard count != lastUndoneStartCount else { return }
+        lastUndoneStartCount = count
         setIcon()
     }
 
@@ -241,11 +241,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Icon / tooltip
 
     private func setIcon() {
-        let hasStartFailures = viewModel.bufferedStartFailureCount > 0
-        let symbol = Self.iconSymbol(hasStartFailures: hasStartFailures)
+        let hasUndoneStarts = viewModel.bufferedUndoneStartCount > 0
+        let symbol = Self.iconSymbol(hasUndoneStarts: hasUndoneStarts)
         // The glyph is the whole signal for a sighted user; the description is
         // the whole of it for VoiceOver, so it changes with the glyph.
-        let description = hasStartFailures ? "Kernova, a virtual machine failed to start" : "Kernova"
+        let description = hasUndoneStarts ? "Kernova, a virtual machine didn\u{2019}t start" : "Kernova"
         // The shared `NSImage.systemSymbol(_:…)` helper's release fallback is a
         // zero-size `NSImage()`, which renders the status-item button invisible,
         // and the status item is the only way to find or quit the headless agent.
@@ -270,7 +270,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Updates the tooltip.
     ///
-    /// A materializing paste and a failed start each append a further line
+    /// A materializing paste and an undone start each append a further line
     /// rather than replacing the running-count line, so headless users never
     /// lose the at-a-glance view of how many VMs are running.
     private func updateTooltip() {
@@ -285,10 +285,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         if let snapshot = transferProgressPresenter.snapshot {
             lines.append(ClipboardProgressFormat.summary(snapshot))
         }
-        switch viewModel.bufferedStartFailureCount {
+        switch viewModel.bufferedUndoneStartCount {
         case ..<1: break
-        case 1: lines.append("1 virtual machine failed to start")
-        case let failures: lines.append("\(failures) virtual machines failed to start")
+        case 1: lines.append("1 virtual machine didn\u{2019}t start")
+        case let undone: lines.append("\(undone) virtual machines didn\u{2019}t start")
         }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
     }
@@ -309,7 +309,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(open)
         openItem = open
 
-        startFailureSection.rebuild(count: viewModel.bufferedStartFailureCount)
+        undoneStartSection.rebuild(count: viewModel.bufferedUndoneStartCount)
 
         menu.addItem(.separator())
 
@@ -332,14 +332,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         transferProgressPresenter.menuDidClose()
     }
 
-    /// Re-syncs the dropdown's VM rows and failed-start line if it is on screen;
+    /// Re-syncs the dropdown's VM rows and undone-start line if it is on screen;
     /// a closed menu is rebuilt by `menuNeedsUpdate` when it next opens.
     private func syncMenuIfOpen() {
         guard isMenuOpen else { return }
         vmSection.sync(to: currentRows())
         if let openItem {
-            startFailureSection.sync(
-                to: viewModel.bufferedStartFailureCount, after: openItem)
+            undoneStartSection.sync(
+                to: viewModel.bufferedUndoneStartCount, after: openItem)
         }
     }
 
@@ -347,9 +347,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openTapped() { onOpen(nil) }
 
-    /// Opens the library, which attaches the presenter the buffered failures
-    /// are waiting for — the alerts they carry follow from that.
-    @objc private func startFailuresTapped() { onOpen(nil) }
+    /// Opens the library, which attaches the presenter the buffered undone
+    /// starts are waiting for — the alerts they carry follow from that.
+    @objc private func undoneStartsTapped() { onOpen(nil) }
 
     @objc private func openVMTapped(_ sender: NSMenuItem) {
         onOpen(sender.representedObject as? UUID)

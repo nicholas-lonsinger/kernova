@@ -297,6 +297,24 @@ struct VMOtherCopyHoldTests {
         #expect(instance.activity.heldByAnotherCopy)
     }
 
+    @Test("The launch load reads each bundle once, and answers the VMs it read marked to start automatically")
+    func launchLoadReadsOnceAndAnswersMarked() async throws {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let marked = VMConfiguration(name: "Marked", guestOS: .linux, bootMode: .efi)
+        let unmarked = VMConfiguration(name: "Unmarked", guestOS: .linux, bootMode: .efi)
+        let markedURL = try storage.bundleURL(for: marked)
+        storage.bundles[markedURL] = marked
+        storage.bundles[try storage.bundleURL(for: unmarked)] = unmarked
+        storage.files.setHostState(VMHostState(startsAutomaticallyOnLaunch: true), at: markedURL)
+        let reads = storage.files.readCount(of: VMBundleLayout.configRelativePath)
+
+        let answered = await library.startLibrary()
+
+        #expect(answered == [marked.id])
+        #expect(storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads + 2)
+    }
+
     @Test("A reconcile pass marks a VM another copy holds, and clears the mark once it lets go")
     func reconcileMarksAndClears() {
         let storage = MockVMStorageService()

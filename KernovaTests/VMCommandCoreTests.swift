@@ -1294,15 +1294,15 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 1)
     }
 
-    @Test("A start at launch is refused beside a shared machine ID, with nobody there to confirm")
-    func duplicateMachineIDRefusesAStandingStart() async throws {
+    @Test("A start nobody can confirm is refused beside a shared machine ID")
+    func duplicateMachineIDRefusesAnUnaskableStart() async throws {
         let harness = makeHarness()
         preferences.allowsDuplicateMachineIDOverride = true
         let (live, twin) = machineIdentityTwins(in: harness)
 
         do {
-            try harness.core.startNow(twin, policy: .standing)
-            Issue.record("the standing start was admitted")
+            try harness.core.startNow(twin, policy: .command(.unavailable))
+            Issue.record("the unaskable start was admitted")
         } catch let refused as VMAdmissionRefusal {
             guard case .identityConflict(let conflict) = refused.refusal else {
                 Issue.record("refused as \(refused.refusal)")
@@ -2744,6 +2744,84 @@ struct VMCommandCoreTests {
             return
         }
         #expect(message == "The disk went away")
+    }
+
+    /// A restore that fails rests the VM back on its saved state, so its status
+    /// carries nothing the stream could report it from.
+    @Test("A direct Start whose failure rests the VM where it began reports the failure, once")
+    func directStartFailureIsReportedOnce() async throws {
+        let harness = makeHarness()
+        harness.virtualization.restoreError = VirtualizationError.restoreFailed(
+            underlying: NSError(domain: "test", code: 1))
+        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let events = harness.core.events()
+
+        let thrown = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) })
+
+        #expect(instance.status == .suspended)
+        let failures = try await failuresReported(on: events, renaming: instance, in: harness.core)
+        #expect(failures.map(\.id) == [instance.id])
+        #expect(failures.map(\.message) == [thrown.message])
+    }
+
+    @Test("A Start failing into the error status, from rest or from the error status, reports one failure")
+    func startFailingIntoErrorIsReportedOnce() async throws {
+        for phase: VMLifecyclePhase in [.stopped, .failed(message: "An earlier failure")] {
+            let harness = makeHarness()
+            harness.virtualization.startError = VirtualizationError.noVirtualMachine
+            let instance = makeInstance(in: harness, name: "Broken", phase: phase)
+            let events = harness.core.events()
+
+            _ = await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) }
+
+            #expect(instance.status == .error)
+            let failures = try await failuresReported(on: events, renaming: instance, in: harness.core)
+            #expect(failures.map(\.id) == [instance.id], "from \(phase)")
+        }
+    }
+
+    @Test("A bring-up two Starts joined reports its failure once")
+    func joinedStartFailureIsReportedOnce() async throws {
+        let harness = makeSuspendingHarness()
+        let instance = makeInstance(in: harness, name: "Joined")
+        harness.virtualization.startError = makeVMLimitExceededError()
+        let events = harness.core.events()
+
+        let first = Task { @MainActor in
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        await harness.virtualization.waitUntilSuspended()
+        Task { @MainActor in harness.virtualization.resumeSuspended() }
+        _ = await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) }
+        _ = await commandError { try await first.value }
+
+        #expect(instance.status == .stopped)
+        #expect(harness.virtualization.startCallCount == 1)
+        let failures = try await failuresReported(on: events, renaming: instance, in: harness.core)
+        #expect(failures.map(\.id) == [instance.id])
+    }
+
+    /// The failures `events` carried, read up to a rename of `instance` made
+    /// now — so a failure reported after the one expected would still be
+    /// counted.
+    private func failuresReported(
+        on events: AsyncStream<[VMLibraryEvent]>, renaming instance: VMInstance, in core: VMCommandCore
+    ) async throws -> [(id: UUID, message: String)] {
+        let sentinel = "Read past the failure"
+        try core.rename(.id(instance.id), to: sentinel)
+        var failures: [(id: UUID, message: String)] = []
+        reading: for await batch in events {
+            for event in batch {
+                switch event {
+                case .renamed(_, _, let to) where to == sentinel: break reading
+                case .failure(let id, _, let message): failures.append((id, message))
+                default: continue
+                }
+            }
+        }
+        return failures
     }
 
     @Test("A clone reports the preparing wire status until its copy settles")

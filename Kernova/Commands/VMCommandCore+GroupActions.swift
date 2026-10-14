@@ -2,9 +2,10 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Start, suspend or stop every VM in a smart group or a folder — the one
-/// executor behind the group header menus, the `kernova` lifecycle verbs given
-/// a group, and the Shortcuts group action.
+/// Start, suspend or stop every VM in a set — the one executor behind the
+/// group header menus, the `kernova` lifecycle verbs given a group, the
+/// Shortcuts group action, and the launch pass that starts the VMs marked to
+/// start automatically.
 extension VMCommandCore {
     /// How many of the VMs in `group` each action acts on — what the actions'
     /// menu items count, by the rule the actions themselves act by
@@ -30,11 +31,96 @@ extension VMCommandCore {
     }
 
     /// Takes `action` on each VM in `group`, one after another, and reports
-    /// what it did to each.
+    /// what it did to each — by ``take(_:on:)``, passing over a VM that other
+    /// work holds at its turn.
     ///
-    /// One at a time, as the launch's auto-start is: each guest commits its
-    /// memory as it comes up, and the platform's cap on running macOS guests is
-    /// met by the start that exceeds it, which then fails on its own.
+    /// The members are the ones the group holds once the library has caught
+    /// up, when the action begins. A smart group's members stay those: its
+    /// filter reads the state the action itself changes. A folder's are
+    /// checked against the folder at each turn, and one taken out of it is
+    /// passed over as ``VMGroupActionOutcome/PassOver/leftGroup``.
+    ///
+    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
+    ///   library does not list, before any VM is acted on.
+    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
+        library.refreshFromOtherCopies(reportingUnreadable: false)
+        let resolved = try self.group(group, verb: action.verb)
+        let set = MemberSet(
+            members: entries(in: resolved.selection), description: "every VM in '\(resolved.name)'",
+            holds: { [weak self] entry in self?.isStill(entry.id, in: resolved) ?? false })
+        let results = await take(Run(action), on: set)
+        return VMGroupActionReport(
+            action: action, groupKind: resolved.kind, groupID: resolved.id, groupName: resolved.name,
+            results: results)
+    }
+
+    /// Starts each VM in `marked` — those the launch's library read found
+    /// marked to start automatically (``VMHostState/startsAutomaticallyOnLaunch``,
+    /// ``VMLibrary/loadVMs()``) — in library order, and reports what it did to
+    /// each: the launch pass, by ``take(_:on:)``.
+    ///
+    /// The members are what that read found, so nothing is read again before
+    /// the turns: each turn re-reads its own VM, and that read decides it. A VM
+    /// another copy of Kernova marked after the read is not one of them.
+    ///
+    /// Unlike a group action, it waits out a VM that other work holds at its
+    /// turn — a snapshot a relaunching `kernova` command is taking, say — and
+    /// decides it in the step that frees it. A VM no longer marked by then is
+    /// passed over as ``VMGroupActionOutcome/PassOver/leftGroup``.
+    func startVMsMarkedToStartAutomatically(_ marked: Set<UUID>) async -> [VMGroupActionResult] {
+        let set = MemberSet(
+            members: library.instances.filter { marked.contains($0.id) }.map(AddressableEntry.vm),
+            description: "every VM marked to start automatically",
+            holds: { entry in
+                if case .vm(let instance) = entry { instance.hostState.startsAutomaticallyOnLaunch } else { false }
+            })
+        return await take(.start(waitsOutBusyVMs: true), on: set)
+    }
+
+    /// The VMs one run of the executor takes, fixed when it begins, and the
+    /// rule that keeps a member in the set until its turn.
+    private struct MemberSet {
+        let members: [AddressableEntry]
+        /// What the log calls the set.
+        let description: String
+        /// Whether `entry`, re-read at its turn, is still in the set.
+        let holds: @MainActor (AddressableEntry) -> Bool
+    }
+
+    /// What one run of the executor does to each member.
+    private enum Run {
+        /// Brings each VM up — deciding it at its turn and passing over one
+        /// other work holds then, or, when `waitsOutBusyVMs`, deciding it once
+        /// that work ends.
+        case start(waitsOutBusyVMs: Bool)
+        case suspend
+        case stop
+
+        /// A group's action, which passes over a VM other work holds.
+        init(_ action: VMGroupAction) {
+            switch action {
+            case .start: self = .start(waitsOutBusyVMs: false)
+            case .suspend: self = .suspend
+            case .stop: self = .stop
+            }
+        }
+
+        var action: VMGroupAction {
+            switch self {
+            case .start: .start
+            case .suspend: .suspend
+            case .stop: .stop
+            }
+        }
+    }
+
+    /// Takes `run` on each VM in `set`, one after another, and reports what it
+    /// did to each.
+    ///
+    /// One at a time: each guest commits its memory as it comes up, the
+    /// platform's cap on running macOS guests is met by the start that exceeds
+    /// it, which then fails on its own, and the machine-identity check every
+    /// bring-up passes counts a VM still coming up as live.
     ///
     /// Asks nobody and puts nothing in front of the user: each bring-up is
     /// ``StartPolicy/group``, which begins no guest setup and readies its
@@ -43,69 +129,69 @@ extension VMCommandCore {
     /// in the result rather than raised — so the caller owes the user one
     /// account of everything left undone.
     ///
-    /// The members are the ones the group holds once the library has caught
-    /// up with what another copy of Kernova holds and wrote, when the action
-    /// begins; one added later is not acted on. A smart group's members stay
-    /// those: its filter reads the state the action itself changes. Each
-    /// member is looked up again when its turn comes, re-read from its bundle,
-    /// and decided as it stands then: an arrival that has become a VM is acted
-    /// on, a VM the action stopped concerning is passed over, and one that has
-    /// left the library is passed over as
-    /// ``VMGroupActionOutcome/PassOver/removed`` — or, taken out of a folder,
-    /// as ``VMGroupActionOutcome/PassOver/leftGroup``.
+    /// Each member is looked up again when its turn comes, re-read from its
+    /// bundle, and decided as it stands then: an arrival that has become a VM
+    /// is acted on, a VM the action stopped concerning is passed over, one
+    /// that has left the set is passed over as
+    /// ``VMGroupActionOutcome/PassOver/leftGroup``, and one that has left the
+    /// library as ``VMGroupActionOutcome/PassOver/removed``.
     ///
     /// A config file a read finds unreadable is recorded for the library's
     /// next report rather than brought on screen mid-action.
     ///
-    /// Cancelling the calling task — a client hanging up — stops the action
+    /// Cancelling the calling task — a client hanging up — stops the run
     /// between VMs: the VM in hand finishes, and every later one is reported as
     /// passed over, untouched.
-    ///
-    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
-    ///   library does not list, before any VM is acted on.
-    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
-        library.refreshFromOtherCopies(reportingUnreadable: false)
-        let resolved = try self.group(group, verb: action.verb)
-        let members = entries(in: resolved.selection)
+    private func take(_ run: Run, on set: MemberSet) async -> [VMGroupActionResult] {
+        let action = run.action
+        // A run over no VM moves nothing, so its records are routine progress.
+        let level: KernovaLogLevel = set.members.isEmpty ? .info : .notice
         #log(
-            Self.logger, .notice,
-            "\(action.rawValue, privacy: .public) on every VM in '\(resolved.name, privacy: .public)': \(members.count, privacy: .public) VM(s)"
+            Self.logger, level,
+            "\(action.rawValue, privacy: .public) on \(set.description, privacy: .public): \(set.members.count, privacy: .public) VM(s)"
         )
         var results: [VMGroupActionResult] = []
-        for member in members {
+        for member in set.members {
             guard !Task.isCancelled else {
                 let current = library.entries.first { $0.id == member.id }?.addressable ?? member
                 results.append(VMGroupActionResult(vm: summary(current), outcome: .passedOver(reason: .cancelled)))
                 continue
             }
-            results.append(await result(of: action, on: member, in: resolved))
+            results.append(await result(of: run, on: member, in: set))
         }
-        let report = VMGroupActionReport(
-            action: action, groupKind: resolved.kind, groupID: resolved.id, groupName: resolved.name,
-            results: results)
-        let undone = report.undone.count
         #log(
-            Self.logger, .notice,
-            "\(action.rawValue, privacy: .public) on '\(resolved.name, privacy: .public)' finished\(Task.isCancelled ? " after a cancel" : "", privacy: .public) — \(undone, privacy: .public) of \(results.count, privacy: .public) VM(s) undone"
+            Self.logger, level,
+            "\(action.rawValue, privacy: .public) on \(set.description, privacy: .public) finished\(Task.isCancelled ? " after a cancel" : "", privacy: .public) — \(results.undone.count, privacy: .public) of \(results.count, privacy: .public) VM(s) undone"
         )
-        return report
+        return results
     }
 
-    /// What `action` does to `member` of `group`, looked up and decided now.
+    /// What `run` does to `member` of `set`, looked up and decided at its turn.
     private func result(
-        of action: VMGroupAction, on member: AddressableEntry, in group: VMResolvedGroup
+        of run: Run, on member: AddressableEntry, in set: MemberSet
     ) async -> VMGroupActionResult {
         guard let entry = library.entries.first(where: { $0.id == member.id })?.addressable else {
             return VMGroupActionResult(vm: summary(member), outcome: .passedOver(reason: .removed))
         }
-        if case .vm(let instance) = entry { library.refreshFromOtherCopies(of: instance) }
-        guard isStill(member.id, in: group) else {
-            return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .leftGroup))
-        }
         guard case .vm(let instance) = entry else {
-            return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .state))
+            let reason: VMGroupActionOutcome.PassOver = set.holds(entry) ? .state : .leftGroup
+            return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: reason))
         }
-        let outcome = await self.outcome(of: action, on: instance)
+        let outcome: VMGroupActionOutcome
+        switch run {
+        case .start(waitsOutBusyVMs: true):
+            outcome = await startOnceFree(instance, in: set)
+        case .start(waitsOutBusyVMs: false):
+            let launched = VMOutcome()
+            let turn = takeStartTurn(on: instance, in: set, resolving: launched)
+            outcome = report(turn, ended: await launched.ended(), on: instance)
+        case .suspend:
+            outcome = await settle(.suspend, on: instance, in: set) { try await self.suspend(instance) }
+        case .stop:
+            outcome = await settle(.stop, on: instance, in: set) {
+                try await self.stop(instance, disposition: .graceful, consent: .none)
+            }
+        }
         return VMGroupActionResult(vm: summary(instance), outcome: outcome)
     }
 
@@ -139,34 +225,121 @@ extension VMCommandCore {
         }
     }
 
-    /// What `action` does to `instance`, decided now: the step its standing
-    /// names, run as a ``StartPolicy/group`` bring-up or the plain suspend or
-    /// graceful stop, with no consent.
-    private func outcome(of action: VMGroupAction, on instance: VMInstance) async -> VMGroupActionOutcome {
-        let step: VMCapabilityCatalog.GroupActionStep
-        switch turn(of: action, on: instance) {
-        case .passesOver(let reason):
+    /// Where `instance` stands for `action` as a member of `set`, re-read from
+    /// its bundle now.
+    private func turn(of action: VMGroupAction, on instance: VMInstance, in set: MemberSet) -> Turn {
+        library.refreshFromOtherCopies(of: instance)
+        guard set.holds(.vm(instance)) else { return .passesOver(.leftGroup) }
+        return turn(of: action, on: instance)
+    }
+
+    /// What a suspend or a stop, `action`, does to `instance`, decided now:
+    /// `act` — the plain suspend or graceful stop, with no consent — when the
+    /// turn takes the VM, which it does by the action's one step.
+    private func settle(
+        _ action: VMGroupAction, on instance: VMInstance, in set: MemberSet,
+        _ act: () async throws -> Void
+    ) async -> VMGroupActionOutcome {
+        if case .passesOver(let reason) = turn(of: action, on: instance, in: set) {
             return .passedOver(reason: reason)
+        }
+        do {
+            try await act()
+            return .done(verb: action.verb)
+        } catch {
+            return outcome(of: error, takenBy: action.verb, on: instance)
+        }
+    }
+
+    /// Starts `instance` once no other work holds it: a follow-up on the VM,
+    /// so its turn is decided, and its bring-up launched, in the step that
+    /// frees it, before anything else can be decided against it — or at once
+    /// on a VM nothing holds.
+    ///
+    /// The follow-up names no request, so nothing joins it before its turn has
+    /// decided a start: a start queued behind it is decided on its own once
+    /// this turn has passed the VM over or brought it up. A bring-up holding
+    /// the VM when the turn comes is waited out, not joined — so one that
+    /// fails leaves the turn to decide, and try, the start afresh.
+    private func startOnceFree(_ instance: VMInstance, in set: MemberSet) async -> VMGroupActionOutcome {
+        // A start until the drained turn decides otherwise: a follow-up that
+        // ends before its turn is reported as the start it was.
+        var turn = StartTurn.takes(verb: .start)
+        let followUp = VMFollowUp(scope: .vm, rank: .ordinary) { [weak self, weak instance] outcome in
+            guard let self, let instance else { throw CancellationError() }
+            turn = self.takeStartTurn(on: instance, in: set, resolving: outcome)
+        }
+        instance.activity.follow(followUp)
+        let ended = await followUp.outcome.ended()
+        return report(turn, ended: ended, on: instance)
+    }
+
+    /// What a start's turn decided for a VM.
+    private enum StartTurn {
+        /// The turn passed the VM over, for `reason`.
+        case passesOver(VMGroupActionOutcome.PassOver)
+        /// The turn took the VM by `verb`'s bring-up.
+        case takes(verb: VMVerb)
+    }
+
+    /// Takes a start's turn on `instance` as a member of `set`: decides it now
+    /// and, when the turn takes the VM, launches the ``StartPolicy/group``
+    /// bring-up its standing names — its Resume or its Start.
+    ///
+    /// `outcome` resolves as the turn ends: with the bring-up's end, with the
+    /// refusal its launch raised, or at once when the turn passes the VM over.
+    private func takeStartTurn(
+        on instance: VMInstance, in set: MemberSet, resolving outcome: VMOutcome
+    ) -> StartTurn {
+        let step: VMCapabilityCatalog.GroupActionStep
+        switch turn(of: .start, on: instance, in: set) {
+        case .passesOver(let reason):
+            outcome.resolve(.success(()))
+            return .passesOver(reason)
         case .acts(let acting):
             step = acting
         }
         do {
-            switch step {
-            case .start:
-                try await startNow(instance, recovery: false, policy: .group).value()
-            case .resume:
-                try await resume(instance, policy: .group)
-            case .suspend:
-                try await suspend(instance)
-            case .stop:
-                try await stop(instance, disposition: .graceful, consent: .none)
+            if step == .resume {
+                try launchResume(instance, policy: .group, resolving: outcome)
+            } else {
+                try startNow(instance, recovery: false, policy: .group, resolving: outcome)
             }
-            return .done(verb: step.verb)
-        } catch is UnattendedGuestSetupRefusal {
-            return .passedOver(reason: .guestSetup)
         } catch {
-            return Self.outcome(of: bringUpFailure(error, verb: step.verb, on: instance), takenBy: step.verb)
+            outcome.resolve(.failure(error))
         }
+        return .takes(verb: step.verb)
+    }
+
+    /// What a run reports for `instance` once the start turn `turn` decided
+    /// has `ended`.
+    private func report(
+        _ turn: StartTurn, ended: Result<Void, any Error>, on instance: VMInstance
+    ) -> VMGroupActionOutcome {
+        switch (turn, ended) {
+        case (.passesOver(let reason), _):
+            .passedOver(reason: reason)
+        case (.takes(let verb), .success):
+            .done(verb: verb)
+        case (.takes(let verb), .failure(let error)):
+            outcome(of: error, takenBy: verb, on: instance)
+        }
+    }
+
+    /// What a run reports for `instance`, whose verb `verb` ended with
+    /// `error`.
+    ///
+    /// A start that would begin a guest setup, and a VM that left the library
+    /// while its turn waited, are passed over; anything else is read by
+    /// ``outcome(of:takenBy:)``.
+    private func outcome(
+        of error: any Error, takenBy verb: VMVerb, on instance: VMInstance
+    ) -> VMGroupActionOutcome {
+        if error is UnattendedGuestSetupRefusal { return .passedOver(reason: .guestSetup) }
+        if let refused = error as? VMAdmissionRefusal, refused.refusal == .removed {
+            return .passedOver(reason: .removed)
+        }
+        return Self.outcome(of: bringUpFailure(error, verb: verb, on: instance), takenBy: verb)
     }
 
     /// What a group action reports for a VM whose verb `verb` refused or

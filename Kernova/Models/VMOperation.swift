@@ -333,15 +333,15 @@ final class VMOutcome: Sendable, Equatable {
         other.resolve(result)
     }
 
+    /// Waits for the operation to end and answers how it did.
+    func ended() async -> Result<Void, any Error> {
+        if let result { return result }
+        return await withCheckedContinuation { waiters.append($0) }
+    }
+
     /// Waits for the operation to end and rethrows how it failed.
     func value() async throws {
-        let result: Result<Void, any Error>
-        if let resolved = self.result {
-            result = resolved
-        } else {
-            result = await withCheckedContinuation { waiters.append($0) }
-        }
-        try result.get()
+        try await ended().get()
     }
 
     nonisolated static func == (lhs: VMOutcome, rhs: VMOutcome) -> Bool { lhs === rhs }

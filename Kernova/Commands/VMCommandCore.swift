@@ -162,6 +162,8 @@ final class VMCommandCore: VMCommanding {
         let status: VMStatus?
         let agentStatus: AgentStatus
         let errorMessage: String?
+        /// `nil` for an arrival, and for a VM no Start or Resume has failed on.
+        let startFailure: VMStartFailure?
 
         /// The status as it crosses the wire.
         var wireStatus: String { status?.rawValue ?? VMStatus.preparingWireName }
@@ -737,6 +739,7 @@ final class VMCommandCore: VMCommanding {
             _ = instance.status
             _ = instance.errorMessage
             _ = instance.agentStatus
+            _ = instance.activity.lastStartFailure
         }
     }
 
@@ -749,10 +752,12 @@ final class VMCommandCore: VMCommanding {
                     name: instance.name,
                     status: instance.status,
                     agentStatus: instance.agentStatus,
-                    errorMessage: instance.errorMessage)
+                    errorMessage: instance.errorMessage,
+                    startFailure: instance.activity.lastStartFailure)
             case .arriving(let arrival):
                 states[arrival.id] = ObservedState(
-                    name: arrival.name, status: nil, agentStatus: .waiting, errorMessage: nil)
+                    name: arrival.name, status: nil, agentStatus: .waiting, errorMessage: nil,
+                    startFailure: nil)
             }
         }
         return states
@@ -766,6 +771,10 @@ final class VMCommandCore: VMCommanding {
     /// The cost is coalescing — a VM that passed through `.starting` between
     /// two passes reports only where it ended up. An arrival's adoption reads
     /// as a status change from ``VMStatus/preparingWireName``.
+    ///
+    /// A VM fails at most once per pass: by a Start or Resume that failed
+    /// (``VMActivity/lastStartFailure``), wherever it rested the VM, or else by
+    /// entering the error status.
     private func emitLibraryChanges() {
         let current = currentObservedStates()
         var batch: [VMLibraryEvent] = []
@@ -780,13 +789,22 @@ final class VMCommandCore: VMCommanding {
                 batch.append(
                     .statusChanged(
                         id: id, name: now.name, from: before.wireStatus, to: now.wireStatus))
-                if now.status == .error {
-                    batch.append(
-                        .failure(
-                            id: id, name: now.name,
-                            message: now.errorMessage
-                                ?? "The virtual machine stopped with an error."))
+            }
+            let startFailure =
+                if case .vm(let instance) = entry, let failure = now.startFailure,
+                    failure != before.startFailure
+                {
+                    reportedFailure(of: failure, on: instance)
+                } else {
+                    CommandError?.none
                 }
+            if let startFailure {
+                batch.append(.failure(id: id, name: now.name, message: startFailure.message))
+            } else if before.status != now.status, now.status == .error {
+                batch.append(
+                    .failure(
+                        id: id, name: now.name,
+                        message: now.errorMessage ?? "The virtual machine stopped with an error."))
             }
             if before.agentStatus != now.agentStatus {
                 batch.append(
@@ -820,25 +838,21 @@ final class VMCommandCore: VMCommanding {
         onFailure?(failure, instance)
     }
 
-    /// Reports work the app ran with nobody awaiting it, putting the failure on
-    /// the event stream when the model it left behind cannot.
-    ///
-    /// ``emitLibraryChanges()`` reports a failure for a VM whose new status is
-    /// the error status, reading the message off the phase. A transient failure
-    /// rests the VM where the attempt began instead, carrying no message
-    /// (``VMOperationKind/restAfterFailure(_:)``), so the diff has nothing to
-    /// report and a subscriber would see only a status change back to where it
-    /// started. One that does rest in the error
-    /// status is left to the diff, so either way exactly one failure is
-    /// reported. A refusal raised before the work ran gets none: nothing about
-    /// the VM moved, and a caller waiting on a state is still owed its wait.
-    func reportUnattendedFailure(_ failure: CommandError, on instance: VMInstance) {
-        if failure.isOperationFailure, instance.status != .error {
-            broadcaster.emit([
-                .failure(id: instance.instanceID, name: instance.name, message: failure.message)
-            ])
+    /// What the event stream reports for `failure`, a Start or Resume that ran
+    /// on `instance` and failed — in the words its verb's own refusal uses
+    /// (``bringUpFailure(_:verb:on:)``), unrecorded — or `nil` for a refusal,
+    /// after which nothing about the VM moved.
+    private func reportedFailure(of failure: VMStartFailure, on instance: VMInstance) -> CommandError? {
+        let reported: CommandError
+        switch failure.error {
+        case is VMAdmissionRefusal:
+            return nil
+        case let command as CommandError:
+            reported = command
+        default:
+            reported = ranAndFailed(failure.error, verb: failure.verb, on: instance)
         }
-        report(failure, on: instance)
+        return reported.isOperationFailure ? reported : nil
     }
 
     /// Puts an arrival's failure on the event stream, waited or not, while its

@@ -14,12 +14,15 @@ extension VMLibrary {
     /// library read there sits between process start and the first window. The
     /// watcher starts only after the read applies — its callback re-reads every
     /// bundle on the main actor, which must not race the initial load.
-    func startLibrary() async {
+    ///
+    /// Answers what ``loadVMs()`` answers.
+    @discardableResult
+    func startLibrary() async -> Set<UUID> {
         storageService.reclaimStagedBundles()
         await reclaimRestoreStaging()
-        await loadVMs()
-        refreshFromOtherCopies()
+        let marked = await loadVMs()
         startDirectoryWatcher()
+        return marked
     }
 
     /// Catches the named networks, the smart groups, and every VM at rest, up
@@ -35,16 +38,22 @@ extension VMLibrary {
     func refreshFromOtherCopies(only ids: Set<UUID>? = nil, reportingUnreadable: Bool = true) {
         networks.reload()
         organization.reload()
+        recordUnreadableLibraryFiles()
+        for instance in instances where ids?.contains(instance.id) ?? true {
+            refreshFromOtherCopies(of: instance)
+        }
+        if reportingUnreadable { reportNewlyUnreadable() }
+    }
+
+    /// Records the named networks' and the organization's files as their last
+    /// read found them.
+    private func recordUnreadableLibraryFiles() {
         if let file = networks.file {
             recordUnreadable([networks.state.unreadable].compactMap { $0 }, under: file.url)
         }
         if let file = organization.file {
             recordUnreadable([organization.state.unreadable].compactMap { $0 }, under: file.url)
         }
-        for instance in instances where ids?.contains(instance.id) ?? true {
-            refreshFromOtherCopies(of: instance)
-        }
-        if reportingUnreadable { reportNewlyUnreadable() }
     }
 
     /// Catches `instance` alone up with what another copy of Kernova holds and
@@ -147,15 +156,21 @@ extension VMLibrary {
         /// The bundles that could not be read, each with the file that kept
         /// it out.
         var unreadable: [UnreadableBundle] = []
+        /// The bundles another copy of Kernova held the run lock of when the
+        /// scan asked, just before reading them.
+        var heldElsewhere: Set<URL> = []
     }
 
-    /// Reads every bundle under the VMs directory, in ``bundleNameOrder(_:_:)``.
+    /// Reads every bundle under the VMs directory, in ``bundleNameOrder(_:_:)``,
+    /// asking each first whether another copy of Kernova holds it — the order
+    /// ``VMActivity/refreshFromBundle()`` asks and reads in.
     ///
     /// Nonisolated so the disk work can run off the main actor; it touches no
     /// library state and reports failures through the returned scan.
     nonisolated static func scanLibrary(using reader: BundleReader) throws -> LibraryScan {
         var scan = LibraryScan()
         for bundleURL in try reader.storage.listVMBundles().sorted(by: bundleNameOrder) {
+            if reader.files(at: bundleURL).isRunLockedElsewhere() { scan.heldElsewhere.insert(bundleURL) }
             do {
                 scan.bundles.append(try reader.bundle(at: bundleURL))
             } catch {
@@ -181,7 +196,15 @@ extension VMLibrary {
     /// whatever window is already on screen. What joined the library while it
     /// ran stays: adoption of a bundle a VM is already built from changes
     /// nothing.
-    func loadVMs() async {
+    ///
+    /// The read is the one this copy takes of every bundle at once: each VM it
+    /// adopts is marked held when another copy held it, and the named networks'
+    /// and organization's files are reported as the library last read them.
+    ///
+    /// Answers the VMs it adopted whose host state it read marked to start
+    /// automatically (``VMHostState/startsAutomaticallyOnLaunch``).
+    @discardableResult
+    func loadVMs() async -> Set<UUID> {
         unreadableReports = UnreadableFileReports()
         reportedDuplicateBundles.removeAll()
         let reader = bundleReader
@@ -192,22 +215,29 @@ extension VMLibrary {
             let scan = try await Task.detached(priority: .userInitiated) {
                 try Self.scanLibrary(using: reader)
             }.value
-            apply(scan)
+            return apply(scan)
         } catch {
             #log(Self.logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error)
+            return []
         }
     }
 
-    /// Turns a scan into the live library: membership, order, and selection.
-    private func apply(_ scan: LibraryScan) {
+    /// Turns a scan into the live library: membership, order, and selection —
+    /// answering the VMs it adopted that the scan read marked to start
+    /// automatically.
+    private func apply(_ scan: LibraryScan) -> Set<UUID> {
+        var marked: Set<UUID> = []
         for scanned in scan.bundles {
-            _ = adopt(scanned)
+            guard case .adopted(let instance) = adopt(scanned) else { continue }
+            instance.activity.recordOtherCopyHold(heldElsewhere: scan.heldElsewhere.contains(scanned.url))
+            if scanned.read.hostState.startsAutomaticallyOnLaunch { marked.insert(instance.id) }
         }
         admitUnreadable(scan.unreadable)
         for bundle in scan.unreadable {
             recordUnreadable([bundle.file], under: bundle.url)
         }
+        recordUnreadableLibraryFiles()
         macAddresses.logDuplicateMACAddressHolders()
         reportNewlyUnreadable()
 
@@ -222,6 +252,7 @@ extension VMLibrary {
 
         restoreSelection()
         #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
+        return marked
     }
 
     // MARK: - Directory Watcher

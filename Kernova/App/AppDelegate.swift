@@ -23,11 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let termination: AppTerminationController
     private let viewModel: VMLibraryViewModel
     /// The library's first read from disk, started in
-    /// `applicationWillFinishLaunching`.
+    /// `applicationWillFinishLaunching`, answering the VMs it found marked to
+    /// start automatically.
     ///
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
-    private var libraryLoad: Task<Void, Never>?
+    private var libraryLoad: Task<Set<UUID>, Never>?
     /// Latched once ``armAutoStartPass()`` has armed the pass, so no later call
     /// runs it a second time.
     private var hasArmedAutoStartPass = false
@@ -235,8 +236,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard !hasArmedAutoStartPass else { return }
         hasArmedAutoStartPass = true
         Task { @MainActor in
-            await self.libraryLoad?.value
-            await self.viewModel.startAutomaticVMsForLaunch()
+            let marked = await self.libraryLoad?.value ?? []
+            await self.viewModel.startAutomaticVMsForLaunch(marked)
         }
     }
 
@@ -331,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// on the next tick, so an open arriving later is unaffected.
     private func importVMs(from urls: [URL]) {
         Task { @MainActor in
-            await self.libraryLoad?.value
+            _ = await self.libraryLoad?.value
             self.viewModel.importVMs(fromDroppedURLs: urls)
         }
     }
@@ -619,7 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 extension AppDelegate: AppLaunchHosting {
     /// Awaits the app's first library read, so an intent that arrives while it is
     /// still in flight resolves against a landed library.
-    func awaitLibraryReady() async { await libraryLoad?.value }
+    func awaitLibraryReady() async { _ = await libraryLoad?.value }
 
     func requestFullQuit() { termination.requestFullQuit() }
 }

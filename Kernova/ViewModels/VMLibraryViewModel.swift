@@ -105,9 +105,13 @@ final class VMLibraryViewModel {
 
     func beginTermination() { library.beginTermination() }
 
-    func startLibrary() async { await library.startLibrary() }
+    /// ``VMLibrary/startLibrary()``, answering the VMs its read found marked
+    /// to start automatically.
+    @discardableResult
+    func startLibrary() async -> Set<UUID> { await library.startLibrary() }
 
-    func loadVMs() async { await library.loadVMs() }
+    @discardableResult
+    func loadVMs() async -> Set<UUID> { await library.loadVMs() }
 
     func reconcileWithDisk() { library.reconcileWithDisk() }
 
@@ -501,10 +505,19 @@ final class VMLibraryViewModel {
         /// and re-resolved on the drain — one that left the library meanwhile
         /// leaves nothing to act on or report.
         case startFailure(StartFailure, vmID: UUID)
+        /// The launch pass's one account of the VMs it left undone. Each VM is
+        /// re-resolved on the drain, as a start failure's is: one that left the
+        /// library meanwhile drops out of the account.
+        case startSummary(title: String, undone: [VMGroupActionResult])
 
-        var isStartFailure: Bool {
-            if case .startFailure = self { return true }
-            return false
+        /// The VMs this presentation reports as not started, by id — each
+        /// reported only while the library still holds it.
+        var undoneStartIDs: [UUID] {
+            switch self {
+            case .error: []
+            case .startFailure(_, let vmID): [vmID]
+            case .startSummary(_, let undone): undone.map(\.vm.id)
+            }
         }
     }
 
@@ -514,9 +527,9 @@ final class VMLibraryViewModel {
     /// The attachment case carries either bring-up, because both assemble the
     /// same configuration — a resume restoring a saved state fails over a
     /// missing disk exactly as a boot does. The message case is the start's:
-    /// every start failure reaches the status item through it, a guest cap or
-    /// a duplicate identity as surely as a missing disk image, and a headless
-    /// launch has no other way to say so.
+    /// every single-VM start failure reaches the status item through
+    /// it, a guest cap or a duplicate identity as surely as a missing disk
+    /// image.
     private enum StartFailure {
         case attachment(StartFailedAttachment)
         case message(title: String, message: String)
@@ -525,16 +538,26 @@ final class VMLibraryViewModel {
     /// What is waiting for a presenter, in the order it was raised.
     ///
     /// Observed — unlike `bufferedDisplayFocus` — because the status item
-    /// renders ``bufferedStartFailureCount`` from it.
+    /// renders ``bufferedUndoneStartCount`` from it.
     private var bufferedPresentations: [BufferedPresentation] = []
 
-    /// How many failed starts are waiting for a window to present them in.
+    /// How many VMs that did not start are waiting for a window to report
+    /// them in, counting only the VMs the library still holds — the ones the
+    /// drain would report.
     ///
     /// Non-zero only for a launch that came up headless: the status item is the
     /// one surface such a process has, and clicking its line opens the library,
     /// which attaches the presenter and drains these back to zero.
-    var bufferedStartFailureCount: Int {
-        bufferedPresentations.lazy.filter(\.isStartFailure).count
+    var bufferedUndoneStartCount: Int {
+        bufferedPresentations.reduce(0) { count, presentation in
+            count + presentation.undoneStartIDs.count { holdsVM($0) }
+        }
+    }
+
+    /// Whether the library still holds the VM `id` names — what a buffered
+    /// report of it needs to be shown or counted.
+    private func holdsVM(_ id: UUID) -> Bool {
+        instances.contains { $0.id == id }
     }
 
     /// The VM an inline surface was asked for before any window existed, focused
@@ -1606,7 +1629,7 @@ final class VMLibraryViewModel {
     // MARK: - Launch Auto-Start
 
     /// Names of the macOS VMs marked to start automatically, in library order —
-    /// which is the order ``startAutomaticVMsForLaunch()`` reaches them in.
+    /// which is the order ``startAutomaticVMsForLaunch(_:)`` reaches them in.
     ///
     /// Feeds the Startup section's capacity warning: macOS caps how many macOS
     /// guests run at once, so a longer list than that cap cannot come up whole.
@@ -1619,97 +1642,21 @@ final class VMLibraryViewModel {
             .map(\.name)
     }
 
-    /// Starts every VM marked to start automatically, one after another.
-    ///
-    /// Sequential: each guest commits its whole memory allocation at start, and
-    /// the duplicate machine-ID and MAC refusal every bring-up is admitted past
-    /// (``VMAdmission/Facts/identityConflict``) counts a VM still coming up as
-    /// live, so a twin checked beside it would be refused by a boot that may
-    /// yet fail. Each start is a follow-up on its VM, awaited before the next:
-    /// one another operation holds — a snapshot a relaunching command is
-    /// taking, say — starts when that operation frees the VM, decided afresh
-    /// then, and the pass waits for it.
-    ///
-    /// Each is a standing start (``VMCommandCore/StartPolicy/standing``), so a
-    /// VM whose state takes none is passed over rather than failed. A failure
-    /// is reported by the start itself, and the pass carries on to the next VM
-    /// either way.
-    ///
-    /// A termination stops it between VMs: from then on admission refuses the
-    /// next start, and the one already inside VZ is left to finish.
+    /// Starts the VMs the launch's library read found marked to start
+    /// automatically, `marked` (``VMCommandCore/startVMsMarkedToStartAutomatically(_:)``),
+    /// then puts one account of every VM it left undone on screen — held until
+    /// a window can show it, on a launch that opens none.
     ///
     /// Nobody is at the machine for this, so it selects and focuses nothing: it
     /// goes through the core rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
-    func startAutomaticVMsForLaunch() async {
-        let marked = instances.filter { $0.hostState.startsAutomaticallyOnLaunch }
-        guard !marked.isEmpty else {
-            #log(Self.logger, .debug, "Launch auto-start: no VMs are marked to start automatically")
-            return
-        }
-
-        #log(Self.logger, .notice, "Launch auto-start: \(marked.count, privacy: .public) VM(s) marked")
-
-        var startedCount = 0
-        var skippedCount = 0
-        var failedCount = 0
-        for instance in marked {
-            // Re-read at the moment of acting: the marking is this pass's own
-            // criterion, and the user can clear it while the pass runs. A VM
-            // deleted or evicted meanwhile is refused by its start.
-            guard instance.hostState.startsAutomaticallyOnLaunch else {
-                #log(
-                    Self.logger, .debug,
-                    "Launch auto-start: '\(instance.name, privacy: .public)' lost its marking before its turn"
-                )
-                skippedCount += 1
-                continue
-            }
-            let start = core.startFollowUp(instance, policy: .standing)
-            instance.activity.follow(start)
-            do {
-                try await start.outcome.value()
-            } catch {
-                if VMCommandCore.standingStartPassedOver(error) {
-                    logPassedOver(instance, error)
-                    skippedCount += 1
-                } else {
-                    failedCount += 1
-                }
-                continue
-            }
-            // A start that succeeded can still leave the VM down — a guest that
-            // powered off the moment it came up.
-            if instance.isKeepingAppAlive {
-                startedCount += 1
-            } else {
-                failedCount += 1
-            }
-        }
-
-        #log(
-            Self.logger, .notice,
-            "Launch auto-start finished — \(startedCount, privacy: .public) running, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
-        )
+    func startAutomaticVMsForLaunch(_ marked: Set<UUID>) async {
+        let results = await core.startVMsMarkedToStartAutomatically(marked)
+        surfaceStartSummary(title: Self.autoStartUndoneTitle, undone: results.undone)
     }
 
-    /// Records why the launch pass passed `instance` over.
-    private func logPassedOver(_ instance: VMInstance, _ error: any Error) {
-        if case .guestAccountPasswordRequired? = error as? CommandError {
-            // A login launch has no window to ask in and leaves no other
-            // trace, so this is the only place the user can find out why a VM
-            // they marked did not come up.
-            #log(
-                Self.logger, .notice,
-                "Launch auto-start: '\(instance.name, privacy: .public)' was not started — it creates a macOS account on its first boot and the password for it is only ever held in memory. Start it by hand to enter the password, or to skip setting up the account"
-            )
-        } else {
-            #log(
-                Self.logger, .debug,
-                "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
-            )
-        }
-    }
+    /// What the launch pass heads its account of the VMs it left undone with.
+    static let autoStartUndoneTitle = "Couldn\u{2019}t Start Every VM Set to Start When Kernova Opens"
 
     // MARK: - Error Handling
 
@@ -1855,9 +1802,9 @@ final class VMLibraryViewModel {
     }
 
     /// Routes a start failure to the presenter, buffering the failure itself
-    /// when none is attached yet — a headless launch's auto-start pass runs
-    /// with no window, and the alert it earns is the one carrying whatever the
-    /// failure offered, the detach-and-start-again action included.
+    /// when none is attached yet — so the alert it earns, shown once a window
+    /// arrives, carries whatever the failure offered, the
+    /// detach-and-start-again action included.
     private func surfaceStartFailure(_ failure: StartFailure, for instance: VMInstance) {
         guard let presenter else {
             bufferedPresentations.append(.startFailure(failure, vmID: instance.id))
@@ -1871,6 +1818,19 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Routes the launch pass's account of the `undone` VMs it did not start
+    /// to the presenter, buffering it — counted by the status item — when none
+    /// is attached yet, as on a launch that came up headless. An account of no
+    /// VMs shows nothing.
+    private func surfaceStartSummary(title: String, undone: [VMGroupActionResult]) {
+        guard !undone.isEmpty else { return }
+        guard let presenter else {
+            bufferedPresentations.append(.startSummary(title: title, undone: undone))
+            return
+        }
+        presenter.presentError(undone.undoneMessage(for: .start), title: title)
+    }
+
     /// Re-dispatches everything raised before the presenter attached, through
     /// the same routing a live presentation takes.
     private func drainBufferedPresentations() {
@@ -1881,6 +1841,15 @@ final class VMLibraryViewModel {
             switch presentation {
             case .error(let title, let message):
                 surfaceError(message, title: title)
+            case .startSummary(let title, let undone):
+                let held = undone.filter { holdsVM($0.vm.id) }
+                if held.count < undone.count {
+                    #log(
+                        Self.logger, .debug,
+                        "Dropped \(undone.count - held.count, privacy: .public) VM(s) from the buffered launch account — they left the library before a window arrived"
+                    )
+                }
+                surfaceStartSummary(title: title, undone: held)
             case .startFailure(let failure, let vmID):
                 guard let instance = instances.first(where: { $0.id == vmID }) else {
                     #log(

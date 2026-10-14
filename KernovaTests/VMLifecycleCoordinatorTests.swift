@@ -105,13 +105,13 @@ struct VMLifecycleCoordinatorTests {
         #expect(virtService.pauseCallCount == 1)
     }
 
-    @Test("resume forwards to virtualization service")
+    @Test("launchResume forwards to virtualization service")
     func resumeForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.livePaused(sessionID: UUID()))
 
-        try await coordinator.resume(instance)
+        try await coordinator.launchResume(instance).value()
 
         #expect(virtService.resumeCallCount == 1)
     }
