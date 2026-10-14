@@ -141,8 +141,9 @@ struct ConfirmationRequest {
 struct StepRouteRequest {
     /// What the core refused with, in its own words.
     let requirement: StepRequirement
-    /// The verb asked again once a route is taken, as each button names it
-    /// after the route's title; `nil` names the route alone.
+    /// The verb a route ending in ``StepRoute/Ending/refusedVerb`` asks
+    /// again, as its button names it after the route's title; `nil` names the
+    /// route alone. A route ending in a start names the start.
     let verbTitle: String?
     /// Answers the request: the route chosen, or `nil` to walk away.
     let answer: @MainActor (PresenterAnswer<StepRoute?>) -> Void

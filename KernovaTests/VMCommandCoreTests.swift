@@ -1612,7 +1612,7 @@ struct VMCommandCoreTests {
                         "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
                     routes: [
                         StepRoute(
-                            title: "Resume", steps: [.resume(vm: harness.core.summary(instance))])
+                            title: "Resume", steps: [.resume(vm: harness.core.summary(instance))], ending: .refusedVerb)
                     ]))
         #expect(harness.virtualization.resumeCallCount == 0)
         #expect(harness.virtualization.stopCallCount == 0)
@@ -2187,7 +2187,7 @@ struct VMCommandCoreTests {
                             .setConfiguration(
                                 vm: harness.core.summary(instance),
                                 assignments: [ConfigurationEntry(key: "ephemeral", value: "false")])
-                        ])
+                        ], ending: .refusedVerb)
                 ]))
 
         await #expect(throws: refusal) {

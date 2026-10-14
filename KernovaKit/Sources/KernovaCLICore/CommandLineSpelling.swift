@@ -24,16 +24,23 @@ enum CommandLineSpelling {
         return "kernova " + words.map(word).joined(separator: " ")
     }
 
-    /// Each of `requirement`'s routes as the command lines that take it: a
-    /// one-step route on its title's line, a longer one beneath it, a step to
-    /// a line.
+    /// The command line that takes `ending`, `nil` for the refused one asked
+    /// again, which the caller just typed.
+    static func line(for ending: StepRoute.Ending) -> String? {
+        switch ending {
+        case .refusedVerb: nil
+        case .start(let vm): "kernova " + ["start", vm.name].map(word).joined(separator: " ")
+        }
+    }
+
+    /// Each of `requirement`'s routes as the command lines that take it, its
+    /// ending's last: a one-line route on its title's line, a longer one
+    /// beneath it, a line each.
     static func routes(of requirement: StepRequirement) -> String {
         requirement.routes.map { route in
-            guard route.steps.count != 1 else {
-                return "\(route.title) with: \(line(for: route.steps[0]))"
-            }
-            return "\(route.title) with:"
-                + route.steps.map { "\n  " + line(for: $0) }.joined()
+            let lines = route.steps.map(line(for:)) + [line(for: route.ending)].compactMap(\.self)
+            guard lines.count != 1 else { return "\(route.title) with: \(lines[0])" }
+            return "\(route.title) with:" + lines.map { "\n  " + $0 }.joined()
         }.joined(separator: "\n")
     }
 }

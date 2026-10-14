@@ -32,14 +32,16 @@ enum VMConsentPolicy {
         try await run(
             prompting: prompting,
             choosingRoute: { throw CommandError.stepRequired($0) },
-            taking: { _ in },
-            body)
+            taking: { _ in }
+        ) { consent, _ in try await body(consent) }
     }
 
     /// ``run(prompting:_:)`` for a door that chains steps — the app's own
     /// view model: a ``CommandError/stepRequired(_:)`` naming routes goes to
     /// `choosingRoute`, each step of the route it answers goes to `taking` in
-    /// order, and `body` then runs again with every consent given so far.
+    /// order, and `body` then runs again with every consent given so far and
+    /// the route's ``StepRoute/ending`` — ``StepRoute/Ending/refusedVerb``
+    /// until a route is taken — which names the request it asks.
     ///
     /// One loop rather than two nested ones, because a confirmation can be
     /// asked before the step refusal is reached — a shared machine identity
@@ -53,23 +55,23 @@ enum VMConsentPolicy {
         prompting: (ConfirmationPrompt) async throws -> Void,
         choosingRoute: (StepRequirement) async throws -> StepRoute,
         taking: (CommandStep) async throws -> Void,
-        _ body: (Consent) async throws -> Void
+        _ body: (Consent, StepRoute.Ending) async throws -> Void
     ) async throws {
         var consent = Consent.none
-        var tookRoute = false
+        var ending: StepRoute.Ending?
         while true {
             do {
-                try await body(consent)
+                try await body(consent, ending ?? .refusedVerb)
                 return
             } catch let error as CommandError {
                 if let prompt = error.confirmationPrompt, !consent.covers(prompt.kind) {
                     try await prompting(prompt)
                     consent = consent.adding(prompt.kind)
-                } else if let requirement = error.stepRequirement, !tookRoute,
+                } else if let requirement = error.stepRequirement, ending == nil,
                     !requirement.routes.isEmpty
                 {
                     let route = try await choosingRoute(requirement)
-                    tookRoute = true
+                    ending = route.ending
                     for step in route.steps { try await taking(step) }
                 } else {
                     throw error

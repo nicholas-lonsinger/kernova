@@ -685,7 +685,9 @@ struct VMCommandCoreGroupActionTests {
         let step = CommandError.stepRequired(
             StepRequirement(
                 message: "M",
-                routes: [StepRoute(title: "Own", steps: [.setConfiguration(vm: vm, assignments: [])])]))
+                routes: [
+                    StepRoute(title: "Own", steps: [.setConfiguration(vm: vm, assignments: [])], ending: .refusedVerb)
+                ]))
         #expect(VMCommandCore.outcome(of: step, takenBy: .resume) == .failed(error: step.dto))
         let failed = CommandError.operationFailed(verb: .start, message: "No.")
         #expect(VMCommandCore.outcome(of: failed, takenBy: .start) == .failed(error: failed.dto))

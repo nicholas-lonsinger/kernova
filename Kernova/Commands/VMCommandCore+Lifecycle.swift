@@ -785,7 +785,7 @@ extension VMCommandCore {
         StepRequirement(
             message:
                 "\u{201C}\(instance.name)\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
-            routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))])])
+            routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))], ending: .refusedVerb)])
     }
 
     /// Requests a graceful shutdown of a live guest, resuming it first when it

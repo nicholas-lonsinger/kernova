@@ -116,7 +116,7 @@ struct CLIVerbWireTests {
             ])
     }
 
-    @Test("A MAC address refusal prints each route as the command lines that take it")
+    @Test("A MAC address refusal prints each route as the command lines that take it, a start it ends with last")
     func macAddressRefusalPrintsItsRoutes() throws {
         let requirement = StepRequirement(
             title: "Duplicate MAC Address", message: "Change its network first.",
@@ -127,14 +127,14 @@ struct CLIVerbWireTests {
                         .setConfiguration(
                             vm: alpha,
                             assignments: [ConfigurationEntry(key: "network.membership", value: "isolated")])
-                    ]),
+                    ], ending: .refusedVerb),
                 StepRoute(
                     title: "Use a New MAC Address",
                     steps: [
                         .discardSavedState(vm: alpha),
                         .setConfiguration(
                             vm: alpha, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-                    ]),
+                    ], ending: .start(vm: alpha)),
             ])
         let exchanged = try CLIWire.exchange(
             ["resume", "Alpha"],
@@ -149,7 +149,8 @@ struct CLIVerbWireTests {
                 failure.message
                     == "Change its network first.\n\n"
                     + "Move to a Network of Its Own with: kernova set Alpha network.membership=isolated\n"
-                    + "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new")
+                    + "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new"
+                    + "\n  kernova start Alpha")
         }
     }
 
@@ -178,7 +179,7 @@ struct CLIVerbWireTests {
         let refusal = StepRequirement(
             message:
                 "\u{201C}My VM\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
-            routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm)])])
+            routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm)], ending: .refusedVerb)])
         let exchanged = try CLIWire.exchange(
             ["stop", "My VM", "--yes"],
             answering: VMCommandResponse(result: .failure(.stepRequired(requirement: refusal))))

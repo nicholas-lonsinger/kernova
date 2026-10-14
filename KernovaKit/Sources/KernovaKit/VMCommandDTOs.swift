@@ -543,18 +543,30 @@ public enum CommandStep: Codable, Sendable, Hashable {
     }
 }
 
-/// One way through a ``StepRequirement``: steps taken in order, after which
-/// the refused verb is asked again.
+/// One way through a ``StepRequirement``: steps taken in order, then the
+/// request ``ending`` names.
 public struct StepRoute: Codable, Sendable, Hashable {
+    /// What is asked once a route's steps are taken.
+    public enum Ending: Codable, Sendable, Hashable {
+        /// The refused request, asked again.
+        case refusedVerb
+        /// A start of `vm`: the steps leave it nothing the refused bring-up
+        /// resumes.
+        case start(vm: VMSummary)
+    }
+
     /// The route's action name, in Title Case.
     public let title: String
     /// The steps, in the order they are taken.
     public let steps: [CommandStep]
+    /// The request the route ends with, admitted once the steps are taken.
+    public let ending: Ending
 
     /// Describes one route.
-    public init(title: String, steps: [CommandStep]) {
+    public init(title: String, steps: [CommandStep], ending: Ending) {
         self.title = title
         self.steps = steps
+        self.ending = ending
     }
 
     /// Whether a step discards the VM's saved state, so a surface tints the

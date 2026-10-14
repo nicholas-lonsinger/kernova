@@ -83,7 +83,7 @@ struct VMConsentPolicyTests {
                         .discardSavedState(vm: vm),
                         .setConfiguration(
                             vm: vm, assignments: [ConfigurationEntry(key: "k\(index)", value: "v")]),
-                    ])
+                    ], ending: .refusedVerb)
             })
     }
 
@@ -97,7 +97,7 @@ struct VMConsentPolicyTests {
             prompting: { _ in },
             choosingRoute: { $0.routes[1] },
             taking: { taken.append($0) }
-        ) { consent in
+        ) { consent, _ in
             given.append(consent)
             guard !taken.isEmpty else { throw CommandError.stepRequired(refused) }
             try verb(needing: [.startBesideSharedMachineIdentity])(consent)
@@ -105,6 +105,23 @@ struct VMConsentPolicyTests {
 
         #expect(taken == refused.routes[1].steps)
         #expect(given == [.none, .none, Consent([.startBesideSharedMachineIdentity])])
+    }
+
+    @Test("A route ending in a start is answered by the start, not the refused verb")
+    func routeEndingInAStartRunsTheStart() async throws {
+        let refused = StepRequirement(
+            message: "M",
+            routes: [StepRoute(title: "New", steps: [.discardSavedState(vm: vm)], ending: .start(vm: vm))])
+        var endings: [StepRoute.Ending] = []
+
+        try await VMConsentPolicy.run(
+            prompting: { _ in }, choosingRoute: { $0.routes[0] }, taking: { _ in }
+        ) { _, ending in
+            endings.append(ending)
+            guard endings.count > 1 else { throw CommandError.stepRequired(refused) }
+        }
+
+        #expect(endings == [.refusedVerb, .start(vm: vm)])
     }
 
     @Test("A second step refusal after a route is rethrown rather than asked again")
@@ -120,7 +137,7 @@ struct VMConsentPolicyTests {
                     return $0.routes[0]
                 },
                 taking: { _ in }
-            ) { _ in throw refusal }
+            ) { _, _ in throw refusal }
         }
         #expect(asked == 1)
     }
@@ -135,7 +152,7 @@ struct VMConsentPolicyTests {
                 prompting: { _ in },
                 choosingRoute: { $0.routes[0] },
                 taking: { _ in throw StepFailed() }
-            ) { _ in
+            ) { _, _ in
                 runs += 1
                 throw CommandError.stepRequired(requirement())
             }
@@ -149,7 +166,7 @@ struct VMConsentPolicyTests {
         await #expect(throws: empty) {
             try await VMConsentPolicy.run(
                 prompting: { _ in }, choosingRoute: { $0.routes[0] }, taking: { _ in }
-            ) { _ in throw empty }
+            ) { _, _ in throw empty }
         }
 
         let routed = CommandError.stepRequired(requirement())

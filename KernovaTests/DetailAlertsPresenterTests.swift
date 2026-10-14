@@ -949,19 +949,19 @@ struct DetailAlertsPresenterTests {
             steps: [
                 .setConfiguration(
                     vm: clone, assignments: [ownNetwork])
-            ]),
+            ], ending: .refusedVerb),
         StepRoute(
             title: "Use a New MAC Address",
             steps: [
                 .discardSavedState(vm: clone),
                 .setConfiguration(vm: clone, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-            ]),
+            ], ending: .refusedVerb),
         StepRoute(
             title: "Turn Off Networking",
             steps: [
                 .discardSavedState(vm: clone),
                 .setConfiguration(vm: clone, assignments: [ConfigurationEntry(key: "network.mode", value: "none")]),
-            ]),
+            ], ending: .start(vm: clone)),
     ]
 
     private func routeRequest(
@@ -974,7 +974,7 @@ struct DetailAlertsPresenterTests {
             verbTitle: verbTitle, answer: { answers.value.append($0) })
     }
 
-    @Test("The route alert names each route then the verb, and keeps a discarding route off Return")
+    @Test("The route alert names each route then the request it ends with, and keeps a discarding route off Return")
     func routeAlertOrdersItsButtons() {
         let request = routeRequest(answers: Box([]))
         let alert = AlertConfiguration(
@@ -985,7 +985,7 @@ struct DetailAlertsPresenterTests {
         #expect(
             alert.buttons.map(\.title) == [
                 "Move to a Network of Its Own and Resume", "Cancel",
-                "Use a New MAC Address and Resume", "Turn Off Networking and Resume",
+                "Use a New MAC Address and Resume", "Turn Off Networking and Start",
             ])
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive, .destructive])
 

@@ -104,7 +104,7 @@ struct AlertConfiguration {
     }
 
     /// Draws the routes a step refusal names, each button reading the route
-    /// and then `verbTitle`, laid out by the rule
+    /// and then the request it ends with, laid out by the rule
     /// ``init(confirming:confirm:alternative:dismiss:)`` states: a route that
     /// discards a saved state never takes Return.
     init(
@@ -114,13 +114,22 @@ struct AlertConfiguration {
     ) {
         let actions = requirement.routes.map { route -> (title: String, isDestructive: Bool, action: () -> Void) in
             (
-                verbTitle.map { "\(route.title) and \($0)" } ?? route.title, route.discardsSavedState,
+                Self.title(of: route, then: verbTitle), route.discardsSavedState,
                 { choose(route) }
             )
         }
         self.init(
             title: requirement.title, message: requirement.message,
             buttons: Self.buttons(actions, dismissTitle: "Cancel", dismiss: dismiss))
+    }
+
+    /// `route`'s button: its title, then the request it ends with — a start it
+    /// names, or `verbTitle` asked again.
+    private static func title(of route: StepRoute, then verbTitle: String?) -> String {
+        switch route.ending {
+        case .start: "\(route.title) and Start"
+        case .refusedVerb: verbTitle.map { "\(route.title) and \($0)" } ?? route.title
+        }
     }
 
     /// `actions` and the dismiss, in the order and roles the two initializers

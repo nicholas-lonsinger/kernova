@@ -115,13 +115,13 @@ struct VMCommandCoreMACConflictTests {
             refused.routes == [
                 StepRoute(
                     title: "Move to a Network of Its Own",
-                    steps: [.setConfiguration(vm: clone, assignments: [Self.ownNetwork])]),
+                    steps: [.setConfiguration(vm: clone, assignments: [Self.ownNetwork])], ending: .refusedVerb),
                 StepRoute(
                     title: "Use a New MAC Address",
-                    steps: [.setConfiguration(vm: clone, assignments: [Self.newAddress])]),
+                    steps: [.setConfiguration(vm: clone, assignments: [Self.newAddress])], ending: .refusedVerb),
                 StepRoute(
                     title: "Turn Off Networking",
-                    steps: [.setConfiguration(vm: clone, assignments: [Self.noNetwork])]),
+                    steps: [.setConfiguration(vm: clone, assignments: [Self.noNetwork])], ending: .refusedVerb),
             ])
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -163,16 +163,20 @@ struct VMCommandCoreMACConflictTests {
         #expect(refused.routes.map(\.discardsSavedState) == [false, true, true])
     }
 
-    @Test("A suspended NAT VM's resume is routed only where a saved state is left to resume")
-    func suspendedNATResumeOffersNoDiscardingRoute() async throws {
+    @Test("A suspended NAT VM's resume routes its discarding changes to the start they leave")
+    func suspendedNATResumeRoutesItsDiscardsToAStart() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
 
         let refused = try requirement(
             await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        let clone = harness.core.summary(vm)
 
-        #expect(refused.routes.map(\.title) == ["Move to a Network of Its Own"])
-        #expect(refused.message == Self.shared + Self.startsRatherThanResumes + Self.ownNetworkOnly)
+        #expect(refused.routes.map(\.ending) == [.refusedVerb, .start(vm: clone), .start(vm: clone)])
+        #expect(
+            refused.message
+                == Self.shared + Self.discardSentence + "; a network of its own keeps it."
+                + Self.startsRatherThanResumes + Self.everyChange)
     }
 
     @Test("A suspended Host Only VM is not routed to a network of its own, which no restore was measured on")
@@ -190,12 +194,23 @@ struct VMCommandCoreMACConflictTests {
                 + " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
                 + "give it a new MAC address or turn its networking off.")
 
+        // A resume is routed through the same changes, each ending in the
+        // start a discard leaves, and taking one then starting succeeds.
         let resumed = try requirement(
             await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
-        #expect(resumed.routes.isEmpty)
+        let clone = harness.core.summary(vm)
+        #expect(resumed.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
+        #expect(resumed.routes.map(\.ending) == [.start(vm: clone), .start(vm: clone)])
         #expect(
             resumed.message
-                == Self.shared + Self.startsRatherThanResumes + " Stop \u{201C}Source\u{201D} first.")
+                == Self.shared + Self.discardSentence + "." + Self.startsRatherThanResumes
+                + " Stop \u{201C}Source\u{201D}, or change \u{201C}Clone\u{201D}\u{2019}s network first: "
+                + "give it a new MAC address or turn its networking off.")
+
+        for step in resumed.routes[0].steps { try await harness.core.take(step) }
+        try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+        #expect(harness.virtualization.lastStartRoute == .coldBoot)
+        #expect(vm.configuration.macAddress != Self.sharedMAC)
     }
 
     @Test("A stopped Host Only VM, holding no saved state, is routed to a network of its own")
@@ -292,8 +307,11 @@ struct VMCommandCoreMACConflictTests {
 
         let resumed = try requirement(
             await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
-        #expect(resumed.routes.map(\.title) == ["Move to a Network of Its Own"])
-        #expect(resumed.message == Self.shared + Self.startsRatherThanResumes + Self.ownNetworkOnly)
+        #expect(resumed.routes.map(\.ending) == [.refusedVerb, .start(vm: clone), .start(vm: clone)])
+        #expect(
+            resumed.message
+                == Self.shared + Self.discardSentence + "; a network of its own keeps it." + ephemeral
+                + Self.startsRatherThanResumes + Self.everyChange)
 
         let started = try requirement(
             await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
@@ -422,7 +440,8 @@ struct VMCommandCoreMACConflictTests {
             refused.routes == [
                 StepRoute(
                     title: "Move to a Network of Its Own",
-                    steps: [.setConfiguration(vm: harness.core.summary(vm), assignments: [Self.ownNetwork])])
+                    steps: [.setConfiguration(vm: harness.core.summary(vm), assignments: [Self.ownNetwork])],
+                    ending: .refusedVerb)
             ])
         #expect(
             refused.message
@@ -584,7 +603,8 @@ struct VMCommandCoreMACConflictTests {
             refused.routes == [
                 StepRoute(
                     title: "Join a Network of Its Own",
-                    steps: [.setConfiguration(vm: harness.core.summary(vm), assignments: [Self.ownNetwork])])
+                    steps: [.setConfiguration(vm: harness.core.summary(vm), assignments: [Self.ownNetwork])],
+                    ending: .refusedVerb)
             ])
         #expect(vm.configuration.networkMode == .hostOnly)
 

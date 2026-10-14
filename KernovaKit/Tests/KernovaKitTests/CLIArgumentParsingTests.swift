@@ -268,7 +268,7 @@ struct CLIArgumentParsingTests {
             CommandLineSpelling.routes(
                 of: StepRequirement(
                     message: "",
-                    routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm("My VM"))])]))
+                    routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm("My VM"))], ending: .refusedVerb)]))
                 == "Resume with: kernova resume 'My VM'")
         #expect(
             CommandLineSpelling.routes(
@@ -282,7 +282,7 @@ struct CLIArgumentParsingTests {
                                 .setConfiguration(
                                     vm: vm("Alpha"),
                                     assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-                            ])
+                            ], ending: .refusedVerb)
                     ]))
                 == "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new")
         #expect(

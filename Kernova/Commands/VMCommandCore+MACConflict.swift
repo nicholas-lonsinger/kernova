@@ -58,27 +58,25 @@ extension VMCommandCore {
         /// lands the VM on a saved state again, beside which the write is
         /// refused.
         case ephemeralBaselineHoldsSavedState(VMSnapshot)
-        /// The bring-up asked for resumes a saved state, which the discard
-        /// leaves the VM without.
-        case bringUpNeedsTheSavedState
         /// A restart's power-off returns an Ephemeral Mode VM to its baseline,
         /// network included, before the boot.
         case restartReturnsToBaseline(VMSnapshot)
     }
 
     /// The changes a bring-up can be routed through, each with the discard
-    /// it is taken after, and why those that need one are not, when they are
-    /// not.
+    /// it is taken after and the request it ends with, and why those that
+    /// need a discard are not, when they are not.
     private struct NetworkChanges {
-        var offered: [(change: NetworkChange, discard: VMSavedStateDiscard?)] = []
+        var offered: [(change: NetworkChange, discard: VMSavedStateDiscard?, ending: StepRoute.Ending)] = []
         var withheld: DiscardWithheld?
     }
 
     /// The refusal a MAC address conflict at the bring-up `verb` performs
     /// raises, with the routes that change the VM's network first.
     ///
-    /// A route is offered only when, once its steps are taken, `verb` asked
-    /// again is admitted. A revert has none: it installs the snapshot's
+    /// A route is offered only when, once its steps are taken, the request it
+    /// ends with is admitted: `verb` asked again, or a start where a discard
+    /// leaves nothing to resume. A revert has none: it installs the snapshot's
     /// network (``VMConfiguration/adoptingSnapshotState(_:)``), so a change
     /// made before it is overwritten.
     func duplicateMACAddressRequirement(
@@ -116,16 +114,17 @@ extension VMCommandCore {
                 "\(vm) is ephemeral, and discarding its saved state returns it to "
                     + "\u{201C}\(baseline.name)\u{201D}, which holds one too, so a new MAC address "
                     + "or no network device needs Ephemeral Mode turned off first.")
-        case .bringUpNeedsTheSavedState:
-            sentences.append(
-                "A new MAC address or no network device discards \(vm)\u{2019}s saved state, "
-                    + "so it then starts rather than resumes.")
         case .restartReturnsToBaseline(let baseline):
             sentences.append(
                 "\(vm) is ephemeral, so a restart returns it to \u{201C}\(baseline.name)\u{201D}, "
                     + "network included, before it starts again.")
         case nil:
             break
+        }
+        if changes.offered.contains(where: { if case .start = $0.ending { true } else { false } }) {
+            sentences.append(
+                "A new MAC address or no network device discards \(vm)\u{2019}s saved state, "
+                    + "so it then starts rather than resumes.")
         }
         if !changes.offered.isEmpty {
             sentences.append(
@@ -144,11 +143,12 @@ extension VMCommandCore {
         let summary = summary(instance)
         return StepRequirement(
             title: ConflictReason.macAddress.title, message: sentences.joined(separator: " "),
-            routes: changes.offered.map { change, discard in
+            routes: changes.offered.map { change, discard, ending in
                 StepRoute(
                     title: change.title,
                     steps: (discard == nil ? [] : [.discardSavedState(vm: summary)])
-                        + [.setConfiguration(vm: summary, assignments: [change.assignment])])
+                        + [.setConfiguration(vm: summary, assignments: [change.assignment])],
+                    ending: ending)
             })
     }
 
@@ -179,11 +179,11 @@ extension VMCommandCore {
                     changes.withheld = .restartReturnsToBaseline(baseline)
                     continue
                 }
-                changes.offered.append((change, nil))
+                changes.offered.append((change, nil, .refusedVerb))
             case .newAddress, .noNetwork:
                 guard let discard = instance.savedStateDiscard else {
                     if capabilities.isAvailable(change.key, writing: value, on: instance) {
-                        changes.offered.append((change, nil))
+                        changes.offered.append((change, nil, .refusedVerb))
                     }
                     continue
                 }
@@ -200,11 +200,15 @@ extension VMCommandCore {
                     }
                     continue
                 }
-                guard bringUpAdmitted(verb, on: instance, after: discard) else {
-                    changes.withheld = .bringUpNeedsTheSavedState
+                let ending: StepRoute.Ending
+                if bringUpAdmitted(verb, on: instance, after: discard) {
+                    ending = .refusedVerb
+                } else if bringUpAdmitted(.start, on: instance, after: discard) {
+                    ending = .start(vm: summary(instance))
+                } else {
                     continue
                 }
-                changes.offered.append((change, discard))
+                changes.offered.append((change, discard, ending))
             }
         }
         return changes
@@ -253,7 +257,8 @@ extension VMCommandCore {
                 routes: [
                     StepRoute(
                         title: "Join a Network of Its Own",
-                        steps: [.setConfiguration(vm: summary(instance), assignments: [change.assignment])])
+                        steps: [.setConfiguration(vm: summary(instance), assignments: [change.assignment])],
+                        ending: .refusedVerb)
                 ]))
     }
 

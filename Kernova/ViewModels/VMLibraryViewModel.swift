@@ -972,8 +972,9 @@ final class VMLibraryViewModel {
     /// ``VMConsentPolicy/run(prompting:choosingRoute:taking:_:)`` and, inside
     /// it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``, asking
     /// on screen for each consent, the route through a step refusal — each
-    /// button naming the route and then `verbTitle` — and the account it
-    /// refuses without.
+    /// button naming the route and then `verbTitle`, or the start a route ends
+    /// with — and the account it refuses without. A route ending in a start
+    /// runs that start in place of `verb`.
     ///
     /// Asking is the door's job and deciding is the verb's: this presents the
     /// questions and hands each answer to the verbs, writing nothing itself;
@@ -996,10 +997,17 @@ final class VMLibraryViewModel {
                 prompting: { try await self.askToConfirm($0) },
                 choosingRoute: { try await self.askForRoute(through: $0, then: verbTitle) },
                 taking: { try await self.commands.take($0) }
-            ) { consent in
+            ) { consent, ending in
                 try await VMConsentPolicy.runGatheringGuestAccount(
                     prompting: { try await self.askForGuestAccount($0) },
-                    { try await verb(consent) })
+                    {
+                        switch ending {
+                        case .refusedVerb:
+                            try await verb(consent)
+                        case .start(let vm):
+                            try await self.commands.start(.id(vm.id), recovery: false, consent: consent)
+                        }
+                    })
             }
             return true
         } catch is GuestAccountPromptDismissed {

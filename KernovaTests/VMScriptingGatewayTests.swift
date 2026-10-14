@@ -563,7 +563,7 @@ struct VMScriptingGatewayTests {
                     steps: [
                         .discardSavedState(vm: vm),
                         .setConfiguration(vm: vm, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-                    ])
+                    ], ending: .refusedVerb)
             ])
         commands.bringUpStepRequirement = requirement
         let gateway = makeGateway(commands)
@@ -685,7 +685,7 @@ struct VMScriptingGatewayTests {
         let refusal = CommandError.stepRequired(
             StepRequirement(
                 message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request.",
-                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())])]))
+                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())], ending: .refusedVerb)]))
         commands.stopError = refusal
 
         // No confirmation names a resume, so the script is told the step to

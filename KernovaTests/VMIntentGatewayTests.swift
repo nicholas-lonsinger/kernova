@@ -442,7 +442,7 @@ struct VMIntentGatewayTests {
         let refusal = CommandError.stepRequired(
             StepRequirement(
                 message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request.",
-                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())])]))
+                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())], ending: .refusedVerb)]))
         commands.stopError = refusal
         let gateway = makeGateway(commands)
         var asked = 0

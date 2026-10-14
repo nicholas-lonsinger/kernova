@@ -1619,24 +1619,31 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("Resume beside a MAC address twin offers no route that would leave nothing to resume")
-    func resumeOffersNoDiscardingRoute() async throws {
+    @Test("Resume beside a MAC address twin, through Use a New MAC Address and Start, discards, writes, then starts")
+    func resumeTakesADiscardingRouteThenStarts() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMACAddressPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         resuming.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: resuming)
-        presenter.choosesRouteTitled = "Move to a Network of Its Own"
+        presenter.choosesRouteTitled = "Use a New MAC Address"
 
         await viewModel.resume(resuming)
 
-        let request = presenter.stepRouteRequests.first
+        let request = try #require(presenter.stepRouteRequests.first)
         #expect(presenter.stepRouteRequests.count == 1)
-        #expect(request?.verbTitle == "Resume")
-        #expect(request?.requirement.routes.map(\.title) == ["Move to a Network of Its Own"])
-        #expect(resuming.configuration.networkMembership == .isolated)
-        #expect(virtService.lastStartRoute == .restoredSavedState)
+        let chosen = try #require(request.requirement.routes.first { $0.title == "Use a New MAC Address" })
+        #expect(
+            AlertConfiguration(offering: request.requirement, then: request.verbTitle, choose: { _ in })
+                .buttons.map(\.title).contains("Use a New MAC Address and Start"))
+        guard case .start = chosen.ending else {
+            Issue.record("ends with \(chosen.ending)")
+            return
+        }
+        #expect(!resuming.hasSaveFile)
+        #expect(resuming.configuration.macAddress != other.configuration.macAddress)
+        #expect(virtService.lastStartRoute == .coldBoot)
         #expect(presenter.errors.isEmpty)
     }
 

@@ -328,7 +328,7 @@ struct VMCommandEnvelopeTests {
                     title: "Duplicate MAC Address",
                     message: "Change \u{201C}Alpha\u{201D}\u{2019}s network first.",
                     routes: [
-                        StepRoute(title: "Resume", steps: [.resume(vm: summary)]),
+                        StepRoute(title: "Resume", steps: [.resume(vm: summary)], ending: .refusedVerb),
                         StepRoute(
                             title: "Use a New MAC Address",
                             steps: [
@@ -336,7 +336,7 @@ struct VMCommandEnvelopeTests {
                                 .setConfiguration(
                                     vm: summary,
                                     assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-                            ]),
+                            ], ending: .start(vm: summary)),
                     ])),
             .stepRequired(requirement: StepRequirement(message: "Take a snapshot first.")),
             .unsupported(capability: "starting in macOS Recovery"),

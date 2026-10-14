@@ -352,7 +352,7 @@ extension VMCommandCore {
                         .setConfiguration(
                             vm: summary(instance),
                             assignments: [VMConfigurationKeyRegistry.ephemeral.assigning(false)])
-                    ])
+                    ], ending: .refusedVerb)
             ])
     }
 
