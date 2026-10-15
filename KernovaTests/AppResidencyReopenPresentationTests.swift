@@ -3,22 +3,23 @@ import Testing
 @testable import Kernova
 
 /// Unit tests for
-/// `AppResidencyController.reopenPresentation(hasOnScreenUserWindow:)` —
+/// `AppResidencyController.reopenPresentation(hasVisibleUserWindow:)` —
 /// the pure helper that decides what a reopen (a Dock click, `open`) does to
 /// the GUI.
 ///
-/// A reopen with a window already on screen must present nothing: that window
-/// owns the presentation, and re-presenting the library would drag it forward
-/// over a per-VM display or clipboard window the status item opened alone.
+/// A reopen with a user window — a miniaturized one included — must present
+/// nothing: that window owns the presentation, and re-presenting the library
+/// would drag it forward over a per-VM display or clipboard window the status
+/// item opened alone.
 @Suite("AppResidencyController.reopenPresentation", .caseScoped)
 struct AppResidencyReopenPresentationTests {
-    @Test("A reopen with a window already on screen presents nothing")
-    func windowOnScreenPresentsNothing() {
-        #expect(AppResidencyController.reopenPresentation(hasOnScreenUserWindow: true) == .nothing)
+    @Test("A reopen with a user window presents nothing")
+    func userWindowPresentsNothing() {
+        #expect(AppResidencyController.reopenPresentation(hasVisibleUserWindow: true) == .nothing)
     }
 
-    @Test("A reopen with no window on screen presents the library")
-    func noWindowOnScreenPresentsLibrary() {
-        #expect(AppResidencyController.reopenPresentation(hasOnScreenUserWindow: false) == .library)
+    @Test("A reopen with no user window presents the library")
+    func noUserWindowPresentsLibrary() {
+        #expect(AppResidencyController.reopenPresentation(hasVisibleUserWindow: false) == .library)
     }
 }

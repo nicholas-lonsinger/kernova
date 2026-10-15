@@ -432,31 +432,54 @@ final class AppResidencyController: WindowResidencyHosting {
     }
 
     /// What a reopen (a Dock click, `open`) does to the GUI, as decided by
-    /// ``reopenPresentation(hasOnScreenUserWindow:)``.
+    /// ``reopenPresentation(hasVisibleUserWindow:)``.
     enum ReopenPresentation: Equatable {
         /// Present the library.
         case library
-        /// Do nothing — a window already on screen owns the presentation.
+        /// Do nothing — a user window the app already has owns the presentation.
         case nothing
     }
 
-    /// Decides the reopen leg's presentation: a window already on screen owns
-    /// it, so a reopen never drags the library forward over a per-VM display or
-    /// clipboard window the status item opened alone — matching
+    /// Decides the reopen leg's presentation: a user window the app already
+    /// has owns it, so a reopen never drags the library forward over a per-VM
+    /// display or clipboard window the status item opened alone — matching
     /// ``summonStatusItemTarget(for:)``'s "opens only the chosen surface" rule.
-    nonisolated static func reopenPresentation(hasOnScreenUserWindow: Bool) -> ReopenPresentation {
-        hasOnScreenUserWindow ? .nothing : .library
+    ///
+    /// A miniaturized window counts: AppKit deminiaturizes it on a reopen the
+    /// delegate lets it handle.
+    nonisolated static func reopenPresentation(hasVisibleUserWindow: Bool) -> ReopenPresentation {
+        hasVisibleUserWindow ? .nothing : .library
     }
 
-    /// The resident app's reopen leg: present the library only when nothing is
-    /// already on screen. Never requests activation — a reopen already carries
-    /// one.
+    /// The resident app's reopen leg: present the library only when no user
+    /// window — a miniaturized one included, which AppKit deminiaturizes —
+    /// remains once the app is out of hiding. Never requests activation — the
+    /// reopen's deliverer already did.
     func handleReopen() {
-        switch Self.reopenPresentation(hasOnScreenUserWindow: hasOnScreenUserWindow) {
-        case .library:
-            presentSummonedInterface()
-        case .nothing:
-            break
+        let wasHidden = foreground.isHidden()
+        // Only a windowless app is ever `.accessory`, and a windowless reopen
+        // presents, so this is the policy any show lands on — asserted a tick
+        // ahead of it for the menu-bar quirk (FB7743313).
+        setActivationPolicy(.regular)
+        Task { @MainActor in
+            // A reopen can arrive before the system's own unhide (Chromium's
+            // `FocusWindowSetOnCurrentSpace`: "this call races with the system
+            // unhiding the application"), and a hidden app's windows all read
+            // `isVisible == false` — so the unhide comes first, and the show
+            // shares its job (``leaveHiddenState()``).
+            self.leaveHiddenState()
+            let presentation = Self.reopenPresentation(
+                hasVisibleUserWindow: self.hasVisibleUserWindow)
+            #log(
+                Self.logger, .notice,
+                "Reopen: wasHidden=\(wasHidden, privacy: .public) presentation=\(String(describing: presentation), privacy: .public)"
+            )
+            switch presentation {
+            case .library:
+                self.putOnScreen(.library)
+            case .nothing:
+                break
+            }
         }
     }
 
@@ -464,9 +487,10 @@ final class AppResidencyController: WindowResidencyHosting {
     /// item, its clipboard notice, the Dock menu: morph to `.regular`, show the
     /// summoned surface, then ask for activation.
     ///
-    /// The sole path that asks for activation itself — a launch or reopen leg
-    /// presents through ``presentSummonedInterface()`` instead, since whoever
-    /// delivered it already asked. Idempotent.
+    /// The sole path that asks for activation itself — a launch leg presents
+    /// through ``presentSummonedInterface()`` and a reopen through
+    /// ``handleReopen()`` instead, since whoever delivered it already asked.
+    /// Idempotent.
     func summonUserInterface() {
         summonUserInterface(showing: .library)
     }
@@ -483,8 +507,8 @@ final class AppResidencyController: WindowResidencyHosting {
 
     /// Who asks for activation when a surface goes on screen.
     private enum Arrival {
-        /// A launch, a reopen, a document open or an App Intent: whoever
-        /// delivered it already asked, so the app asks nothing.
+        /// A launch, a document open or an App Intent: whoever delivered it
+        /// already asked, so the app asks nothing.
         case delivered
         /// An in-app click: the app leaves the hidden state, orders the surface
         /// front, and asks for activation itself.
@@ -492,8 +516,8 @@ final class AppResidencyController: WindowResidencyHosting {
     }
 
     /// Puts the summoned library on screen without requesting activation, for
-    /// a request whose deliverer already asked for it — a launch, a reopen, a
-    /// document open, a link, an App Intent.
+    /// a request whose deliverer already asked for it — a launch, a document
+    /// open, a link, an App Intent.
     func presentSummonedInterface() {
         presentSummonedInterface(showing: .library, arrival: .delivered)
     }
@@ -509,33 +533,12 @@ final class AppResidencyController: WindowResidencyHosting {
     /// Puts `target` on screen, and for a summon asks for activation once it is
     /// ordered front.
     private func presentSummonedInterface(showing target: SummonTarget, arrival: Arrival) {
-        // Idempotent — re-asserted here since a reopen can arrive with the
-        // policy already `.regular`.
         setActivationPolicy(.regular)
         // Defer the show to the next runloop tick so the menu bar has refreshed
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         Task { @MainActor in
             if arrival == .summoned { self.leaveHiddenState() }
-            let summoned: NSWindow?
-            switch target {
-            case .library:
-                self.windows.showLibrary(bringToFront: true)
-                summoned = self.windows.libraryWindow
-            case .librarySidebar:
-                self.windows.showLibrary(bringToFront: true)
-                self.windows.revealLibrarySidebar()
-                summoned = self.windows.libraryWindow
-            case .display(let instance):
-                self.windows.displayPlacement.showDisplayWindow(for: instance)
-                summoned = self.windows.displayPlacement.window(for: instance.instanceID)
-            case .clipboard(let instance):
-                self.windows.showClipboard(for: instance)
-                summoned = self.windows.clipboardWindow(for: instance.instanceID)
-            }
-            // Activation may be refused; the window has to arrive either way.
-            // `orderFrontRegardless` is the only ordering call that doesn't
-            // depend on the app being active.
-            summoned?.orderFrontRegardless()
+            self.putOnScreen(target)
             // After the order-front: WindowServer denies an activation request
             // from an app presenting no window (`CPS: … presents 0 windows …
             // Denying the request`, #1377's macOS 27 probe).
@@ -553,6 +556,30 @@ final class AppResidencyController: WindowResidencyHosting {
         host?.armAutoStartPass()
     }
 
+    /// Shows `target` and orders it front whether or not the app is active.
+    private func putOnScreen(_ target: SummonTarget) {
+        let summoned: NSWindow?
+        switch target {
+        case .library:
+            windows.showLibrary(bringToFront: true)
+            summoned = windows.libraryWindow
+        case .librarySidebar:
+            windows.showLibrary(bringToFront: true)
+            windows.revealLibrarySidebar()
+            summoned = windows.libraryWindow
+        case .display(let instance):
+            windows.displayPlacement.showDisplayWindow(for: instance)
+            summoned = windows.displayPlacement.window(for: instance.instanceID)
+        case .clipboard(let instance):
+            windows.showClipboard(for: instance)
+            summoned = windows.clipboardWindow(for: instance.instanceID)
+        }
+        // Activation may be refused; the window has to arrive either way.
+        // `orderFrontRegardless` is the only ordering call that doesn't
+        // depend on the app being active.
+        summoned?.orderFrontRegardless()
+    }
+
     /// Leaves the hidden state without asking for activation, so the surface
     /// the caller puts up next is actually on screen.
     ///
@@ -560,13 +587,13 @@ final class AppResidencyController: WindowResidencyHosting {
     /// Intents launch — stays hidden for the life of the process, and a hidden
     /// app displays no window however it is ordered, `orderFrontRegardless`
     /// included. A `.present` launch builds its library behind the hide, where
-    /// the Dock icon is what brings it forward, so only a summon and an
-    /// outside request call this.
+    /// the Dock icon is what brings it forward, so only a summon, a reopen and
+    /// an outside request call this.
     ///
-    /// A summon puts its surface up in the same main-actor job: the unhide
-    /// reconcile ``noteDidUnhide()`` schedules runs as a later job and reads
-    /// the window list, where a surface not yet shown would read as a window
-    /// closed during the hide.
+    /// A summon or reopen puts its surface up in the same main-actor job: the
+    /// unhide reconcile ``noteDidUnhide()`` schedules runs as a later job and
+    /// reads the window list, where a surface not yet shown would read as a
+    /// window closed during the hide.
     private func leaveHiddenState() {
         guard foreground.isHidden() else { return }
         #log(Self.logger, .notice, "Surfacing while hidden — unhiding")
@@ -642,17 +669,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// while the app is hidden, where every window reads `false` and the
     /// reconcile leaves the policy the app already had (``ResidencyOutcome/waitForUnhide``).
     private var hasVisibleUserWindow: Bool {
-        windows.hasUserWindow(countingMiniaturized: true)
-    }
-
-    /// Whether any user-facing Kernova window is currently on screen, excluding
-    /// a miniaturized one.
-    ///
-    /// Used by the reopen leg: a reopen arriving for an app with only a
-    /// miniaturized window must still present, matching AppKit's own Dock-click
-    /// behavior of deminiaturizing it.
-    private var hasOnScreenUserWindow: Bool {
-        windows.hasUserWindow(countingMiniaturized: false)
+        windows.hasUserWindow
     }
 
     /// Whether closing `window` can change what `hasVisibleUserWindow` returns,
@@ -782,8 +799,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// window closed, and an unhide is the one moment where a person has just
     /// asked for the app.
     ///
-    /// A summon's unhide runs this too, and finds the summoned surface already
-    /// on screen (``leaveHiddenState()``).
+    /// A summon's or reopen's unhide runs this too, and finds the surface it
+    /// put up already on screen (``leaveHiddenState()``).
     func noteDidUnhide() {
         Task { @MainActor in self.reconcileUnhide() }
     }

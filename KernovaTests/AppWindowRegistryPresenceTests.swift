@@ -3,16 +3,15 @@ import Testing
 
 @testable import Kernova
 
-/// Covers `AppWindowRegistry.hasTrackedUserWindow(countingMiniaturized:)` — the
-/// deterministic half of the window-presence answer the activation-policy
-/// reconcile and the reopen leg both read — the clipboard window's
-/// close-driven deregistration, and the `WindowResidencyHosting` call a
-/// presentation owes.
+/// Covers `AppWindowRegistry.hasTrackedUserWindow` — the deterministic half
+/// of the window-presence answer the activation-policy reconcile and the reopen
+/// leg both read — the clipboard window's close-driven deregistration, and the
+/// `WindowResidencyHosting` call a presentation owes.
 ///
 /// Only the tracked windows are exercised for presence: the `NSApp.windows` scan
-/// `hasUserWindow(countingMiniaturized:)` layers on top also sees the windows of
-/// every test running alongside this one in the shared test host, so it has no
-/// deterministic answer here.
+/// `hasUserWindow` layers on top also sees the windows of every test running
+/// alongside this one in the shared test host, so it has no deterministic
+/// answer here.
 @Suite("AppWindowRegistry presence", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct AppWindowRegistryPresenceTests {
@@ -56,21 +55,19 @@ struct AppWindowRegistryPresenceTests {
     func nothingShown() {
         let registry = makeRegistry()
 
-        #expect(!registry.hasTrackedUserWindow(countingMiniaturized: true))
-        #expect(!registry.hasTrackedUserWindow(countingMiniaturized: false))
+        #expect(!registry.hasTrackedUserWindow)
     }
 
-    @Test("The library window counts, however miniaturized windows are treated")
+    @Test("The library window counts")
     func libraryShown() throws {
         let registry = makeRegistry()
         registry.showLibrary(bringToFront: true)
         adoptAppWindow(try #require(registry.libraryWindow))
 
-        #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
-        #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
+        #expect(registry.hasTrackedUserWindow)
     }
 
-    @Test("A miniaturized library window counts only when miniaturized windows do")
+    @Test("A miniaturized library window counts")
     func libraryMiniaturized() async throws {
         let registry = makeRegistry()
         registry.showLibrary(bringToFront: true)
@@ -88,8 +85,7 @@ struct AppWindowRegistryPresenceTests {
         window.miniaturize(nil)
         try await gate.wait { window.isMiniaturized && !window.isVisible }
 
-        #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
-        #expect(!registry.hasTrackedUserWindow(countingMiniaturized: false))
+        #expect(registry.hasTrackedUserWindow)
     }
 
     @Test("The Settings window counts on its own")
@@ -98,7 +94,7 @@ struct AppWindowRegistryPresenceTests {
         registry.showSettings()
         adoptAppWindow(try #require(registry.settingsWindow))
 
-        #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
+        #expect(registry.hasTrackedUserWindow)
     }
 
     @Test("An automatic config check shows its window without bringing Kernova forward; the user's does both")
@@ -124,7 +120,7 @@ struct AppWindowRegistryPresenceTests {
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
         adoptAppWindow(window)
-        #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
+        #expect(registry.hasTrackedUserWindow)
 
         // `close()` dispatches `windowWillClose` synchronously, which is what
         // drives `ClipboardWindowController.onWillClose`.
