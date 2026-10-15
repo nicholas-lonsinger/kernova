@@ -1,21 +1,5 @@
 import AppKit
 
-/// Delegate for ``AgentStatusPopoverContentViewController``; the host closes
-/// the popover after each callback.
-@MainActor
-protocol AgentStatusPopoverContentViewControllerDelegate: AnyObject {
-    /// Invoked when the user clicks the trailing button while it presents the
-    /// guest-agent disk control.
-    func agentStatusPopoverDidTapDiskControl(_ vc: AgentStatusPopoverContentViewController)
-
-    /// Invoked when the user clicks the trailing button while it reads "Done".
-    func agentStatusPopoverDidTapDone(_ vc: AgentStatusPopoverContentViewController)
-
-    /// Invoked when the user clicks the "Don't show again" link, which only the
-    /// host's `hasDismissAction` surfaces.
-    func agentStatusPopoverDidTapDismiss(_ vc: AgentStatusPopoverContentViewController)
-}
-
 /// Popover content shown when the user clicks the sidebar agent-status
 /// button (the small SF Symbol or spinner next to each VM row).
 ///
@@ -45,7 +29,14 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    weak var delegate: AgentStatusPopoverContentViewControllerDelegate?
+    /// Fires when the user clicks the trailing button while it presents the
+    /// guest-agent disk control.
+    var onDiskControl: (() -> Void)?
+    /// Fires when the user clicks the trailing button while it reads "Done".
+    var onDone: (() -> Void)?
+    /// Fires when the user clicks the "Don't show again" link, which only
+    /// `hasDismissAction` surfaces.
+    var onDismiss: (() -> Void)?
 
     /// Current status driving the popover's title and body.
     private(set) var status: AgentStatus = .waiting
@@ -200,13 +191,13 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     @objc private func actionTapped(_: NSButton) {
         switch actionButtonRole {
-        case .diskControl: delegate?.agentStatusPopoverDidTapDiskControl(self)
-        case .done: delegate?.agentStatusPopoverDidTapDone(self)
+        case .diskControl: onDiskControl?()
+        case .done: onDone?()
         }
     }
 
     @objc private func dismissTapped(_: NSButton) {
-        delegate?.agentStatusPopoverDidTapDismiss(self)
+        onDismiss?()
     }
 
     // MARK: - Per-status strings

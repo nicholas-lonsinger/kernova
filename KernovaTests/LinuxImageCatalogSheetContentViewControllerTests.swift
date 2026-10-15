@@ -110,28 +110,32 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
         #expect(findButton(titled: "Choose", in: vc.view)?.isEnabled == false)
     }
 
-    @Test("Choosing reports the entry to the delegate")
-    func choosingReportsToDelegate() {
+    @Test("Choosing reports the entry to onChoose")
+    func choosingReports() {
         let vc = makeSheet(selectedID: "debian-13")
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: LinuxImageCatalogEntry?
+        var cancelCount = 0
+        vc.onChoose = { chosen = $0 }
+        vc.onCancel = { cancelCount += 1 }
 
         findButton(titled: "Choose", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen?.id == "debian-13")
-        #expect(delegate.cancelCount == 0)
+        #expect(chosen?.id == "debian-13")
+        #expect(cancelCount == 0)
     }
 
     @Test("Cancel reports a dismissal and no choice")
-    func cancelReportsToDelegate() {
+    func cancelReports() {
         let vc = makeSheet()
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: LinuxImageCatalogEntry?
+        var cancelCount = 0
+        vc.onChoose = { chosen = $0 }
+        vc.onCancel = { cancelCount += 1 }
 
         findButton(titled: "Cancel", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen == nil)
-        #expect(delegate.cancelCount == 1)
+        #expect(chosen == nil)
+        #expect(cancelCount == 1)
     }
 
     @Test("The Status column names only the images already in Downloads")
@@ -227,25 +231,5 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
         let vc = makeSheet()
         #expect(findLabel(containing: "August 2026", in: vc.view) != nil)
         #expect(findLabel(containing: "ISO File", in: vc.view) != nil)
-    }
-
-    // MARK: - Helpers
-
-    private final class RecordingDelegate: LinuxImageCatalogSheetContentViewControllerDelegate {
-        var chosen: LinuxImageCatalogEntry?
-        var cancelCount = 0
-
-        func linuxImageCatalogSheet(
-            _ vc: LinuxImageCatalogSheetContentViewController,
-            didChoose entry: LinuxImageCatalogEntry
-        ) {
-            chosen = entry
-        }
-
-        func linuxImageCatalogSheetDidCancel(
-            _ vc: LinuxImageCatalogSheetContentViewController
-        ) {
-            cancelCount += 1
-        }
     }
 }

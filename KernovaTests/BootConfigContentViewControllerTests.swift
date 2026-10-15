@@ -176,7 +176,7 @@ struct BootConfigContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         let entry = makeLinuxCatalogEntry(distribution: "Debian", version: "13")
-        vc.linuxImageCatalogSheet(makeCatalogSheet(), didChoose: entry)
+        vc.commitCatalogEntry(entry)
 
         #expect(vm.linuxSelection == .catalogEntry(entry))
         #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
@@ -190,7 +190,7 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        vc.linuxImageCatalogSheetDidCancel(makeCatalogSheet())
+        vc.dismissSourceSheet()
 
         #expect(vm.linuxSelection == .localISO(path: "/tmp/ubuntu.iso", bookmark: nil))
         #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .on)
@@ -204,7 +204,7 @@ struct BootConfigContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         let image = makeCustomLinuxImage()
-        vc.linuxImageURLSheet(makeURLSheet(), didChoose: image, sizeBytes: 1_073_741_824)
+        vc.commitCustomImage(image, sizeBytes: 1_073_741_824)
 
         #expect(vm.linuxSelection == .customURL(image: image, sizeBytes: 1_073_741_824))
         #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
@@ -218,20 +218,10 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        vc.linuxImageURLSheetDidCancel(makeURLSheet())
+        vc.dismissSourceSheet()
 
         #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
         #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .off)
-    }
-
-    /// A picker instance to hand the delegate methods, which ignore it.
-    private func makeCatalogSheet() -> LinuxImageCatalogSheetContentViewController {
-        LinuxImageCatalogSheetContentViewController(entries: [makeLinuxCatalogEntry()])
-    }
-
-    /// A URL sheet instance to hand the delegate methods, which ignore it.
-    private func makeURLSheet() -> LinuxImageURLSheetContentViewController {
-        LinuxImageURLSheetContentViewController(resolveService: MockLinuxImageResolveService())
     }
 
     @Test("Switching to Linux Kernel updates the model and shows kernel rows")

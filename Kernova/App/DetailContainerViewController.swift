@@ -367,16 +367,12 @@ final class DetailContainerViewController: NSViewController {
     }
 }
 
-// MARK: - VMCreationWizardViewControllerDelegate
+// MARK: - Creation wizard
 
-extension DetailContainerViewController: VMCreationWizardViewControllerDelegate {
-    func wizardDidCancel(_ vc: VMCreationWizardViewController) {
-        wizardPresenter.close()
-    }
-
-    func wizardDidRequestCreate(
-        _ vc: VMCreationWizardViewController,
-        creationVM: VMCreationViewModel
+extension DetailContainerViewController {
+    private func createVM(
+        from creationVM: VMCreationViewModel,
+        presentingFailureOn vc: VMCreationWizardViewController
     ) {
         // The create registers its row and returns, so the only failure that
         // can reach here is the refusal raised before anything was written —
@@ -475,7 +471,11 @@ extension DetailContainerViewController: VMLibraryPresenting {
         pendingWizard = false
         let creationVM = VMCreationViewModel()
         let wizard = VMCreationWizardViewController(creationVM: creationVM)
-        wizard.delegate = self
+        wizard.onCancel = { [weak self] in self?.wizardPresenter.close() }
+        wizard.onCreate = { [weak self, weak wizard] creationVM in
+            guard let self, let wizard else { return }
+            createVM(from: creationVM, presentingFailureOn: wizard)
+        }
         wizardPresenter.show(content: wizard, in: window)
         #log(Self.logger, .notice, "Presented creation wizard")
     }

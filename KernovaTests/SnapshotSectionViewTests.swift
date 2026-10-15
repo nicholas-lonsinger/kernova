@@ -7,56 +7,12 @@ import Testing
 @Suite("SnapshotSectionView Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct SnapshotSectionViewTests {
-    /// Records what the section asks its host to do.
-    private final class Recorder: SnapshotSectionViewDelegate {
-        var takeRequests = 0
-        var reverted: [VMSnapshot] = []
-        var deleted: [VMSnapshot] = []
-        var renamed: [(snapshot: VMSnapshot, name: String)] = []
-        var noted: [(snapshot: VMSnapshot, notes: String)] = []
-        var infoRequests: [VMSnapshot] = []
-
-        func snapshotSectionRequestedTakeSnapshot(_ view: SnapshotSectionView) {
-            takeRequests += 1
-        }
-        func snapshotSection(_ view: SnapshotSectionView, requestedRevertTo snapshot: VMSnapshot) {
-            reverted.append(snapshot)
-        }
-        func snapshotSection(_ view: SnapshotSectionView, requestedDeleteOf snapshot: VMSnapshot) {
-            deleted.append(snapshot)
-        }
-        func snapshotSection(
-            _ view: SnapshotSectionView, renamed snapshot: VMSnapshot, to newName: String
-        ) {
-            renamed.append((snapshot, newName))
-        }
-        func snapshotSection(
-            _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot
-        ) {
-            noted.append((snapshot, notes))
-        }
-        func snapshotSection(
-            _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView
-        ) {
-            infoRequests.append(snapshot)
-        }
-    }
-
     private func makeSnapshot(
         _ name: String, offsetSeconds: TimeInterval = 0, notes: String = ""
     ) -> VMSnapshot {
         VMSnapshot(
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds),
             notes: notes, macAddress: nil)
-    }
-
-    /// The recorder is held weakly by the view, so the caller must keep the
-    /// returned pair alive for the length of the test.
-    private func makeSection() -> (SnapshotSectionView, Recorder) {
-        let recorder = Recorder()
-        let view = SnapshotSectionView()
-        view.delegate = recorder
-        return (view, recorder)
     }
 
     private func revertButtons(in view: NSView) -> [NSButton] {
@@ -80,7 +36,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A VM with no snapshots shows the empty row and no readout")
     func emptyState() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
 
         render(
             view, manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false)
@@ -93,7 +49,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Rows render newest first")
     func rowsAreNewestFirst() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let older = makeSnapshot("Older")
         let newer = makeSnapshot("Newer", offsetSeconds: 60)
 
@@ -111,7 +67,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The header counts the snapshots before their sizes are known")
     func headerCountsBeforeSizes() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
 
         render(
             view,
@@ -125,7 +81,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Rows read their sizes once they land, and the header stays a count")
     func sizesReachTheRowsNotTheHeader() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One")
         let second = makeSnapshot("Two", offsetSeconds: 60)
         render(
@@ -146,7 +102,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Every row names its state between its date and its size")
     func everyRowNamesItsState() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         var cold = makeSnapshot("Before first boot")
         cold.record.kind = .cold
         let warm = makeSnapshot("Mid-session", offsetSeconds: 60)
@@ -167,7 +123,7 @@ struct SnapshotSectionViewTests {
 
     @Test("On a cloning volume a row's size carries its private bytes in parentheses")
     func cloningVolumeRowShowsPrivateBytes() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("Cloned")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
@@ -187,7 +143,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Without private bytes — a volume that can't clone, or a failed read — a row shows its size alone")
     func rowWithoutPrivateBytesShowsSizeAlone() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("Copied")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
@@ -201,7 +157,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A single snapshot reads in the singular")
     func singleSnapshotReadsSingular() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let only = makeSnapshot("Only")
 
         render(
@@ -214,7 +170,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A snapshot whose size is unknown shows no size part")
     func unknownSizeShowsNoSizePart() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let measured = makeSnapshot("Measured")
         let unknown = makeSnapshot("Unknown", offsetSeconds: 60)
         render(
@@ -232,7 +188,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Only the current snapshot's row shows the marker")
     func currentMarkerIsOnOneRow() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One")
         let second = makeSnapshot("Two", offsetSeconds: 60)
 
@@ -248,7 +204,7 @@ struct SnapshotSectionViewTests {
 
     @Test("An in-place update moves the current marker without a rebuild")
     func currentMarkerFollowsAnInPlaceUpdate() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One")
         let second = makeSnapshot("Two", offsetSeconds: 60)
         let manifest = VMSnapshotManifest(snapshots: [first, second], currentID: second.id)
@@ -270,7 +226,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The baseline row reads both roles when it is also the current snapshot")
     func baselineAndCurrentReadAsOneMarker() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let baseline = makeSnapshot("Clean install")
         let later = makeSnapshot("Mid-session", offsetSeconds: 60)
 
@@ -290,7 +246,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A baseline that isn't the current snapshot reads as Baseline alone")
     func baselineAloneReadsAsBaseline() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let baseline = makeSnapshot("Clean install")
         let later = makeSnapshot("Mid-session", offsetSeconds: 60)
 
@@ -310,7 +266,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The baseline's Delete is offered like any other row's")
     func baselineDeleteIsOffered() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let baseline = makeSnapshot("Clean install")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [baseline]), canTakeSnapshot: true,
@@ -325,7 +281,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A snapshot that isn't the baseline stays deletable")
     func nonBaselineDeleteStaysEnabled() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let baseline = makeSnapshot("Clean install")
         let later = makeSnapshot("Mid-session", offsetSeconds: 60)
         render(
@@ -341,7 +297,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Revert is disabled while the VM can't be taken there")
     func revertDisabledWhenNotRevertible() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
 
         render(
             view, manifest: VMSnapshotManifest(snapshots: [makeSnapshot("One")]),
@@ -352,7 +308,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The Take Snapshot link follows whether a snapshot can be taken")
     func takeLinkFollowsCapability() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
 
         render(
             view, manifest: VMSnapshotManifest(), canTakeSnapshot: false, canRevert: false)
@@ -367,19 +323,23 @@ struct SnapshotSectionViewTests {
 
     @Test("The footer link asks for a new snapshot")
     func takeLinkAsksForASnapshot() {
-        let (view, recorder) = makeSection()
+        let view = SnapshotSectionView()
+        var takeRequests = 0
+        view.onTakeSnapshot = { takeRequests += 1 }
         render(
             view, manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false)
 
         let button = findButton(titled: "Take Snapshot\u{2026}", in: view)
         button.map { _ = $0.target?.perform($0.action, with: $0) }
 
-        #expect(recorder.takeRequests == 1)
+        #expect(takeRequests == 1)
     }
 
     @Test("A row's Revert button names that row's snapshot")
     func revertButtonNamesItsRow() {
-        let (view, recorder) = makeSection()
+        let view = SnapshotSectionView()
+        var reverted: [VMSnapshot] = []
+        view.onRevert = { reverted.append($0) }
         let older = makeSnapshot("Older")
         let newer = makeSnapshot("Newer", offsetSeconds: 60)
         render(
@@ -391,14 +351,14 @@ struct SnapshotSectionViewTests {
         #expect(buttons.count == 2)
         buttons.last.map { _ = $0.target?.perform($0.action, with: $0) }
 
-        #expect(recorder.reverted == [older])
+        #expect(reverted == [older])
     }
 
     // MARK: - Row menu
 
     @Test("The row menu offers rename, info, revert, and delete")
     func rowMenuOffersEveryAction() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
@@ -415,7 +375,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The row menu's Revert is disabled when the VM can't be reverted")
     func rowMenuRevertFollowsCapability() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
@@ -429,7 +389,9 @@ struct SnapshotSectionViewTests {
 
     @Test("The row menu's Delete names its snapshot")
     func rowMenuDeleteNamesItsSnapshot() {
-        let (view, recorder) = makeSection()
+        let view = SnapshotSectionView()
+        var deleted: [VMSnapshot] = []
+        view.onDelete = { deleted.append($0) }
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
@@ -440,12 +402,14 @@ struct SnapshotSectionViewTests {
         let delete = menu.items.first { $0.title == "Delete\u{2026}" }
         delete.map { _ = $0.target?.perform($0.action, with: $0) }
 
-        #expect(recorder.deleted == [snapshot])
+        #expect(deleted == [snapshot])
     }
 
     @Test("The row menu's Get Info names its snapshot")
     func rowMenuGetInfoNamesItsSnapshot() {
-        let (view, recorder) = makeSection()
+        let view = SnapshotSectionView()
+        var infoRequests: [VMSnapshot] = []
+        view.onRequestInfo = { snapshot, _ in infoRequests.append(snapshot) }
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
@@ -456,14 +420,14 @@ struct SnapshotSectionViewTests {
         let info = menu.items.first { $0.title == "Get Info" }
         info.map { _ = $0.target?.perform($0.action, with: $0) }
 
-        #expect(recorder.infoRequests == [snapshot])
+        #expect(infoRequests == [snapshot])
     }
 
     // MARK: - Rename
 
     @Test("A rename in flight suppresses the structural rebuild")
     func renameSuppressesRebuild() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
@@ -494,7 +458,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Cancelling a rename renders what arrived while it was open")
     func cancelRenameRendersTheStoredManifest() async {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
@@ -523,7 +487,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A snapshot's note trails its name in the row")
     func notesRenderInTheRow() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let annotated = makeSnapshot("One", notes: "tools configured")
         let bare = makeSnapshot("Two", offsetSeconds: 60)
 
@@ -543,7 +507,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A note edit in flight suppresses the structural rebuild")
     func notesEditSuppressesRebuild() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One", notes: "before")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
@@ -564,7 +528,7 @@ struct SnapshotSectionViewTests {
 
     @Test("Cancelling a note edit ends it")
     func cancelNotesEditEndsIt() async {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let first = makeSnapshot("One", notes: "before")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
@@ -580,7 +544,9 @@ struct SnapshotSectionViewTests {
 
     @Test("A note holding a newline opens Get Info instead of editing in the row")
     func multilineNotesRouteToGetInfo() {
-        let (view, recorder) = makeSection()
+        let view = SnapshotSectionView()
+        var infoRequests: [VMSnapshot] = []
+        view.onRequestInfo = { snapshot, _ in infoRequests.append(snapshot) }
         let first = makeSnapshot("One", notes: "line one\nline two")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
@@ -589,7 +555,7 @@ struct SnapshotSectionViewTests {
 
         view.beginNotesEditing(first.id)
 
-        #expect(recorder.infoRequests == [first])
+        #expect(infoRequests == [first])
         #expect(view.activeEdit == nil)
         // Flattened for the row; the newline survives in the stored note.
         #expect(findLabel(withText: "line one line two", in: view) != nil)
@@ -597,7 +563,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The row menu offers Edit Notes regardless of whether the list can be deleted from")
     func rowMenuOffersEditNotes() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
@@ -617,7 +583,9 @@ struct SnapshotSectionViewTests {
 
     @Test("Edit Notes on a row with no note starts an edit that commits what is typed")
     func editNotesCommitsTypedText() async {
-        let (view, recorder) = makeSection()
+        let view = SnapshotSectionView()
+        var noted: [(snapshot: VMSnapshot, notes: String)] = []
+        view.onSetNotes = { noted.append(($0, $1)) }
         let first = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
@@ -630,8 +598,8 @@ struct SnapshotSectionViewTests {
         field.map { $0.controlTextDidEndEditing(Notification(name: .init("test"), object: $0)) }
         await drainMainQueue()
 
-        #expect(recorder.noted.count == 1)
-        #expect(recorder.noted.first?.notes == "tools configured")
+        #expect(noted.count == 1)
+        #expect(noted.first?.notes == "tools configured")
         #expect(view.activeEdit == nil)
     }
 
@@ -652,7 +620,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A row whose metadata the VM refuses offers no Rename or Edit Notes, and no click-to-edit")
     func metadataEditsFollowTheirCapabilities() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("One", notes: "A note")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
@@ -669,7 +637,7 @@ struct SnapshotSectionViewTests {
 
     @Test("The row menu's Rename stays enabled with the revert and delete gate closed")
     func rowMenuEditingFollowsTheGate() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
@@ -688,7 +656,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A disabled Take Snapshot link is visibly dimmed, not link-tinted")
     func disabledLinkIsDimmed() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
 
         render(
             view, manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false)
@@ -704,7 +672,7 @@ struct SnapshotSectionViewTests {
 
     @Test("A disabled row Revert link dims the same way")
     func disabledRevertLinkIsDimmed() {
-        let (view, _) = makeSection()
+        let view = SnapshotSectionView()
 
         render(
             view, manifest: VMSnapshotManifest(snapshots: [makeSnapshot("One")]), canTakeSnapshot: false,

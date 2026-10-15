@@ -1,22 +1,17 @@
 import AppKit
 
-/// Delegate for ``TakeSnapshotSheetContentViewController``.
-@MainActor
-protocol TakeSnapshotSheetContentViewControllerDelegate: AnyObject {
-    func takeSnapshotSheetDidCancel(_ vc: TakeSnapshotSheetContentViewController)
-    func takeSnapshotSheet(
-        _ vc: TakeSnapshotSheetContentViewController, didConfirmName name: String, notes: String)
-}
-
 /// Sheet that names a new snapshot before it is taken.
 @MainActor
 final class TakeSnapshotSheetContentViewController: NSViewController {
-    weak var delegate: TakeSnapshotSheetContentViewControllerDelegate?
+    /// Fires when the user cancels.
+    var onCancel: (() -> Void)?
+    /// Fires when the user confirms, with the entered name and note.
+    var onConfirm: ((_ name: String, _ notes: String) -> Void)?
 
     private let vmName: String
     private let suggestedName: String
-    /// What the capture is for, which the delegate reads back on confirm.
-    let purpose: TakeSnapshotPurpose
+    /// What the capture is for.
+    private let purpose: TakeSnapshotPurpose
 
     /// How a capture confirmed right now would be taken, which the header and
     /// caption describe.
@@ -221,12 +216,11 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     // MARK: - Actions
 
     @objc private func cancelTapped() {
-        delegate?.takeSnapshotSheetDidCancel(self)
+        onCancel?()
     }
 
     @objc private func confirmTapped() {
-        delegate?.takeSnapshotSheet(
-            self, didConfirmName: nameField.stringValue, notes: notesEditor.text)
+        onConfirm?(nameField.stringValue, notesEditor.text)
     }
 }
 

@@ -58,11 +58,13 @@ struct DiskSizePopoverContentViewControllerTests {
         )
     }
 
-    @Test("Cancel button invokes delegate's cancel method")
-    func cancelInvokesDelegate() {
+    @Test("Cancel button fires onCancel")
+    func cancelFiresCallback() {
         let vc = make(headline: "X", caption: "Y", sizes: [10, 50], defaultGB: 50)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var confirmedSizes: [Int] = []
+        var cancelCount = 0
+        vc.onConfirm = { confirmedSizes.append($0) }
+        vc.onCancel = { cancelCount += 1 }
         vc.loadViewIfNeeded()
 
         guard let cancelButton = findButton(titled: "Cancel", in: vc.view) else {
@@ -71,15 +73,17 @@ struct DiskSizePopoverContentViewControllerTests {
         }
         cancelButton.performClick(nil)
 
-        #expect(delegate.cancelCount == 1)
-        #expect(delegate.confirmedSizes.isEmpty)
+        #expect(cancelCount == 1)
+        #expect(confirmedSizes.isEmpty)
     }
 
-    @Test("Create button invokes delegate with the popup-selected size")
-    func createInvokesDelegateWithSelectedSize() {
+    @Test("Create button fires onConfirm with the popup-selected size")
+    func createFiresCallbackWithSelectedSize() {
         let vc = make(headline: "X", caption: "Y", sizes: [10, 50, 100], defaultGB: 50)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var confirmedSizes: [Int] = []
+        var cancelCount = 0
+        vc.onConfirm = { confirmedSizes.append($0) }
+        vc.onCancel = { cancelCount += 1 }
         vc.loadViewIfNeeded()
 
         let popup = firstSubview(NSPopUpButton.self, in: vc.view)
@@ -91,8 +95,8 @@ struct DiskSizePopoverContentViewControllerTests {
         }
         createButton.performClick(nil)
 
-        #expect(delegate.confirmedSizes == [100])
-        #expect(delegate.cancelCount == 0)
+        #expect(confirmedSizes == [100])
+        #expect(cancelCount == 0)
     }
 
     // MARK: - Helpers
@@ -107,22 +111,5 @@ struct DiskSizePopoverContentViewControllerTests {
             availableSizes: sizes,
             defaultSizeInGB: defaultGB
         )
-    }
-
-    @MainActor
-    private final class MockDelegate: DiskSizePopoverContentViewControllerDelegate {
-        var confirmedSizes: [Int] = []
-        var cancelCount = 0
-
-        func diskSizePopover(
-            _ vc: DiskSizePopoverContentViewController,
-            didConfirmSizeInGB sizeInGB: Int
-        ) {
-            confirmedSizes.append(sizeInGB)
-        }
-
-        func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController) {
-            cancelCount += 1
-        }
     }
 }

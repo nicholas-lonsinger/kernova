@@ -1,30 +1,18 @@
 import AppKit
 
-/// Delegate for ``DiskSizePopoverContentViewController``.
-@MainActor
-protocol DiskSizePopoverContentViewControllerDelegate: AnyObject {
-    /// Invoked when the user clicks the confirm (Create) button.
-    ///
-    /// `sizeInGB` is always one of the `availableSizes` passed to the
-    /// controller's initializer.
-    func diskSizePopover(
-        _ vc: DiskSizePopoverContentViewController,
-        didConfirmSizeInGB sizeInGB: Int
-    )
-
-    /// Invoked when the user clicks Cancel.
-    func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController)
-}
-
 /// Generic popover content for asking the user to pick a disk size and
 /// confirm or cancel.
 ///
 /// The controller knows nothing about the flow it serves: the host supplies the
-/// headline and caption via init, implements the delegate, and owns the
+/// headline and caption via init, sets the callbacks, and owns the
 /// surrounding `NSPopover` chrome.
 @MainActor
 final class DiskSizePopoverContentViewController: NSViewController {
-    weak var delegate: DiskSizePopoverContentViewControllerDelegate?
+    /// Fires when the user clicks the confirm (Create) button, with a size that
+    /// is always one of the `availableSizes` passed to the initializer.
+    var onConfirm: ((_ sizeInGB: Int) -> Void)?
+    /// Fires when the user clicks Cancel.
+    var onCancel: (() -> Void)?
 
     /// Headline shown at the top of the popover (e.g. "Create New Disk").
     let headline: String
@@ -157,10 +145,10 @@ final class DiskSizePopoverContentViewController: NSViewController {
     }
 
     @objc private func cancelTapped(_: NSButton) {
-        delegate?.diskSizePopoverDidCancel(self)
+        onCancel?()
     }
 
     @objc private func createTapped(_: NSButton) {
-        delegate?.diskSizePopover(self, didConfirmSizeInGB: selectedSizeInGB)
+        onConfirm?(selectedSizeInGB)
     }
 }

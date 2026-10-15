@@ -305,7 +305,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             selectedID: selectedCatalogID,
             generatedAt: creationVM.linuxCatalogService.generatedAt
         )
-        sheet.delegate = self
+        sheet.onChoose = { [weak self] entry in self?.commitCatalogEntry(entry) }
+        sheet.onCancel = { [weak self] in self?.dismissSourceSheet() }
         catalogSheetPresenter.show(content: sheet, in: window)
     }
 
@@ -318,7 +319,10 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             initialURL: current?.url.absoluteString,
             initialChecksum: current?.sha256
         )
-        sheet.delegate = self
+        sheet.onChoose = { [weak self] image, sizeBytes in
+            self?.commitCustomImage(image, sizeBytes: sizeBytes)
+        }
+        sheet.onCancel = { [weak self] in self?.dismissSourceSheet() }
         catalogSheetPresenter.show(content: sheet, in: window)
     }
 
@@ -372,43 +376,26 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 }
 
-// MARK: - LinuxImageCatalogSheetContentViewControllerDelegate
+// MARK: - Source sheets
 
-extension BootConfigContentViewController: LinuxImageCatalogSheetContentViewControllerDelegate {
-    func linuxImageCatalogSheet(
-        _ vc: LinuxImageCatalogSheetContentViewController,
-        didChoose entry: LinuxImageCatalogEntry
-    ) {
+extension BootConfigContentViewController {
+    /// Commits the distribution the picker reported.
+    func commitCatalogEntry(_ entry: LinuxImageCatalogEntry) {
         catalogSheetPresenter.close()
         creationVM.selectLinuxCatalogEntry(entry)
         rebuildConditional()
     }
 
-    func linuxImageCatalogSheetDidCancel(
-        _ vc: LinuxImageCatalogSheetContentViewController
-    ) {
-        // The model was never touched, so the radios already show the source
-        // that was selected before the picker opened.
-        catalogSheetPresenter.close()
-    }
-}
-
-// MARK: - LinuxImageURLSheetContentViewControllerDelegate
-
-extension BootConfigContentViewController: LinuxImageURLSheetContentViewControllerDelegate {
-    func linuxImageURLSheet(
-        _ vc: LinuxImageURLSheetContentViewController,
-        didChoose image: CustomLinuxImage,
-        sizeBytes: UInt64
-    ) {
+    /// Commits the image the URL sheet reported, with the length its check read.
+    func commitCustomImage(_ image: CustomLinuxImage, sizeBytes: UInt64) {
         catalogSheetPresenter.close()
         creationVM.selectLinuxCustomURL(image, sizeBytes: sizeBytes)
         rebuildConditional()
     }
 
-    func linuxImageURLSheetDidCancel(
-        _ vc: LinuxImageURLSheetContentViewController
-    ) {
+    /// Closes a sheet dismissed without choosing. The model was never touched,
+    /// so the radios already show the source selected before it opened.
+    func dismissSourceSheet() {
         catalogSheetPresenter.close()
     }
 }

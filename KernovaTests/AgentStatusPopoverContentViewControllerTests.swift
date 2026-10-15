@@ -80,21 +80,23 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(dismissButton(in: vc.view)?.isHidden == true)
     }
 
-    /// Clicks the action button for `status` and returns what reached the
-    /// delegate, alongside the title the button carried.
+    /// Clicks the action button for `status` and returns how often each
+    /// callback fired, alongside the title the button carried.
     private func tapAction(status: AgentStatus, isInstallerMounted: Bool) -> (
-        title: String?, delegate: MockDelegate
+        title: String?, diskControlCount: Int, doneCount: Int
     ) {
         let vc = AgentStatusPopoverContentViewController()
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var diskControlCount = 0
+        var doneCount = 0
+        vc.onDiskControl = { diskControlCount += 1 }
+        vc.onDone = { doneCount += 1 }
         vc.update(
             status: status, isInstallerMounted: isInstallerMounted, vmName: "TestVM",
             hasDismissAction: false)
         vc.loadViewIfNeeded()
         let button = actionButton(in: vc.view)
         button?.performClick(nil)
-        return (button?.title, delegate)
+        return (button?.title, diskControlCount, doneCount)
     }
 
     @Test(
@@ -107,33 +109,33 @@ struct AgentStatusPopoverContentViewControllerTests {
             .connecting(expected: "0.9.2"),
         ])
     func installerAttachedEjects(status: AgentStatus) {
-        let (title, delegate) = tapAction(status: status, isInstallerMounted: true)
+        let (title, diskControlCount, doneCount) = tapAction(status: status, isInstallerMounted: true)
         #expect(title == "Eject Guest Agent Media")
         #expect(
             GuestAgentDiskControl.model(status: status, isInstallerMounted: true).action == .eject)
-        #expect(delegate.diskControlCount == 1)
-        #expect(delegate.doneCount == 0)
+        #expect(diskControlCount == 1)
+        #expect(doneCount == 0)
     }
 
     @Test("An unresponsive agent is offered Manage, which re-mounts the disk")
     func unresponsiveOffersManage() {
         let status = AgentStatus.unresponsive(version: "0.9.2")
-        let (title, delegate) = tapAction(status: status, isInstallerMounted: false)
+        let (title, diskControlCount, doneCount) = tapAction(status: status, isInstallerMounted: false)
         #expect(title == "Manage Guest Agent…")
         #expect(
             GuestAgentDiskControl.model(status: status, isInstallerMounted: false).action
                 == .mount(.manage))
-        #expect(delegate.diskControlCount == 1)
-        #expect(delegate.doneCount == 0)
+        #expect(diskControlCount == 1)
+        #expect(doneCount == 0)
     }
 
     @Test("While the control is disabled the button reads Done and only closes")
     func disabledControlIsDone() {
-        let (title, delegate) = tapAction(
+        let (title, diskControlCount, doneCount) = tapAction(
             status: .connecting(expected: "0.9.2"), isInstallerMounted: false)
         #expect(title == "Done")
-        #expect(delegate.doneCount == 1)
-        #expect(delegate.diskControlCount == 0)
+        #expect(doneCount == 1)
+        #expect(diskControlCount == 0)
     }
 
     @Test(
@@ -151,40 +153,25 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(!body.contains("Reinstalling presents"))
     }
 
-    @Test("dismiss button click fires delegate")
-    func dismissFiresDelegate() {
+    @Test("dismiss button click fires onDismiss")
+    func dismissFiresCallback() {
         let vc = AgentStatusPopoverContentViewController()
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var diskControlCount = 0
+        var doneCount = 0
+        var dismissCount = 0
+        vc.onDiskControl = { diskControlCount += 1 }
+        vc.onDone = { doneCount += 1 }
+        vc.onDismiss = { dismissCount += 1 }
         vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         dismissButton(in: vc.view)?.performClick(nil)
-        #expect(delegate.dismissCount == 1)
-        #expect(delegate.diskControlCount == 0)
-        #expect(delegate.doneCount == 0)
+        #expect(dismissCount == 1)
+        #expect(diskControlCount == 0)
+        #expect(doneCount == 0)
     }
 
     // MARK: - Helpers
-
-    @MainActor
-    private final class MockDelegate: AgentStatusPopoverContentViewControllerDelegate {
-        var diskControlCount = 0
-        var doneCount = 0
-        var dismissCount = 0
-
-        func agentStatusPopoverDidTapDiskControl(_ vc: AgentStatusPopoverContentViewController) {
-            diskControlCount += 1
-        }
-
-        func agentStatusPopoverDidTapDone(_ vc: AgentStatusPopoverContentViewController) {
-            doneCount += 1
-        }
-
-        func agentStatusPopoverDidTapDismiss(_ vc: AgentStatusPopoverContentViewController) {
-            dismissCount += 1
-        }
-    }
 
     @MainActor
     private func titleLabel(in view: NSView) -> NSTextField? {

@@ -175,11 +175,13 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(vc.checkboxes[missingID] == nil)
     }
 
-    @Test("Cancel button fires delegate's cancel")
-    func cancelFiresDelegate() {
+    @Test("Cancel button fires onCancel")
+    func cancelFiresCallback() {
         let vc = make(vmName: "MyVM")
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var cancelCount = 0
+        var confirmedIDChoices: [Set<UUID>] = []
+        vc.onCancel = { cancelCount += 1 }
+        vc.onConfirm = { confirmedIDChoices.append($0) }
         vc.loadViewIfNeeded()
 
         guard let cancel = findButton(titled: "Cancel", in: vc.view) else {
@@ -187,8 +189,8 @@ struct DeleteVMSheetContentViewControllerTests {
             return
         }
         cancel.performClick(nil)
-        #expect(delegate.cancelCount == 1)
-        #expect(delegate.confirmedIDChoices.isEmpty)
+        #expect(cancelCount == 1)
+        #expect(confirmedIDChoices.isEmpty)
     }
 
     @Test("Move to Trash returns the ids of the checked externals")
@@ -200,8 +202,8 @@ struct DeleteVMSheetContentViewControllerTests {
             makeAttachment(id: trashID, label: "Trash", path: "/tmp/trash.img"),
         ]
         let vc = make(vmName: "MyVM", externals: externals)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var confirmedIDChoices: [Set<UUID>] = []
+        vc.onConfirm = { confirmedIDChoices.append($0) }
         vc.loadViewIfNeeded()
 
         guard let confirm = findButton(titled: "Move to Trash", in: vc.view) else {
@@ -210,12 +212,12 @@ struct DeleteVMSheetContentViewControllerTests {
         }
         // Both start unchecked: confirming keeps every external file.
         confirm.performClick(nil)
-        #expect(delegate.confirmedIDChoices == [[]])
+        #expect(confirmedIDChoices == [[]])
 
         // Check one row and confirm again — only that id is returned.
         vc.checkboxes[trashID]?.state = .on
         confirm.performClick(nil)
-        #expect(delegate.confirmedIDChoices == [[], [trashID]])
+        #expect(confirmedIDChoices == [[], [trashID]])
     }
 
     @Test("Move to Trash button is the default (Return)")
@@ -405,8 +407,8 @@ struct DeleteVMSheetContentViewControllerTests {
             makeAttachment(id: deleteID, label: "Delete", path: "/tmp/delete.img"),
         ]
         let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var confirmedIDChoices: [Set<UUID>] = []
+        vc.onConfirm = { confirmedIDChoices.append($0) }
         vc.loadViewIfNeeded()
 
         guard let confirm = findButton(titled: "Delete Immediately", in: vc.view) else {
@@ -416,7 +418,7 @@ struct DeleteVMSheetContentViewControllerTests {
         // Opt one file in; the unchecked one is kept.
         vc.checkboxes[deleteID]?.state = .on
         confirm.performClick(nil)
-        #expect(delegate.confirmedIDChoices == [[deleteID]])
+        #expect(confirmedIDChoices == [[deleteID]])
     }
 
     // The content list's height is driven by an explicit measured constant
@@ -540,22 +542,5 @@ struct DeleteVMSheetContentViewControllerTests {
             sharedWithVMNames: shared,
             isMissing: missing
         )
-    }
-
-    @MainActor
-    private final class MockDelegate: DeleteVMSheetContentViewControllerDelegate {
-        var cancelCount = 0
-        var confirmedIDChoices: [Set<UUID>] = []
-
-        func deleteVMSheetDidCancel(_ vc: DeleteVMSheetContentViewController) {
-            cancelCount += 1
-        }
-
-        func deleteVMSheet(
-            _ vc: DeleteVMSheetContentViewController,
-            didConfirmDeletingExternalIDs ids: Set<UUID>
-        ) {
-            confirmedIDChoices.append(ids)
-        }
     }
 }

@@ -7,7 +7,7 @@ import AppKit
 /// One instance owns one popover slot — typically a stored property on the view
 /// controller that hosts the anchor button.
 @MainActor
-final class DiskSizePopoverCoordinator: DiskSizePopoverContentViewControllerDelegate {
+final class DiskSizePopoverCoordinator {
     private let presenter = PopoverPresenter()
     private let headline: String
     private let caption: String
@@ -27,24 +27,15 @@ final class DiskSizePopoverCoordinator: DiskSizePopoverContentViewControllerDele
             availableSizes: VMGuestOS.allDiskSizes,
             defaultSizeInGB: VMGuestOS.defaultDiskSizeInGB
         )
-        vc.delegate = self
+        vc.onConfirm = { [weak self] sizeInGB in
+            guard let self else { return }
+            // Close before invoking the action so the popover's dismissal
+            // animation completes before the action presents an NSSavePanel
+            // (removable media) or mutates the config (in-bundle disk).
+            presenter.close()
+            onConfirm(sizeInGB)
+        }
+        vc.onCancel = { [weak self] in self?.presenter.close() }
         presenter.show(content: vc, from: anchor, preferredEdge: .minY)
-    }
-
-    // MARK: - DiskSizePopoverContentViewControllerDelegate
-
-    func diskSizePopover(
-        _ vc: DiskSizePopoverContentViewController,
-        didConfirmSizeInGB sizeInGB: Int
-    ) {
-        // Close before invoking the action so the popover's dismissal animation
-        // completes before the action presents an NSSavePanel (removable media)
-        // or mutates the config (in-bundle disk).
-        presenter.close()
-        onConfirm(sizeInGB)
-    }
-
-    func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController) {
-        presenter.close()
     }
 }

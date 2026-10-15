@@ -560,7 +560,8 @@ final class IPSWSelectionContentViewController: NSViewController {
             selectedBuild: creationVM.lastCatalogPick?.build,
             generatedAt: creationVM.catalogService.generatedAt
         )
-        sheet.delegate = self
+        sheet.onChoose = { [weak self] entry in self?.commitCatalogEntry(entry) }
+        sheet.onCancel = { [weak self] in self?.dismissSourceSheet() }
         catalogSheetPresenter.show(content: sheet, in: window)
     }
 
@@ -571,53 +572,34 @@ final class IPSWSelectionContentViewController: NSViewController {
             probeService: creationVM.probeService,
             initialURL: creationVM.lastPastedImage?.url.absoluteString
         )
-        sheet.delegate = self
+        sheet.onChoose = { [weak self] image in self?.commitPastedImage(image) }
+        sheet.onCancel = { [weak self] in self?.dismissSourceSheet() }
         catalogSheetPresenter.show(content: sheet, in: window)
     }
 }
 
-// MARK: - RestoreImageURLSheetContentViewControllerDelegate
+// MARK: - Source sheets
 
-extension IPSWSelectionContentViewController:
-    RestoreImageURLSheetContentViewControllerDelegate
-{
-    func restoreImageURLSheet(
-        _ vc: RestoreImageURLSheetContentViewController,
-        didChoose image: ProbedRestoreImage
-    ) {
-        catalogSheetPresenter.close()
-        clearExistingFileNotice()
-        creationVM.selectPastedImage(image)
-        refresh()
-    }
-
-    func restoreImageURLSheetDidCancel(
-        _ vc: RestoreImageURLSheetContentViewController
-    ) {
-        catalogSheetPresenter.close()
-    }
-}
-
-// MARK: - RestoreImageCatalogSheetContentViewControllerDelegate
-
-extension IPSWSelectionContentViewController:
-    RestoreImageCatalogSheetContentViewControllerDelegate
-{
-    func restoreImageCatalogSheet(
-        _ vc: RestoreImageCatalogSheetContentViewController,
-        didChoose entry: RestoreImageCatalogEntry
-    ) {
+extension IPSWSelectionContentViewController {
+    /// Commits the version the picker reported.
+    private func commitCatalogEntry(_ entry: RestoreImageCatalogEntry) {
         catalogSheetPresenter.close()
         clearExistingFileNotice()
         creationVM.selectCatalogEntry(entry)
         refresh()
     }
 
-    func restoreImageCatalogSheetDidCancel(
-        _ vc: RestoreImageCatalogSheetContentViewController
-    ) {
-        // The model was never touched, so the radios already show the source
-        // that was selected before the picker opened.
+    /// Commits the image the URL sheet reported.
+    private func commitPastedImage(_ image: ProbedRestoreImage) {
+        catalogSheetPresenter.close()
+        clearExistingFileNotice()
+        creationVM.selectPastedImage(image)
+        refresh()
+    }
+
+    /// Closes a sheet dismissed without choosing. The model was never touched,
+    /// so the radios already show the source selected before it opened.
+    private func dismissSourceSheet() {
         catalogSheetPresenter.close()
     }
 }

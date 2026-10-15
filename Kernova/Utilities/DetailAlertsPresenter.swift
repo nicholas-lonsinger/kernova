@@ -91,8 +91,8 @@ final class DetailAlertsPresenter: NSObject {
         let instance: VMInstance
         let permanently: Bool
     }
-    /// The request the *shown* delete sheet is presenting, read by the sheet
-    /// delegate on confirm; `nil` when no sheet is on screen.
+    /// The request the *shown* delete sheet is presenting, read by the sheet's
+    /// confirm callback; `nil` when no sheet is on screen.
     ///
     /// Frozen as a single value at show time so the displayed sheet and the
     /// confirm disposition can never disagree. Distinct from ``pendingDelete``:
@@ -312,7 +312,14 @@ final class DetailAlertsPresenter: NSObject {
         let content = TakeSnapshotSheetContentViewController(
             vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
             mode: mode, purpose: purpose)
-        content.delegate = self
+        content.onCancel = { [weak self] in self?.snapshotSheetPresenter.close() }
+        content.onConfirm = { [weak self] name, notes in
+            guard let self else { return }
+            if let instance = shownSnapshotInstance {
+                viewModel.takeSnapshot(instance, name: name, notes: notes, for: purpose)
+            }
+            snapshotSheetPresenter.close()
+        }
         shownSnapshotInstance = instance
         // The capture's mode is decided at confirm time, so the sheet's copy
         // tracks the VM rather than freezing at what it was when it opened. A
@@ -620,7 +627,17 @@ final class DetailAlertsPresenter: NSObject {
             snapshotCount: request.instance.snapshotManifest.snapshots.count,
             mode: request.permanently ? .immediate : .trash
         )
-        content.delegate = self
+        content.onCancel = { [weak self] in self?.deleteSheetPresenter.close() }
+        content.onConfirm = { [weak self] ids in
+            guard let self else { return }
+            if let shown = shownDelete {
+                Task { [viewModel] in
+                    await viewModel.delete(
+                        shown.instance, deletingExternalIDs: ids, permanently: shown.permanently)
+                }
+            }
+            deleteSheetPresenter.close()
+        }
         shownDelete = request
         deleteSheetPresenter.onClose = { [weak self] in
             self?.handleDeleteSheetClosed(token: token)
@@ -962,42 +979,5 @@ final class DetailAlertsPresenter: NSObject {
             message:
                 "\(lead) Inside the VM, open the “\(KernovaMacOSAgentInfo.diskLabel)” disk in Finder and \(nextStep)"
         )
-    }
-}
-
-// MARK: - TakeSnapshotSheetContentViewControllerDelegate
-
-extension DetailAlertsPresenter: TakeSnapshotSheetContentViewControllerDelegate {
-    func takeSnapshotSheetDidCancel(_ vc: TakeSnapshotSheetContentViewController) {
-        snapshotSheetPresenter.close()
-    }
-
-    func takeSnapshotSheet(
-        _ vc: TakeSnapshotSheetContentViewController, didConfirmName name: String, notes: String
-    ) {
-        if let instance = shownSnapshotInstance {
-            viewModel.takeSnapshot(instance, name: name, notes: notes, for: vc.purpose)
-        }
-        snapshotSheetPresenter.close()
-    }
-}
-
-// MARK: - DeleteVMSheetContentViewControllerDelegate
-
-extension DetailAlertsPresenter: DeleteVMSheetContentViewControllerDelegate {
-    func deleteVMSheetDidCancel(_ vc: DeleteVMSheetContentViewController) {
-        deleteSheetPresenter.close()
-    }
-
-    func deleteVMSheet(
-        _ vc: DeleteVMSheetContentViewController, didConfirmDeletingExternalIDs ids: Set<UUID>
-    ) {
-        if let shown = shownDelete {
-            Task { [viewModel] in
-                await viewModel.delete(
-                    shown.instance, deletingExternalIDs: ids, permanently: shown.permanently)
-            }
-        }
-        deleteSheetPresenter.close()
     }
 }

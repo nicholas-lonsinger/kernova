@@ -1,27 +1,15 @@
 import AppKit
 
-/// Delegate for ``StorageDiskReorderSheetContentViewController``.
-@MainActor
-protocol StorageDiskReorderSheetContentViewControllerDelegate: AnyObject {
-    /// Invoked after a successful drag-reorder, with the new ordering top to
-    /// bottom.
-    func storageDiskReorderSheet(
-        _ vc: StorageDiskReorderSheetContentViewController,
-        didReorderTo disks: [StorageDisk]
-    )
-
-    /// Invoked when the user clicks Done (or presses Return).
-    func storageDiskReorderSheetDidDismiss(
-        _ vc: StorageDiskReorderSheetContentViewController
-    )
-}
-
 /// AppKit Boot Order sheet: shows a draggable list of the VM's storage
 /// disks so the user can change boot priority / guest device
 /// enumeration order.
 @MainActor
 final class StorageDiskReorderSheetContentViewController: NSViewController {
-    weak var delegate: StorageDiskReorderSheetContentViewControllerDelegate?
+    /// Fires after a successful drag-reorder, with the new ordering top to
+    /// bottom.
+    var onReorder: (([StorageDisk]) -> Void)?
+    /// Fires when the user clicks Done (or presses Return).
+    var onDone: (() -> Void)?
 
     /// Current ordering, mutated in place by drag-and-drop.
     private(set) var disks: [StorageDisk]
@@ -231,7 +219,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     // MARK: - Actions
 
     @objc private func doneTapped(_: NSButton) {
-        delegate?.storageDiskReorderSheetDidDismiss(self)
+        onDone?()
     }
 
     // MARK: - File-monitor observation
@@ -323,7 +311,7 @@ extension StorageDiskReorderSheetContentViewController: NSTableViewDataSource {
         if target < tableView.numberOfRows {
             tableView.selectRowIndexes([target], byExtendingSelection: false)
         }
-        delegate?.storageDiskReorderSheet(self, didReorderTo: disks)
+        onReorder?(disks)
         return true
     }
 }

@@ -471,7 +471,11 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         guard let window = view.window else { return }
         let sheet = StorageDiskReorderSheetContentViewController(
             disks: currentStorageDisks, instance: instance, fileMonitor: context.fileMonitor)
-        sheet.delegate = self
+        sheet.onReorder = { [weak self] disks in
+            guard let self else { return }
+            viewModel.reorderStorageDisks(disks.map(\.id), on: instance)
+        }
+        sheet.onDone = { [weak self] in self?.reorderSheetPresenter.close() }
         reorderSheetPresenter.show(content: sheet, in: window)
     }
 
@@ -860,21 +864,5 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                     for: instance, sizeInGB: sizeInGB, destinationURL: url)
             }
         }
-    }
-}
-
-// MARK: - StorageDiskReorderSheetContentViewControllerDelegate
-
-extension VMSettingsStoragePanelViewController:
-    StorageDiskReorderSheetContentViewControllerDelegate
-{
-    func storageDiskReorderSheet(
-        _ vc: StorageDiskReorderSheetContentViewController, didReorderTo disks: [StorageDisk]
-    ) {
-        viewModel.reorderStorageDisks(disks.map(\.id), on: instance)
-    }
-
-    func storageDiskReorderSheetDidDismiss(_ vc: StorageDiskReorderSheetContentViewController) {
-        reorderSheetPresenter.close()
     }
 }

@@ -1,14 +1,6 @@
 import KernovaKit
 import AppKit
 
-/// What an overview card asks the settings pane to do.
-@MainActor
-protocol VMSettingsOverviewDelegate: AnyObject {
-    func overview(_ vc: VMSettingsOverviewViewController, didSelect category: VMSettingsCategory)
-    func overview(_ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool)
-    func overview(_ vc: VMSettingsOverviewViewController, didInvoke action: VMOverviewAction)
-}
-
 /// The detail pane's overview: one card per ``VMSettingsCategory``, stacked down
 /// the pane's column in category order, each stating the category's current
 /// facts and offering the drill-in to its panel.
@@ -17,7 +9,12 @@ protocol VMSettingsOverviewDelegate: AnyObject {
 /// card from the model on the settings pane's own refresh pass.
 @MainActor
 final class VMSettingsOverviewViewController: NSViewController {
-    weak var delegate: VMSettingsOverviewDelegate?
+    /// Fires when a card's header row or Edit button is activated.
+    var onShow: ((VMSettingsCategory) -> Void)?
+    /// Fires when one of a card's switches is flipped.
+    var onToggle: ((VMOverviewToggle, Bool) -> Void)?
+    /// Fires when a card's foot command is run.
+    var onAction: ((VMOverviewAction) -> Void)?
 
     private let stack = NSStackView()
     private var cards: [VMSettingsCategory: VMOverviewCardView] = [:]
@@ -55,18 +52,9 @@ final class VMSettingsOverviewViewController: NSViewController {
         let toggles = VMOverviewSummary.toggleKinds(
             for: category, guestOS: instance.configuration.guestOS)
         let card = VMOverviewCardView(category: category, toggles: toggles)
-        card.onShow = { [weak self] in
-            guard let self else { return }
-            self.delegate?.overview(self, didSelect: category)
-        }
-        card.onToggle = { [weak self] toggle, isOn in
-            guard let self else { return }
-            self.delegate?.overview(self, didSet: toggle, to: isOn)
-        }
-        card.onAction = { [weak self] action in
-            guard let self else { return }
-            self.delegate?.overview(self, didInvoke: action)
-        }
+        card.onShow = { [weak self] in self?.onShow?(category) }
+        card.onToggle = { [weak self] toggle, isOn in self?.onToggle?(toggle, isOn) }
+        card.onAction = { [weak self] action in self?.onAction?(action) }
         cards[category] = card
         return card
     }

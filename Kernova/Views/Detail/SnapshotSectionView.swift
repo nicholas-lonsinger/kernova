@@ -1,28 +1,26 @@
 import AppKit
 import KernovaKit
 
-/// What a snapshot row's controls ask the settings pane to do.
-@MainActor
-protocol SnapshotSectionViewDelegate: AnyObject {
-    func snapshotSectionRequestedTakeSnapshot(_ view: SnapshotSectionView)
-    func snapshotSection(_ view: SnapshotSectionView, requestedRevertTo snapshot: VMSnapshot)
-    func snapshotSection(_ view: SnapshotSectionView, requestedDeleteOf snapshot: VMSnapshot)
-    func snapshotSection(
-        _ view: SnapshotSectionView, renamed snapshot: VMSnapshot, to newName: String)
-    func snapshotSection(
-        _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot)
-    func snapshotSection(
-        _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView)
-}
-
 /// The VM Settings pane's Snapshots section: header readout, one row per
 /// snapshot newest-first, and the "Take Snapshot…" footer link.
 ///
 /// Self-contained so the settings controller only builds it, hands it state,
-/// and answers its delegate.
+/// and answers its callbacks.
 @MainActor
 final class SnapshotSectionView: NSView {
-    weak var delegate: SnapshotSectionViewDelegate?
+    /// Fires when the footer's "Take Snapshot…" link is activated.
+    var onTakeSnapshot: (() -> Void)?
+    /// Fires when a row's Revert button or menu item is activated.
+    var onRevert: ((VMSnapshot) -> Void)?
+    /// Fires when a row's Delete menu item is activated.
+    var onDelete: ((VMSnapshot) -> Void)?
+    /// Fires when an inline rename is committed.
+    var onRename: ((_ snapshot: VMSnapshot, _ newName: String) -> Void)?
+    /// Fires when an inline note edit is committed.
+    var onSetNotes: ((_ snapshot: VMSnapshot, _ notes: String) -> Void)?
+    /// Fires when a row asks for the snapshot's Get Info popover, anchored at
+    /// `anchor`.
+    var onRequestInfo: ((_ snapshot: VMSnapshot, _ anchor: NSView) -> Void)?
 
     /// The snapshot whose name or note is being edited inline, or `nil`.
     var activeEdit: UUID? { list.activeEdit }
@@ -72,7 +70,7 @@ final class SnapshotSectionView: NSView {
         listStack: listStack, emptyMessage: "No snapshots",
         separator: { makeGroupedFormHairline() })
 
-    /// The manifest the rows were last built from, so a delegate callback can
+    /// The manifest the rows were last built from, so a row callback can
     /// name the snapshot a control belongs to.
     private var manifest = VMSnapshotManifest()
 
@@ -317,7 +315,7 @@ final class SnapshotSectionView: NSView {
 
         row.icon.onActivate = { [weak self] anchor in
             guard let self, let snapshot = self.manifest.snapshot(id: snapshotID) else { return }
-            self.delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: anchor)
+            self.onRequestInfo?(snapshot, anchor)
         }
 
         let title = row.titleView
@@ -327,7 +325,7 @@ final class SnapshotSectionView: NSView {
             let snapshot = self.manifest.snapshot(id: id)
             self.endEdit()
             guard let snapshot else { return }
-            self.delegate?.snapshotSection(self, renamed: snapshot, to: newName)
+            self.onRename?(snapshot, newName)
         }
         title.onRenameCancelled = { [weak self] _ in self?.endEdit() }
         title.onNotesCommitted = { [weak self] id, notes in
@@ -335,7 +333,7 @@ final class SnapshotSectionView: NSView {
             let snapshot = self.manifest.snapshot(id: id)
             self.endEdit()
             guard let snapshot else { return }
-            self.delegate?.snapshotSection(self, setNotes: notes, on: snapshot)
+            self.onSetNotes?(snapshot, notes)
         }
         title.onNotesCancelled = { [weak self] _ in self?.endEdit() }
         // A note the row can't hold on one line is edited where it fits.
@@ -343,7 +341,7 @@ final class SnapshotSectionView: NSView {
             guard let self, let snapshot = self.manifest.snapshot(id: id),
                 let row = self.list.row(id)
             else { return }
-            self.delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: row.icon)
+            self.onRequestInfo?(snapshot, row.icon)
         }
         // Built at click time from the current model, not the one this row was
         // created with, so an enablement change that took the in-place path is
@@ -392,12 +390,12 @@ final class SnapshotSectionView: NSView {
     // MARK: - Actions
 
     @objc private func takeSnapshotTapped() {
-        delegate?.snapshotSectionRequestedTakeSnapshot(self)
+        onTakeSnapshot?()
     }
 
     @objc private func revertTapped(_ sender: NSButton) {
         guard let snapshot = snapshot(from: sender.identifier?.rawValue) else { return }
-        delegate?.snapshotSection(self, requestedRevertTo: snapshot)
+        onRevert?(snapshot)
     }
 
     @objc private func moreTapped(_ sender: NSButton) {
@@ -421,17 +419,17 @@ final class SnapshotSectionView: NSView {
         guard let snapshot = snapshot(from: sender.representedObject as? String),
             let row = list.row(snapshot.id)
         else { return }
-        delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: row.icon)
+        onRequestInfo?(snapshot, row.icon)
     }
 
     @objc private func menuRevert(_ sender: NSMenuItem) {
         guard let snapshot = snapshot(from: sender.representedObject as? String) else { return }
-        delegate?.snapshotSection(self, requestedRevertTo: snapshot)
+        onRevert?(snapshot)
     }
 
     @objc private func menuDelete(_ sender: NSMenuItem) {
         guard let snapshot = snapshot(from: sender.representedObject as? String) else { return }
-        delegate?.snapshotSection(self, requestedDeleteOf: snapshot)
+        onDelete?(snapshot)
     }
 
     private func snapshot(from rawID: String?) -> VMSnapshot? {

@@ -1,22 +1,6 @@
 import AppKit
 import Foundation
 
-/// Delegate for ``LinuxImageURLSheetContentViewController``.
-@MainActor
-protocol LinuxImageURLSheetContentViewControllerDelegate: AnyObject {
-    /// The user accepted a checked image, with the length the check read for it.
-    func linuxImageURLSheet(
-        _ vc: LinuxImageURLSheetContentViewController,
-        didChoose image: CustomLinuxImage,
-        sizeBytes: UInt64
-    )
-
-    /// The user dismissed without choosing.
-    func linuxImageURLSheetDidCancel(
-        _ vc: LinuxImageURLSheetContentViewController
-    )
-}
-
 /// Nested sheet that takes an installer image URL, and the SHA-256 to check the
 /// download against, before anything is downloaded.
 ///
@@ -26,11 +10,15 @@ protocol LinuxImageURLSheetContentViewControllerDelegate: AnyObject {
 /// optional; without one the download is not verified.
 @MainActor
 final class LinuxImageURLSheetContentViewController: NSViewController {
-    weak var delegate: LinuxImageURLSheetContentViewControllerDelegate?
+    /// Fires when the user accepts a checked image, with the length the check
+    /// read for it.
+    var onChoose: ((_ image: CustomLinuxImage, _ sizeBytes: UInt64) -> Void)?
+    /// Fires when the user dismisses without choosing.
+    var onCancel: (() -> Void)?
 
     private let resolveService: any LinuxImageResolving
 
-    /// The last successful check, and what **Use** hands to the delegate.
+    /// The last successful check, and what **Use** hands to `onChoose`.
     private(set) var checkedImage: CustomLinuxImage?
 
     /// The length that check read, carried alongside so the wizard can show it.
@@ -400,12 +388,12 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     @objc private func cancelTapped() {
         checkTask?.cancel()
         checkTask = nil
-        delegate?.linuxImageURLSheetDidCancel(self)
+        onCancel?()
     }
 
     @objc private func useTapped() {
         guard let image = checkedImage, let sizeBytes = checkedSizeBytes else { return }
-        delegate?.linuxImageURLSheet(self, didChoose: image, sizeBytes: sizeBytes)
+        onChoose?(image, sizeBytes)
     }
 
     // MARK: - Helpers

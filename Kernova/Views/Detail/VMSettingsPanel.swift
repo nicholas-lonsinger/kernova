@@ -28,8 +28,9 @@ final class VMSettingsPanelContext {
     /// the panels that render those rows so one watch serves them all.
     let fileMonitor: AttachmentFileMonitor
 
-    /// The shell, which owns the write paths a panel shares with the overview.
-    weak var host: (any VMSettingsPanelHost)?
+    /// Routes a mirrored toggle into the shell's one write path for it, the
+    /// same one the overview card's switch takes.
+    var onSetToggle: ((VMOverviewToggle, Bool) -> Void)?
 
     /// `true` while the pane is off screen, so an async read that lands late
     /// paints nothing. The shell drives it from its own appearance callbacks;
@@ -81,18 +82,6 @@ final class VMSettingsPanelContext {
             .filter(\.kind.isExistenceMonitored).bookmarksByPath
         Task { [fileMonitor] in await fileMonitor.setPaths(refs) }
     }
-}
-
-/// What a panel asks of the settings shell.
-///
-/// A panel resolves its own sheets and popovers from `view.window`, so the host
-/// answers only for state the shell owns.
-@MainActor
-protocol VMSettingsPanelHost: AnyObject {
-    /// Routes a mirrored toggle into the shell's one write path for it, the same
-    /// one the overview card's switch takes.
-    func settingsPanel(
-        _ panel: any VMSettingsPanel, setToggle toggle: VMOverviewToggle, to isOn: Bool)
 }
 
 /// One category's form: builds its sections and refreshes them from the model.
@@ -180,7 +169,7 @@ extension VMSettingsPanel {
     /// Hands a toggle this panel shares with an overview card to the shell, so
     /// both surfaces write through one path.
     func setToggle(_ toggle: VMOverviewToggle, to isOn: Bool) {
-        context.host?.settingsPanel(self, setToggle: toggle, to: isOn)
+        context.onSetToggle?(toggle, isOn)
     }
 
     /// Re-resolves ``resolved`` after a write one of its values reads, so the

@@ -1,23 +1,6 @@
 import AppKit
 import KernovaKit
 
-/// Delegate for ``DeleteVMSheetContentViewController``.
-@MainActor
-protocol DeleteVMSheetContentViewControllerDelegate: AnyObject {
-    /// Invoked when the user clicks Cancel (or presses Escape).
-    func deleteVMSheetDidCancel(_ vc: DeleteVMSheetContentViewController)
-
-    /// Invoked when the user clicks the confirm button (Move to Trash, or
-    /// Delete Immediately in the immediate-delete mode).
-    ///
-    /// `ids` are the externals whose checkbox is on at the moment of
-    /// confirmation; locked-off shared or missing rows are never included.
-    func deleteVMSheet(
-        _ vc: DeleteVMSheetContentViewController,
-        didConfirmDeletingExternalIDs ids: Set<UUID>
-    )
-}
-
 /// Confirmation sheet shown when deleting a VM.
 ///
 /// Lists the VM's in-bundle disks read-only, and external attachments with a
@@ -32,7 +15,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         case immediate
     }
 
-    weak var delegate: DeleteVMSheetContentViewControllerDelegate?
+    /// Fires when the user clicks Cancel (or presses Escape).
+    var onCancel: (() -> Void)?
+    /// Fires when the user clicks the confirm button (Move to Trash, or Delete
+    /// Immediately in the immediate-delete mode), with the externals whose
+    /// checkbox is on at that moment; locked-off shared or missing rows are
+    /// never included.
+    var onConfirm: ((_ deletingExternalIDs: Set<UUID>) -> Void)?
 
     /// The confirmation this sheet gathers — its heading, its sentence, and
     /// both button titles, in the words every other surface asks the delete in.
@@ -552,11 +541,11 @@ final class DeleteVMSheetContentViewController: NSViewController {
     // MARK: - Actions
 
     @objc private func cancelTapped(_: NSButton) {
-        delegate?.deleteVMSheetDidCancel(self)
+        onCancel?()
     }
 
     @objc private func confirmTapped(_: NSButton) {
-        delegate?.deleteVMSheet(self, didConfirmDeletingExternalIDs: selectedExternalIDs)
+        onConfirm?(selectedExternalIDs)
     }
 
     /// Bulk-toggles every selectable external row.

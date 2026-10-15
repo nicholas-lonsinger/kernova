@@ -82,30 +82,34 @@ struct RestoreImageURLSheetContentViewControllerTests {
         #expect(findLabel(containing: "isn't a valid URL", in: vc.view) != nil)
     }
 
-    @Test("Choosing hands the checked image to the delegate")
-    func chooseReportsToDelegate() async {
+    @Test("Choosing hands the checked image to onChoose")
+    func chooseReports() async {
         let probe = MockRestoreImageProbeService()
         let vc = makeSheet(probe: probe, initialURL: "https://example.com/R.ipsw")
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: ProbedRestoreImage?
+        var cancelCount = 0
+        vc.onChoose = { chosen = $0 }
+        vc.onCancel = { cancelCount += 1 }
 
         await check(vc)
         findButton(titled: "Use", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen == probe.probeResult)
-        #expect(delegate.cancelCount == 0)
+        #expect(chosen == probe.probeResult)
+        #expect(cancelCount == 0)
     }
 
     @Test("Cancel reports a dismissal and no choice")
-    func cancelReportsToDelegate() {
+    func cancelReports() {
         let vc = makeSheet(probe: MockRestoreImageProbeService())
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: ProbedRestoreImage?
+        var cancelCount = 0
+        vc.onChoose = { chosen = $0 }
+        vc.onCancel = { cancelCount += 1 }
 
         findButton(titled: "Cancel", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen == nil)
-        #expect(delegate.cancelCount == 1)
+        #expect(chosen == nil)
+        #expect(cancelCount == 1)
     }
 
     @Test("An image newer than the host warns without blocking Use")
@@ -193,24 +197,6 @@ struct RestoreImageURLSheetContentViewControllerTests {
         // Back to idle, so the edited URL can be checked in turn.
         #expect(findLabel(containing: "Reading the image directory", in: vc.view) == nil)
         #expect(findButton(titled: "Check", in: vc.view)?.isEnabled == true)
-    }
-
-    // MARK: - Helpers
-
-    private final class RecordingDelegate: RestoreImageURLSheetContentViewControllerDelegate {
-        var chosen: ProbedRestoreImage?
-        var cancelCount = 0
-
-        func restoreImageURLSheet(
-            _ vc: RestoreImageURLSheetContentViewController,
-            didChoose image: ProbedRestoreImage
-        ) {
-            chosen = image
-        }
-
-        func restoreImageURLSheetDidCancel(_ vc: RestoreImageURLSheetContentViewController) {
-            cancelCount += 1
-        }
     }
 }
 
