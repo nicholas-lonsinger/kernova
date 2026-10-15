@@ -85,11 +85,15 @@ struct AppWindowRegistryWorkingWindowTests {
         makeMenuInstance(in: fixture.viewModel)
         let other = showTestWindow(styleMask: [.titled])
         let controller = MainMenuController(
-            viewModel: fixture.viewModel, windows: fixture.registry, hasBundledGuestAgentDisk: true,
-            frontWindows: { (other, other) })
+            viewModel: fixture.viewModel, windows: fixture.registry, hasBundledGuestAgentDisk: true)
+        let working = fixture.registry.workingInstance(keyWindow: other, mainWindow: other)
 
-        #expect(controller.activeInstance == nil)
-        #expect(!controller.validate(makeMenuItem(#selector(AppDelegate.startVM(_:)))))
-        #expect(!controller.validate(makeMenuItem(#selector(AppDelegate.deleteVM(_:)))))
+        #expect(working == nil)
+        #expect(
+            !controller.validate(
+                makeMenuItem(#selector(AppDelegate.startVM(_:))), workingInstance: working))
+        #expect(
+            !controller.validate(
+                makeMenuItem(#selector(AppDelegate.deleteVM(_:))), workingInstance: working))
     }
 }

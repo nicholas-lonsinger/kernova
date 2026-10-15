@@ -18,22 +18,6 @@ func makeWindowRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
         autosaveScope: autosave)
 }
 
-/// A menu controller over `viewModel` whose working window is the library
-/// window, shown for it — so the library's selection is the VM its commands
-/// act on, whatever window the shared test host has key.
-@MainActor
-func makeLibraryMenuController(
-    _ viewModel: VMLibraryViewModel, hasBundledGuestAgentDisk: Bool = true
-) -> MainMenuController {
-    let windows = makeWindowRegistry(viewModel)
-    windows.showLibrary(bringToFront: false)
-    guard let library = windows.libraryWindow else { preconditionFailure("showLibrary made no window") }
-    adoptAppWindow(library)
-    return MainMenuController(
-        viewModel: viewModel, windows: windows, hasBundledGuestAgentDisk: hasBundledGuestAgentDisk,
-        frontWindows: { (library, nil) })
-}
-
 @MainActor
 func makeLibraryViewModel(
     preferences: AppPreferences,
@@ -57,9 +41,8 @@ func makeLibraryViewModel(
     )
 }
 
-/// A VM in `viewModel`'s library, selected in its sidebar, so a menu command
-/// acts on it while the library window is the working window
-/// (``makeLibraryMenuController(_:hasBundledGuestAgentDisk:)``).
+/// A VM in `viewModel`'s library, selected in its sidebar — the VM the library
+/// window shows while it is the working window.
 @MainActor
 @discardableResult
 func makeMenuInstance(

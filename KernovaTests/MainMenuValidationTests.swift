@@ -8,23 +8,31 @@ import Testing
 ///
 /// The controller is built but never installed: `install()` writes
 /// `NSApp.mainMenu` in the shared test host.
-@Suite("MainMenuController validation", .serialized, .caseScoped, .scopedWindows)
+@Suite("MainMenuController validation", .serialized, .caseScoped)
 @MainActor
 struct MainMenuValidationTests {
     private let preferences = makeTestPreferences()
 
     /// The controller under test, over a library a test selects the VM in
-    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), working in the
-    /// library window.
+    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), which each check
+    /// takes as the VM the working window shows.
     private struct Fixture {
         let controller: MainMenuController
         let viewModel: VMLibraryViewModel
+
+        /// Validates `item` with the VM ``makeMenuInstance(in:guestOS:name:phase:mutate:)``
+        /// selected as the one the working window shows.
+        @MainActor
+        func validate(_ item: NSMenuItem) -> Bool {
+            controller.validate(item, workingInstance: viewModel.selectedInstance)
+        }
     }
 
     private func makeFixture(hasBundledGuestAgentDisk: Bool = true) -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let controller = makeLibraryMenuController(
-            viewModel, hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)
+        let controller = MainMenuController(
+            viewModel: viewModel, windows: makeWindowRegistry(viewModel),
+            hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)
         return Fixture(controller: controller, viewModel: viewModel)
     }
 
@@ -32,16 +40,16 @@ struct MainMenuValidationTests {
     func appLevelCommandsIgnoreSelection() {
         let fixture = makeFixture()
 
-        #expect(fixture.controller.validate(makeMenuItem(#selector(AppDelegate.showLibrary(_:)))))
-        #expect(fixture.controller.validate(makeMenuItem(#selector(AppDelegate.newVM(_:)))))
-        #expect(fixture.controller.validate(makeMenuItem(#selector(AppDelegate.quitCompletely(_:)))))
+        #expect(fixture.validate(makeMenuItem(#selector(AppDelegate.showLibrary(_:)))))
+        #expect(fixture.validate(makeMenuItem(#selector(AppDelegate.newVM(_:)))))
+        #expect(fixture.validate(makeMenuItem(#selector(AppDelegate.quitCompletely(_:)))))
     }
 
     @Test("A VM command with nothing selected is disabled")
     func vmCommandWithoutSelection() {
         let fixture = makeFixture()
 
-        #expect(!fixture.controller.validate(makeMenuItem(#selector(AppDelegate.startVM(_:)))))
+        #expect(!fixture.validate(makeMenuItem(#selector(AppDelegate.startVM(_:)))))
     }
 
     @Test("Start takes its title from the VM's start action")
@@ -52,7 +60,7 @@ struct MainMenuValidationTests {
         }
         let item = makeMenuItem(#selector(AppDelegate.startVM(_:)))
 
-        #expect(fixture.controller.validate(item))
+        #expect(fixture.validate(item))
         #expect(item.title == instance.startAction.label)
         #expect(item.title == "Install")
     }
@@ -68,7 +76,7 @@ struct MainMenuValidationTests {
         // admits, so the item is enabled through the second capability alone.
         #expect(!fixture.viewModel.capabilities.isAvailable(.stop, on: instance))
         #expect(fixture.viewModel.capabilities.isAvailable(.discardSavedState, on: instance))
-        #expect(fixture.controller.validate(item))
+        #expect(fixture.validate(item))
         #expect(item.title == VMInstance.StopAction.discardSavedState.menuTitle)
     }
 
@@ -97,7 +105,7 @@ struct MainMenuValidationTests {
         makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
         let item = makeMenuItem(#selector(AppDelegate.forceStopVM(_:)))
 
-        #expect(fixture.controller.validate(item) == isEnabled, "\(phase)")
+        #expect(fixture.validate(item) == isEnabled, "\(phase)")
     }
 
     @Test("A build with no bundled guest-agent disk withholds the command")
@@ -107,7 +115,7 @@ struct MainMenuValidationTests {
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
 
         #expect(fixture.viewModel.capabilities.isAvailable(.toggleGuestAgentDisk, on: instance))
-        #expect(!fixture.controller.validate(item))
+        #expect(!fixture.validate(item))
         #expect(item.title == GuestAgentDiskControl.unavailableTitle)
     }
 
@@ -118,7 +126,7 @@ struct MainMenuValidationTests {
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
         let model = GuestAgentDiskControl.model(for: instance)
 
-        #expect(fixture.controller.validate(item) == model.isEnabled)
+        #expect(fixture.validate(item) == model.isEnabled)
         #expect(item.title == model.title)
     }
 
@@ -129,8 +137,8 @@ struct MainMenuValidationTests {
         let clone = makeMenuItem(#selector(AppDelegate.cloneVM(_:)))
         let alternate = makeMenuItem(#selector(AppDelegate.cloneVMAlternate(_:)))
 
-        #expect(!fixture.controller.validate(clone))
-        #expect(!fixture.controller.validate(alternate))
+        #expect(!fixture.validate(clone))
+        #expect(!fixture.validate(alternate))
         #expect(clone.title == "Clone as New Machine")
         #expect(alternate.title == "Clone as Exact Copy")
         #expect(!alternate.isHidden)
@@ -144,8 +152,8 @@ struct MainMenuValidationTests {
         let clone = makeMenuItem(#selector(AppDelegate.cloneVM(_:)))
         let alternate = makeMenuItem(#selector(AppDelegate.cloneVMAlternate(_:)))
 
-        _ = fixture.controller.validate(clone)
-        _ = fixture.controller.validate(alternate)
+        _ = fixture.validate(clone)
+        _ = fixture.validate(alternate)
         #expect(clone.title == "Clone as Exact Copy")
         #expect(alternate.isHidden)
     }
@@ -166,7 +174,7 @@ struct MainMenuValidationTests {
         if phase.phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
 
         #expect(
-            fixture.controller.validate(makeMenuItem(#selector(AppDelegate.cloneVM(_:)))) == isEnabled,
+            fixture.validate(makeMenuItem(#selector(AppDelegate.cloneVM(_:)))) == isEnabled,
             "\(phase)")
     }
 
@@ -183,10 +191,10 @@ struct MainMenuValidationTests {
         #expect(
             runningFixture.viewModel.capabilities.decision(.takeSnapshot, on: running, posture: .offer)
                 == .refuse(.takesStoppedVM(.snapshotWritingOutsideBundle)))
-        #expect(!runningFixture.controller.validate(item))
+        #expect(!runningFixture.validate(item))
         let stoppedFixture = makeFixture()
         makeMenuInstance(in: stoppedFixture.viewModel, phase: .stopped, mutate: writable)
-        #expect(stoppedFixture.controller.validate(item))
+        #expect(stoppedFixture.validate(item))
     }
 
     @Test("Clone is greyed for a running VM whose guest can write an external disk, and enabled once stopped")
@@ -205,10 +213,10 @@ struct MainMenuValidationTests {
         #expect(
             runningFixture.viewModel.capabilities.decision(.clone, on: running, posture: .offer)
                 == .refuse(.takesStoppedVM(.cloneWritingOutsideBundle)))
-        #expect(!runningFixture.controller.validate(item))
+        #expect(!runningFixture.validate(item))
         let stoppedFixture = makeFixture()
         makeMenuInstance(in: stoppedFixture.viewModel, phase: .stopped, mutate: writable)
-        #expect(stoppedFixture.controller.validate(item))
+        #expect(stoppedFixture.validate(item))
     }
 
     @Test("The pop-out title follows where the display lives")
@@ -217,11 +225,11 @@ struct MainMenuValidationTests {
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         let item = makeMenuItem(#selector(AppDelegate.togglePopOut(_:)))
 
-        #expect(fixture.controller.validate(item))
+        #expect(fixture.validate(item))
         #expect(item.title == "Pop Out Display")
 
         instance.displayMode = .popOut
-        #expect(fixture.controller.validate(item))
+        #expect(fixture.validate(item))
         #expect(item.title == "Pop In Display")
     }
 
@@ -231,11 +239,11 @@ struct MainMenuValidationTests {
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         let item = makeMenuItem(#selector(AppDelegate.toggleFullscreen(_:)))
 
-        #expect(fixture.controller.validate(item))
+        #expect(fixture.validate(item))
         #expect(item.title == "Fullscreen Display")
 
         instance.displayMode = .fullscreen
-        #expect(fixture.controller.validate(item))
+        #expect(fixture.validate(item))
         #expect(item.title == "Exit Fullscreen Display")
     }
 

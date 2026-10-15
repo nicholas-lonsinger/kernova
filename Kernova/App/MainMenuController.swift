@@ -23,8 +23,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// window whose sidebar the View menu's section items read and act on
     /// while it is on screen.
     private let windows: AppWindowRegistry
-    /// The app's key and main windows, which ``activeInstance`` resolves.
-    private let frontWindows: @MainActor () -> (key: NSWindow?, main: NSWindow?)
 
     /// The application menu, retained so its quit section can be rebuilt when it opens.
     private var appMenu: NSMenu?
@@ -99,15 +97,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     init(
         viewModel: VMLibraryViewModel,
         windows: AppWindowRegistry,
-        hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil,
-        frontWindows: @escaping @MainActor () -> (key: NSWindow?, main: NSWindow?) = {
-            (NSApp.keyWindow, NSApp.mainWindow)
-        }
+        hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
     ) {
         self.viewModel = viewModel
         self.windows = windows
         self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
-        self.frontWindows = frontWindows
     }
 
     // MARK: - Command Target
@@ -116,8 +110,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// shows (``AppWindowRegistry/workingInstance(keyWindow:mainWindow:)``),
     /// `nil` — every VM command disabled — when it shows none.
     var activeInstance: VMInstance? {
-        let front = frontWindows()
-        return windows.workingInstance(keyWindow: front.key, mainWindow: front.main)
+        windows.workingInstance(keyWindow: NSApp.keyWindow, mainWindow: NSApp.mainWindow)
     }
 
     /// The VM a nil-target action acts on: the one the sending item names, else
@@ -128,7 +121,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// the VM on the item is what keeps the click acting on the row it came
     /// from. Every other sender carries none and gets the working-window rule.
     func target(of sender: Any?) -> VMInstance? {
-        (sender as? NSMenuItem)?.representedObject as? VMInstance ?? activeInstance
+        target(of: sender, workingInstance: activeInstance)
+    }
+
+    /// ``target(of:)`` with the working window's VM given: the one the sending
+    /// item names, else `workingInstance`.
+    private func target(of sender: Any?, workingInstance: VMInstance?) -> VMInstance? {
+        (sender as? NSMenuItem)?.representedObject as? VMInstance ?? workingInstance
     }
 
     // MARK: - Quit Section
@@ -211,9 +210,15 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// runs on keystrokes that open no menu: every rebuild here holds whether
     /// or not it runs then, and reads only what the app holds in memory.
     func menuNeedsUpdate(_ menu: NSMenu) {
+        update(menu, workingInstance: activeInstance)
+    }
+
+    /// ``menuNeedsUpdate(_:)`` for `menu`, with `workingInstance` as the VM the
+    /// working window shows.
+    func update(_ menu: NSMenu, workingInstance: VMInstance?) {
         if menu === windowsMenu {
             clipboardMenuItem?.isEnabled =
-                target(of: nil).map {
+                workingInstance.map {
                     viewModel.capabilities.isAvailable(.showClipboard, on: $0)
                 } ?? false
         } else if menu === viewMenu {
@@ -223,12 +228,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             // the next open.
             rebuildAppMenuQuitItems()
         } else if menu === revertSnapshotMenu {
-            rebuildRevertSnapshotMenu(menu)
+            rebuildRevertSnapshotMenu(menu, for: workingInstance)
         } else if menu === usbAccessoryMenu {
-            rebuildUSBAccessoryMenu(menu)
+            rebuildUSBAccessoryMenu(menu, for: workingInstance)
         } else if menu === virtualMachineMenu {
-            if let revertSnapshotMenu { rebuildRevertSnapshotMenu(revertSnapshotMenu) }
-            if let usbAccessoryMenu { rebuildUSBAccessoryMenu(usbAccessoryMenu) }
+            if let revertSnapshotMenu { rebuildRevertSnapshotMenu(revertSnapshotMenu, for: workingInstance) }
+            if let usbAccessoryMenu { rebuildUSBAccessoryMenu(usbAccessoryMenu, for: workingInstance) }
         }
     }
 
@@ -256,10 +261,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     }
 
     /// Rebuilds the USB submenu from the accessories macOS has assigned to
-    /// Kernova and the ones the target VM already holds, unless they are
-    /// what it already lists.
-    private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
-        let instance = activeInstance
+    /// Kernova and the ones `instance` already holds, unless they are what it
+    /// already lists.
+    private func rebuildUSBAccessoryMenu(_ menu: NSMenu, for instance: VMInstance?) {
         // Both listings come from the command core, so the menu offers exactly
         // what an attach would accept — the held-accessory filter lives at the
         // enforcement point, not here.
@@ -282,14 +286,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             detachAction: #selector(AppDelegate.detachUSBAccessory(_:)))
     }
 
-    /// Rebuilds the revert submenu from the target VM's snapshots, unless
-    /// they are what it already lists.
+    /// Rebuilds the revert submenu from `instance`'s snapshots, unless they
+    /// are what it already lists.
     ///
     /// The model alone answers for the submenu because every item in it is one
     /// this rebuild wrote — AppKit injects nothing into a submenu it does not
     /// own.
-    private func rebuildRevertSnapshotMenu(_ menu: NSMenu) {
-        let instance = activeInstance
+    private func rebuildRevertSnapshotMenu(_ menu: NSMenu, for instance: VMInstance?) {
         let model = RevertSnapshotMenuModel(
             instanceID: instance?.id,
             snapshots: instance?.snapshotManifest.ordered ?? [],
@@ -414,6 +417,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Decides `menuItem`'s enablement and, for the commands whose wording
     /// depends on state, retitles it.
     func validate(_ menuItem: NSMenuItem) -> Bool {
+        validate(menuItem, workingInstance: activeInstance)
+    }
+
+    /// ``validate(_:)`` with `workingInstance` as the VM the working window
+    /// shows.
+    func validate(_ menuItem: NSMenuItem, workingInstance: VMInstance?) -> Bool {
         // App-level commands — New, Show Library, Open VMs Folder, Check Config
         // Files, Quit Completely — are never gated on the selection, or a selected import
         // still copying would disable the GUI's only full-quit affordance.
@@ -423,7 +432,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // selection guard so none strands the last selection's wording: the
         // guest-agent item's title is part of what it reports (see
         // `unavailableTitle`), and the Clone items name the preference.
-        let target = self.target(of: menuItem)
+        let target = self.target(of: menuItem, workingInstance: workingInstance)
         switch menuItem.action {
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             menuItem.title = GuestAgentDiskControl.unavailableTitle
@@ -631,7 +640,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         revertItem.submenu = revertMenu
         revertSnapshotMenu = revertMenu
         // Seeded so the parent item is never a live entry onto an empty submenu.
-        rebuildRevertSnapshotMenu(revertMenu)
+        rebuildRevertSnapshotMenu(revertMenu, for: activeInstance)
         vmMenu.addItem(revertItem)
         // The capability is a property of this build's signature and OS, so a
         // build without it never grows the item — there is nothing here to
@@ -642,7 +651,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             usbMenu.delegate = self
             usbItem.submenu = usbMenu
             usbAccessoryMenu = usbMenu
-            rebuildUSBAccessoryMenu(usbMenu)
+            rebuildUSBAccessoryMenu(usbMenu, for: activeInstance)
             vmMenu.addItem(usbItem)
         }
         vmMenu.delegate = self

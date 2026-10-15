@@ -9,18 +9,32 @@ import Testing
 ///
 /// The menus come from `makeMainMenu()` rather than `install()`, which writes
 /// `NSApp.mainMenu` in the shared test host.
-@Suite("MainMenuController rebuilds", .serialized, .caseScoped, .scopedWindows)
+@Suite("MainMenuController rebuilds", .serialized, .caseScoped)
 @MainActor
 struct MainMenuRebuildTests {
     private let preferences = makeTestPreferences()
 
     /// The controller under test, over a library a test selects the VM in
-    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), working in the
-    /// library window.
+    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), which each check
+    /// takes as the VM the working window shows.
     private struct Fixture {
         let controller: MainMenuController
         let viewModel: VMLibraryViewModel
         let mainMenu: NSMenu
+
+        /// Validates `item` with the VM ``makeMenuInstance(in:guestOS:name:phase:mutate:)``
+        /// selected as the one the working window shows.
+        @MainActor
+        func validate(_ item: NSMenuItem) -> Bool {
+            controller.validate(item, workingInstance: viewModel.selectedInstance)
+        }
+
+        /// Updates `menu` with the VM ``makeMenuInstance(in:guestOS:name:phase:mutate:)``
+        /// selected as the one the working window shows.
+        @MainActor
+        func update(_ menu: NSMenu) {
+            controller.update(menu, workingInstance: viewModel.selectedInstance)
+        }
     }
 
     /// `populate` runs before the menu bar is built, so a VM it selects is the
@@ -31,7 +45,8 @@ struct MainMenuRebuildTests {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         populate(viewModel)
-        let controller = makeLibraryMenuController(viewModel)
+        let controller = MainMenuController(
+            viewModel: viewModel, windows: makeWindowRegistry(viewModel), hasBundledGuestAgentDisk: true)
         return Fixture(
             controller: controller, viewModel: viewModel, mainMenu: controller.makeMainMenu())
     }
@@ -61,7 +76,7 @@ struct MainMenuRebuildTests {
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
         let before = quitItems(in: appMenu, count: 1)
 
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
 
         let after = quitItems(in: appMenu, count: 1)
         #expect(before.count == 1)
@@ -76,7 +91,7 @@ struct MainMenuRebuildTests {
         let itemCountBefore = appMenu.items.count
 
         fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
 
         let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
         let after = quitItems(in: appMenu, count: model.count)
@@ -105,7 +120,7 @@ struct MainMenuRebuildTests {
         appMenu.insertItem(bystander, at: 0)
 
         fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
 
         let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
         #expect(!appMenu.items.contains { $0 === intruder })
@@ -128,7 +143,7 @@ struct MainMenuRebuildTests {
         intruder.keyEquivalentModifierMask = [.command, .option]
         appMenu.insertItem(intruder, at: appMenu.items.count - 1)
 
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
 
         let after = quitItems(in: appMenu, count: model.count)
         #expect(!appMenu.items.contains { $0 === intruder })
@@ -155,8 +170,8 @@ struct MainMenuRebuildTests {
 
         // Every ⌘-keystroke reaches this, so a matching section has to survive
         // repeated updates without a single mutation.
-        fixture.controller.menuNeedsUpdate(appMenu)
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
+        fixture.update(appMenu)
 
         let after = quitItems(in: appMenu, count: model.count)
         #expect(before.count == model.count)
@@ -175,7 +190,7 @@ struct MainMenuRebuildTests {
         appMenu.addItem(intruder)
 
         fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
 
         let claimants = appMenu.items.filter {
             $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
@@ -195,7 +210,7 @@ struct MainMenuRebuildTests {
         appMenu.addItem(intruder)
 
         fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.update(appMenu)
 
         let fresh = makeFixture(keepInMenuBar: true)
         let freshAppMenu = try #require(fresh.mainMenu.items.first?.submenu)
@@ -209,9 +224,10 @@ struct MainMenuRebuildTests {
     func revertSubmenuUnchangedModel() throws {
         let fixture = makeFixture { makeMenuInstance(in: $0) }
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
+        fixture.update(revertMenu)
         let before = revertMenu.items
 
-        fixture.controller.menuNeedsUpdate(revertMenu)
+        fixture.update(revertMenu)
 
         #expect(before.count == 1)
         #expect(before.first?.title == SnapshotRevertMenu.emptyTitle)
@@ -225,7 +241,7 @@ struct MainMenuRebuildTests {
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Clean", macAddress: nil)]))
-        fixture.controller.menuNeedsUpdate(revertMenu)
+        fixture.update(revertMenu)
 
         // Each item renders two lines, so its title is matched by prefix.
         #expect(revertMenu.items.count == 1)
@@ -241,7 +257,7 @@ struct MainMenuRebuildTests {
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Clean", macAddress: nil)]))
-        fixture.controller.menuNeedsUpdate(vmMenu)
+        fixture.update(vmMenu)
 
         #expect(revertMenu.items.count == 1)
         #expect(revertMenu.items.first?.title.hasPrefix("Clean\u{2026}") == true)
@@ -258,11 +274,11 @@ struct MainMenuRebuildTests {
         let windowMenu = try #require(submenu(titled: "Window", in: fixture.mainMenu))
         let clipboardItem = try #require(windowMenu.items.first { $0.title == "Clipboard" })
 
-        fixture.controller.menuNeedsUpdate(windowMenu)
+        fixture.update(windowMenu)
         #expect(clipboardItem.isEnabled)
 
         fixture.viewModel.library.selection = nil
-        fixture.controller.menuNeedsUpdate(windowMenu)
+        fixture.update(windowMenu)
         #expect(!clipboardItem.isEnabled)
     }
 
