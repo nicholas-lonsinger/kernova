@@ -33,7 +33,7 @@ struct AppResidencyPresentationTests {
         let host = StubLaunchHost()
         let controller = AppResidencyController(
             viewModel: viewModel,
-            windows: makeWindowRegistry(viewModel))
+            windows: makeWindowRegistry(viewModel), heldAlerts: HeldAlerts())
         controller.host = host
         return (controller, host)
     }

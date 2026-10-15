@@ -45,6 +45,12 @@ struct AppWindowRegistryWorkingWindowTests {
 
         #expect(fixture.registry.workingInstance(keyWindow: sheet, mainWindow: clipboard) === instance)
         #expect(fixture.registry.workingInstance(keyWindow: sheet, mainWindow: nil) === instance)
+
+        // An alert raised there goes to the window the sheet is on, not the
+        // sheet.
+        let scene = fixture.registry.alertScene(keyWindow: sheet, mainWindow: nil)
+        #expect(scene.working.first?.window === clipboard)
+        #expect(scene.working.first?.vmID == instance.id)
     }
 
     @Test("The library window answers for its selection while it is key")

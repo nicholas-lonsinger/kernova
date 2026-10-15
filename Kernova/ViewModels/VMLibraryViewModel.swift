@@ -468,15 +468,22 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Presentation delegate for alerts, sheets, and the creation wizard.
+    /// Where the alerts and sheets this view model raises are shown.
     ///
-    /// Presentations raised before a presenter is attached — the library read
-    /// starts in `applicationWillFinishLaunching`, ahead of any window — are
-    /// buffered and flushed when one is set.
-    @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
+    /// Set by the composition root before the library's first read starts, so
+    /// nothing raised by a launch goes unpresented; a request with no window to
+    /// show on waits in the presenter.
+    @ObservationIgnored weak var presenter: (any VMLibraryPresenting)?
+
+    /// The library window's own surfaces — the creation wizard and the inline
+    /// guest display — attached by that window's detail pane.
+    ///
+    /// A config check or an inline focus asked for before one is attached — the
+    /// library read starts in `applicationWillFinishLaunching`, ahead of any
+    /// window — is held and delivered when one is.
+    @ObservationIgnored weak var libraryWindowPresenter: (any LibraryWindowPresenting)? {
         didSet {
-            guard presenter != nil else { return }
-            drainBufferedPresentations()
+            guard libraryWindowPresenter != nil else { return }
             if owesConfigCheck {
                 owesConfigCheck = false
                 onShowConfigCheck?(.automatic)
@@ -484,80 +491,14 @@ final class VMLibraryViewModel {
             if let id = bufferedDisplayFocus {
                 bufferedDisplayFocus = nil
                 if let instance = instances.first(where: { $0.id == id }) {
-                    presenter?.focusGuestDisplay(for: instance)
+                    libraryWindowPresenter?.focusGuestDisplay(for: instance)
                 }
             }
         }
     }
 
-    /// A presentation raised with no presenter attached, held as what it is
-    /// rather than as the text an alert would have shown: the drain re-runs the
-    /// same branch the live call took, so a failure keeps the recovery it
-    /// offered.
-    private enum BufferedPresentation {
-        case error(title: String, message: String, subject: AlertSubject)
-        /// A start that failed, whatever it failed with. The VM is named by id
-        /// and re-resolved on the drain — one that left the library meanwhile
-        /// leaves nothing to act on or report.
-        case startFailure(StartFailure, vmID: UUID)
-        /// The launch pass's one account of the VMs it left undone. Each VM is
-        /// re-resolved on the drain, as a start failure's is: one that left the
-        /// library meanwhile drops out of the account.
-        case startSummary(title: String, undone: [VMGroupActionResult])
-
-        /// The VMs this presentation reports as not started, by id — each
-        /// reported only while the library still holds it.
-        var undoneStartIDs: [UUID] {
-            switch self {
-            case .error: []
-            case .startFailure(_, let vmID): [vmID]
-            case .startSummary(_, let undone): undone.map(\.vm.id)
-            }
-        }
-    }
-
-    /// How a bring-up failed: with an attachment the alert can offer to detach,
-    /// or with only a message to show.
-    ///
-    /// The attachment case carries either bring-up, because both assemble the
-    /// same configuration — a resume restoring a saved state fails over a
-    /// missing disk exactly as a boot does. The message case is the start's:
-    /// every single-VM start failure reaches the status item through
-    /// it, a guest cap or a duplicate identity as surely as a missing disk
-    /// image.
-    private enum StartFailure {
-        case attachment(StartFailedAttachment)
-        case message(title: String, message: String)
-    }
-
-    /// What is waiting for a presenter, in the order it was raised.
-    ///
-    /// Observed — unlike `bufferedDisplayFocus` — because the status item
-    /// renders ``bufferedUndoneStartCount`` from it.
-    private var bufferedPresentations: [BufferedPresentation] = []
-
-    /// How many VMs that did not start are waiting for a window to report
-    /// them in, counting only the VMs the library still holds — the ones the
-    /// drain would report.
-    ///
-    /// Non-zero only for a launch that came up headless: the status item is the
-    /// one surface such a process has, and clicking its line opens the library,
-    /// which attaches the presenter and drains these back to zero.
-    var bufferedUndoneStartCount: Int {
-        bufferedPresentations.reduce(0) { count, presentation in
-            count + presentation.undoneStartIDs.count { holdsVM($0) }
-        }
-    }
-
-    /// Whether the library still holds the VM `id` names — what a buffered
-    /// report of it needs to be shown or counted.
-    private func holdsVM(_ id: UUID) -> Bool {
-        instances.contains { $0.id == id }
-    }
-
-    /// The VM an inline surface was asked for before any window existed, focused
-    /// when the presenter attaches — the same buffering `bufferedPresentations`
-    /// does, for the same reason.
+    /// The VM an inline surface was asked for before any library window
+    /// existed, focused when one attaches.
     @ObservationIgnored private var bufferedDisplayFocus: UUID?
 
     /// The one rename open: in a sidebar row — held by the library
@@ -633,9 +574,8 @@ final class VMLibraryViewModel {
         onShowSettings?(destination)
     }
 
-    /// Whether a read found a config file it can't read while no presenter
-    /// was attached: the check comes up when one is, with the library window,
-    /// as the alerts the read raises do.
+    /// Whether a read found a config file it can't read while no library
+    /// window was attached: the check comes up when one is.
     @ObservationIgnored private var owesConfigCheck = false
 
     /// Puts the config check in front of the user — File > Check Config
@@ -768,7 +708,7 @@ final class VMLibraryViewModel {
         }
         library.onUnreadableFilesFound = { [weak self] in
             guard let self else { return }
-            guard self.presenter != nil else {
+            guard self.libraryWindowPresenter != nil else {
                 self.owesConfigCheck = true
                 return
             }
@@ -906,13 +846,14 @@ final class VMLibraryViewModel {
     /// Moves the first responder into the selected VM's inline display, holding
     /// the ask until a window exists to move it in.
     private func deliverInlineFocus(to instance: VMInstance) {
-        guard let presenter else {
-            // No window has ever been created, so there is no inline display to
-            // focus yet. The one just asked for focuses when it attaches.
+        guard let libraryWindowPresenter else {
+            // No library window has ever been created, so there is no inline
+            // display to focus yet. The one just asked for focuses when it
+            // attaches.
             bufferedDisplayFocus = instance.id
             return
         }
-        presenter.focusGuestDisplay(for: instance)
+        libraryWindowPresenter.focusGuestDisplay(for: instance)
     }
 
     /// Selects the row, dropping any sidebar filter that hides it, and asks for
@@ -1559,7 +1500,7 @@ final class VMLibraryViewModel {
             runEdit(on: instance) {
                 let outcome = try self.commands.mountGuestAgentDisk(.id(instance.id))
                 self.presenter?.presentInstallerMounted(
-                    vmName: instance.name, purpose: purpose, delivery: outcome.delivery)
+                    for: instance, purpose: purpose, delivery: outcome.delivery)
             }
         }
     }
@@ -1625,7 +1566,8 @@ final class VMLibraryViewModel {
     /// left showing whatever the user left it on.
     func startAutomaticVMsForLaunch(_ marked: Set<UUID>) async {
         let results = await commands.startVMsMarkedToStartAutomatically(marked)
-        surfaceStartSummary(title: Self.autoStartUndoneTitle, undone: results.undone)
+        guard !results.undone.isEmpty else { return }
+        presenter?.presentStartSummary(title: Self.autoStartUndoneTitle, undone: results.undone)
     }
 
     /// What the launch pass heads its account of the VMs it left undone with.
@@ -1704,9 +1646,8 @@ final class VMLibraryViewModel {
     /// Shows a refusal nobody is waiting for.
     ///
     /// A `kernova:` link has no caller to answer to, so the app is where its
-    /// refusal lands — through the same routing every in-app refusal takes,
-    /// buffering included, so a refusal raised while the window it will be
-    /// shown in is still being built survives to reach it.
+    /// refusal lands — through the same routing every in-app refusal takes, so
+    /// a refusal raised before any window can show it waits for one.
     func surfaceUnawaitedFailure(_ failure: CommandError) {
         present(failure, about: .library)
     }
@@ -1733,9 +1674,9 @@ final class VMLibraryViewModel {
                 "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public) about no VM"
             )
         case (.operationFailed(_, _, _, .removeStartFailedAttachment(let failure)?), .vm(let instance)):
-            surfaceStartFailure(.attachment(failure), for: instance)
+            presenter?.presentStartFailedAttachment(failure, for: instance)
         case (.operationFailed(.start, _, let message, _), .vm(let instance)):
-            surfaceStartFailure(.message(title: command.alertTitle, message: message), for: instance)
+            presenter?.presentStartFailure(message, title: command.alertTitle, for: instance)
         case (.operationFailed(_, _, let message, _), _):
             surfaceError(message, title: command.alertTitle, about: subject)
         default:
@@ -1767,76 +1708,9 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Routes an error message composed upstream to the presenter, buffering
-    /// it if none is attached yet; an `Error` goes through
-    /// ``present(_:about:)`` instead.
+    /// Routes an error message composed upstream to the presenter; an `Error`
+    /// goes through ``present(_:about:)`` instead.
     func surfaceError(_ message: String, title: String, about subject: AlertSubject) {
-        if let presenter {
-            presenter.presentError(message, title: title, about: subject)
-        } else {
-            bufferedPresentations.append(.error(title: title, message: message, subject: subject))
-        }
-    }
-
-    /// Routes a start failure to the presenter, buffering the failure itself
-    /// when none is attached yet — so the alert it earns, shown once a window
-    /// arrives, carries whatever the failure offered, the
-    /// detach-and-start-again action included.
-    private func surfaceStartFailure(_ failure: StartFailure, for instance: VMInstance) {
-        guard let presenter else {
-            bufferedPresentations.append(.startFailure(failure, vmID: instance.id))
-            return
-        }
-        switch failure {
-        case .attachment(let attachment):
-            presenter.presentStartFailedAttachment(attachment, for: instance)
-        case .message(let title, let message):
-            presenter.presentError(message, title: title, about: .vm(instance))
-        }
-    }
-
-    /// Routes the launch pass's account of the `undone` VMs it did not start
-    /// to the presenter, buffering it — counted by the status item — when none
-    /// is attached yet, as on a launch that came up headless. An account of no
-    /// VMs shows nothing.
-    private func surfaceStartSummary(title: String, undone: [VMGroupActionResult]) {
-        guard !undone.isEmpty else { return }
-        guard let presenter else {
-            bufferedPresentations.append(.startSummary(title: title, undone: undone))
-            return
-        }
-        presenter.presentError(undone.undoneMessage(for: .start), title: title, about: .library)
-    }
-
-    /// Re-dispatches everything raised before the presenter attached, through
-    /// the same routing a live presentation takes.
-    private func drainBufferedPresentations() {
-        guard !bufferedPresentations.isEmpty else { return }
-        let buffered = bufferedPresentations
-        bufferedPresentations.removeAll()
-        for presentation in buffered {
-            switch presentation {
-            case .error(let title, let message, let subject):
-                surfaceError(message, title: title, about: subject)
-            case .startSummary(let title, let undone):
-                let held = undone.filter { holdsVM($0.vm.id) }
-                if held.count < undone.count {
-                    #log(
-                        Self.logger, .debug,
-                        "Dropped \(undone.count - held.count, privacy: .public) VM(s) from the buffered launch account — they left the library before a window arrived"
-                    )
-                }
-                surfaceStartSummary(title: title, undone: held)
-            case .startFailure(let failure, let vmID):
-                guard let instance = instances.first(where: { $0.id == vmID }) else {
-                    #log(
-                        Self.logger, .debug,
-                        "Dropped a buffered start failure — its VM left the library before a window arrived"
-                    )
-                    continue
-                }
-                surfaceStartFailure(failure, for: instance)
-            }
-        }
+        presenter?.presentError(message, title: title, about: subject)
     }
 }

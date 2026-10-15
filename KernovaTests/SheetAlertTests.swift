@@ -104,7 +104,7 @@ struct SheetAlertTests {
 
         // Nothing was chosen, so nothing the user chose runs. An alert whose
         // answer something is waiting on gets it from whatever ended the sheet
-        // — `DetailAlertsPresenter.stop()` — not from a reading of a response
+        // — `AppAlertPresenter` for a closing window — not from a reading of a response
         // code this has no way to check.
         dispatchAction(for: .stop, buttons: buttons)
 

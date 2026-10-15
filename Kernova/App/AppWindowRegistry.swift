@@ -28,6 +28,10 @@ final class AppWindowRegistry {
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
 
+    /// Reports that this registry put a window on screen — an event no
+    /// notification carries for a window ordered in without becoming key.
+    var onWindowShown: (@MainActor () -> Void)?
+
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppWindowRegistry")
 
     init(
@@ -73,6 +77,7 @@ final class AppWindowRegistry {
             }
             mainWindowController = windowController
         }
+        onWindowShown?()
     }
 
     func revealLibrarySidebar() {
@@ -146,6 +151,7 @@ final class AppWindowRegistry {
         let vmID = instance.instanceID
         if let existing = clipboardWindows[vmID] {
             existing.window?.makeKeyAndOrderFront(nil)
+            onWindowShown?()
             return
         }
 
@@ -156,6 +162,7 @@ final class AppWindowRegistry {
         }
         clipboardWindows[vmID] = controller
         controller.showWindow(nil)
+        onWindowShown?()
     }
 
     func clipboardWindow(for vmID: UUID) -> NSWindow? { clipboardWindows[vmID]?.window }
@@ -166,8 +173,7 @@ final class AppWindowRegistry {
     /// library's selection while the library window is visible; `nil` for any
     /// other window. A sheet answers for the window it is attached to.
     func instance(shownIn window: NSWindow) -> VMInstance? {
-        var window = window
-        while let parent = window.sheetParent { window = parent }
+        let window = Self.sheetRoot(of: window)
         if let instance = displayPlacement.instance(forDisplayWindow: window) { return instance }
         if let clipboard = clipboardWindows.values.first(where: { $0.window === window }) {
             return clipboard.instance
@@ -181,6 +187,29 @@ final class AppWindowRegistry {
     /// (`NSApplication.sendAction(_:to:from:)`).
     func workingInstance(keyWindow: NSWindow?, mainWindow: NSWindow?) -> VMInstance? {
         keyWindow.flatMap(instance(shownIn:)) ?? mainWindow.flatMap(instance(shownIn:))
+    }
+
+    /// The windows an alert can go to, read from the key and main windows the
+    /// caller passes and the library and display windows this registry holds.
+    func alertScene(keyWindow: NSWindow?, mainWindow: NSWindow?) -> AlertWindowScene<NSWindow> {
+        let working = [keyWindow, mainWindow].compactMap { $0 }.map { window in
+            (window: Self.sheetRoot(of: window), vmID: instance(shownIn: window)?.id)
+        }
+        let displayWindows = displayPlacement.windowsByVM
+        var states: [NSWindow: AlertWindowState] = [:]
+        for window in working.map(\.window) + displayWindows.values + [libraryWindow].compactMap({ $0 }) {
+            states[window] = AlertWindowState(window)
+        }
+        return AlertWindowScene(
+            working: working, displayWindows: displayWindows, library: libraryWindow, states: states)
+    }
+
+    /// The window `window` is a sheet on, through every level, or `window`
+    /// itself.
+    private static func sheetRoot(of window: NSWindow) -> NSWindow {
+        var window = window
+        while let parent = window.sheetParent { window = parent }
+        return window
     }
 
     // MARK: - Presence
@@ -255,4 +284,6 @@ final class AppWindowRegistry {
 
 extension AppWindowRegistry: VMDisplayPlacementHosting {
     var libraryScreen: NSScreen? { libraryWindow?.screen }
+
+    func displayWindowShown() { onWindowShown?() }
 }

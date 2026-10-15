@@ -17,11 +17,13 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// state takes the badged screen glyph — a symbol the set already draws for
     /// menu-bar sizes — rather than a composited badge.
     private static let undoneStartIconSymbol = "display.trianglebadge.exclamationmark"
+    private static let waitingAlertIconSymbol = "exclamationmark.bubble"
 
-    /// The glyph the status item shows, which reports a start left undone that
-    /// no window was there to present.
-    static func iconSymbol(hasUndoneStarts: Bool) -> String {
-        hasUndoneStarts ? undoneStartIconSymbol : idleIconSymbol
+    /// The glyph the status item shows, which reports alerts held for want of a
+    /// window: a start left undone first, then any other.
+    static func iconSymbol(hasUndoneStarts: Bool, hasWaitingAlerts: Bool) -> String {
+        if hasUndoneStarts { return undoneStartIconSymbol }
+        return hasWaitingAlerts ? waitingAlertIconSymbol : idleIconSymbol
     }
 
     private let statusItem: NSStatusItem
@@ -30,9 +32,15 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private lazy var vmSection = StatusMenuVMSection(
         menu: menu, rowTarget: self, rowAction: #selector(openVMTapped(_:)))
     /// The dropdown's undone-start line, edited in place the same way.
-    private lazy var undoneStartSection = StatusMenuUndoneStartSection(
-        menu: menu, target: self, action: #selector(undoneStartsTapped))
-    /// The item the undone-start line sits under, so an in-place insertion has
+    private lazy var undoneStartLine = StatusMenuCountLine(
+        menu: menu, target: self, action: #selector(heldAlertsTapped),
+        title: StatusMenuCountLine.undoneStartTitle(count:))
+    /// The dropdown's line for every other held alert, under the undone-start
+    /// line.
+    private lazy var waitingAlertLine = StatusMenuCountLine(
+        menu: menu, target: self, action: #selector(heldAlertsTapped),
+        title: StatusMenuCountLine.waitingAlertTitle(count:))
+    /// The item the held-alert lines sit under, so an in-place insertion has
     /// an anchor while the dropdown is open.
     private var openItem: NSMenuItem?
     /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
@@ -40,6 +48,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var isMenuOpen = false
 
     private let viewModel: VMLibraryViewModel
+    /// The alerts waiting for a window to show them on.
+    private let heldAlerts: HeldAlerts
     private var preferences: AppPreferences { viewModel.preferences }
     /// Summons the GUI — `nil` opens the library, a VM id opens just that VM.
     private let onOpen: (UUID?) -> Void
@@ -75,9 +85,27 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// it alone doesn't re-run the automatic-open decision.
     private var lastAppliedReadout: ClipboardTransferReport = .idle
 
-    /// The undone-start count the icon was last drawn for, so a library change
-    /// that leaves it alone doesn't redraw the button.
-    private var lastUndoneStartCount = 0
+    /// The held-alert counts the icon was last drawn for, so a library change
+    /// that leaves them alone doesn't redraw the button.
+    private var lastHeldCounts = HeldCounts(undoneStarts: 0, waitingAlerts: 0)
+
+    /// What the status item reports of the held alerts.
+    private struct HeldCounts: Equatable {
+        /// VMs that did not start, still in the library.
+        let undoneStarts: Int
+        /// Every other held alert.
+        let waitingAlerts: Int
+    }
+
+    /// The held alerts as they stand, counting only what the library still
+    /// lists — what showing them would show.
+    private var heldCounts: HeldCounts {
+        let instances = viewModel.instances
+        let isListed: (UUID) -> Bool = { id in instances.contains { $0.id == id } }
+        return HeldCounts(
+            undoneStarts: heldAlerts.undoneStartCount(listing: isListed),
+            waitingAlerts: heldAlerts.otherAlertCount(listing: isListed))
+    }
 
     /// When each VM's last presented refusal was raised.
     ///
@@ -93,12 +121,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     init(
         viewModel: VMLibraryViewModel,
+        heldAlerts: HeldAlerts,
         onOpen: @escaping (UUID?) -> Void,
         onOpenClipboard: @escaping (UUID) -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.viewModel = viewModel
+        self.heldAlerts = heldAlerts
         self.onOpen = onOpen
         self.onOpenClipboard = onOpenClipboard
         self.onQuit = onQuit
@@ -120,12 +150,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 for instance in self.viewModel.instances {
                     _ = instance.clipboardTransferReport
                 }
-                _ = self.viewModel.bufferedUndoneStartCount
+                _ = self.heldCounts
             },
             apply: { [weak self] in
                 guard let self else { return }
                 self.transferReportsChanged()
-                self.undoneStartsChanged()
+                self.heldAlertsChanged()
                 self.syncMenuIfOpen()
                 self.presentPendingNotices()
             }
@@ -172,14 +202,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         updateTooltip()
     }
 
-    // MARK: - Undone starts
+    // MARK: - Held alerts
 
-    /// Re-draws the icon when the number of undone starts waiting for a window
-    /// changes — the resident app's only way to report one.
-    private func undoneStartsChanged() {
-        let count = viewModel.bufferedUndoneStartCount
-        guard count != lastUndoneStartCount else { return }
-        lastUndoneStartCount = count
+    /// Re-draws the icon when the alerts waiting for a window change — the
+    /// resident app's only way to report them.
+    private func heldAlertsChanged() {
+        let counts = heldCounts
+        guard counts != lastHeldCounts else { return }
+        lastHeldCounts = counts
         setIcon()
     }
 
@@ -241,11 +271,16 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Icon / tooltip
 
     private func setIcon() {
-        let hasUndoneStarts = viewModel.bufferedUndoneStartCount > 0
-        let symbol = Self.iconSymbol(hasUndoneStarts: hasUndoneStarts)
+        let counts = heldCounts
+        let hasUndoneStarts = counts.undoneStarts > 0
+        let hasWaitingAlerts = counts.waitingAlerts > 0
+        let symbol = Self.iconSymbol(hasUndoneStarts: hasUndoneStarts, hasWaitingAlerts: hasWaitingAlerts)
         // The glyph is the whole signal for a sighted user; the description is
         // the whole of it for VoiceOver, so it changes with the glyph.
-        let description = hasUndoneStarts ? "Kernova, a virtual machine didn\u{2019}t start" : "Kernova"
+        let description =
+            hasUndoneStarts
+            ? "Kernova, a virtual machine didn\u{2019}t start"
+            : hasWaitingAlerts ? "Kernova, an alert is waiting" : "Kernova"
         // The shared `NSImage.systemSymbol(_:…)` helper's release fallback is a
         // zero-size `NSImage()`, which renders the status-item button invisible,
         // and the status item is the only way to find or quit the headless agent.
@@ -270,7 +305,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Updates the tooltip.
     ///
-    /// A materializing paste and an undone start each append a further line
+    /// A materializing paste and each kind of held alert append a further line
     /// rather than replacing the running-count line, so headless users never
     /// lose the at-a-glance view of how many VMs are running.
     private func updateTooltip() {
@@ -285,10 +320,16 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         if let snapshot = transferProgressPresenter.snapshot {
             lines.append(ClipboardProgressFormat.summary(snapshot))
         }
-        switch viewModel.bufferedUndoneStartCount {
+        let counts = heldCounts
+        switch counts.undoneStarts {
         case ..<1: break
         case 1: lines.append("1 virtual machine didn\u{2019}t start")
         case let undone: lines.append("\(undone) virtual machines didn\u{2019}t start")
+        }
+        switch counts.waitingAlerts {
+        case ..<1: break
+        case 1: lines.append("1 alert is waiting to be shown")
+        case let waiting: lines.append("\(waiting) alerts are waiting to be shown")
         }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
     }
@@ -309,7 +350,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(open)
         openItem = open
 
-        undoneStartSection.rebuild(count: viewModel.bufferedUndoneStartCount)
+        let counts = heldCounts
+        undoneStartLine.rebuild(count: counts.undoneStarts)
+        waitingAlertLine.rebuild(count: counts.waitingAlerts)
 
         menu.addItem(.separator())
 
@@ -332,14 +375,16 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         transferProgressPresenter.menuDidClose()
     }
 
-    /// Re-syncs the dropdown's VM rows and undone-start line if it is on screen;
+    /// Re-syncs the dropdown's VM rows and held-alert lines if it is on screen;
     /// a closed menu is rebuilt by `menuNeedsUpdate` when it next opens.
     private func syncMenuIfOpen() {
         guard isMenuOpen else { return }
         vmSection.sync(to: currentRows())
         if let openItem {
-            undoneStartSection.sync(
-                to: viewModel.bufferedUndoneStartCount, after: openItem)
+            let counts = heldCounts
+            undoneStartLine.sync(to: counts.undoneStarts, after: openItem)
+            waitingAlertLine.sync(
+                to: counts.waitingAlerts, after: undoneStartLine.item ?? openItem)
         }
     }
 
@@ -347,9 +392,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openTapped() { onOpen(nil) }
 
-    /// Opens the library, which attaches the presenter the buffered undone
-    /// starts are waiting for — the alerts they carry follow from that.
-    @objc private func undoneStartsTapped() { onOpen(nil) }
+    /// Opens the library, which every held alert can be shown on.
+    @objc private func heldAlertsTapped() { onOpen(nil) }
 
     @objc private func openVMTapped(_ sender: NSMenuItem) {
         onOpen(sender.representedObject as? UUID)

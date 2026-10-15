@@ -79,7 +79,7 @@ final class VMLibrary: VMAdmissionPeers {
     /// Receives every failure the library needs a user to see.
     ///
     /// The library presents nothing itself; the adapter routes these to its
-    /// presenter, buffering them until one is attached.
+    /// presenter.
     @ObservationIgnored var onFailure: ((_ title: String, _ message: String, _ subject: AlertSubject) -> Void)?
 
     /// Fires when a VM's guest agent handshakes a current version, for the
