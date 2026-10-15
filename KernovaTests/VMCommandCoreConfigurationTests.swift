@@ -13,38 +13,8 @@ struct VMCommandCoreConfigurationTests {
     private let preferences = makeTestPreferences()
     private let scratch = TestScratchDirectory(prefix: "VMCommandCoreConfigurationTests")
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let storage: MockVMStorageService
-        let authority: MockSandboxSourceAuthority
-    }
-
-    private func makeHarness(entitlements: EntitlementService = .entitled) -> Harness {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles()
-        let fileSystem = MockFileSystem()
-        let lifecycle = makeTestLifecycle(
-            virtualization: MockVirtualizationService(),
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage,
-            machineFiles: snapshots,
-            lifecycle: lifecycle,
-            fileSystem: fileSystem,
-            preferences: preferences,
-            entitlements: entitlements)
-        let core = VMCommandCore(
-            library: library,
-            lifecycle: lifecycle,
-            storageService: storage,
-            diskImageService: MockDiskImageService(),
-            fileSystem: fileSystem,
-            preferences: preferences
-        )
-        let authority = MockSandboxSourceAuthority()
-        core.sourceAuthority = authority
-        return Harness(core: core, library: library, storage: storage, authority: authority)
+    private func makeHarness(entitlements: EntitlementService = .entitled) -> WiredCommandCore {
+        WiredCommandCore(entitlements: entitlements, preferences: preferences)
     }
 
     /// A folder that really is one, so the share verb's directory check passes.
@@ -57,7 +27,7 @@ struct VMCommandCoreConfigurationTests {
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String = "Alpha", phase: VMLifecyclePhase = .stopped,
+        in harness: WiredCommandCore, name: String = "Alpha", phase: VMLifecyclePhase = .stopped,
         guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = [],
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
@@ -131,14 +101,12 @@ struct VMCommandCoreConfigurationTests {
         let harness = makeHarness()
         makeInstance(in: harness, guestOS: .linux)
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.configuration(.name("Alpha"), keys: ["display.hidpi"])
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .unsupported = error else {
-                Issue.record("expected unsupported, got \(error)")
-                return
-            }
+        }
+        guard case .unsupported = error else {
+            Issue.record("expected unsupported, got \(error)")
+            return
         }
     }
 
@@ -247,17 +215,15 @@ struct VMCommandCoreConfigurationTests {
         harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
         let assignment = ConfigurationEntry(key: "cpus", value: String(held))
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"), assignments: [assignment], consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState(_, _, _, let settings) = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
-            #expect(settings == [assignment])
         }
+        guard case .invalidState(_, _, _, let settings) = error else {
+            Issue.record("expected invalidState, got \(error)")
+            return
+        }
+        #expect(settings == [assignment])
         #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held + 1)
     }
 
@@ -370,7 +336,7 @@ struct VMCommandCoreConfigurationTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let before = instance.configuration
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [
@@ -378,12 +344,10 @@ struct VMCommandCoreConfigurationTests {
                     ConfigurationEntry(key: "cpus", value: "3"),
                 ],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
+        }
+        guard case .invalidState = error else {
+            Issue.record("expected invalidState, got \(error)")
+            return
         }
 
         #expect(instance.configuration == before)
@@ -423,17 +387,15 @@ struct VMCommandCoreConfigurationTests {
         #expect(!linux.configuration.clipboardSharingEnabled)
         #expect(!macOS.configuration.clipboardSharingEnabled)
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Linux"), assignments: [assignment], consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState(_, _, _, let settings) = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
-            #expect(settings == [assignment])
         }
+        guard case .invalidState(_, _, _, let settings) = error else {
+            Issue.record("expected invalidState, got \(error)")
+            return
+        }
+        #expect(settings == [assignment])
         #expect(!linux.configuration.clipboardSharingEnabled)
         #expect(
             !harness.core.capabilities.isAvailable(
@@ -459,34 +421,30 @@ struct VMCommandCoreConfigurationTests {
         ]
 
         for assignment in moved {
-            do {
+            let error = try #require(throws: CommandError.self, "expected a refusal of \(assignment.key)") {
                 try harness.core.setConfiguration(
                     .name("Alpha"), assignments: [assignment], consent: .none)
-                Issue.record("expected a refusal of \(assignment.key)")
-            } catch let error as CommandError {
-                guard case .invalidState(_, _, _, let settings) = error else {
-                    Issue.record("expected invalidState, got \(error)")
-                    continue
-                }
-                #expect(settings == [assignment])
-                #expect(error.message.contains(assignment.key))
             }
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                continue
+            }
+            #expect(settings == [assignment])
+            #expect(error.message.contains(assignment.key))
         }
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: moved + [ConfigurationEntry(key: "serial.socket", value: "true")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState(_, _, _, let settings) = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
-            // The live key in the batch is not what the state refused.
-            #expect(settings == moved)
         }
+        guard case .invalidState(_, _, _, let settings) = error else {
+            Issue.record("expected invalidState, got \(error)")
+            return
+        }
+        // The live key in the batch is not what the state refused.
+        #expect(settings == moved)
         #expect(instance.configuration == before)
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
     }
@@ -565,19 +523,17 @@ struct VMCommandCoreConfigurationTests {
             $0.networkMode = .nat
         }
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mode", value: "none")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            // Other modes hot-swap, so the copy says which value is refused.
-            #expect(
-                error.message.hasPrefix(
-                    "\u{201C}Alpha\u{201D} is running, so network.mode cannot be set to "
-                        + "\u{201C}none\u{201D} while it is. "))
         }
+        // Other modes hot-swap, so the copy says which value is refused.
+        #expect(
+            error.message.hasPrefix(
+                "\u{201C}Alpha\u{201D} is running, so network.mode cannot be set to "
+                    + "\u{201C}none\u{201D} while it is. "))
     }
 
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")
@@ -625,26 +581,24 @@ struct VMCommandCoreConfigurationTests {
         makeInstance(in: harness, name: "Beta") { $0.macAddress = "aa:bb:cc:dd:ee:ff" }
         let before = alpha.configuration
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mac", value: "AA:BB:CC:DD:EE:FF")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .conflict(_, let other, let reason) = error else {
-                Issue.record("expected a conflict, got \(error)")
-                return
-            }
-            #expect(other.name == "Beta")
-            // The address the assignment named, canonical: what the refusal
-            // tells a caller who is typing addresses at it.
-            #expect(
-                reason
-                    == .macAddressInUse(
-                        address: "aa:bb:cc:dd:ee:ff", holding: .configuration, otherHolders: []))
-            #expect(error.message.contains("aa:bb:cc:dd:ee:ff"))
         }
+        guard case .conflict(_, let other, let reason) = error else {
+            Issue.record("expected a conflict, got \(error)")
+            return
+        }
+        #expect(other.name == "Beta")
+        // The address the assignment named, canonical: what the refusal
+        // tells a caller who is typing addresses at it.
+        #expect(
+            reason
+                == .macAddressInUse(
+                    address: "aa:bb:cc:dd:ee:ff", holding: .configuration, otherHolders: []))
+        #expect(error.message.contains("aa:bb:cc:dd:ee:ff"))
 
         #expect(alpha.configuration == before)
     }
@@ -709,16 +663,14 @@ struct VMCommandCoreConfigurationTests {
         let assignment = VMConfigurationKeyRegistry.networkMAC.assigning(
             VMConfigurationKeyRegistry.newMACAddressValue)
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(.name("Alpha"), assignments: [assignment], consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState(_, _, _, let settings) = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
-            #expect(settings == [assignment])
         }
+        guard case .invalidState(_, _, _, let settings) = error else {
+            Issue.record("expected invalidState, got \(error)")
+            return
+        }
+        #expect(settings == [assignment])
         #expect(instance.configuration.macAddress == old)
     }
 
@@ -744,15 +696,13 @@ struct VMCommandCoreConfigurationTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness) { $0.clipboardSharingEnabled = true }
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
         }
+        #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
         #expect(!instance.configuration.clipboardPassthroughEnabled)
 
         try harness.core.setConfiguration(
@@ -844,17 +794,15 @@ struct VMCommandCoreConfigurationTests {
         let instance = makeInstance(in: harness)
         let before = instance.configuration
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "cpu", value: "3")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidArgument = error else {
-                Issue.record("expected invalidArgument, got \(error)")
-                return
-            }
+        }
+        guard case .invalidArgument = error else {
+            Issue.record("expected invalidArgument, got \(error)")
+            return
         }
         #expect(instance.configuration == before)
     }
@@ -882,15 +830,13 @@ struct VMCommandCoreConfigurationTests {
         // goes off, and turning sharing back on starts it running again.
         let instance = makeInstance(in: harness) { $0.clipboardPassthroughEnabled = true }
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
         }
+        #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
         #expect(!instance.configuration.clipboardSharingEnabled)
 
         try harness.core.setConfiguration(
@@ -969,19 +915,17 @@ struct VMCommandCoreConfigurationTests {
         let instance = makeInstance(in: harness) { $0.displaySizesToWindow = true }
         let before = instance.configuration
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "display.width", value: "1600")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidArgument(let message) = error else {
-                Issue.record("expected invalidArgument, got \(error)")
-                return
-            }
-            #expect(message.contains("display.sizeToWindow"))
         }
+        guard case .invalidArgument(let message) = error else {
+            Issue.record("expected invalidArgument, got \(error)")
+            return
+        }
+        #expect(message.contains("display.sizeToWindow"))
         #expect(instance.configuration == before)
 
         // Writing back the value the VM already holds is still a no-op, so a
@@ -1137,19 +1081,17 @@ struct VMCommandCoreConfigurationTests {
         makeInstance(in: harness)
         harness.storage.saveConfigurationError = CocoaError(.fileWriteNoPermission)
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "cpus", value: "3")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .operationFailed(let verb, _, _, _) = error else {
-                Issue.record("expected operationFailed, got \(error)")
-                return
-            }
-            #expect(verb == .setConfiguration)
         }
+        guard case .operationFailed(let verb, _, _, _) = error else {
+            Issue.record("expected operationFailed, got \(error)")
+            return
+        }
+        #expect(verb == .setConfiguration)
     }
 
     @Test("A bundle still being copied takes no configuration write")
@@ -1160,17 +1102,15 @@ struct VMCommandCoreConfigurationTests {
 
         // Resolution is the whole of what refuses this: an arrival is no VM, so
         // no configuration write can name one.
-        do {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
                 consent: .none)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .busy = error else {
-                Issue.record("expected busy, got \(error)")
-                return
-            }
+        }
+        guard case .busy = error else {
+            Issue.record("expected busy, got \(error)")
+            return
         }
         #expect(harness.storage.saveConfigurationCallCount == 0)
 
@@ -1316,15 +1256,13 @@ struct VMCommandCoreConfigurationTests {
         // a share written onto a running VM is stored inert until it next boots.
         harness.authority.whilePanelStands = { instance.activity.placeForTesting(.running(sessionID: UUID())) }
 
-        do {
+        let error = try await #require(throws: CommandError.self) {
             try await harness.core.addSharedDirectory(
                 .name("Alpha"), path: picked.path(percentEncoded: false), readOnly: false)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
+        }
+        guard case .invalidState = error else {
+            Issue.record("expected invalidState, got \(error)")
+            return
         }
         #expect(instance.configuration.sharedDirectories == nil)
     }

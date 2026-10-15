@@ -20,13 +20,8 @@ struct VMLibraryConfigCheckTests {
     /// A value no field of any config type takes.
     private static let unrecognized = "plan9-mode"
 
-    private struct Harness {
-        let library: VMLibrary
-        let core: VMCommandCore
-        let storage: MockVMStorageService
-        /// How many times the library asked for the check to come up.
-        let checkRequests: Counter
-    }
+    /// How many times the library asked for the check to come up.
+    private let checkRequests = Counter()
 
     @MainActor
     private final class Counter {
@@ -36,21 +31,13 @@ struct VMLibraryConfigCheckTests {
     private func makeHarness(
         networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
-    ) -> Harness {
-        let storage = MockVMStorageService()
-        let lifecycle = makeTestLifecycle(
-            virtualization: MockVirtualizationService(), fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files),
-            lifecycle: lifecycle, fileSystem: fileSystem, preferences: preferences,
-            networks: networks, organization: organization)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
+    ) -> WiredCommandCore {
+        let wired = WiredCommandCore(
+            fileSystem: fileSystem, networks: networks, organization: organization,
             preferences: preferences)
-        let counter = Counter()
-        library.onUnreadableFilesFound = { counter.count += 1 }
-        return Harness(library: library, core: core, storage: storage, checkRequests: counter)
+        let counter = checkRequests
+        wired.library.onUnreadableFilesFound = { counter.count += 1 }
+        return wired
     }
 
     /// A bundle whose `config.json` is `name`'s configuration with `edit`
@@ -255,23 +242,23 @@ struct VMLibraryConfigCheckTests {
         try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
 
         await harness.library.loadVMs()
-        #expect(harness.checkRequests.count == 1)
+        #expect(checkRequests.count == 1)
 
         harness.library.reconcileWithDisk()
-        #expect(harness.checkRequests.count == 1)
+        #expect(checkRequests.count == 1)
 
         try addBundle("Second", to: harness.storage) { $0["guestOS"] = Self.unrecognized }
         harness.library.reconcileWithDisk()
-        #expect(harness.checkRequests.count == 2)
+        #expect(checkRequests.count == 2)
         harness.library.reconcileWithDisk()
-        #expect(harness.checkRequests.count == 2)
+        #expect(checkRequests.count == 2)
 
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: networksURL)
         harness.library.refreshFromOtherCopies()
-        #expect(harness.checkRequests.count == 3)
+        #expect(checkRequests.count == 3)
         harness.library.refreshFromOtherCopies()
-        #expect(harness.checkRequests.count == 3)
+        #expect(checkRequests.count == 3)
     }
 
     // MARK: - The check
@@ -526,10 +513,10 @@ struct VMLibraryConfigCheckTests {
         await harness.library.loadVMs()
 
         #expect(harness.library.instances.map(\.name) == ["Dev"])
-        #expect(harness.checkRequests.count == 1)
+        #expect(checkRequests.count == 1)
         harness.library.reconcileWithDisk()
         harness.library.refreshFromOtherCopies()
-        #expect(harness.checkRequests.count == 1)
+        #expect(checkRequests.count == 1)
     }
 
     @Test("A running VM's bundle is read by no list or reconcile; its unreadable config is reported once it stops")
@@ -540,7 +527,7 @@ struct VMLibraryConfigCheckTests {
         let instance = try #require(harness.library.instances.first)
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         try await waitForChange { instance.status == .running }
-        #expect(harness.checkRequests.count == 0)
+        #expect(checkRequests.count == 0)
 
         harness.storage.files.setData(
             Data("not json".utf8), atRelativePath: VMBundleLayout.configRelativePath, in: url)
@@ -555,18 +542,18 @@ struct VMLibraryConfigCheckTests {
             harness.library.reconcileWithDisk()
         }
         #expect(reads() == readsBefore)
-        #expect(harness.checkRequests.count == 0)
+        #expect(checkRequests.count == 0)
         #expect(instance.status == .running)
 
         try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all, timeout: nil)
         try await waitForChange { instance.status == .stopped }
-        #expect(harness.checkRequests.count == 1)
+        #expect(checkRequests.count == 1)
 
         for _ in 0..<2 {
             _ = harness.core.list(.all)
             harness.library.reconcileWithDisk()
         }
-        #expect(harness.checkRequests.count == 1)
+        #expect(checkRequests.count == 1)
     }
 
     // MARK: - A readable VM's unreadable files

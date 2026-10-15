@@ -20,10 +20,19 @@ final class WiredCommandCore {
     let arpTable: ScriptedARPTable
     let authority: MockSandboxSourceAuthority
     let preferences: AppPreferences
+    /// The library's password store, read by identifier — the one way to ask
+    /// about an arrival that never became a VM.
+    let passwords: InMemoryGuestAccountPasswordStore
 
-    /// Present when the harness was given an accessory service: the core's
-    /// three accessory hooks report user attaches and detaches to it, and it
-    /// is held here because they reach it weakly. Nothing wires
+    let diskImages: MockDiskImageService
+    let removableMedia: MockRemovableMediaDeviceService
+    let liveShares: MockLiveDirectorySharing
+    /// The accessory service the harness was given, if any.
+    let usbAccessories: MockUSBAccessoryService?
+
+    /// Present when the harness was given an accessory service: the core
+    /// reports user attaches and detaches to it, and it is held here because
+    /// the core reaches it weakly. Nothing wires
     /// `library.onSessionBecameAttachable`, so a session coming up takes no
     /// paired accessory back.
     let pairingCoordinator: USBAccessoryCoordinator?
@@ -41,25 +50,34 @@ final class WiredCommandCore {
     let quitRequested = AsyncGate()
     /// Each failure ``VMCommandCore/onFailure`` received.
     private(set) var failures: [CommandError] = []
+    /// Fires each time ``failures`` grows: an unattended failure is reported
+    /// from the task that ran it, so a test awaits it.
+    let failureReported = AsyncGate()
 
     init(
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
         installService: any MacOSInstallProviding = MockMacOSInstallService(),
-        diskImages: any DiskImageProviding = MockDiskImageService(),
+        diskImages: MockDiskImageService = MockDiskImageService(),
         usbAccessoryService: MockUSBAccessoryService? = nil,
+        removableMedia: MockRemovableMediaDeviceService = MockRemovableMediaDeviceService(),
+        liveShares: MockLiveDirectorySharing = MockLiveDirectorySharing(),
+        storage: MockVMStorageService = MockVMStorageService(),
+        fileSystem: MockFileSystem = MockFileSystem(),
+        entitlements: EntitlementService = .entitled,
         networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
         preferences: AppPreferences = makeTestPreferences(),
         clock: any EngineClock = makePlatformEngineClock()
     ) {
-        let storage = MockVMStorageService()
-        let machineFiles = MockVMBundleMachineFiles(files: storage.files)
-        let fileSystem = MockFileSystem()
+        let machineFiles = MockVMBundleMachineFiles(files: storage.files, fileSystem: fileSystem)
         let vmnet = ScriptedVmnetNetworks()
         let arpTable = ScriptedARPTable()
+        let passwords = InMemoryGuestAccountPasswordStore()
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization,
             installService: installService,
+            removableMedia: removableMedia,
+            liveDirectorySharing: liveShares,
             usbAccessoryService: usbAccessoryService,
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
@@ -70,8 +88,10 @@ final class WiredCommandCore {
             preferences: preferences,
             vmnetNetworks: vmnet.service,
             arpTable: arpTable,
+            entitlements: entitlements,
             networks: networks,
-            organization: organization)
+            organization: organization,
+            guestAccountPasswords: passwords)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -93,23 +113,15 @@ final class WiredCommandCore {
         self.arpTable = arpTable
         self.authority = authority
         self.preferences = preferences
+        self.passwords = passwords
+        self.usbAccessories = usbAccessoryService
+        self.diskImages = diskImages
+        self.removableMedia = removableMedia
+        self.liveShares = liveShares
 
-        if usbAccessoryService != nil {
-            let pairingCoordinator = USBAccessoryCoordinator(
-                lifecycle: lifecycle, library: library)
-            core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
-                try pairingCoordinator?.userAttached(accessory, permit)
-            }
-            core.onUserDetachingAccessory = { [weak pairingCoordinator] _, accessory in
-                pairingCoordinator?.userDetaching(accessory)
-            }
-            core.onUserReleasedAccessory = { [weak pairingCoordinator] permit, accessory in
-                try pairingCoordinator?.userReleased(accessory, permit)
-            }
-            self.pairingCoordinator = pairingCoordinator
-        } else {
-            self.pairingCoordinator = nil
-        }
+        let pairingCoordinator = USBAccessoryCoordinator(lifecycle: lifecycle, library: library)
+        core.usbAccessoryPairings = pairingCoordinator
+        self.pairingCoordinator = pairingCoordinator
 
         core.surfaceDisplay = { [weak self] in self?.surfacedDisplays.append($0.id) }
         core.revealInLibrary = { [weak self] in self?.revealedInLibrary.append($0) }
@@ -118,7 +130,10 @@ final class WiredCommandCore {
             self?.quitRequests += 1
             self?.quitRequested.notify()
         }
-        core.onFailure = { [weak self] failure, _ in self?.failures.append(failure) }
+        core.onFailure = { [weak self] failure, _ in
+            self?.failures.append(failure)
+            self?.failureReported.notify()
+        }
     }
 
     /// Registers a fixture VM in the library, wired as a load would have left
@@ -133,5 +148,32 @@ final class WiredCommandCore {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots, library: library,
             preferences: preferences, hostState: hostState, mutate: mutate)
+    }
+}
+
+extension WiredCommandCore {
+    /// A wired core with the virtualization service it runs on kept at its own
+    /// type, for a test that scripts that service; every other member reads
+    /// through to the harness.
+    @MainActor
+    @dynamicMemberLookup
+    struct Scripted<Virtualization: VirtualizationProviding> {
+        let wired: WiredCommandCore
+        let virtualization: Virtualization
+
+        /// `wired`, with the service its lifecycle runs on read back at
+        /// `Virtualization`; a harness built over another service is a
+        /// mistake in the test.
+        init(_ wired: WiredCommandCore) {
+            guard let virtualization = wired.lifecycle.virtualizationService as? Virtualization else {
+                preconditionFailure("The harness runs on \(type(of: wired.lifecycle.virtualizationService))")
+            }
+            self.wired = wired
+            self.virtualization = virtualization
+        }
+
+        subscript<Value>(dynamicMember keyPath: KeyPath<WiredCommandCore, Value>) -> Value {
+            wired[keyPath: keyPath]
+        }
     }
 }

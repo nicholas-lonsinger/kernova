@@ -12,28 +12,12 @@ import Testing
 struct VMCommandCoreMACConflictTests {
     private let preferences = makeTestPreferences()
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let virtualization: MockVirtualizationService
-        let snapshots: MockVMBundleMachineFiles
-    }
+    private typealias Harness = WiredCommandCore.Scripted<MockVirtualizationService>
 
     private func makeHarness(entitlements: EntitlementService = .entitled) -> Harness {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles(files: storage.files)
-        let fileSystem = MockFileSystem()
-        let virtualization = MockVirtualizationService()
-        let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: snapshots, lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences, entitlements: entitlements)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
-            preferences: preferences)
-        return Harness(
-            core: core, library: library, virtualization: virtualization, snapshots: snapshots)
+        Harness(
+            WiredCommandCore(
+                virtualization: MockVirtualizationService(), entitlements: entitlements, preferences: preferences))
     }
 
     private static let sharedMAC = "02:4b:4e:56:0c:01"
@@ -68,18 +52,6 @@ struct VMCommandCoreMACConflictTests {
         return (vm, other)
     }
 
-    private func refusal(_ body: () async throws -> Void) async -> CommandError? {
-        do {
-            try await body()
-            return nil
-        } catch let error as CommandError {
-            return error
-        } catch {
-            Issue.record("threw \(error)")
-            return nil
-        }
-    }
-
     /// The sentences every refusal of Clone beside Source opens with.
     private static let shared =
         "\u{201C}Clone\u{201D} has the same MAC address as \u{201C}Source\u{201D}, which is active. "
@@ -89,10 +61,6 @@ struct VMCommandCoreMACConflictTests {
     private static let newAddress = ConfigurationEntry(key: "network.mac", value: "new")
     private static let noNetwork = ConfigurationEntry(key: "network.mode", value: "none")
 
-    private func requirement(_ error: CommandError?) throws -> StepRequirement {
-        try #require(error?.stepRequirement, "refused as \(String(describing: error))")
-    }
-
     // MARK: - Routes
 
     @Test("A stopped NAT VM is routed through all three changes, none discarding anything")
@@ -100,8 +68,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
         let clone = harness.core.summary(vm)
 
         #expect(refused.title == "Duplicate MAC Address")
@@ -146,8 +116,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
         let clone = harness.core.summary(vm)
 
         #expect(
@@ -167,8 +139,9 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) { try await harness.core.resume(.id(vm.id), consent: .none) }
+                .stepRequirement)
         let clone = harness.core.summary(vm)
 
         #expect(refused.routes.map(\.ending) == [.refusedVerb, .start(vm: clone), .start(vm: clone)])
@@ -183,8 +156,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, mode: .hostOnly, phase: .suspended, savedState: true)
 
-        let started = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let started = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
         #expect(started.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
         #expect(started.routes.allSatisfy { $0.discardsSavedState })
         #expect(
@@ -195,8 +170,9 @@ struct VMCommandCoreMACConflictTests {
 
         // A resume is routed through the same changes, each ending in the
         // start a discard leaves, and taking one then starting succeeds.
-        let resumed = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        let resumed = try #require(
+            try await #require(throws: CommandError.self) { try await harness.core.resume(.id(vm.id), consent: .none) }
+                .stepRequirement)
         let clone = harness.core.summary(vm)
         #expect(resumed.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
         #expect(resumed.routes.map(\.ending) == [.start(vm: clone), .start(vm: clone)])
@@ -217,8 +193,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, mode: .hostOnly)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
 
         #expect(
             refused.routes.map(\.title) == [
@@ -231,8 +209,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, mode: .bridged)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
 
         #expect(refused.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
     }
@@ -242,8 +222,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness(entitlements: .unentitled)
         let (vm, _) = try makePair(in: harness)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
 
         #expect(refused.routes.map(\.title) == ["Use a New MAC Address", "Turn Off Networking"])
     }
@@ -257,8 +239,10 @@ struct VMCommandCoreMACConflictTests {
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
         #expect(vm.ephemeralBaselineSnapshot?.kind == .warm)
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
 
         // Its discard is a revert to the baseline, which lands it suspended on
         // a saved state again, beside which the address and mode stay pinned.
@@ -280,8 +264,10 @@ struct VMCommandCoreMACConflictTests {
             in: harness, mode: .hostOnly, phase: .suspended, savedState: true, snapshots: [baseline],
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
 
         #expect(refused.routes.isEmpty)
         #expect(
@@ -304,16 +290,19 @@ struct VMCommandCoreMACConflictTests {
             " \u{201C}Clone\u{201D} is ephemeral, so it returns to \u{201C}Baseline\u{201D}. "
             + "The suspended session, and everything changed inside the guest during it, are discarded."
 
-        let resumed = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        let resumed = try #require(
+            try await #require(throws: CommandError.self) { try await harness.core.resume(.id(vm.id), consent: .none) }
+                .stepRequirement)
         #expect(resumed.routes.map(\.ending) == [.refusedVerb, .start(vm: clone), .start(vm: clone)])
         #expect(
             resumed.message
                 == Self.shared + Self.discardSentence + "; a network of its own keeps it." + ephemeral
                 + Self.startsRatherThanResumes + Self.everyChange)
 
-        let started = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let started = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
         #expect(
             started.message
                 == Self.shared + Self.discardSentence + "; a network of its own keeps it." + ephemeral
@@ -334,11 +323,11 @@ struct VMCommandCoreMACConflictTests {
 
         // The setting off: the machine ID refuses outright, and nothing is
         // routed or written.
-        let refused = await refusal {
+        let refused = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(vm.id), recovery: false, consent: .all)
         }
         guard case .conflict(_, _, .machineIdentity) = refused else {
-            Issue.record("refused as \(String(describing: refused))")
+            Issue.record("refused as \(refused)")
             return
         }
         #expect(vm.hasSaveFile)
@@ -346,15 +335,15 @@ struct VMCommandCoreMACConflictTests {
 
         // The setting on: the confirmation comes first, then the route.
         preferences.allowsDuplicateMachineIDOverride = true
-        let asked = await refusal {
+        let asked = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
         }
-        #expect(asked?.confirmationPrompt?.kind == .startBesideSharedMachineIdentity)
-        let routed = try requirement(
-            await refusal {
+        #expect(asked.confirmationPrompt?.kind == .startBesideSharedMachineIdentity)
+        let routed = try #require(
+            try await #require(throws: CommandError.self) {
                 try await harness.core.start(
                     .id(vm.id), recovery: false, consent: Consent([.startBesideSharedMachineIdentity]))
-            })
+            }.stepRequirement)
         #expect(routed.routes.count == 3)
         #expect(vm.hasSaveFile)
         #expect(harness.virtualization.startCallCount == 0)
@@ -386,8 +375,10 @@ struct VMCommandCoreMACConflictTests {
         for index in 0..<3 {
             let harness = makeHarness()
             let (vm, _) = try makePair(in: harness)
-            let refused = try requirement(
-                await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+            let refused = try #require(
+                try await #require(throws: CommandError.self) {
+                    try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+                }.stepRequirement)
             let route = refused.routes[index]
 
             for step in route.steps { try await harness.core.take(step) }
@@ -401,8 +392,9 @@ struct VMCommandCoreMACConflictTests {
     func ownNetworkRouteKeepsTheSavedState() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
-        let refused = try requirement(
-            await refusal { try await harness.core.resume(.id(vm.id), consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) { try await harness.core.resume(.id(vm.id), consent: .none) }
+                .stepRequirement)
 
         for step in refused.routes[0].steps { try await harness.core.take(step) }
         try await harness.core.resume(.id(vm.id), consent: .none)
@@ -415,8 +407,10 @@ struct VMCommandCoreMACConflictTests {
     func discardingRouteLeavesTheVMStopped() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
-        let refused = try requirement(
-            await refusal { try await harness.core.start(.id(vm.id), recovery: false, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
 
         for step in refused.routes[1].steps { try await harness.core.take(step) }
 
@@ -433,8 +427,10 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .running(sessionID: UUID()))
 
-        let refused = try requirement(
-            await refusal { try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+            }.stepRequirement)
         #expect(
             refused.routes == [
                 StepRoute(
@@ -464,8 +460,10 @@ struct VMCommandCoreMACConflictTests {
             in: harness, phase: .running(sessionID: UUID()), snapshots: [baseline],
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
-        let refused = try requirement(
-            await refusal { try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none) })
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+            }.stepRequirement)
 
         #expect(refused.routes.isEmpty)
         #expect(
@@ -499,13 +497,13 @@ struct VMCommandCoreMACConflictTests {
         reverting.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         var captured = reverting.configuration
         captured.macAddress = Self.sharedMAC
-        harness.snapshots.setCapturedConfiguration(captured, for: snapshot.id)
+        harness.machineFiles.setCapturedConfiguration(captured, for: snapshot.id)
 
-        let refused = try requirement(
-            await refusal {
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
                 try await harness.core.revertToSnapshot(
                     .id(reverting.id), snapshot: snapshot.id, consent: .all)
-            })
+            }.stepRequirement)
 
         #expect(refused.title == "Duplicate MAC Address")
         #expect(refused.routes.isEmpty)
@@ -545,13 +543,13 @@ struct VMCommandCoreMACConflictTests {
             name: "On common", kind: .warm, macAddress: Self.sharedMAC,
             network: VMCapturedNetwork(captured))
         a.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        harness.snapshots.setCapturedConfiguration(captured, for: snapshot.id)
+        harness.machineFiles.setCapturedConfiguration(captured, for: snapshot.id)
 
-        let refused = try requirement(
-            await refusal {
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
                 try await harness.core.revertToSnapshot(
                     .id(a.id), snapshot: snapshot.id, consent: .all)
-            })
+            }.stepRequirement)
 
         #expect(refused.title == "Duplicate MAC Address")
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
@@ -591,8 +589,10 @@ struct VMCommandCoreMACConflictTests {
         let vm = makeLivePair(in: harness)
         let toNAT = [ConfigurationEntry(key: "network.mode", value: "nat")]
 
-        let refused = try requirement(
-            await refusal { _ = try harness.core.setConfiguration(.id(vm.id), assignments: toNAT, consent: .none) })
+        let refused = try #require(
+            try #require(throws: CommandError.self) {
+                _ = try harness.core.setConfiguration(.id(vm.id), assignments: toNAT, consent: .none)
+            }.stepRequirement)
 
         #expect(refused.title == "Duplicate MAC Address")
         #expect(
@@ -619,7 +619,7 @@ struct VMCommandCoreMACConflictTests {
         let harness = makeHarness()
         let vm = makeLivePair(in: harness, membership: .isolated)
 
-        let error = await refusal {
+        let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(
                 .id(vm.id),
                 assignments: [
@@ -629,8 +629,8 @@ struct VMCommandCoreMACConflictTests {
                 consent: .none)
         }
 
-        #expect(error?.stepRequirement == nil)
-        #expect(error?.isConflict == true)
+        #expect(error.stepRequirement == nil)
+        #expect(error.isConflict)
     }
 
     @Test("A running VM taken off its own network onto a used one is refused with no route back")
@@ -640,16 +640,14 @@ struct VMCommandCoreMACConflictTests {
         try harness.core.setConfiguration(
             .id(vm.id), assignments: [Self.ownNetwork], consent: .none)
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .id(vm.id),
                 assignments: [ConfigurationEntry(key: "network.membership", value: "common")],
                 consent: .none)
-            Issue.record("the switch onto the used network was taken")
-        } catch let error as CommandError {
-            #expect(error.stepRequirement == nil)
-            #expect(error.isConflict)
         }
+        #expect(error.stepRequirement == nil)
+        #expect(error.isConflict)
         #expect(vm.configuration.networkMembership == .isolated)
     }
 }

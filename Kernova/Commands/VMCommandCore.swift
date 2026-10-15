@@ -132,29 +132,15 @@ final class VMCommandCore {
     /// quit is an AppKit termination, and the core performs none.
     var requestQuit: (() -> Void)?
 
-    /// Reports an accessory the user has just placed on a guest, so that guest
-    /// takes it back on its own from now on — a pairing write, under the
-    /// permit of the attach operation still holding the guest's VM.
+    /// What the user's own attaches and detaches mean for what a guest takes
+    /// back on its own: told of each, so the menu, the CLI and the pairing
+    /// prompt's answer write the same rule. `nil` in a build that cannot pass
+    /// accessories through.
     ///
-    /// A hook rather than a call: what an attach *means* for the future is the
-    /// accessory coordinator's policy, and a build that cannot pass accessories
-    /// through has no coordinator to hold it.
-    var onUserAttachedAccessory: ((borrowing VMEditPermit, USBAccessoryInfo) throws -> Void)?
-
-    /// Reports an accessory the user is about to take back by hand, before the
-    /// detach runs: the detach re-enumerates the device, and the return it
-    /// causes can arrive while the detach is still in flight.
-    ///
-    /// Not fired by the lifecycle's own eject sweeps, and neither is
-    /// ``onUserReleasedAccessory``: a stop, a suspend or a snapshot capture
-    /// takes an accessory off without the user asking, and must leave the
-    /// pairing alone.
-    var onUserDetachingAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
-
-    /// Reports an accessory the user has just taken back by hand, which ends
-    /// that pairing — under the permit of the detach operation still holding
-    /// the guest's VM.
-    var onUserReleasedAccessory: ((borrowing VMEditPermit, USBAccessoryInfo) throws -> Void)?
+    /// The lifecycle's own eject sweeps reach it not at all: a stop, a suspend
+    /// or a snapshot capture takes an accessory off without the user asking,
+    /// and must leave the pairing alone. Weak; its owner keeps it alive.
+    weak var usbAccessoryPairings: USBAccessoryCoordinator?
 
     /// Measures the window or screen a starting VM's display is about to occupy,
     /// for `displaySizesToWindow` — `nil` when nothing can measure one.

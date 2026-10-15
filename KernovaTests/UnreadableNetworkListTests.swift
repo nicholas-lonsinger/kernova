@@ -24,26 +24,12 @@ struct UnreadableNetworkListTests {
             """.utf8)
     }
 
-    private struct Harness {
-        let library: VMLibrary
-        let core: VMCommandCore
-    }
-
-    private func makeHarness() throws -> Harness {
+    private func makeHarness() throws -> WiredCommandCore {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         try unreadableBytes.write(to: fileURL)
-        let storage = MockVMStorageService()
-        let lifecycle = makeTestLifecycle(
-            virtualization: MockVirtualizationService(), fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files),
-            lifecycle: lifecycle, fileSystem: fileSystem, preferences: preferences,
-            networks: VMNetworkDirectory(fileURL: fileURL))
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
+        return WiredCommandCore(
+            fileSystem: fileSystem, networks: VMNetworkDirectory(fileURL: fileURL),
             preferences: preferences)
-        return Harness(library: library, core: core)
     }
 
     private var refusal: CommandError {
@@ -86,7 +72,7 @@ struct UnreadableNetworkListTests {
 
     /// A VM in `harness`'s library naming the network `id`.
     @discardableResult
-    private func registerMember(of id: UUID, in harness: Harness) -> VMInstance {
+    private func registerMember(of id: UUID, in harness: WiredCommandCore) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: "Member", phase: .stopped, guestOS: .linux, library: harness.library,
             preferences: preferences,

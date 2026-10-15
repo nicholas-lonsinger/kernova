@@ -16,34 +16,16 @@ struct VMCapabilityAgreementTests {
     private let preferences = makeTestPreferences()
     private let scratch = TestScratchDirectory(prefix: "VMCapabilityAgreementTests")
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let storage: MockVMStorageService
-        let snapshots: MockVMBundleMachineFiles
-    }
-
-    private func makeHarness() -> Harness {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles(files: storage.files)
-        let fileSystem = MockFileSystem()
+    private func makeHarness() -> WiredCommandCore {
         let virtualization = MockVirtualizationService()
         // A shutdown request that lands on a held VM changes nothing: the
         // session the operation holds stays, and nothing waits on it.
         virtualization.guestIgnoresShutdownRequest = true
-        let lifecycle = makeTestLifecycle(
-            virtualization: virtualization, usbAccessoryService: MockUSBAccessoryService(),
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: snapshots, lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences)
         // Already past any deadline, so a restart the catalog accepts answers
         // on its power-off deadline instead of waiting on a guest.
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
+        return WiredCommandCore(
+            virtualization: virtualization, usbAccessoryService: MockUSBAccessoryService(),
             preferences: preferences, clock: TestEngineClock())
-        return Harness(core: core, library: library, storage: storage, snapshots: snapshots)
     }
 
     /// The capabilities `capability`'s verb is gated on, or `nil` for one
@@ -76,7 +58,7 @@ struct VMCapabilityAgreementTests {
     /// consent it asks for.
     private func invoke(
         _ capability: VMCapability, on instance: VMInstance, snapshot: VMSnapshot,
-        in harness: Harness
+        in harness: WiredCommandCore
     ) async throws {
         let core = harness.core
         let vm = VMSelector.id(instance.id)
@@ -189,7 +171,7 @@ struct VMCapabilityAgreementTests {
                 let instance = RegisteredVMInstanceFixture.register(
                     name: "Agreeing", phase: .stopped, guestOS: guestOS, snapshots: [snapshot],
                     library: harness.library, preferences: preferences, mutate: Self.twoShares)
-                harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
+                harness.machineFiles.setCapturedConfiguration(instance.configuration, for: snapshot.id)
                 // The slot the operation started from is a file, as every
                 // predicate reads it.
                 if operation.startedFrom == .suspended {
@@ -229,7 +211,7 @@ struct VMCapabilityAgreementTests {
                 let instance = RegisteredVMInstanceFixture.register(
                     name: "Agreeing", phase: phase, guestOS: guestOS, snapshots: [snapshot],
                     library: harness.library, preferences: preferences, mutate: Self.twoShares)
-                harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
+                harness.machineFiles.setCapturedConfiguration(instance.configuration, for: snapshot.id)
                 if phase == .suspended {
                     try VMInstanceFixture.writeSaveFile(for: instance)
                 }

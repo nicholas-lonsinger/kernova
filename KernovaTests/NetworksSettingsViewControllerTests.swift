@@ -105,15 +105,13 @@ struct NetworksSettingsViewControllerTests {
         check.performClick(nil)
         #expect(checks == 1)
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try pane.create(name: "Lab", kind: .nat)
-            Issue.record("A create over an unreadable list went through")
-        } catch let error as CommandError {
-            #expect(
-                error.message
-                    == "Kernova can\u{2019}t read its list of networks. Choose File > Check Config Files\u{2026} to review it."
-            )
         }
+        #expect(
+            error.message
+                == "Kernova can\u{2019}t read its list of networks. Choose File > Check Config Files\u{2026} to review it."
+        )
         #expect(try Data(contentsOf: fileURL) == bytes)
     }
 

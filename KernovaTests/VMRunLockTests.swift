@@ -419,7 +419,7 @@ struct VMRunLockTests {
         let instance = harness.library.registerFixture()
         let catalog = VMCapabilityCatalog(library: harness.library)
         #expect(catalog.isAvailable(.start, on: instance))
-        harness.store.holdElsewhere(instance.bundleURL)
+        harness.storage.files.holdElsewhere(instance.bundleURL)
 
         let refusal = await #expect(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
@@ -431,12 +431,12 @@ struct VMRunLockTests {
         #expect(catalog.isApplicable(.start, to: instance))
         #expect(!catalog.isAvailable(.start, on: instance))
 
-        harness.store.releaseElsewhere(instance.bundleURL)
+        harness.storage.files.releaseElsewhere(instance.bundleURL)
         try harness.core.require(.start, on: instance)
 
         #expect(!instance.activity.heldByAnotherCopy)
         #expect(catalog.isAvailable(.start, on: instance))
-        expectLockFollowsPhase(instance, harness.store)
+        expectLockFollowsPhase(instance, harness.storage.files)
     }
 
     // MARK: - Failures while taking the lock
@@ -500,49 +500,29 @@ struct VMRunLockTests {
 
     // MARK: - Verbs
 
-    private struct CoreHarness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let store: InMemoryVMBundleFiles
-        let virtualization: MockVirtualizationService
-    }
-
-    private func makeCore() -> CoreHarness {
-        let storage = MockVMStorageService()
-        let store = storage.files
-        let virtualization = MockVirtualizationService()
-        let fileSystem = MockFileSystem()
-        let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, lifecycle: lifecycle, fileSystem: fileSystem)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
-            preferences: makeTestPreferences())
-        return CoreHarness(core: core, library: library, store: store, virtualization: virtualization)
+    private func makeCore() -> WiredCommandCore.Scripted<MockVirtualizationService> {
+        .init(WiredCommandCore(virtualization: MockVirtualizationService()))
     }
 
     @Test("Start on a VM another copy holds is refused with the other copy named, and asks nothing of VZ")
     func startVerbIsRefusedWhileHeldElsewhere() async throws {
         let harness = makeCore()
         let instance = harness.library.registerFixture(name: "Held")
-        harness.store.holdElsewhere(instance.bundleURL)
+        harness.storage.files.holdElsewhere(instance.bundleURL)
 
-        do {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-            Issue.record("The start was not refused")
-        } catch let refusal as CommandError {
-            guard case .heldByAnotherCopy(let vm) = refusal else {
-                Issue.record("Refused as \(refusal)")
-                return
-            }
-            #expect(vm.id == instance.id)
-            #expect(refusal.message == "\u{201C}Held\u{201D} is in use by another copy of Kernova.")
         }
+        guard case .heldByAnotherCopy(let vm) = refusal else {
+            Issue.record("Refused as \(refusal)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(refusal.message == "\u{201C}Held\u{201D} is in use by another copy of Kernova.")
         #expect(harness.virtualization.startCallCount == 0)
         #expect(instance.phase == .stopped)
         #expect(instance.activity.heldByAnotherCopy)
-        expectLockFollowsPhase(instance, harness.store)
+        expectLockFollowsPhase(instance, harness.storage.files)
     }
 
     @Test("Start on a VM another copy left suspended restores its saved state")
@@ -554,7 +534,7 @@ struct VMRunLockTests {
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
 
         #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
-        expectLockFollowsPhase(instance, harness.store)
+        expectLockFollowsPhase(instance, harness.storage.files)
     }
 
     // MARK: - Launch sweep

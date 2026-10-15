@@ -801,18 +801,7 @@ final class VMLibraryViewModel {
         commands.displayBootSurface = { [weak self] instance in
             self?.displayBootSurface?(instance)
         }
-        // What the user's own attach and detach mean for what a guest takes
-        // back on its own. Both hang off the verb rather than the surface, so
-        // the menu, the CLI and the prompt's answer write the same rule.
-        commands.onUserAttachedAccessory = { [weak usbAccessories] permit, accessory in
-            try usbAccessories?.userAttached(accessory, permit)
-        }
-        commands.onUserDetachingAccessory = { [weak usbAccessories] _, accessory in
-            usbAccessories?.userDetaching(accessory)
-        }
-        commands.onUserReleasedAccessory = { [weak usbAccessories] permit, accessory in
-            try usbAccessories?.userReleased(accessory, permit)
-        }
+        commands.usbAccessoryPairings = usbAccessories
         library.onSessionBecameAttachable = { [weak usbAccessories] instance in
             usbAccessories?.sessionBecameAttachable(instance) ?? []
         }
