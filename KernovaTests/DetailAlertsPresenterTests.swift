@@ -860,6 +860,7 @@ struct DetailAlertsPresenterTests {
 
     private func confirmationRequest(answers: Box<[PresenterAnswer<Bool>]>) -> ConfirmationRequest {
         ConfirmationRequest(
+            instance: VMInstanceFixture.make(name: "Twin"),
             prompt: ConfirmationPrompt(
                 kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
                 message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
@@ -971,6 +972,7 @@ struct DetailAlertsPresenterTests {
         answers: Box<[PresenterAnswer<StepRoute?>]>, then verbTitle: String? = "Resume"
     ) -> StepRouteRequest {
         StepRouteRequest(
+            instance: VMInstanceFixture.make(),
             requirement: StepRequirement(
                 title: "Duplicate MAC Address", message: "Change its network first.",
                 routes: Self.routes),

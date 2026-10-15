@@ -17,6 +17,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
     /// Parallel to `errors`: the alert title each message was presented under.
     private(set) var errorTitles: [String] = []
+    /// Parallel to `errors`: what each alert was about.
+    private(set) var errorSubjects: [AlertSubject] = []
     private(set) var startFailedAttachments: [StartFailedAttachment] = []
     private(set) var startFailedAttachmentInstances: [VMInstance] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
@@ -65,9 +67,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// a real refusal names are the core's to build.
     var choosesRouteTitled: String?
 
-    func presentError(_ message: String, title: String) {
+    func presentError(_ message: String, title: String, about subject: AlertSubject) {
         errors.append(message)
         errorTitles.append(title)
+        errorSubjects.append(subject)
     }
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
         startFailedAttachments.append(failure)
@@ -129,6 +132,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var showError: Bool { !errors.isEmpty }
     var errorMessage: String? { errors.last }
     var errorTitle: String? { errorTitles.last }
+    var errorSubject: AlertSubject? { errorSubjects.last }
     var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     /// Whether the most recent delete-sheet request asked for immediate delete.
@@ -146,4 +150,15 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
     var installerMountedDelivery: GuestAgentDiskDelivery? { installerMountedDeliveries.last }
     var showCreationWizard: Bool { creationWizardCount > 0 }
+}
+
+extension AlertSubject {
+    /// The VM this subject names, `nil` for the library.
+    var vm: VMInstance? {
+        if case .vm(let instance) = self { instance } else { nil }
+    }
+
+    var isLibrary: Bool {
+        if case .library = self { true } else { false }
+    }
 }

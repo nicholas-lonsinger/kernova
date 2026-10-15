@@ -38,7 +38,7 @@ struct VMSleepWakeCoordinatorTests {
             roster: roster
         )
         coordinator.onFailure = { [failures] error in
-            failures.record(title: "Error", message: error.localizedDescription)
+            failures.record(title: "Error", message: error.localizedDescription, subject: .library)
         }
         return (coordinator, roster, virtualizationService)
     }
@@ -373,7 +373,7 @@ struct VMSleepWakeCoordinatorTests {
             lifecycle: makeTestLifecycle(virtualization: mock, fileSystem: fileSystem),
             roster: roster)
         coordinator.onFailure = { [failures] error in
-            failures.record(title: "Error", message: error.localizedDescription)
+            failures.record(title: "Error", message: error.localizedDescription, subject: .library)
         }
         let session = UUID()
         let instance = VMInstanceFixture.make(name: "Pausing")
@@ -449,7 +449,7 @@ struct VMSleepWakeCoordinatorTests {
         }
         let coordinator = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         coordinator.onFailure = { [failures] error in
-            failures.record(title: "Error", message: error.localizedDescription)
+            failures.record(title: "Error", message: error.localizedDescription, subject: .library)
         }
 
         await sleep(coordinator, virtService)

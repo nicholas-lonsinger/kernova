@@ -8,14 +8,14 @@ import Testing
 ///
 /// The controller is built but never installed: `install()` writes
 /// `NSApp.mainMenu` in the shared test host.
-@Suite("MainMenuController validation", .serialized, .caseScoped)
+@Suite("MainMenuController validation", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct MainMenuValidationTests {
     private let preferences = makeTestPreferences()
 
     /// The controller under test, over a library a test selects the VM in
-    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``) and windows it
-    /// opens none of.
+    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), working in the
+    /// library window.
     private struct Fixture {
         let controller: MainMenuController
         let viewModel: VMLibraryViewModel
@@ -23,9 +23,8 @@ struct MainMenuValidationTests {
 
     private func makeFixture(hasBundledGuestAgentDisk: Bool = true) -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let controller = MainMenuController(
-            viewModel: viewModel, windows: makeWindowRegistry(viewModel),
-            hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)
+        let controller = makeLibraryMenuController(
+            viewModel, hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)
         return Fixture(controller: controller, viewModel: viewModel)
     }
 

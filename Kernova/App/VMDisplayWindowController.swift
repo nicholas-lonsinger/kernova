@@ -50,8 +50,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("displayTakeSnapshot"),
                 // Targets this window's VM: the nil-target showClipboard action
-                // resolves through `AppDelegate.activeInstance`, which prefers the
-                // key display window's instance over the sidebar selection.
+                // resolves through `MainMenuController.activeInstance`, which
+                // answers the key display window's VM.
                 clipboardID: NSToolbarItem.Identifier("displayClipboard"),
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),

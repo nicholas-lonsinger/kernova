@@ -391,7 +391,7 @@ extension DetailContainerViewController {
 // MARK: - VMLibraryPresenting
 
 extension DetailContainerViewController: VMLibraryPresenting {
-    func presentError(_ message: String, title: String) {
+    func presentError(_ message: String, title: String, about subject: AlertSubject) {
         alertsPresenter.presentError(message, title: title)
     }
 

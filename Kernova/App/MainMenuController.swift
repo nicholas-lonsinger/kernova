@@ -19,10 +19,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Whether this build carries the guest-agent installer disk image the
     /// guest-agent item mounts.
     private let hasBundledGuestAgentDisk: Bool
-    /// The app's windows: the key window's VM, and the library window whose
-    /// sidebar the View menu's section items read and act on while it is on
-    /// screen.
+    /// The app's windows: the VM the working window shows, and the library
+    /// window whose sidebar the View menu's section items read and act on
+    /// while it is on screen.
     private let windows: AppWindowRegistry
+    /// The app's key and main windows, which ``activeInstance`` resolves.
+    private let frontWindows: @MainActor () -> (key: NSWindow?, main: NSWindow?)
 
     /// The application menu, retained so its quit section can be rebuilt when it opens.
     private var appMenu: NSMenu?
@@ -37,7 +39,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// submenu that decides one of its items' enablement.
     private var virtualMachineMenu: NSMenu?
     /// That menu's "Revert to Snapshot" submenu, retained so it can be rebuilt
-    /// from the selected VM's manifest when it opens.
+    /// from the target VM's manifest when it opens.
     private var revertSnapshotMenu: NSMenu?
     /// What that submenu currently lists, so an open that would produce
     /// identical items skips the rebuild.
@@ -97,19 +99,25 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     init(
         viewModel: VMLibraryViewModel,
         windows: AppWindowRegistry,
-        hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
+        hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil,
+        frontWindows: @escaping @MainActor () -> (key: NSWindow?, main: NSWindow?) = {
+            (NSApp.keyWindow, NSApp.mainWindow)
+        }
     ) {
         self.viewModel = viewModel
         self.windows = windows
         self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
+        self.frontWindows = frontWindows
     }
 
     // MARK: - Command Target
 
-    /// The VM a command no item names acts on: the key window's, else the
-    /// sidebar selection.
+    /// The VM a command no item names acts on: the one the working window
+    /// shows (``AppWindowRegistry/workingInstance(keyWindow:mainWindow:)``),
+    /// `nil` — every VM command disabled — when it shows none.
     var activeInstance: VMInstance? {
-        NSApp.keyWindow.flatMap(windows.instance(forKeyWindow:)) ?? viewModel.selectedInstance
+        let front = frontWindows()
+        return windows.workingInstance(keyWindow: front.key, mainWindow: front.main)
     }
 
     /// The VM a nil-target action acts on: the one the sending item names, else
@@ -118,7 +126,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// The sidebar's context menu dispatches its display toggles down the
     /// responder chain, and its row is not always the key window's VM — naming
     /// the VM on the item is what keeps the click acting on the row it came
-    /// from. Every other sender carries none and gets the key-window rule.
+    /// from. Every other sender carries none and gets the working-window rule.
     func target(of sender: Any?) -> VMInstance? {
         (sender as? NSMenuItem)?.representedObject as? VMInstance ?? activeInstance
     }
@@ -248,7 +256,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     }
 
     /// Rebuilds the USB submenu from the accessories macOS has assigned to
-    /// Kernova and the ones the selected VM already holds, unless they are
+    /// Kernova and the ones the target VM already holds, unless they are
     /// what it already lists.
     private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
         let instance = activeInstance
@@ -274,7 +282,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             detachAction: #selector(AppDelegate.detachUSBAccessory(_:)))
     }
 
-    /// Rebuilds the revert submenu from the selected VM's snapshots, unless
+    /// Rebuilds the revert submenu from the target VM's snapshots, unless
     /// they are what it already lists.
     ///
     /// The model alone answers for the submenu because every item in it is one
@@ -615,7 +623,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         takeSnapshotItem.keyEquivalentModifierMask = [.command, .shift]
         let revertItem = NSMenuItem(title: SnapshotRevertMenu.title, action: nil, keyEquivalent: "")
         let revertMenu = NSMenu(title: SnapshotRevertMenu.title)
-        // Rebuilt from the selected VM's manifest whenever this submenu or the
+        // Rebuilt from the target VM's manifest whenever this submenu or the
         // menu holding it opens — the latter because AppKit decides the parent
         // item's enablement from the submenu's contents, before the submenu
         // itself is ever asked to update.

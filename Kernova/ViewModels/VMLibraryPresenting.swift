@@ -127,9 +127,19 @@ struct GuestAccountPasswordRequest {
     let answer: @MainActor (PresenterAnswer<GuestAccountPasswordAnswer>) -> Void
 }
 
+/// What an alert is about.
+enum AlertSubject {
+    /// One VM.
+    case vm(VMInstance)
+    /// The library as a whole — an arrival, a bundle on disk, or several VMs.
+    case library
+}
+
 /// A confirmation a verb the user started refused without, put to the user
 /// while that verb waits for the answer.
 struct ConfirmationRequest {
+    /// The VM the verb that raised the prompt acts on.
+    let instance: VMInstance
     /// What the core is asking, in its own words.
     let prompt: ConfirmationPrompt
     /// Answers the prompt: `true` to go ahead, `false` to walk away.
@@ -139,6 +149,8 @@ struct ConfirmationRequest {
 /// The routes a refusal a verb the user started raised names, put to the
 /// user while that verb waits for the answer.
 struct StepRouteRequest {
+    /// The VM the verb that raised the refusal acts on.
+    let instance: VMInstance
     /// What the core refused with, in its own words.
     let requirement: StepRequirement
     /// The verb a route ending in ``StepRoute/Ending/refusedVerb`` asks
@@ -153,8 +165,8 @@ struct StepRouteRequest {
 /// sheets, and the creation wizard.
 @MainActor
 protocol VMLibraryPresenting: AnyObject {
-    /// Show an error alert headed `title` with `message`.
-    func presentError(_ message: String, title: String)
+    /// Show an error alert about `subject`, headed `title` with `message`.
+    func presentError(_ message: String, title: String, about subject: AlertSubject)
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance)

@@ -180,6 +180,19 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 0)
     }
 
+    @Test("A delete whose bundle the storage fails to remove is presented about the VM")
+    func deleteVMFailurePresentsAboutTheVM() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.deleteVMBundleError = CocoaError(.fileWriteNoPermission)
+
+        await viewModel.delete(instance)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(presenter.errorSubject?.vm === instance)
+    }
+
     @Test("deleteVM refuses a VM whose cold resume is still restoring it")
     func deleteVMRefusesWhileRestoring() async throws {
         let storage = MockVMStorageService()
@@ -1416,6 +1429,7 @@ struct VMLibraryViewModelTests {
         #expect(
             presenter.confirmationRequests.map(\.prompt.title)
                 == ["Start \u{201C}Starting\u{201D} Anyway?"])
+        #expect(presenter.confirmationRequests.first?.instance === starting)
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
     }
@@ -1434,6 +1448,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.confirmationRequests.count == 1)
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(presenter.errorSubject?.vm === starting)
         #expect(
             presenter.errorMessage?.hasPrefix(
                 "\u{201C}Starting\u{201D} has the same machine ID as \u{201C}Twin\u{201D}, which is active.")
@@ -1672,6 +1687,7 @@ struct VMLibraryViewModelTests {
         let request = presenter.stepRouteRequests.first
         #expect(presenter.stepRouteRequests.count == 1)
         #expect(request?.verbTitle == "Start")
+        #expect(request?.instance === starting)
         #expect(request?.requirement.routes.first?.steps.first?.vm.id == starting.id)
         #expect(starting.configuration.macAddress != other.configuration.macAddress)
         #expect(virtService.startCallCount == 1)

@@ -21,8 +21,9 @@ final class VMRemovableMediaReconciler {
     /// — ``VMLibrary/settleRemovableMedia(_:toLive:)``.
     var onSettle: ((borrowing VMEditPermit, [RemovableMediaItem]?) -> Void)?
 
-    /// Receives every failure the reconcile needs a user to see.
-    var onFailure: ((any Error) -> Void)?
+    /// Receives every failure the reconcile needs a user to see, with the VM
+    /// it is about.
+    var onFailure: ((any Error, VMInstance) -> Void)?
 
     init(lifecycle: VMLifecycleCoordinator) {
         self.lifecycle = lifecycle
@@ -267,7 +268,7 @@ final class VMRemovableMediaReconciler {
         }
         let live = instance.liveRemovableMedia.compactMap { refused.lookup[$0.id] }
         onSettle?(permit, live.isEmpty ? nil : live)
-        onFailure?(refused.failure)
+        onFailure?(refused.failure, instance)
     }
 }
 

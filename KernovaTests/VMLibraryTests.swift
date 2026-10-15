@@ -42,8 +42,8 @@ struct VMLibraryTests {
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
             activationCenter: activationCenter)
-        library.onFailure = { [failures] title, message in
-            failures.record(title: title, message: message)
+        library.onFailure = { [failures] title, message, subject in
+            failures.record(title: title, message: message, subject: subject)
         }
         library.onUnreadableFilesFound = { [failures] in failures.recordCheckRequest() }
         return (library, storageService, virtualizationService, removableMediaDeviceService)
@@ -118,6 +118,7 @@ struct VMLibraryTests {
         #expect(library.hasLoadedLibrary == true)
         #expect(library.instances.isEmpty)
         #expect(failures.showError == true)
+        #expect(failures.errorSubject?.isLibrary == true)
     }
 
     @Test("An arrival registered while the read is in flight survives the load")
@@ -306,7 +307,8 @@ struct VMLibraryTests {
         #expect(storage.bundles[instance.bundleURL]?.name == "Before")
         // No pass was launched for a list that never became the configuration.
         #expect(instance.phase.operation == nil)
-        #expect(failures.showError)
+        #expect(failures.errorSubject?.vm === instance)
+        #expect(failures.errorMessage?.hasPrefix("The change to \u{201C}Before\u{201D} wasn\u{2019}t saved: ") == true)
     }
 
     @Test("A snapshot's whole configuration passes the MAC-address refusal only as the revert's own write")
@@ -489,7 +491,10 @@ struct VMLibraryTests {
         #expect(!instance.hostState.startsAutomaticallyOnLaunch)
         #expect(instance.configuration == storage.bundles[instance.bundleURL])
         #expect(instance.hostState == storage.hostStates[instance.bundleURL])
-        #expect(failures.showError)
+        #expect(failures.errorSubject?.vm === instance)
+        #expect(
+            failures.errorMessage?.hasPrefix("The change to \u{201C}\(instance.name)\u{201D} was saved only in part")
+                == true)
     }
 
     @Test("An arrival becomes a VM holding the configuration its write put in the bundle")
@@ -789,6 +794,7 @@ struct VMLibraryTests {
 
         #expect(failures.showError == true)
         #expect(failures.errorMessage?.contains("VM bundle not found") == true)
+        #expect(failures.errorSubject?.isLibrary == true)
     }
 
     @Test("reconcileWithDisk does not ask for the check again for an already-reported bundle")
@@ -1088,8 +1094,8 @@ struct VMLibraryTests {
             storage: storage, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
             lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()),
             fileSystem: fileSystem, preferences: preferences)
-        library.onFailure = { [failures] title, message in
-            failures.record(title: title, message: message)
+        library.onFailure = { [failures] title, message, subject in
+            failures.record(title: title, message: message, subject: subject)
         }
         return (library, storage)
     }

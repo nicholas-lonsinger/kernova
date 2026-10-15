@@ -177,7 +177,7 @@ final class VMDisplayPlacementController {
     func window(for vmID: UUID) -> NSWindow? { windows[vmID]?.window }
 
     /// The VM whose display window is `window`, if any.
-    func instance(forKeyWindow window: NSWindow) -> VMInstance? {
+    func instance(forDisplayWindow window: NSWindow) -> VMInstance? {
         windows.values.first(where: { $0.window === window })?.instance
     }
 

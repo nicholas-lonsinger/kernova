@@ -9,14 +9,14 @@ import Testing
 ///
 /// The menus come from `makeMainMenu()` rather than `install()`, which writes
 /// `NSApp.mainMenu` in the shared test host.
-@Suite("MainMenuController rebuilds", .serialized, .caseScoped)
+@Suite("MainMenuController rebuilds", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct MainMenuRebuildTests {
     private let preferences = makeTestPreferences()
 
     /// The controller under test, over a library a test selects the VM in
-    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``) and windows it
-    /// opens none of.
+    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), working in the
+    /// library window.
     private struct Fixture {
         let controller: MainMenuController
         let viewModel: VMLibraryViewModel
@@ -31,8 +31,7 @@ struct MainMenuRebuildTests {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         populate(viewModel)
-        let controller = MainMenuController(
-            viewModel: viewModel, windows: makeWindowRegistry(viewModel), hasBundledGuestAgentDisk: true)
+        let controller = makeLibraryMenuController(viewModel)
         return Fixture(
             controller: controller, viewModel: viewModel, mainMenu: controller.makeMainMenu())
     }

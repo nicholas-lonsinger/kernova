@@ -9,7 +9,7 @@ import Virtualization
 ///
 /// It runs no verb itself. Each method here does three things and stops: show
 /// the sheet if one is owed, call the core with explicit consent, and route
-/// whatever ``CommandError`` comes back through ``present(_:for:)``.
+/// whatever ``CommandError`` comes back through ``present(_:about:)``.
 ///
 /// Owns the library and the core, routes ``VMLibrary/onFailure`` and the core's
 /// own failures to the presenter, and forwards the library's reads so a view
@@ -177,12 +177,12 @@ final class VMLibraryViewModel {
     ) {
         Task {
             do {
-                let route = try await askForRoute(through: requirement, then: nil)
+                let route = try await askForRoute(through: requirement, then: nil, about: instance)
                 for step in route.steps { try await commands.take(step) }
             } catch is ConfirmationDeclined {
                 return
             } catch {
-                present(error, for: instance)
+                present(error, about: .vm(instance))
                 return
             }
             setConfiguration(assignments, on: instance, consent: consent)
@@ -426,7 +426,7 @@ final class VMLibraryViewModel {
                 "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
             )
         } catch {
-            surfaceError(error.localizedDescription)
+            present(error, about: .vm(instance))
         }
     }
 
@@ -495,7 +495,7 @@ final class VMLibraryViewModel {
     /// same branch the live call took, so a failure keeps the recovery it
     /// offered.
     private enum BufferedPresentation {
-        case error(title: String, message: String)
+        case error(title: String, message: String, subject: AlertSubject)
         /// A start that failed, whatever it failed with. The VM is named by id
         /// and re-resolved on the drain — one that left the library meanwhile
         /// leaves nothing to act on or report.
@@ -669,7 +669,8 @@ final class VMLibraryViewModel {
                 Self.logger, .error,
                 "Couldn't move \(bundle.bundleURL.lastPathComponent, privacy: .public) to the Trash: \(error.localizedDescription, privacy: .public)"
             )
-            surfaceError(error.localizedDescription, title: "Couldn\u{2019}t Move to Trash")
+            surfaceError(
+                error.localizedDescription, title: "Couldn\u{2019}t Move to Trash", about: .library)
         }
     }
 
@@ -762,8 +763,8 @@ final class VMLibraryViewModel {
         )
         self.commands = commands
 
-        library.onFailure = { [weak self] title, message in
-            self?.surfaceError(message, title: title)
+        library.onFailure = { [weak self] title, message, subject in
+            self?.surfaceError(message, title: title, about: subject)
         }
         library.onUnreadableFilesFound = { [weak self] in
             guard let self else { return }
@@ -773,13 +774,14 @@ final class VMLibraryViewModel {
             }
             self.onShowConfigCheck?(.automatic)
         }
+        // Each of its failures names every VM it is about.
         sleepWake.onFailure = { [weak self] error in
-            self?.surfaceError(error.localizedDescription)
+            self?.present(error, about: .library)
         }
         // The same routing a call site gets, so a failure nobody awaited still
         // reaches the sheet or the recovery alert its type asks for.
         commands.onFailure = { [weak self] failure, instance in
-            self?.present(failure, for: instance)
+            self?.present(failure, about: instance.map(AlertSubject.vm) ?? .library)
         }
         commands.surfaceDisplay = { [weak self] instance in
             self?.surfaceDisplay(for: instance)
@@ -849,7 +851,7 @@ final class VMLibraryViewModel {
         do {
             try commands.forgetUSBPairing(.id(instance.id), key: key)
         } catch {
-            present(error, for: instance)
+            present(error, about: .vm(instance))
         }
     }
 
@@ -959,7 +961,7 @@ final class VMLibraryViewModel {
             try await commands.removeStartFailedAttachment(
                 .id(instance.id), attachment: failure)
         } catch {
-            present(error, for: instance)
+            present(error, about: .vm(instance))
             return
         }
         await start(instance)
@@ -998,8 +1000,8 @@ final class VMLibraryViewModel {
     ) async -> Bool {
         do {
             try await VMConsentPolicy.run(
-                prompting: { try await self.askToConfirm($0) },
-                choosingRoute: { try await self.askForRoute(through: $0, then: verbTitle) },
+                prompting: { try await self.askToConfirm($0, about: instance) },
+                choosingRoute: { try await self.askForRoute(through: $0, then: verbTitle, about: instance) },
                 taking: { try await self.commands.take($0) }
             ) { consent, ending in
                 try await VMConsentPolicy.runGatheringGuestAccount(
@@ -1025,21 +1027,23 @@ final class VMLibraryViewModel {
                 "'\(instance.name, privacy: .public)': the user declined the confirmation it asked for"
             )
         } catch {
-            present(error, for: instance)
+            present(error, about: .vm(instance))
         }
         return false
     }
 
-    /// Puts a confirmation on screen and waits for the user's answer.
+    /// Puts a confirmation a verb on `instance` raised on screen and waits for
+    /// the user's answer.
     ///
     /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
     ///   refusal itself when it could not be asked.
-    private func askToConfirm(_ prompt: ConfirmationPrompt) async throws {
+    private func askToConfirm(_ prompt: ConfirmationPrompt, about instance: VMInstance) async throws {
         guard let presenter else { throw CommandError.confirmationRequired(prompt) }
         let answer = await withCheckedContinuation { continuation in
             presenter.presentConfirmationRequest(
                 ConfirmationRequest(
-                    prompt: prompt, answer: { continuation.resume(returning: $0) }))
+                    instance: instance, prompt: prompt,
+                    answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
         case .answered(true): return
@@ -1048,19 +1052,19 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Puts the routes a step refusal names on screen and waits for the
-    /// user's choice.
+    /// Puts the routes a step refusal a verb on `instance` raised names on
+    /// screen and waits for the user's choice.
     ///
     /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
     ///   refusal itself when it could not be asked.
     private func askForRoute(
-        through requirement: StepRequirement, then verbTitle: String?
+        through requirement: StepRequirement, then verbTitle: String?, about instance: VMInstance
     ) async throws -> StepRoute {
         guard let presenter else { throw CommandError.stepRequired(requirement) }
         let answer = await withCheckedContinuation { continuation in
             presenter.presentStepRoutes(
                 StepRouteRequest(
-                    requirement: requirement, verbTitle: verbTitle,
+                    instance: instance, requirement: requirement, verbTitle: verbTitle,
                     answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
@@ -1244,7 +1248,7 @@ final class VMLibraryViewModel {
                 try await commands.takeSnapshot(
                     .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "")
             } catch {
-                present(error, for: instance)
+                present(error, about: .vm(instance))
                 return
             }
         }
@@ -1295,7 +1299,7 @@ final class VMLibraryViewModel {
                     .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
             } catch {
                 guard instance.isEphemeralBaseline(snapshot) else {
-                    self.present(error, for: instance)
+                    self.present(error, about: .vm(instance))
                     return
                 }
                 self.presenter?.presentDeleteSnapshot(snapshot, for: instance)
@@ -1350,10 +1354,10 @@ final class VMLibraryViewModel {
                     "Refusing delete of '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
                 )
             default:
-                present(error, for: instance)
+                present(error, about: .vm(instance))
             }
         } catch {
-            surfaceError(error.localizedDescription)
+            present(error, about: .vm(instance))
         }
     }
 
@@ -1377,9 +1381,10 @@ final class VMLibraryViewModel {
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
         let batch = commands.beginImports(from: bundles, intoFolder: folder)
-        for case .failure(let error) in batch.imports { present(error, for: nil) }
+        for case .failure(let error) in batch.imports { present(error, about: .library) }
         if let failure = batch.membershipFailure {
-            surfaceError(failure.localizedDescription, title: "Couldn\u{2019}t Add to the Folder")
+            surfaceError(
+                failure.localizedDescription, title: "Couldn\u{2019}t Add to the Folder", about: .library)
         }
         return true
     }
@@ -1413,10 +1418,10 @@ final class VMLibraryViewModel {
                     "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
                 )
             } else {
-                present(error, for: instance)
+                present(error, about: .vm(instance))
             }
         } catch {
-            surfaceError(error.localizedDescription)
+            present(error, about: .vm(instance))
         }
     }
 
@@ -1439,7 +1444,7 @@ final class VMLibraryViewModel {
                 "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message, privacy: .public)"
             )
         } catch {
-            surfaceError(error.localizedDescription)
+            present(error, about: .library)
         }
     }
 
@@ -1502,7 +1507,7 @@ final class VMLibraryViewModel {
                 "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message, privacy: .public)"
             )
         } catch {
-            present(error, for: instance)
+            present(error, about: .vm(instance))
         }
         clearRename(ifOwnedBy: surface.target(for: instance))
     }
@@ -1629,20 +1634,20 @@ final class VMLibraryViewModel {
     // MARK: - Error Handling
 
     /// Runs one verb, routing whatever it refuses with to the right surface.
-    private func run(on instance: VMInstance?, _ verb: () async throws -> Void) async {
+    private func run(on instance: VMInstance, _ verb: () async throws -> Void) async {
         do {
             try await verb()
         } catch {
-            present(error, for: instance)
+            present(error, about: .vm(instance))
         }
     }
 
     /// The synchronous counterpart of ``run(on:_:)``.
-    private func runSync(on instance: VMInstance?, _ verb: () throws -> Void) {
+    private func runSync(on instance: VMInstance, _ verb: () throws -> Void) {
         do {
             try verb()
         } catch {
-            present(error, for: instance)
+            present(error, about: .vm(instance))
         }
     }
 
@@ -1692,7 +1697,7 @@ final class VMLibraryViewModel {
                 return .refused
             }
         }
-        present(error, for: instance)
+        present(error, about: .vm(instance))
         return .refused
     }
 
@@ -1703,34 +1708,38 @@ final class VMLibraryViewModel {
     /// buffering included, so a refusal raised while the window it will be
     /// shown in is still being built survives to reach it.
     func surfaceUnawaitedFailure(_ failure: CommandError) {
-        present(failure, for: nil)
+        present(failure, about: .library)
     }
 
-    /// The single place a ``CommandError`` becomes something on screen.
+    /// The single place an error about `subject` becomes something on screen.
     ///
     /// A consent refusal opens the sheet that gathers it; a failure carrying a
     /// recovery opens the alert that offers it; everything else is an error
-    /// alert headed by the refusal's own title.
-    private func present(_ error: Error, for instance: VMInstance?) {
+    /// alert headed by the refusal's own title — a ``TitledError``'s, or
+    /// "Error".
+    func present(_ error: Error, about subject: AlertSubject) {
         guard let command = error as? CommandError else {
             surfaceError(
-                error.localizedDescription, title: (error as? any TitledError)?.alertTitle ?? "Error")
+                error.localizedDescription, title: (error as? any TitledError)?.alertTitle ?? "Error",
+                about: subject)
             return
         }
-        switch command {
-        case .confirmationRequired(let prompt):
+        switch (command, subject) {
+        case (.confirmationRequired(let prompt), .vm(let instance)):
             presentConfirmation(prompt, for: instance)
-        case .operationFailed(let verb, _, let message, let recovery):
-            if case .removeStartFailedAttachment(let failure) = recovery, let instance {
-                surfaceStartFailure(.attachment(failure), for: instance)
-            } else if verb == .start, let instance {
-                surfaceStartFailure(
-                    .message(title: command.alertTitle, message: message), for: instance)
-            } else {
-                surfaceError(message, title: command.alertTitle)
-            }
+        case (.confirmationRequired(let prompt), .library):
+            #log(
+                Self.logger, .debug,
+                "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public) about no VM"
+            )
+        case (.operationFailed(_, _, _, .removeStartFailedAttachment(let failure)?), .vm(let instance)):
+            surfaceStartFailure(.attachment(failure), for: instance)
+        case (.operationFailed(.start, _, let message, _), .vm(let instance)):
+            surfaceStartFailure(.message(title: command.alertTitle, message: message), for: instance)
+        case (.operationFailed(_, _, let message, _), _):
+            surfaceError(message, title: command.alertTitle, about: subject)
         default:
-            surfaceError(command.message, title: command.alertTitle)
+            surfaceError(command.message, title: command.alertTitle, about: subject)
         }
     }
 
@@ -1743,14 +1752,13 @@ final class VMLibraryViewModel {
     /// raised by the `request…` method that opens its own sheet and knows the
     /// arguments — which VM, which snapshot, Trash or immediate — that the
     /// prompt alone does not carry.
-    private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance?) {
-        guard let instance else { return }
+    private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance) {
         switch prompt.kind {
         case .forceStop:
             presenter?.presentForceStop(for: instance)
         case .startBesideSharedMachineIdentity:
             // Raised where it could not be asked: the refusal it stands for.
-            surfaceError(prompt.message, title: ConflictReason.machineIdentity.title)
+            surfaceError(prompt.message, title: ConflictReason.machineIdentity.title, about: .vm(instance))
         default:
             #log(
                 Self.logger, .debug,
@@ -1759,13 +1767,14 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Routes an error message to the presenter, buffering it if none is
-    /// attached yet.
-    func surfaceError(_ message: String, title: String = "Error") {
+    /// Routes an error message composed upstream to the presenter, buffering
+    /// it if none is attached yet; an `Error` goes through
+    /// ``present(_:about:)`` instead.
+    func surfaceError(_ message: String, title: String, about subject: AlertSubject) {
         if let presenter {
-            presenter.presentError(message, title: title)
+            presenter.presentError(message, title: title, about: subject)
         } else {
-            bufferedPresentations.append(.error(title: title, message: message))
+            bufferedPresentations.append(.error(title: title, message: message, subject: subject))
         }
     }
 
@@ -1782,7 +1791,7 @@ final class VMLibraryViewModel {
         case .attachment(let attachment):
             presenter.presentStartFailedAttachment(attachment, for: instance)
         case .message(let title, let message):
-            presenter.presentError(message, title: title)
+            presenter.presentError(message, title: title, about: .vm(instance))
         }
     }
 
@@ -1796,7 +1805,7 @@ final class VMLibraryViewModel {
             bufferedPresentations.append(.startSummary(title: title, undone: undone))
             return
         }
-        presenter.presentError(undone.undoneMessage(for: .start), title: title)
+        presenter.presentError(undone.undoneMessage(for: .start), title: title, about: .library)
     }
 
     /// Re-dispatches everything raised before the presenter attached, through
@@ -1807,8 +1816,8 @@ final class VMLibraryViewModel {
         bufferedPresentations.removeAll()
         for presentation in buffered {
             switch presentation {
-            case .error(let title, let message):
-                surfaceError(message, title: title)
+            case .error(let title, let message, let subject):
+                surfaceError(message, title: title, about: subject)
             case .startSummary(let title, let undone):
                 let held = undone.filter { holdsVM($0.vm.id) }
                 if held.count < undone.count {

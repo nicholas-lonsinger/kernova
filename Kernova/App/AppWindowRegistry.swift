@@ -160,13 +160,30 @@ final class AppWindowRegistry {
 
     func clipboardWindow(for vmID: UUID) -> NSWindow? { clipboardWindows[vmID]?.window }
 
-    // MARK: - Presence
+    // MARK: - Working Window
 
-    /// The VM whose display or clipboard window is `window`, if any.
-    func instance(forKeyWindow window: NSWindow) -> VMInstance? {
-        if let instance = displayPlacement.instance(forKeyWindow: window) { return instance }
-        return clipboardWindows.values.first(where: { $0.window === window })?.instance
+    /// The VM `window` shows: a display or clipboard window's own VM, or the
+    /// library's selection while the library window is visible; `nil` for any
+    /// other window. A sheet answers for the window it is attached to.
+    func instance(shownIn window: NSWindow) -> VMInstance? {
+        var window = window
+        while let parent = window.sheetParent { window = parent }
+        if let instance = displayPlacement.instance(forDisplayWindow: window) { return instance }
+        if let clipboard = clipboardWindows.values.first(where: { $0.window === window }) {
+            return clipboard.instance
+        }
+        guard window === libraryWindow, window.isVisible else { return nil }
+        return viewModel.selectedInstance
     }
+
+    /// The VM the user is working on, found the way AppKit finds a menu
+    /// action's target — the key window's VM, else the main window's
+    /// (`NSApplication.sendAction(_:to:from:)`).
+    func workingInstance(keyWindow: NSWindow?, mainWindow: NSWindow?) -> VMInstance? {
+        keyWindow.flatMap(instance(shownIn:)) ?? mainWindow.flatMap(instance(shownIn:))
+    }
+
+    // MARK: - Presence
 
     /// Whether any window this registry tracks is on screen, optionally counting
     /// a miniaturized one as present.
