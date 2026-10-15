@@ -37,9 +37,8 @@ public struct EngineInstant: Comparable, Sendable {
     }
 }
 
-/// Monotonic time source for the stream engine and the guest agent's liveness
-/// watchdogs — `Swift.Clock`, one floor lower, so code that must run on
-/// macOS 12 guests can suspend through the same seam a 13+ host does.
+/// Monotonic time source — `Swift.Clock`, one floor lower, so code that must
+/// run on macOS 12 guests can suspend through the same seam a 13+ host does.
 ///
 /// `sleep` MUST count time the system spends asleep, as `now` does: a
 /// suspension on an uptime timebase freezes across VM save/restore, so a
@@ -51,9 +50,32 @@ public protocol EngineClock: Sendable {
     /// Suspends the current task for at least `interval` seconds, throwing
     /// `CancellationError` when the task is cancelled.
     func sleep(for interval: TimeInterval) async throws
+
+    /// Runs `body` once `interval` seconds have passed on this clock, unless
+    /// the returned task is cancelled first.
+    ///
+    /// `body` runs on the returned task, so `Task.isCancelled` inside it reads
+    /// that task's cancellation. A cancel racing the expiry can still let
+    /// `body` start, so a `body` that must not act once superseded checks
+    /// `Task.isCancelled` under the isolation or lock its canceller holds. A
+    /// requirement rather than only the extension's default, so a test clock
+    /// can record the arming before this returns.
+    func schedule(
+        after interval: TimeInterval, _ body: @escaping @Sendable () async -> Void
+    ) -> Task<Void, Never>
 }
 
 extension EngineClock {
+    /// Sleeps for `interval` in a task of its own, then runs `body`.
+    public func schedule(
+        after interval: TimeInterval, _ body: @escaping @Sendable () async -> Void
+    ) -> Task<Void, Never> {
+        Task {
+            do { try await sleep(for: interval) } catch { return }
+            await body()
+        }
+    }
+
     /// Seconds elapsed from `start` to `now`.
     public func seconds(since start: EngineInstant) -> TimeInterval {
         start.seconds(to: now)

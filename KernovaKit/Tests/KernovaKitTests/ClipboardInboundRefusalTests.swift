@@ -24,7 +24,7 @@ struct ClipboardInboundRefusalTests {
             session: ClipboardControlSession(
                 channel: channel, role: .host, kind: .clipboard, label: "refusals",
                 staging: staging, dataSocketTimeout: testWaitBackstop),
-            reporter: ClipboardTransferReporter(dwell: 0, schedule: { _, _ in }),
+            reporter: ClipboardTransferReporter(clock: GatedEngineClock()),
             staging: staging, peerName: "guest", maxPasteBytes: { ClipboardPasteLimit.defaultBytes })
         let recorded = Box<[ClipboardEndpoint.Activity]>([])
         let changed = AsyncGate()

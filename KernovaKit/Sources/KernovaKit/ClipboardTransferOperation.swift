@@ -84,12 +84,10 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
 
     /// What an event left for `deliver` to run once `lock` is released.
     ///
-    /// `emit`-side work is deferred because the reporter hop and the scheduler
-    /// are injected closures a caller may run synchronously, and an `os_log`
-    /// under the lock would put every chunk callback behind it.
+    /// Deferred because an `os_log` under the lock would put every chunk
+    /// callback behind it.
     private struct Outcome {
         var call: ReporterCall?
-        var armIdle: UInt64?
         var logs: [LogEvent] = []
     }
 
@@ -127,11 +125,9 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
 
     private let revealDelay: TimeInterval
     private let idleGap: TimeInterval
-    /// Monotonic seconds.
-    private let now: @Sendable () -> TimeInterval
-    /// Runs `work` after a delay — the idle terminal's only trigger, since by
-    /// definition no further transfer event arrives to drive it.
-    private let schedule: @Sendable (_ after: TimeInterval, _ work: @escaping @Sendable () -> Void) -> Void
+    /// What the reveal gate, the readout's timings and the idle terminal are
+    /// measured on.
+    private let clock: any EngineClock
     /// Stops what this operation measures, when it can be cancelled at all. `nil`
     /// is what leaves the readout without a Cancel button.
     private let onCancelRequested: (@Sendable () -> Void)?
@@ -140,7 +136,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     // MARK: - Locked state
 
     private let lock = NSLock()
-    private let startedAt: TimeInterval
+    private let startedAt: EngineInstant
     private var units: [UInt64: UnitState] = [:]
     /// Bytes moved across the whole operation.
     ///
@@ -170,9 +166,12 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// knows it has nothing to retire.
     private var published = false
     private var isFinished = false
-    /// Bumped whenever a transfer begins, so an already-scheduled idle terminal
-    /// can tell it was superseded.
-    private var idleEpoch: UInt64 = 0
+    /// The armed idle terminal, `nil` while none is.
+    ///
+    /// A transfer beginning, or any terminal, cancels it under `lock`, and the
+    /// terminal acts only if it takes `lock` uncancelled — so one armed before
+    /// a transfer began can never complete the operation.
+    private var idleTerminal: Task<Void, Never>?
     /// This operation's share of the republish-rate bound — the aggregate is a
     /// single byte stream even when several transfers feed it.
     private let coalescer = FetchProgressCoalescer()
@@ -184,9 +183,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     ///
     /// `expectedBytes`/`expectedItems` are a **floor** for the denominator, for
     /// an operation that knows its whole set up front (a drop); units revise it
-    /// upward as they are declared. `now` and `schedule` default to the system
-    /// monotonic clock and the main queue; tests inject their own so no wait is
-    /// timing-based.
+    /// upward as they are declared.
     ///
     /// `onCancelRequested` stops what this operation measures — the transfers,
     /// not the offer behind them — and is what puts a Cancel affordance on the
@@ -200,13 +197,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         expectedItems: Int = 0,
         revealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         idleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
-        now: @escaping @Sendable () -> TimeInterval = {
-            Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
-        },
-        schedule: @escaping @Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void = {
-            after, work in
-            DispatchQueue.main.asyncAfter(deadline: .now() + after, execute: work)
-        },
+        clock: any EngineClock = makePlatformEngineClock(),
         onCancelRequested: (@Sendable () -> Void)? = nil,
         reporter: ClipboardTransferReporter
     ) {
@@ -217,11 +208,10 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         self.expectedItems = expectedItems
         self.revealDelay = revealDelay
         self.idleGap = idleGap
-        self.now = now
-        self.schedule = schedule
+        self.clock = clock
         self.onCancelRequested = onCancelRequested
         self.reporter = reporter
-        self.startedAt = now()
+        self.startedAt = clock.now
     }
 
     // MARK: - Transfer events
@@ -252,9 +242,9 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         apply(id: id, declaring: UnitState(expected: expectedBytes, name: name)) { unit in
             if !self.activeUnits.contains(unit) { self.activeUnits.append(unit) }
             self.lastActiveName = self.units[unit]?.name ?? self.lastActiveName
-            // A transfer in flight means the operation isn't idle: invalidate the
-            // terminal scheduled for the gap this transfer just filled.
-            self.idleEpoch &+= 1
+            // A transfer in flight means the operation isn't idle: call off the
+            // terminal armed for the gap this transfer just filled.
+            self.cancelIdleTerminalLocked()
         }
     }
 
@@ -316,11 +306,12 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// walked one file at a time, so the gap between two of them looks exactly
     /// like the end, and this gap is what tells them apart.
     public func finishWhenIdle() {
-        deliver(
-            lock.withLock { () -> Outcome in
-                guard !isFinished, activeUnits.isEmpty else { return Outcome() }
-                return Outcome(armIdle: idleEpoch)
-            })
+        lock.withLock {
+            guard !isFinished, activeUnits.isEmpty, idleTerminal == nil else { return }
+            idleTerminal = clock.schedule(after: idleGap) { [weak self] in
+                self?.idleTerminalFired()
+            }
+        }
     }
 
     /// Retires the operation without a finished report — a teardown, where what
@@ -330,6 +321,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
             lock.withLock { () -> Outcome in
                 guard !isFinished else { return Outcome() }
                 isFinished = true
+                cancelIdleTerminalLocked()
                 let logs: [LogEvent] = [endedLocked("abandoned")]
                 guard published else { return Outcome(logs: logs) }
                 return Outcome(call: .retire, logs: logs)
@@ -395,26 +387,26 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// repainting. The final update is never lost: the throttle's final-chunk rule
     /// always admits the update that reaches the total.
     private func resolveLocked() -> Outcome {
-        let sampledAt = now()
-        rate.record(bytes: transferredBytes, seconds: sampledAt)
+        let sampledAt = clock.now
+        let elapsed = startedAt.seconds(to: sampledAt)
+        rate.record(bytes: transferredBytes, seconds: elapsed)
 
         var logs: [LogEvent] = []
         let admits: Bool
         if !revealed {
-            guard sampledAt - startedAt >= revealDelay else { return Outcome() }
+            guard elapsed >= revealDelay else { return Outcome() }
             revealed = true
             // The reveal bypassed the throttle, so its watermarks must still
             // reflect what just went on screen — otherwise the next update would
             // measure its delta from a byte count already shown.
-            coalescer.markForwarded(bytesTransferred: transferredBytes)
+            coalescer.markForwarded(bytesTransferred: transferredBytes, at: sampledAt)
             logs.append(
                 .revealed(
-                    elapsed: sampledAt - startedAt, transferred: transferredBytes,
-                    total: totalBytesLocked))
+                    elapsed: elapsed, transferred: transferredBytes, total: totalBytesLocked))
             admits = true
         } else {
             admits = coalescer.shouldForward(
-                bytesTransferred: transferredBytes, totalBytes: totalBytesLocked)
+                bytesTransferred: transferredBytes, totalBytes: totalBytesLocked, at: sampledAt)
         }
         if let current = activeUnits.last, let name = units[current]?.name {
             lastActiveName = name
@@ -430,6 +422,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     private func finishLocked(_ terminal: Terminal) -> Outcome {
         guard !isFinished else { return Outcome() }
         isFinished = true
+        cancelIdleTerminalLocked()
         let outcome: ClipboardTransferOutcome
         let label: String
         var isFailure = false
@@ -458,21 +451,28 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     }
 
     /// Completes the operation once it has stayed idle for the whole gap.
-    private func idleTerminalFired(epoch: UInt64) {
+    ///
+    /// Runs on the idle terminal's own task, so a cancel that landed first is
+    /// what `Task.isCancelled` reads under `lock`.
+    private func idleTerminalFired() {
         deliver(
             lock.withLock { () -> Outcome in
-                guard !isFinished, idleEpoch == epoch, activeUnits.isEmpty else { return Outcome() }
+                guard !Task.isCancelled else { return Outcome() }
                 return finishLocked(.completed)
             })
     }
 
-    /// Runs an event's deferred work — the records, the publication and the idle
-    /// arming — with `lock` released.
+    /// Calls off the armed idle terminal. Caller holds `lock`.
+    private func cancelIdleTerminalLocked() {
+        idleTerminal?.cancel()
+        idleTerminal = nil
+    }
+
+    /// Runs an event's deferred work — the records and the publication — with
+    /// `lock` released.
     private func deliver(_ outcome: Outcome) {
         for event in outcome.logs { log(event) }
         if let call = outcome.call { send(call) }
-        guard let epoch = outcome.armIdle else { return }
-        schedule(idleGap) { [weak self] in self?.idleTerminalFired(epoch: epoch) }
     }
 
     /// Publishes to the reporter through one serial main hop, so a snapshot can
@@ -521,7 +521,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
             bytesPerSecond: rate.bytesPerSecond,
             secondsRemaining: rate.secondsRemaining(bytes: transferredBytes, total: total),
             gesture: gesture,
-            elapsedSeconds: max(0, now() - startedAt),
+            elapsedSeconds: max(0, clock.seconds(since: startedAt)),
             isCancellable: onCancelRequested != nil,
             operationID: id)
     }
@@ -531,7 +531,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// Caller holds `lock`.
     private func endedLocked(_ terminal: String) -> LogEvent {
         .ended(
-            terminal: terminal, elapsed: max(0, now() - startedAt), transferred: transferredBytes,
+            terminal: terminal, elapsed: max(0, clock.seconds(since: startedAt)), transferred: transferredBytes,
             total: totalBytesLocked, revealed: revealed)
     }
 

@@ -41,7 +41,7 @@ struct VsockGuestDropAgentTests {
             ) { _, _ in
                 provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
             }
-            reporter = ClipboardTransferReporter(dwell: 0)
+            reporter = ClipboardTransferReporter(clock: TestEngineClock())
             let revealed = self.revealed
             agent = VsockGuestDropAgent(
                 client: client, reporter: reporter,

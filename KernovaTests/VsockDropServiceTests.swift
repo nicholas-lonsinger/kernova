@@ -32,6 +32,8 @@ struct VsockDropServiceTests {
         /// This VM's transfer report, as every surface reads it.
         let reports = ClipboardTransferReports()
         let recorder: FrameRecorder
+        /// The drop deadlines' clock: one passes only when a test releases it.
+        let clock = GatedEngineClock()
         private let host: VsockChannel
 
         init(
@@ -43,11 +45,7 @@ struct VsockDropServiceTests {
             // Inline, so reading the items needs no cross-thread wait.
             runOffMainActor: @escaping (@escaping @Sendable () -> Void) -> Void = { work in
                 work()
-            },
-            scheduleDropDeadline:
-                @escaping @Sendable (
-                    TimeInterval, @escaping @MainActor @Sendable () -> Void
-                ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue
+            }
         ) throws {
             let (hostFd, guestFd) = try makeRawSocketPair()
             host = VsockChannel(fileDescriptor: hostFd)
@@ -59,8 +57,7 @@ struct VsockDropServiceTests {
                 channel: host, label: "Drop VM", reporter: reports.reporter,
                 progressRevealDelay: progressRevealDelay, progressIdleGap: 0,
                 directoryByteCount: directoryByteCount,
-                runOffMainActor: runOffMainActor,
-                scheduleDropDeadline: scheduleDropDeadline)
+                runOffMainActor: runOffMainActor, clock: clock)
             service.start()
         }
 
@@ -760,61 +757,33 @@ struct VsockDropServiceTests {
 
     // MARK: - A drop the guest never takes
 
-    /// The unclaimed-drop deadlines the service has armed, fired by hand.
-    ///
-    /// Not `@MainActor`: the service arms these from the main actor while the
-    /// test reads the tally, so the state is lock-guarded instead.
-    private final class ManualDeadlines: @unchecked Sendable {
-        private let lock = NSLock()
-        private var pending: [@MainActor @Sendable () -> Void] = []
-
-        /// Fires whenever a deadline is armed.
-        let armed = AsyncGate()
-
-        /// How many armings are waiting to be fired.
-        var count: Int { lock.withLock { pending.count } }
-
-        /// Armings made over the whole run, which a wait can count on where the
-        /// pending tally rises and falls as deadlines re-arm.
-        var total: Int { lock.withLock { armedCount } }
-
-        private var armedCount = 0
-
-        /// The seam the service is built with.
-        var schedule: @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void {
-            { [self] _, work in
-                lock.withLock {
-                    pending.append(work)
-                    armedCount += 1
-                }
-                armed.notify()
-            }
+    /// Waits until the service has armed `armed` drop deadlines in all and the
+    /// last of them is the only one parked — every earlier one passed or stood
+    /// down.
+    private func awaitDeadline(_ harness: Harness, armed: Int) async throws {
+        let clock = harness.clock
+        try await clock.parkedChanged.wait {
+            clock.requestedSeconds.count == armed && clock.parked.count == 1
         }
+        #expect(clock.parked.first?.seconds == ClipboardStreamTuning.dropClaimTimeout)
+    }
 
-        /// Runs every armed deadline, whether or not it is still the live one.
-        @MainActor
-        func fireAll() {
-            let due = lock.withLock {
-                let due = pending
-                pending.removeAll()
-                return due
-            }
-            for work in due { work() }
-        }
+    /// Passes every drop deadline parked so far.
+    private func passDeadlines(_ harness: Harness) {
+        for deadline in harness.clock.parked { harness.clock.release(deadline) }
     }
 
     @Test("a drop the guest never asks for is called off, and says so")
     func unclaimedDropIsCalledOff() async throws {
-        let deadlines = ManualDeadlines()
-        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        let harness = try Harness()
         defer { harness.tearDown() }
         let file = try makeFile(
             in: scratch.url, named: "big.bin", bytes: Data(repeating: 0x43, count: 64))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
-        try await deadlines.armed.wait { deadlines.count == 1 }
-        deadlines.fireAll()
+        try await awaitDeadline(harness, armed: 1)
+        passDeadlines(harness)
 
         // A drop's readout is closed by the guest's `DropComplete`, so without
         // this the gesture would report nothing at all, ever.
@@ -827,15 +796,14 @@ struct VsockDropServiceTests {
 
     @Test("a drop waiting behind one the guest is streaming is not called off")
     func queuedDropKeepsItsPlace() async throws {
-        let deadlines = ManualDeadlines()
-        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        let harness = try Harness()
         defer { harness.tearDown() }
         let first = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
         let second = try makeFile(in: scratch.url, named: "b.txt", bytes: Data("b".utf8))
 
         #expect(harness.service.startDrop(urls: [first]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
-        try await deadlines.armed.wait { deadlines.count == 1 }
+        try await awaitDeadline(harness, armed: 1)
 
         // The guest takes the first batch, which is what says it is working
         // rather than ignoring the host.
@@ -848,26 +816,53 @@ struct VsockDropServiceTests {
         // with nothing of its own in flight — and no deadline of its own.
         #expect(harness.service.startDrop(urls: [second]))
         try await harness.recorder.waitForFrames { harness.recorder.dropOffers.count == 2 }
-        // Every deadline armed by now belongs to the batch the guest is
-        // serving, whose bytes moved during the window — so firing them calls
-        // nothing off, and the queued batch is not among them.
-        deadlines.fireAll()
+        // The one deadline standing is the served batch's, the unclaimed one
+        // stood down by the claim. Its bytes moved during the window, so passing
+        // it calls nothing off and starts the window again.
+        try await awaitDeadline(harness, armed: 2)
+        passDeadlines(harness)
+        try await awaitDeadline(harness, armed: 3)
         #expect(harness.failure == nil)
 
         // Once the first batch is over, the one behind it is owed an answer
         // again — and gets a deadline of its own.
-        let armedSoFar = deadlines.total
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
-        try await deadlines.armed.wait { deadlines.total > armedSoFar }
-        deadlines.fireAll()
+        try await awaitDeadline(harness, armed: 4)
+        passDeadlines(harness)
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .unclaimed)
     }
 
+    @Test("a deadline that passed as the guest claimed the drop calls nothing off")
+    func aDeadlinePassingAsTheClaimLandsDoesNothing() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
+
+        #expect(harness.service.startDrop(urls: [file]))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        try await awaitDeadline(harness, armed: 1)
+        let unclaimed = try #require(harness.clock.parked.first)
+
+        // The unclaimed window passes, and before its body reaches the main
+        // actor the guest's claim stands it down for a window of its own.
+        harness.clock.releaseHeld(unclaimed)
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+        try await awaitDeadline(harness, armed: 2)
+        harness.clock.resume(unclaimed)
+        await harness.clock.completion(of: unclaimed)
+
+        // Neither called off nor re-armed: the served window is the only one.
+        #expect(harness.failure == nil)
+        #expect(harness.clock.requestedSeconds.count == 2)
+    }
+
     @Test("a drop the guest began and then stopped moving is called off")
     func wedgedClaimedDropIsCalledOff() async throws {
-        let deadlines = ManualDeadlines()
-        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        let harness = try Harness()
         defer { harness.tearDown() }
         let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
@@ -880,12 +875,14 @@ struct VsockDropServiceTests {
 
         // The clock on a claimed drop is an inactivity window: the bytes that
         // moved during this one start it again rather than ending the job.
-        deadlines.fireAll()
+        try await awaitDeadline(harness, armed: 2)
+        passDeadlines(harness)
+        try await awaitDeadline(harness, armed: 3)
         #expect(harness.failure == nil)
 
         // Nothing moves in the next one, and no `DropComplete` ever arrives —
         // the gesture would otherwise have no end at all.
-        deadlines.fireAll()
+        passDeadlines(harness)
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .timedOut)
         #expect(try #require(harness.wording).menuLine == "Drop: the VM stopped taking the files")
@@ -894,8 +891,7 @@ struct VsockDropServiceTests {
 
     @Test("a batch queued behind a wedged drop still gets its own answer")
     func queuedDropOutlivesAWedgedOne() async throws {
-        let deadlines = ManualDeadlines()
-        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        let harness = try Harness()
         defer { harness.tearDown() }
         let first = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
         let second = try makeFile(in: scratch.url, named: "b.txt", bytes: Data("b".utf8))
@@ -912,14 +908,17 @@ struct VsockDropServiceTests {
         // The guest holds the first batch open and never sends a verdict for
         // it. The batch behind it is owed an answer of its own, which nothing
         // would ever give it while the wedged one suppressed every deadline.
-        deadlines.fireAll()
-        deadlines.fireAll()
+        try await awaitDeadline(harness, armed: 2)
+        passDeadlines(harness)
+        try await awaitDeadline(harness, armed: 3)
+        passDeadlines(harness)
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .timedOut)
 
         // Calling the wedged one off is what puts the batch behind it back on
         // a clock of its own.
-        deadlines.fireAll()
+        try await awaitDeadline(harness, armed: 4)
+        passDeadlines(harness)
         try await harness.reports.wait { harness.failure == .unclaimed }
     }
 
@@ -963,16 +962,15 @@ struct VsockDropServiceTests {
 
     @Test("a drop the guest never takes frees what it staged")
     func unclaimedDropReleasesItsStagedFiles() async throws {
-        let deadlines = ManualDeadlines()
-        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        let harness = try Harness()
         defer { harness.tearDown() }
         let staged = try makeStagedDrop()
         defer { DropPromiseStaging.release(staged.directory) }
 
         #expect(harness.service.startDrop(urls: [staged.file], stagedIn: staged.directory))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
-        try await deadlines.armed.wait { deadlines.count == 1 }
-        deadlines.fireAll()
+        try await awaitDeadline(harness, armed: 1)
+        passDeadlines(harness)
 
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .unclaimed)

@@ -139,8 +139,7 @@ func waitForObservedChange(
         )
         guard let deadline else { return }
         box.arm(
-            Task { @MainActor in
-                try? await deadline.clock.sleep(for: deadline.seconds)
+            deadline.clock.schedule(after: deadline.seconds) { @MainActor in
                 guard !Task.isCancelled else { return }
                 box.settle(predicate())
             })

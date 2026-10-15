@@ -4,39 +4,6 @@ import Testing
 
 @testable import KernovaKit
 
-/// Manually advanced monotonic clock for an operation's `now` seam.
-private final class TestClock: @unchecked Sendable {
-    private let lock = NSLock()
-    private var seconds: TimeInterval = 0
-
-    var now: TimeInterval { lock.withLock { seconds } }
-
-    func advance(_ interval: TimeInterval) {
-        lock.withLock { seconds += interval }
-    }
-}
-
-/// Captures the delayed work an operation arms, so a test fires the idle
-/// terminal instead of waiting for it.
-private final class TestScheduler: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pending: [@Sendable () -> Void] = []
-
-    func schedule(after _: TimeInterval, _ work: @escaping @Sendable () -> Void) {
-        lock.withLock { pending.append(work) }
-    }
-
-    /// Runs everything armed so far.
-    func fire() {
-        let work = lock.withLock { () -> [@Sendable () -> Void] in
-            let armed = pending
-            pending.removeAll()
-            return armed
-        }
-        work.forEach { $0() }
-    }
-}
-
 /// One-shot flag a `@Sendable` cancel closure can set from any thread.
 private final class AtomicFlag: @unchecked Sendable {
     private let lock = NSLock()
@@ -51,12 +18,17 @@ private final class AtomicFlag: @unchecked Sendable {
 private final class Recorder {
     let reporter: ClipboardTransferReporter
     private(set) var reports: [ClipboardTransferReport] = []
+    /// Notified on each report, for an event-driven wait.
+    let changed = AsyncGate()
 
-    /// The dwell never fires: a finished report stands for the whole test rather
-    /// than retiring under it.
+    /// The dwell is never released: a finished report stands for the whole test
+    /// rather than retiring under it.
     init() {
-        reporter = ClipboardTransferReporter(dwell: 0, schedule: { _, _ in })
-        reporter.onReportChanged = { [weak self] report in self?.reports.append(report) }
+        reporter = ClipboardTransferReporter(clock: GatedEngineClock())
+        reporter.onReportChanged = { [weak self] report in
+            self?.reports.append(report)
+            self?.changed.notify()
+        }
     }
 
     var latest: ClipboardTransferReport { reports.last ?? .idle }
@@ -87,12 +59,14 @@ private func settle() async {
 @Suite("ClipboardTransferOperation", .caseScoped)
 @MainActor
 struct ClipboardTransferOperationTests {
-    private static let revealDelay: TimeInterval = 0.3
+    private static let revealDelay = ClipboardTransferOperation.defaultRevealDelay
 
+    /// An operation at the production reveal delay and idle gap, measured on
+    /// `clock` — whose reading moves only when the test advances it, and whose
+    /// idle terminal passes only when the test releases it.
     private func makeOperation(
         recorder: Recorder,
-        clock: TestClock,
-        scheduler: TestScheduler = TestScheduler(),
+        clock: GatedEngineClock,
         gesture: ClipboardTransferGesture = .preview,
         direction: ClipboardProgressSnapshot.Direction = .inbound,
         expectedBytes: UInt64 = 0,
@@ -101,9 +75,7 @@ struct ClipboardTransferOperationTests {
     ) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
             gesture: gesture, direction: direction, peerName: "macOS TEST",
-            expectedBytes: expectedBytes, expectedItems: expectedItems,
-            revealDelay: Self.revealDelay, idleGap: 2,
-            now: { clock.now }, schedule: { after, work in scheduler.schedule(after: after, work) },
+            expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock,
             onCancelRequested: onCancelRequested, reporter: recorder.reporter)
     }
 
@@ -112,7 +84,7 @@ struct ClipboardTransferOperationTests {
     @Test("nothing reaches a surface until the operation has run for the reveal delay")
     func revealsOnlyAfterTheDelay() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
@@ -120,7 +92,7 @@ struct ClipboardTransferOperationTests {
         await settle()
         #expect(recorder.reports.isEmpty)
 
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
         operation.unitProgressed(id: 1, bytesTransferred: 60)
         await settle()
         #expect(recorder.runningSnapshot?.bytesTransferred == 60)
@@ -129,7 +101,7 @@ struct ClipboardTransferOperationTests {
     @Test("an operation that completes inside the reveal gate never flashes UI")
     func completionInsideTheGatePublishesNothing() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
@@ -142,7 +114,7 @@ struct ClipboardTransferOperationTests {
     @Test("a refusal inside the reveal gate is still reported")
     func failureInsideTheGateIsPublished() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
@@ -156,9 +128,9 @@ struct ClipboardTransferOperationTests {
     @Test("concurrent and sequential transfers fill one bar between them")
     func aggregatesEveryTransfer() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.unitBegan(id: 2, expectedBytes: 300)
@@ -179,9 +151,9 @@ struct ClipboardTransferOperationTests {
     @Test("a retry that restarts its own byte count never walks the aggregate back")
     func clampsMonotonically() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 1_000)
         operation.unitProgressed(id: 1, bytesTransferred: 800)
@@ -195,9 +167,9 @@ struct ClipboardTransferOperationTests {
     @Test("the streamed total replaces what the transfer advertised")
     func totalIsWireAuthoritative() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 1_000)
         operation.unitProgressed(id: 1, bytesTransferred: 400, totalBytes: 500)
@@ -210,9 +182,9 @@ struct ClipboardTransferOperationTests {
     @Test("a transfer that succeeded reads as complete even with its last chunks throttled")
     func creditsSuccessInFull() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 1_000)
         operation.unitProgressed(id: 1, bytesTransferred: 10)
@@ -228,9 +200,9 @@ struct ClipboardTransferOperationTests {
     @Test("the update that reaches the total is admitted however small its delta")
     func admitsTheFinalChunk() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 1_000)
         operation.unitProgressed(id: 1, bytesTransferred: 999)
@@ -246,9 +218,9 @@ struct ClipboardTransferOperationTests {
     @Test("the readout names the transfer that began most recently")
     func tracksTheCurrentItemName() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100, name: "first.txt")
         operation.unitBegan(id: 2, expectedBytes: 100, name: "second.txt")
@@ -261,10 +233,10 @@ struct ClipboardTransferOperationTests {
     @Test("the declared totals are a floor the transfers revise upward")
     func floorDenominatorIsRevisedUpward() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(
             recorder: recorder, clock: clock, expectedBytes: 500, expectedItems: 3)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         await settle()
@@ -288,9 +260,9 @@ struct ClipboardTransferOperationTests {
     @Test("a chunk landing after the terminal cannot resurrect the readout")
     func dropsEventsAfterFinishing() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 1_000)
         operation.unitProgressed(id: 1, bytesTransferred: 300)
@@ -312,9 +284,9 @@ struct ClipboardTransferOperationTests {
     @Test("a second terminal is dropped")
     func finishIsIdempotent() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.finish(.failed(.timedOut))
@@ -328,9 +300,9 @@ struct ClipboardTransferOperationTests {
     @Test("a teardown retires the readout without reporting a finish")
     func abandonPublishesNothingFurther() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         await settle()
@@ -347,12 +319,10 @@ struct ClipboardTransferOperationTests {
     @Test("the idle gap completes a peer-driven operation once nothing is in flight")
     func idleGapCompletesThePeerDrivenOperation() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
-        let scheduler = TestScheduler()
+        let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, scheduler: scheduler, gesture: .peerPaste,
-            direction: .outbound)
-        clock.advance(Self.revealDelay)
+            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.unitEnded(id: 1, succeeded: true)
@@ -361,33 +331,84 @@ struct ClipboardTransferOperationTests {
         // Still running: the gap is what tells the end from the pause between two
         // of the peer's pulls.
         #expect(recorder.finish == nil)
+        let gap = try #require(clock.parked.first)
+        #expect(gap.seconds == ClipboardTransferOperation.defaultIdleGap)
 
-        scheduler.fire()
-        await settle()
+        clock.release(gap)
+        try await recorder.changed.wait { recorder.finish != nil }
         let finish = try #require(recorder.finish)
         #expect(finish.gesture == .peerPaste)
         #expect(finish.finalSnapshot?.fractionComplete == 1)
     }
 
     @Test("a transfer beginning inside the gap defuses the idle terminal")
-    func aNewTransferDefusesTheIdleTerminal() async {
+    func aNewTransferDefusesTheIdleTerminal() async throws {
         let recorder = Recorder()
-        let clock = TestClock()
-        let scheduler = TestScheduler()
+        let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, scheduler: scheduler, gesture: .peerPaste,
-            direction: .outbound)
-        clock.advance(Self.revealDelay)
+            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+        clock.advance(seconds: Self.revealDelay)
+
+        operation.unitBegan(id: 1, expectedBytes: 100)
+        operation.unitEnded(id: 1, succeeded: true)
+        operation.finishWhenIdle()
+        #expect(clock.parked.count == 1)
+
+        // The terminal armed for that gap is called off, not left to fire.
+        operation.unitBegan(id: 2, expectedBytes: 100)
+        try await clock.parkedChanged.wait { clock.parked.isEmpty }
+        await settle()
+
+        #expect(operation.isLive)
+        #expect(recorder.finish == nil)
+    }
+
+    @Test("an idle terminal whose gap passed as a transfer began completes nothing")
+    func anIdleTerminalPassingAsATransferBeginsCompletesNothing() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let operation = makeOperation(
+            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+        clock.advance(seconds: Self.revealDelay)
+
+        operation.unitBegan(id: 1, expectedBytes: 100)
+        operation.unitEnded(id: 1, succeeded: true)
+        operation.finishWhenIdle()
+        let gap = try #require(clock.parked.first)
+
+        // The gap passes, and before the terminal takes the lock the peer's next
+        // pull begins.
+        clock.releaseHeld(gap)
+        operation.unitBegan(id: 2, expectedBytes: 100)
+        clock.resume(gap)
+        await clock.completion(of: gap)
+        await settle()
+
+        #expect(operation.isLive)
+        #expect(recorder.finish == nil)
+    }
+
+    @Test("the idle gap restarts from the transfer that ended last")
+    func theIdleGapFollowsTheLastTransfer() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let operation = makeOperation(
+            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.unitEnded(id: 1, succeeded: true)
         operation.finishWhenIdle()
         operation.unitBegan(id: 2, expectedBytes: 100)
-        scheduler.fire()
-        await settle()
+        operation.unitEnded(id: 2, succeeded: true)
+        operation.finishWhenIdle()
+        try await clock.parkedChanged.wait { clock.parked.count == 1 }
 
-        #expect(operation.isLive)
-        #expect(recorder.finish == nil)
+        // The one gap left standing is the second transfer's.
+        #expect(clock.requestedSeconds.count == 2)
+        clock.release(try #require(clock.parked.first))
+        try await recorder.changed.wait { recorder.finish != nil }
+        #expect(recorder.finish?.finalSnapshot?.filesCompleted == 2)
     }
 
     // MARK: - Cancel
@@ -395,7 +416,7 @@ struct ClipboardTransferOperationTests {
     @Test("a cancel on the readout reaches the operation's own stop closure")
     func routesCancelToTheOperation() {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let stopped = AtomicFlag()
         let operation = makeOperation(
             recorder: recorder, clock: clock, onCancelRequested: { stopped.set() })
@@ -407,9 +428,9 @@ struct ClipboardTransferOperationTests {
     @Test("an operation with nothing to stop offers no cancel")
     func reportsWhetherItIsCancellable() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         await settle()
@@ -423,7 +444,7 @@ struct ClipboardTransferOperationTests {
     @Test("an operation announced as queued shows no bar of its own")
     func queuedShowsNoBar() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
 
         operation.markQueued()
@@ -438,7 +459,7 @@ struct ClipboardTransferOperationTests {
     @Test("a queued operation that ends without ever revealing leaves nothing behind")
     func queuedOperationRetiresOnItsTerminal() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
 
         operation.markQueued()
@@ -453,11 +474,11 @@ struct ClipboardTransferOperationTests {
     @Test("the readout takes over from the queued announcement once bytes move")
     func queuedGivesWayToTheReadout() async {
         let recorder = Recorder()
-        let clock = TestClock()
+        let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
 
         operation.markQueued()
-        clock.advance(Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.unitProgressed(id: 1, bytesTransferred: 40)
         await settle()

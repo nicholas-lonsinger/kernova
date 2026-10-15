@@ -84,12 +84,10 @@ public final class ClipboardTransferReporter {
     /// clears this and the bar comes back.
     private var failureAwaitsDisplacement = false
 
-    /// Bumped on every change to ``report``, so an armed dwell can tell it was
-    /// superseded.
-    ///
-    /// An epoch rather than a cancellable timer because `Task`'s duration-based
-    /// sleep is macOS 13+ and this deploys to macOS 12.
-    private var dwellEpoch: UInt64 = 0
+    /// The armed retirement of a completed or cancelled ``report``, cancelled by
+    /// every change to it — so a dwell only ever retires the report it was
+    /// armed for.
+    private var dwell: Task<Void, Never>?
 
     /// How long a completed or cancelled report stays up before the reporter goes
     /// idle.
@@ -98,12 +96,10 @@ public final class ClipboardTransferReporter {
     /// vanishing at 99 %, and the status-item ring stays up across the gap
     /// between two sequentially-fired pasteboard promises, because the next
     /// fire's operation displaces the dwell.
-    nonisolated private let dwellSeconds: TimeInterval
+    public static let dwellSeconds: TimeInterval = 2
 
-    /// Runs `work` on the main actor after a delay; tests inject their own so no
-    /// wait is timing-based.
-    nonisolated private let schedule:
-        @Sendable (_ after: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) -> Void
+    /// What the dwell is measured on.
+    nonisolated private let clock: any EngineClock
 
     /// What every surface renders.
     public private(set) var report: ClipboardTransferReport = .idle
@@ -116,19 +112,8 @@ public final class ClipboardTransferReporter {
     /// `nonisolated` so an owner built off the main actor — a test harness, or a
     /// producer's own initializer — can create one; every method on it still
     /// crosses to the main actor.
-    public nonisolated init(
-        dwell: TimeInterval = 2,
-        schedule:
-            @escaping @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) ->
-            Void = {
-                after, work in
-                DispatchQueue.main.asyncAfter(deadline: .now() + after) {
-                    MainActor.assumeIsolated { work() }
-                }
-            }
-    ) {
-        self.dwellSeconds = dwell
-        self.schedule = schedule
+    public nonisolated init(clock: any EngineClock = makePlatformEngineClock()) {
+        self.clock = clock
     }
 
     // MARK: - Producer entry points
@@ -321,7 +306,8 @@ public final class ClipboardTransferReporter {
             next = .idle
         }
         guard next != report else { return }
-        dwellEpoch &+= 1
+        dwell?.cancel()
+        dwell = nil
         report = next
         onReportChanged?(next)
         armDwellIfNeeded(next)
@@ -333,11 +319,8 @@ public final class ClipboardTransferReporter {
     /// fresh gesture clears it.
     private func armDwellIfNeeded(_ report: ClipboardTransferReport) {
         guard case .finished(let finish) = report, finish.failure == nil else { return }
-        let epoch = dwellEpoch
-        schedule(dwellSeconds) { [weak self] in
-            // Retires only the report it was armed for: a refusal recorded in the
-            // meantime is not this dwell's to clear.
-            guard let self, self.dwellEpoch == epoch, self.lastFinish == finish else { return }
+        dwell = clock.schedule(after: Self.dwellSeconds) { @MainActor [weak self] in
+            guard !Task.isCancelled, let self else { return }
             self.clearFinished()
         }
     }

@@ -89,7 +89,7 @@ struct StatusMenuVMSectionTests {
         let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
         let operation = ClipboardTransferOperation(
             gesture: .paste, direction: .inbound, peerName: running.name, revealDelay: 0,
-            now: { 0 }, schedule: { _, _ in }, reporter: running.clipboardTransfers)
+            clock: GatedEngineClock(), reporter: running.clipboardTransfers)
         running.clipboardTransfers.publish(
             from: operation,
             .running(

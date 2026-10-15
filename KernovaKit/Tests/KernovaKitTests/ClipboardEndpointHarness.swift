@@ -16,7 +16,10 @@ final class EndpointSide {
     let recorder = EndpointRecorder()
     let reports = ClipboardTransferReports()
     let staging: ClipboardFileStaging?
-    let clock: TestEngineClock
+    /// The refusal-burst window's and the drop deadline's clock: its reading
+    /// moves only when a test advances it, and a deadline armed on it never
+    /// passes unless a test releases it.
+    let clock: GatedEngineClock
     let channel: VsockChannel
     /// The ceiling `maxPasteBytes` reads, so a test can move it mid-connection.
     let pasteLimit: Box<Int>
@@ -37,7 +40,7 @@ final class EndpointSide {
     ) {
         self.channel = channel
         self.pasteLimit = Box(pasteLimit)
-        let clock = TestEngineClock()
+        let clock = GatedEngineClock()
         self.clock = clock
         if receives {
             staging = ClipboardFileStaging(

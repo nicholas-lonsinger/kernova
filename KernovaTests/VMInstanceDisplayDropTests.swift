@@ -223,7 +223,7 @@ struct VMInstanceDisplayDropTests {
 
         let operation = ClipboardTransferOperation(
             gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
-            now: { 0 }, schedule: { _, _ in }, onCancelRequested: {},
+            clock: GatedEngineClock(), onCancelRequested: {},
             reporter: instance.clipboardTransfers)
         let readout = ClipboardProgressSnapshot(
             direction: .outbound, peerName: instance.name, currentItemName: "a.txt",

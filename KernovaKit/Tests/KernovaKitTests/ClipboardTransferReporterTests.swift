@@ -4,29 +4,6 @@ import Testing
 
 @testable import KernovaKit
 
-/// Holds the dwell work the reporter arms, so a test fires it instead of waiting
-/// for it.
-private final class DwellScheduler: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pending: [@MainActor @Sendable () -> Void] = []
-
-    var isArmed: Bool { lock.withLock { !pending.isEmpty } }
-
-    func schedule(after _: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) {
-        lock.withLock { pending.append(work) }
-    }
-
-    @MainActor
-    func fire() {
-        let armed = lock.withLock { () -> [@MainActor @Sendable () -> Void] in
-            let armed = pending
-            pending.removeAll()
-            return armed
-        }
-        armed.forEach { $0() }
-    }
-}
-
 /// One-shot flag a `@Sendable` cancel closure can set from any thread.
 private final class AtomicFlag: @unchecked Sendable {
     private let lock = NSLock()
@@ -39,10 +16,23 @@ private final class AtomicFlag: @unchecked Sendable {
 @Suite("ClipboardTransferReporter", .caseScoped)
 @MainActor
 struct ClipboardTransferReporterTests {
-    /// A reporter whose dwell only fires when the test says so.
-    private func makeReporter(scheduler: DwellScheduler) -> ClipboardTransferReporter {
-        ClipboardTransferReporter(
-            dwell: 2, schedule: { after, work in scheduler.schedule(after: after, work) })
+    /// A reporter whose dwell passes only when the test releases it from `clock`.
+    private func makeReporter(clock: GatedEngineClock) -> ClipboardTransferReporter {
+        ClipboardTransferReporter(clock: clock)
+    }
+
+    /// Releases the one dwell armed on `clock`, at the production interval, and
+    /// waits for the reporter to go idle under it.
+    private func passDwell(
+        on clock: GatedEngineClock, of reporter: ClipboardTransferReporter
+    ) async throws {
+        let dwell = try #require(clock.parked.first)
+        #expect(clock.parked.count == 1)
+        #expect(dwell.seconds == ClipboardTransferReporter.dwellSeconds)
+        let changed = AsyncGate()
+        reporter.onReportChanged = { _ in changed.notify() }
+        clock.release(dwell)
+        try await changed.wait { reporter.report == .idle }
     }
 
     private func makeOperation(
@@ -52,9 +42,9 @@ struct ClipboardTransferReporterTests {
     ) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
             gesture: gesture, direction: .inbound, peerName: "macOS TEST",
-            // Nothing is driven through the operation itself here; these seams
-            // keep it from touching a real clock or the main queue.
-            revealDelay: 0, idleGap: 0, now: { 0 }, schedule: { _, _ in },
+            // Nothing is driven through the operation itself here; a clock
+            // nothing advances or releases keeps it from timing anything.
+            revealDelay: 0, idleGap: 0, clock: GatedEngineClock(),
             onCancelRequested: onCancelRequested, reporter: reporter)
     }
 
@@ -87,8 +77,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("the newest running operation takes the readout, and the older one gets it back")
     func newestRunningWins() throws {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let first = makeOperation(reporter)
         let second = makeOperation(reporter)
         let early = Date(timeIntervalSince1970: 100)
@@ -113,8 +103,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a running report displaces a standing refusal, and its finish takes over again")
     func runningAndFinishedDisplaceEachOther() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
         let standing = finish(.timedOut)
 
@@ -135,9 +125,9 @@ struct ClipboardTransferReporterTests {
     // MARK: - Dwell
 
     @Test("a completed report dwells, then the reporter goes idle")
-    func completedReportsDwellThenClear() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+    func completedReportsDwellThenClear() async throws {
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
         let completed = ClipboardTransferFinish(
             gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
@@ -145,19 +135,17 @@ struct ClipboardTransferReporterTests {
 
         reporter.publish(from: operation, .finished(completed))
         #expect(reporter.report == .finished(completed))
-        #expect(scheduler.isArmed)
 
-        scheduler.fire()
-        #expect(reporter.report == .idle)
+        try await passDwell(on: clock, of: reporter)
     }
 
     @Test("a refusal never dwells — it stands until something displaces or clears it")
     func failedReportsStand() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
 
         reporter.finish(finish(.timedOut))
-        #expect(!scheduler.isArmed)
+        #expect(clock.requestedSeconds.isEmpty)
         guard case .finished = reporter.report else {
             Issue.record("expected the refusal to stand")
             return
@@ -168,18 +156,21 @@ struct ClipboardTransferReporterTests {
     }
 
     @Test("a dwell armed for one report is defused by the next")
-    func aNewReportDefusesTheDwell() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+    func aNewReportDefusesTheDwell() async throws {
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
         let completed = ClipboardTransferFinish(
             gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
             peerName: "macOS TEST")
 
         reporter.publish(from: operation, .finished(completed))
+        #expect(clock.parked.count == 1)
         let next = makeOperation(reporter)
         reporter.publish(from: next, .running(snapshot(bytes: 5), since: Date()))
-        scheduler.fire()
+        // The dwell armed for the completed report is called off, not left to
+        // fire against the readout that replaced it.
+        try await clock.parkedChanged.wait { clock.parked.isEmpty }
 
         guard case .running = reporter.report else {
             Issue.record("the stale dwell must not clear the newer readout")
@@ -187,12 +178,33 @@ struct ClipboardTransferReporterTests {
         }
     }
 
+    @Test("a dwell whose interval passed as the report changed retires nothing")
+    func aDwellPassingAsTheReportChangesRetiresNothing() async throws {
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
+        let operation = makeOperation(reporter)
+        let completed = ClipboardTransferFinish(
+            gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
+            peerName: "macOS TEST")
+        reporter.publish(from: operation, .finished(completed))
+        let dwell = try #require(clock.parked.first)
+
+        // The interval passes, and before the dwell's body can reach the main
+        // actor a refusal replaces the report it was armed for.
+        clock.release(dwell)
+        let refusal = finish(.timedOut)
+        reporter.finish(refusal)
+        await clock.completion(of: dwell)
+
+        #expect(reporter.report == .finished(refusal))
+    }
+
     // MARK: - A refusal raised alongside another operation
 
     @Test("a refusal raised during another operation survives that operation's completion")
     func refusalOutlivesAConcurrentOperation() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let preview = makeOperation(reporter, gesture: .preview)
         let since = Date(timeIntervalSince1970: 100)
 
@@ -228,14 +240,13 @@ struct ClipboardTransferReporterTests {
         #expect(reporter.report == .finished(refusal))
         // No dwell retires it either: a refusal stands until something displaces
         // it, and this one is not the dwell's to clear.
-        scheduler.fire()
-        #expect(reporter.report == .finished(refusal))
+        #expect(clock.requestedSeconds.isEmpty)
     }
 
     @Test("a retry that succeeds clears a failure that stood before it began")
-    func aLaterSuccessClearsAnOlderFailure() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+    func aLaterSuccessClearsAnOlderFailure() async throws {
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let retry = makeOperation(reporter)
         let failedAt = Date(timeIntervalSince1970: 100)
 
@@ -249,14 +260,13 @@ struct ClipboardTransferReporterTests {
         reporter.publish(from: retry, .finished(completed))
 
         #expect(reporter.report == .finished(completed))
-        scheduler.fire()
-        #expect(reporter.report == .idle)
+        try await passDwell(on: clock, of: reporter)
     }
 
     @Test("the peer's paste completing leaves this side's own refusal standing")
     func aPeerPasteDoesNotClearThisSidesRefusal() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let peerPaste = makeOperation(reporter, gesture: .peerPaste)
         let refusedAt = Date(timeIntervalSince1970: 100)
 
@@ -281,14 +291,13 @@ struct ClipboardTransferReporterTests {
                     gesture: .peerPaste, outcome: .completed(final: snapshot(bytes: 100)),
                     peerName: "macOS TEST")))
         #expect(reporter.report == .finished(refusal))
-        scheduler.fire()
-        #expect(reporter.report == .finished(refusal))
+        #expect(clock.requestedSeconds.isEmpty)
     }
 
     @Test("the peer's paste failing leaves this side's own refusal standing too")
     func aFailedPeerPasteDoesNotDisplaceThisSidesRefusal() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let peerPaste = makeOperation(reporter, gesture: .peerPaste)
         let refusedAt = Date(timeIntervalSince1970: 100)
 
@@ -308,14 +317,13 @@ struct ClipboardTransferReporterTests {
             .finished(finish(.transferFailed, gesture: .peerPaste, at: since.addingTimeInterval(1))))
 
         #expect(reporter.report == .finished(refusal))
-        scheduler.fire()
-        #expect(reporter.report == .finished(refusal))
+        #expect(clock.requestedSeconds.isEmpty)
     }
 
     @Test("a peer paste that succeeds still clears the peer paste that failed before it")
-    func aPeerPasteClearsAnOlderPeerPasteRefusal() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+    func aPeerPasteClearsAnOlderPeerPasteRefusal() async throws {
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let retry = makeOperation(reporter, gesture: .peerPaste)
         let failedAt = Date(timeIntervalSince1970: 100)
 
@@ -331,16 +339,15 @@ struct ClipboardTransferReporterTests {
         reporter.publish(from: retry, .finished(completed))
 
         #expect(reporter.report == .finished(completed))
-        scheduler.fire()
-        #expect(reporter.report == .idle)
+        try await passDwell(on: clock, of: reporter)
     }
 
     // MARK: - Absorbing repeats
 
     @Test("the repeated fires of one refused paste raise one report")
     func absorbsARepeatedRefusal() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         var changes = 0
         reporter.onReportChanged = { _ in changes += 1 }
 
@@ -355,8 +362,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("the same refusal after an operation ran in between is announced again")
     func reannouncesAfterARunningReport() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
 
         reporter.finish(finish(.incompleteFileSet, at: Date(timeIntervalSince1970: 1)))
@@ -370,8 +377,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("the same refusal from a later gesture is announced again, bar or no bar")
     func reannouncesAfterAnOperationThatOpenedNoBar() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         var announced: [ClipboardTransferFinish] = []
         reporter.onReportChanged = { report in
             guard case .finished(let finish) = report, finish.failure != nil else { return }
@@ -409,8 +416,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a gesture that opens no operation at all is still owed its own message")
     func reannouncesAfterAGestureThatOpenedNoOperation() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         var announced: [ClipboardTransferFinish] = []
         reporter.onReportChanged = { report in
             guard case .finished(let finish) = report, finish.failure != nil else { return }
@@ -437,8 +444,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("clearing a finished report leaves a running one alone")
     func clearFinishedLeavesRunningAlone() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
 
         reporter.publish(from: operation, .running(snapshot(bytes: 5), since: Date()))
@@ -451,8 +458,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a cancel reaches the operation its readout named, not the newest one")
     func cancelReachesTheOperationItsReadoutNamed() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let olderStopped = AtomicFlag()
         let newerStopped = AtomicFlag()
         let older = makeOperation(reporter, onCancelRequested: { olderStopped.set() })
@@ -468,8 +475,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a cancel of an operation that cannot be stopped reaches nothing else")
     func cancelOfANonCancellableOperationStopsNothing() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let stopped = AtomicFlag()
         let cancellable = makeOperation(reporter, onCancelRequested: { stopped.set() })
         // A paste fire: the pasteboard drives it one item at a time, so there is
@@ -485,8 +492,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a cancel for an operation that has ended reports it reached nothing")
     func cancelOfAFinishedOperationIsANoOp() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let stopped = AtomicFlag()
         let operation = makeOperation(reporter, onCancelRequested: { stopped.set() })
 
@@ -506,8 +513,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a drop started during a peer's paste leaves the paste on the readout")
     func aPeerPasteOutranksADropStartedUnderIt() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let paste = makeOperation(reporter, gesture: .peerPaste)
         let drop = makeOperation(reporter, gesture: .drop)
 
@@ -520,8 +527,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a preview fetch started during a drop leaves the drop on the readout")
     func aDropOutranksAPreviewStartedUnderIt() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let drop = makeOperation(reporter, gesture: .drop)
         let preview = makeOperation(reporter, gesture: .preview)
 
@@ -537,8 +544,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("equal-ranked operations keep the newest readout")
     func equalRanksFallBackToRecency() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let older = makeOperation(reporter, gesture: .drop)
         let newer = makeOperation(reporter, gesture: .drop)
 
@@ -550,8 +557,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a queued operation takes the readout once it opens a bar of its own")
     func aQueuedOperationTakesTheReadoutWhenItStarts() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let waiting = makeOperation(reporter, gesture: .drop)
         let started = makeOperation(reporter, gesture: .drop)
 
@@ -567,8 +574,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("progress on the older of two running readouts does not take the bar back")
     func progressOnAnOlderReadoutDoesNotTakeTheBarBack() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let older = makeOperation(reporter, gesture: .drop)
         let newer = makeOperation(reporter, gesture: .drop)
 
@@ -585,8 +592,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a queued operation is counted on the readout rather than replacing it")
     func aQueuedOperationIsCountedOnTheReadout() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let running = makeOperation(reporter, gesture: .drop)
         let waiting = makeOperation(reporter, gesture: .drop)
 
@@ -600,8 +607,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a queued operation alone shows nothing — there is no bar to show yet")
     func aQueuedOperationAloneShowsNothing() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let waiting = makeOperation(reporter, gesture: .drop)
 
         reporter.queued(waiting)
@@ -611,8 +618,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a queued operation stops being counted once it retires")
     func aQueuedOperationStopsBeingCountedWhenItRetires() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let running = makeOperation(reporter, gesture: .drop)
         let waiting = makeOperation(reporter, gesture: .drop)
 
@@ -625,8 +632,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("an operation that started is counted behind the readout that outranks it")
     func aRunningOperationUnderTheReadoutIsCountedToo() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let paste = makeOperation(reporter, gesture: .peerPaste)
         let drop = makeOperation(reporter, gesture: .drop)
 
@@ -640,8 +647,8 @@ struct ClipboardTransferReporterTests {
 
     @Test("a surface hears once per distinct value")
     func notifiesOncePerDistinctValue() {
-        let scheduler = DwellScheduler()
-        let reporter = makeReporter(scheduler: scheduler)
+        let clock = GatedEngineClock()
+        let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
         var reports: [ClipboardTransferReport] = []
         reporter.onReportChanged = { reports.append($0) }
