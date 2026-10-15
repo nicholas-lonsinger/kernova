@@ -28,7 +28,7 @@ struct VMLibraryAdoptionTests {
     private func makeLibrary(reports: Reports? = nil) -> VMLibrary {
         let library = makeWiredLibrary(storage: storage, preferences: preferences)
         if let reports {
-            library.onFailure = { title, _ in reports.titles.append(title) }
+            library.onFailure = { title, _, _ in reports.titles.append(title) }
         }
         return library
     }

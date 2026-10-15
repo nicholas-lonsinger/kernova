@@ -13,12 +13,17 @@ import Observation
 /// Observable, so a test waits on a presentation with `waitForChange`.
 @MainActor
 @Observable
-final class MockVMLibraryPresenting: VMLibraryPresenting {
+final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresenting {
     private(set) var errors: [String] = []
     /// Parallel to `errors`: the alert title each message was presented under.
     private(set) var errorTitles: [String] = []
+    /// Parallel to `errors`: what each alert was about.
+    private(set) var errorSubjects: [AlertSubject] = []
     private(set) var startFailedAttachments: [StartFailedAttachment] = []
     private(set) var startFailedAttachmentInstances: [VMInstance] = []
+    /// The VMs each start report named — an attachment failure, a message
+    /// failure, or the launch account — in the order reported.
+    private(set) var startReportVMIDs: [[UUID]] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
     /// Parallel to `deleteSheetInstances`: whether each request asked for the
     /// immediate (bypass-Trash) variant.
@@ -65,13 +70,25 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// a real refusal names are the core's to build.
     var choosesRouteTitled: String?
 
-    func presentError(_ message: String, title: String) {
+    func presentError(_ message: String, title: String, about subject: AlertSubject) {
         errors.append(message)
         errorTitles.append(title)
+        errorSubjects.append(subject)
     }
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
         startFailedAttachments.append(failure)
         startFailedAttachmentInstances.append(instance)
+        startReportVMIDs.append([instance.id])
+    }
+    /// Recorded as the error alert it is drawn as, and as a start report.
+    func presentStartFailure(_ message: String, title: String, for instance: VMInstance) {
+        presentError(message, title: title, about: .vm(instance))
+        startReportVMIDs.append([instance.id])
+    }
+    /// Recorded as the error alert it is drawn as, and as a start report.
+    func presentStartSummary(title: String, undone: [VMGroupActionResult]) {
+        presentError(undone.undoneMessage(for: .start), title: title, about: .library)
+        startReportVMIDs.append(undone.map(\.vm.id))
     }
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
         deleteSheetInstances.append(instance)
@@ -94,9 +111,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentStopPaused(for instance: VMInstance) { pausedStopInstances.append(instance) }
     func presentCancelPreparing(for arrival: VMArrival) { cancelPreparingArrivals.append(arrival) }
     func presentInstallerMounted(
-        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
+        for instance: VMInstance, purpose: GuestAgentInstallerPurpose,
+        delivery: GuestAgentDiskDelivery
     ) {
-        installerMountedNames.append(vmName)
+        installerMountedNames.append(instance.name)
         installerMountedPurposes.append(purpose)
         installerMountedDeliveries.append(delivery)
     }
@@ -129,6 +147,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var showError: Bool { !errors.isEmpty }
     var errorMessage: String? { errors.last }
     var errorTitle: String? { errorTitles.last }
+    var errorSubject: AlertSubject? { errorSubjects.last }
     var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     /// Whether the most recent delete-sheet request asked for immediate delete.
@@ -146,4 +165,15 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
     var installerMountedDelivery: GuestAgentDiskDelivery? { installerMountedDeliveries.last }
     var showCreationWizard: Bool { creationWizardCount > 0 }
+}
+
+extension AlertSubject {
+    /// The VM this subject names, `nil` for the library.
+    var vm: VMInstance? {
+        if case .vm(let instance) = self { instance } else { nil }
+    }
+
+    var isLibrary: Bool {
+        if case .library = self { true } else { false }
+    }
 }

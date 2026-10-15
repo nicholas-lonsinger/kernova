@@ -30,7 +30,7 @@ struct VMMACAddressRegistryTests {
         let failure = CommandErrorDTO.conflict(
             vm: instance.summary(ipAddress: .unavailable),
             with: conflict.other.summary(ipAddress: .unavailable), reason: conflict.reason)
-        failures.record(title: failure.title, message: failure.message)
+        failures.record(title: failure.title, message: failure.message, subject: .vm(instance))
         return conflict
     }
 

@@ -9,8 +9,9 @@ nothing here restates one.
 
 `AppDelegate.init` (`Kernova/App/`) is the composition root. It builds
 `VMLibraryViewModel`, then `AppWindowRegistry` (holding
-`VMDisplayPlacementController`), `AppResidencyController`, `MainMenuController`
-and `AppTerminationController`. `AppDelegate.main()` is the one branch on
+`VMDisplayPlacementController`), `AppAlertPresenter` (attached to the view
+model before the library's first read), `AppResidencyController`,
+`MainMenuController` and `AppTerminationController`. `AppDelegate.main()` is the one branch on
 process mode, and the unit-test host takes the arm that builds none of it.
 
 `VMLibraryViewModel.init` (`Kernova/ViewModels/`) builds everything beneath the
@@ -30,7 +31,9 @@ and `VMActivity` commits, and `VMConfigurationKeyRegistry` names every
 configuration key. Five surfaces call the core and present its refusals in
 their own idiom:
 
-- `VMLibraryViewModel` — AppKit, through `VMLibraryPresenting`.
+- `VMLibraryViewModel` — AppKit, through `VMLibraryPresenting` (alerts, which
+  `AppAlertPresenter` shows on the window each is about) and
+  `LibraryWindowPresenting` (the library window's own surfaces).
 - `VMCommandSocketListener` → `VMCommandEnvelopeRouter` — the `kernova` tool,
   over the app-group `AF_UNIX` socket.
 - `VMIntentGateway` (`Kernova/Intents/`) — Shortcuts and Spotlight.

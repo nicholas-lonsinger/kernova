@@ -328,22 +328,18 @@ struct GuestAccountResumePromptTests {
     }
 
     @available(macOS 27.0, *)
-    @Test("With no window to ask in, the refusal takes the ordinary error surface")
-    func noPresenterSurfacesTheRefusal() async {
+    @Test("With nowhere to ask, the refusal takes the ordinary error surface")
+    func unaskedPromptSurfacesTheRefusal() async {
         let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(in: viewModel, intent: makeIntent())
-        viewModel.presenter = nil
+        presenter.guestAccountPasswordAnswer = .unasked
 
         await viewModel.start(instance)
 
         #expect(virtualization.startCallCount == 0)
         #expect(instance.setupOperationTask == nil)
-        // Buffered for the window that eventually appears, and the account is
-        // still there to ask about when it does.
+        // The account is still there to ask about next time.
         #expect(instance.configuration.pendingGuestAccount == makeIntent())
-
-        viewModel.presenter = presenter
         #expect(presenter.errors.contains { $0.contains("ada") })
-        #expect(presenter.guestAccountPasswordRequests.isEmpty)
     }
 }

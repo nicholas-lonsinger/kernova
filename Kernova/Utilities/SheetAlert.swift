@@ -261,7 +261,7 @@ func configureNSAlertButton(_ button: NSButton, role: AlertButtonRole) {
 ///
 /// A response naming no button ran no action, because nothing was chosen. An
 /// alert whose answer something is waiting on gets that answer from whatever
-/// ended the sheet — `DetailAlertsPresenter.stop()` for a window going away —
+/// ended the sheet — `AppAlertPresenter` for a window going away —
 /// rather than from a guess made here about what a framework response meant.
 @MainActor
 func dispatchAction(for response: NSApplication.ModalResponse, buttons: [AlertButton]) {

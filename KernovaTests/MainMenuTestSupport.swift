@@ -21,19 +21,21 @@ func makeWindowRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
 @MainActor
 func makeLibraryViewModel(
     preferences: AppPreferences,
+    storageService: MockVMStorageService = MockVMStorageService(),
+    fileSystem: MockFileSystem = MockFileSystem(),
     usbAccessoryService: (any USBAccessoryProviding)? = nil,
     diskImageService: MockDiskImageService = MockDiskImageService(),
     organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
-        storageService: MockVMStorageService(),
+        storageService: storageService,
         diskImageService: diskImageService,
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         usbAccessoryService: usbAccessoryService,
-        fileSystem: MockFileSystem(),
+        fileSystem: fileSystem,
         downloadsDirectory: nil,
         preferences: preferences,
         vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
@@ -41,8 +43,8 @@ func makeLibraryViewModel(
     )
 }
 
-/// A VM in `viewModel`'s library, selected in its sidebar, so a menu command
-/// no key window answers for acts on it.
+/// A VM in `viewModel`'s library, selected in its sidebar — the VM the library
+/// window shows while it is the working window.
 @MainActor
 @discardableResult
 func makeMenuInstance(

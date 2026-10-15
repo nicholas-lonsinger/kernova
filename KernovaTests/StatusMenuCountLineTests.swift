@@ -3,16 +3,16 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `StatusMenuUndoneStartSection` — the status-item dropdown's
-/// undone-start line, the one report a headless launch can make.
+/// Unit tests for `StatusMenuCountLine` — a status-item dropdown line counting
+/// alerts held for want of a window, exercised as the undone-start line.
 ///
 /// `rebuild(count:)` covers the from-scratch path `menuNeedsUpdate` runs on each
 /// open; `sync(to:after:)` covers the in-place edits applied while the menu is
 /// on screen, where the line has to land in its slot under the anchor and keep
 /// its identity across a retitle.
-@Suite("StatusMenuUndoneStartSection", .caseScoped)
+@Suite("StatusMenuCountLine", .caseScoped)
 @MainActor
-struct StatusMenuUndoneStartSectionTests {
+struct StatusMenuCountLineTests {
     private final class ActionTarget: NSObject {
         private(set) var tapCount = 0
         @objc func undoneStartsTapped(_: NSMenuItem) { tapCount += 1 }
@@ -23,13 +23,14 @@ struct StatusMenuUndoneStartSectionTests {
     private func makeSection(
         count: Int
     ) -> (
-        menu: NSMenu, section: StatusMenuUndoneStartSection, anchor: NSMenuItem,
+        menu: NSMenu, section: StatusMenuCountLine, anchor: NSMenuItem,
         target: ActionTarget
     ) {
         let menu = NSMenu()
         let target = ActionTarget()
-        let section = StatusMenuUndoneStartSection(
-            menu: menu, target: target, action: #selector(ActionTarget.undoneStartsTapped(_:)))
+        let section = StatusMenuCountLine(
+            menu: menu, target: target, action: #selector(ActionTarget.undoneStartsTapped(_:)),
+            title: StatusMenuCountLine.undoneStartTitle(count:))
         let anchor = NSMenuItem(title: "Open Kernova", action: nil, keyEquivalent: "")
         menu.addItem(anchor)
         section.rebuild(count: count)
@@ -42,17 +43,24 @@ struct StatusMenuUndoneStartSectionTests {
 
     @Test("No undone starts produce no line")
     func titleForNone() {
-        #expect(StatusMenuUndoneStartSection.title(count: 0) == nil)
+        #expect(StatusMenuCountLine.undoneStartTitle(count: 0) == nil)
     }
 
     @Test("One undone start titles the line in the singular")
     func titleForOne() {
-        #expect(StatusMenuUndoneStartSection.title(count: 1) == "1 VM Didn\u{2019}t Start\u{2026}")
+        #expect(StatusMenuCountLine.undoneStartTitle(count: 1) == "1 VM Didn\u{2019}t Start\u{2026}")
     }
 
     @Test("Several undone starts title the line in the plural, counted")
     func titleForSeveral() {
-        #expect(StatusMenuUndoneStartSection.title(count: 4) == "4 VMs Didn\u{2019}t Start\u{2026}")
+        #expect(StatusMenuCountLine.undoneStartTitle(count: 4) == "4 VMs Didn\u{2019}t Start\u{2026}")
+    }
+
+    @Test("Waiting alerts title their line by count, and none produce no line")
+    func waitingAlertTitles() {
+        #expect(StatusMenuCountLine.waitingAlertTitle(count: 0) == nil)
+        #expect(StatusMenuCountLine.waitingAlertTitle(count: 1) == "1 Alert Waiting\u{2026}")
+        #expect(StatusMenuCountLine.waitingAlertTitle(count: 3) == "3 Alerts Waiting\u{2026}")
     }
 
     // MARK: - Rebuild

@@ -44,9 +44,6 @@ final class DetailContainerViewController: NSViewController {
     private var currentContentView: NSView?
     private var displayedInstanceID: UUID?
 
-    /// Presents the lifecycle confirmation alerts and the delete sheet.
-    private let alertsPresenter: DetailAlertsPresenter
-
     /// Drives the AppKit creation-wizard sheet.
     private let wizardPresenter = SheetPresenter()
     /// Set when a wizard presentation is requested before the window exists;
@@ -59,9 +56,8 @@ final class DetailContainerViewController: NSViewController {
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
-        self.alertsPresenter = DetailAlertsPresenter(viewModel: viewModel)
         super.init(nibName: nil, bundle: nil)
-        viewModel.presenter = self
+        viewModel.libraryWindowPresenter = self
     }
 
     required init?(coder: NSCoder) {
@@ -93,7 +89,6 @@ final class DetailContainerViewController: NSViewController {
         updateContent()
         updateDisplayState()
         if stateObservation == nil { observeState() }
-        if let window = view.window { alertsPresenter.start(window: window) }
         if pendingWizard { presentCreationWizard() }
     }
 
@@ -101,7 +96,6 @@ final class DetailContainerViewController: NSViewController {
         super.viewWillDisappear()
         stateObservation?.cancel()
         stateObservation = nil
-        alertsPresenter.stop()
         if wizardPresenter.isShown { wizardPresenter.close() }
         for id in Array(backingViews.keys) {
             removeBackingView(for: id)
@@ -376,8 +370,8 @@ extension DetailContainerViewController {
     ) {
         // The create registers its row and returns, so the only failure that
         // can reach here is the refusal raised before anything was written —
-        // presented on the wizard's own window, because the global alerts
-        // presenter shares this one with the still-open wizard sheet.
+        // presented on the wizard's own sheet, which still holds the library
+        // window: an alert routed there would wait for the wizard to close.
         do {
             try viewModel.createVM(from: creationVM)
             wizardPresenter.close()
@@ -388,71 +382,9 @@ extension DetailContainerViewController {
     }
 }
 
-// MARK: - VMLibraryPresenting
+// MARK: - LibraryWindowPresenting
 
-extension DetailContainerViewController: VMLibraryPresenting {
-    func presentError(_ message: String, title: String) {
-        alertsPresenter.presentError(message, title: title)
-    }
-
-    func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
-        alertsPresenter.presentStartFailedAttachment(failure, for: instance)
-    }
-
-    func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
-        alertsPresenter.presentDeleteSheet(for: instance, permanently: permanently)
-    }
-
-    func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
-        alertsPresenter.presentTakeSnapshotSheet(for: instance, purpose: purpose)
-    }
-
-    func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
-        alertsPresenter.presentRevertSnapshot(snapshot, for: instance)
-    }
-
-    func presentDeleteSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
-        alertsPresenter.presentDeleteSnapshot(snapshot, for: instance)
-    }
-
-    func presentForceStop(for instance: VMInstance) {
-        alertsPresenter.presentForceStop(for: instance)
-    }
-
-    func presentRecoveryBoot(for instance: VMInstance) {
-        alertsPresenter.presentRecoveryBoot(for: instance)
-    }
-
-    func presentStopPaused(for instance: VMInstance) {
-        alertsPresenter.presentStopPaused(for: instance)
-    }
-
-    func presentCancelPreparing(for arrival: VMArrival) {
-        alertsPresenter.presentCancelPreparing(for: arrival)
-    }
-
-    func presentInstallerMounted(
-        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
-    ) {
-        alertsPresenter.presentInstallerMounted(vmName: vmName, purpose: purpose, delivery: delivery)
-    }
-
-    func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
-        alertsPresenter.presentUSBAccessoryPairing(request)
-    }
-
-    func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest) {
-        alertsPresenter.presentGuestAccountPassword(request)
-    }
-
-    func presentConfirmationRequest(_ request: ConfirmationRequest) {
-        alertsPresenter.presentConfirmationRequest(request)
-    }
-
-    func presentStepRoutes(_ request: StepRouteRequest) {
-        alertsPresenter.presentStepRoutes(request)
-    }
-
+extension DetailContainerViewController: LibraryWindowPresenting {
     func focusGuestDisplay(for instance: VMInstance) {
         guard let window = view.window else { return }
         if let backing = backingViews[instance.id], !backing.isHidden {

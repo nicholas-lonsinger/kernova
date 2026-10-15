@@ -49,6 +49,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled
         )
         vm.presenter = presenter
+        vm.libraryWindowPresenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, removableMediaDeviceService)
     }
 
@@ -71,6 +72,7 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         vm.presenter = presenter
+        vm.libraryWindowPresenter = presenter
         return (vm, suspending)
     }
 
@@ -178,6 +180,19 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.count == 1)
         #expect(storage.deleteVMBundleCallCount == 0)
+    }
+
+    @Test("A delete whose bundle the storage fails to remove is presented about the VM")
+    func deleteVMFailurePresentsAboutTheVM() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.deleteVMBundleError = CocoaError(.fileWriteNoPermission)
+
+        await viewModel.delete(instance)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(presenter.errorSubject?.vm === instance)
     }
 
     @Test("deleteVM refuses a VM whose cold resume is still restoring it")
@@ -1079,7 +1094,7 @@ struct VMLibraryViewModelTests {
     func startWithNoWindowBuffersFocusWithoutTheLibrary() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        viewModel.presenter = nil
+        viewModel.libraryWindowPresenter = nil
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
@@ -1087,7 +1102,7 @@ struct VMLibraryViewModelTests {
 
         #expect(libraryRequests == 0)
         #expect(viewModel.selectedID == instance.id)
-        viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         #expect(presenter.focusGuestDisplayInstances.last === instance)
     }
 
@@ -1157,8 +1172,8 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = viewModel.library.admitFixture(name: "Wanted")
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
-        // `makeViewModel` attaches the presenter, standing in for a window that
-        // exists — the case that used to skip the request.
+        // `makeViewModel` attaches the library window presenter, standing in
+        // for a window that exists.
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
@@ -1189,8 +1204,8 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = viewModel.library.admitFixture(name: "Wanted")
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
-        // No main window has been created, which is what leaves `presenter` nil.
-        viewModel.presenter = nil
+        // No main window has been created, which is what leaves `libraryWindowPresenter` nil.
+        viewModel.libraryWindowPresenter = nil
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
@@ -1199,8 +1214,8 @@ struct VMLibraryViewModelTests {
         #expect(libraryRequests == 1)
         #expect(viewModel.selectedID == wanted.id)
 
-        // Attaching the presenter is what the requested window does on arrival.
-        viewModel.presenter = presenter
+        // Attaching is what the requested window does on arrival.
+        viewModel.libraryWindowPresenter = presenter
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
     }
 
@@ -1225,8 +1240,8 @@ struct VMLibraryViewModelTests {
     func revealWithNoWindowAsksForTheLibrary() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = viewModel.library.admitFixture(name: "Wanted")
-        // No main window has been created, which is what leaves `presenter` nil.
-        viewModel.presenter = nil
+        // No main window has been created, which is what leaves `libraryWindowPresenter` nil.
+        viewModel.libraryWindowPresenter = nil
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
@@ -1294,12 +1309,12 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = viewModel.library.admitFixture(name: "Wanted")
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
-        viewModel.presenter = nil
+        viewModel.libraryWindowPresenter = nil
         viewModel.onSurfaceLibrary = {}
 
         try viewModel.commands.open(.id(wanted.id))
         viewModel.library.evict(wanted)
-        viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
 
         #expect(presenter.focusGuestDisplayInstances.isEmpty)
     }
@@ -1416,6 +1431,7 @@ struct VMLibraryViewModelTests {
         #expect(
             presenter.confirmationRequests.map(\.prompt.title)
                 == ["Start \u{201C}Starting\u{201D} Anyway?"])
+        #expect(presenter.confirmationRequests.first?.instance === starting)
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
     }
@@ -1434,6 +1450,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.confirmationRequests.count == 1)
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(presenter.errorSubject?.vm === starting)
         #expect(
             presenter.errorMessage?.hasPrefix(
                 "\u{201C}Starting\u{201D} has the same machine ID as \u{201C}Twin\u{201D}, which is active.")
@@ -1672,6 +1689,7 @@ struct VMLibraryViewModelTests {
         let request = presenter.stepRouteRequests.first
         #expect(presenter.stepRouteRequests.count == 1)
         #expect(request?.verbTitle == "Start")
+        #expect(request?.instance === starting)
         #expect(request?.requirement.routes.first?.steps.first?.vm.id == starting.id)
         #expect(starting.configuration.macAddress != other.configuration.macAddress)
         #expect(virtService.startCallCount == 1)
@@ -2445,102 +2463,41 @@ struct VMLibraryViewModelTests {
 
         // The actionable alert is presented instead of the generic error.
         #expect(presenter.startFailedAttachments.count == 1)
+        #expect(presenter.startReportVMIDs == [[instance.id]])
         #expect(presenter.startFailedAttachments.first?.kind == .removableMedia)
         #expect(presenter.startFailedAttachments.first?.id == item.id)
         #expect(presenter.startFailedAttachments.first?.label == "Stale ISO")
         #expect(presenter.errors.isEmpty)
     }
 
-    /// A start raised before any window exists has its failure's recovery
-    /// survive the wait for one, instead of flattening into a message no alert
-    /// can act on.
-    @Test("A start failure raised with no window buffers the failure, not its text")
-    func startFailureWithNoWindowBuffersTheRecovery() async {
-        let virtService = MockVirtualizationService()
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
-        let instance = viewModel.library.admitFixture { $0.removableMedia = [item] }
-        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
-            id: item.id, path: item.path, label: item.label,
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
-        // No main window has been created, which is what leaves `presenter` nil.
-        viewModel.presenter = nil
-
-        await viewModel.start(instance)
-
-        #expect(viewModel.bufferedUndoneStartCount == 1)
-        #expect(presenter.startFailedAttachments.isEmpty)
-
-        // Attaching the presenter is what the window does on arrival.
-        viewModel.presenter = presenter
-
-        #expect(presenter.startFailedAttachments.count == 1)
-        #expect(presenter.startFailedAttachments.first?.kind == .removableMedia)
-        #expect(presenter.startFailedAttachments.first?.id == item.id)
-        #expect(presenter.startFailedAttachmentInstances.last === instance)
-        #expect(presenter.errors.isEmpty)
-        #expect(viewModel.bufferedUndoneStartCount == 0)
-    }
-
-    @Test("A buffered start failure is dropped when its VM leaves before the window arrives")
-    func bufferedStartFailureIsDroppedWhenItsVMLeaves() async {
-        let virtService = MockVirtualizationService()
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
-        let instance = viewModel.library.admitFixture { $0.removableMedia = [item] }
-        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
-            id: item.id, path: item.path, label: item.label,
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
-        viewModel.presenter = nil
-
-        await viewModel.start(instance)
-        viewModel.library.evict(instance)
-        viewModel.presenter = presenter
-
-        // Nothing is left for the recovery to detach from.
-        #expect(presenter.startFailedAttachments.isEmpty)
-        #expect(presenter.errors.isEmpty)
-        #expect(viewModel.bufferedUndoneStartCount == 0)
-    }
-
     /// A guest cap or a duplicate identity refuses a start with only a message,
     /// and a headless launch has to report that as surely as a missing disk.
-    @Test("A start failure carrying no recovery is counted, then drains as a plain alert")
-    func plainStartFailureWithNoWindowIsCountedAndDrainsAsAnAlert() async {
+    @Test("A start failure carrying no recovery is reported as a start")
+    func plainStartFailureIsAStartReport() async {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = viewModel.library.admitFixture()
-        viewModel.presenter = nil
 
         await viewModel.start(instance)
 
-        #expect(presenter.errors.isEmpty)
-        #expect(viewModel.bufferedUndoneStartCount == 1)
-
-        viewModel.presenter = presenter
-
         #expect(presenter.errors.count == 1)
         #expect(presenter.startFailedAttachments.isEmpty)
-        #expect(viewModel.bufferedUndoneStartCount == 0)
+        #expect(presenter.startReportVMIDs == [[instance.id]])
     }
 
-    @Test("A failure raised by something other than a start is buffered but not counted")
-    func nonStartFailureWithNoWindowIsNotCounted() async {
+    @Test("A failure raised by something other than a start is no start report")
+    func nonStartFailureIsNoStartReport() async {
         let virtService = MockVirtualizationService()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        viewModel.presenter = nil
 
         await viewModel.stop(instance)
 
-        #expect(viewModel.bufferedUndoneStartCount == 0)
-
-        viewModel.presenter = presenter
-
         #expect(presenter.errors.count == 1)
+        #expect(presenter.startReportVMIDs.isEmpty)
     }
 
     @Test("removeStartFailedAttachmentAndStart detaches the item and retries the start")
@@ -3089,6 +3046,7 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         let instance = viewModel.library.registerFixture(name: "Sequoia", guestOS: .macOS) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
@@ -3919,6 +3877,7 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         let instance = viewModel.library.registerFixture(name: "Race VM") {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
@@ -4831,72 +4790,22 @@ struct VMLibraryViewModelTests {
         #expect(lines.last?.hasPrefix("Couldn\u{2019}t start Following: ") == true)
     }
 
-    /// A login launch has no window: the status item is what tells the user
-    /// the pass left anything undone.
-    @Test("startAutomaticVMsForLaunch with no window holds its one account, counting each VM left undone")
-    func autoStartWithNoWindowCountsWhatItLeftUndone() async {
+    /// A login launch has no window: the account goes to the presenter as a
+    /// start report naming each VM, which the status item counts while it is
+    /// held.
+    @Test("startAutomaticVMsForLaunch reports what it left undone as one start report")
+    func autoStartReportsWhatItLeftUndone() async {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        viewModel.presenter = nil
-        makeAutoStartInstance(in: viewModel.library, name: "Failing")
-        makeAutoStartInstance(in: viewModel.library, name: "Following")
+        let failing = makeAutoStartInstance(in: viewModel.library, name: "Failing")
+        let following = makeAutoStartInstance(in: viewModel.library, name: "Following")
 
         await viewModel.startAutomaticVMsForLaunch()
         await drainMainQueue()
-
-        #expect(viewModel.bufferedUndoneStartCount == 2)
-
-        // Attaching the presenter is what the window does on arrival.
-        viewModel.presenter = presenter
 
         #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
-        #expect(viewModel.bufferedUndoneStartCount == 0)
-    }
-
-    @Test("A held launch account stops counting, and drops the line of, a VM that leaves the library")
-    func autoStartHeldAccountDropsAVMThatLeaves() async {
-        let virtService = MockVirtualizationService()
-        virtService.startError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        viewModel.presenter = nil
-        let leaving = makeAutoStartInstance(in: viewModel.library, name: "Leaving")
-        makeAutoStartInstance(in: viewModel.library, name: "Staying")
-
-        await viewModel.startAutomaticVMsForLaunch()
-        await drainMainQueue()
-        #expect(viewModel.bufferedUndoneStartCount == 2)
-
-        viewModel.library.evict(leaving)
-
-        #expect(viewModel.bufferedUndoneStartCount == 1)
-
-        viewModel.presenter = presenter
-
-        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
-        let lines = presenter.errors.first?.split(separator: "\n").map(String.init) ?? []
-        #expect(lines.count == 1)
-        #expect(lines.first?.hasPrefix("Couldn\u{2019}t start Staying: ") == true)
-        #expect(viewModel.bufferedUndoneStartCount == 0)
-    }
-
-    @Test("A held launch account whose every VM left the library shows nothing")
-    func autoStartHeldAccountWithNoVMLeftShowsNothing() async {
-        let virtService = MockVirtualizationService()
-        virtService.startError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        viewModel.presenter = nil
-        let leaving = makeAutoStartInstance(in: viewModel.library, name: "Leaving")
-
-        await viewModel.startAutomaticVMsForLaunch()
-        await drainMainQueue()
-        viewModel.library.evict(leaving)
-
-        #expect(viewModel.bufferedUndoneStartCount == 0)
-
-        viewModel.presenter = presenter
-
-        #expect(presenter.errors.isEmpty)
+        #expect(presenter.startReportVMIDs.map(Set.init) == [[failing.id, following.id]])
     }
 
     @Test("startAutomaticVMsForLaunch leaves a failed restore suspended and carries on")
@@ -5091,8 +5000,8 @@ struct VMLibraryViewModelTests {
     func autoStartReadiesWithoutSurfacing() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         // No window exists on a headless launch, which is what leaves the
-        // presenter nil.
-        viewModel.presenter = nil
+        // library window presenter nil.
+        viewModel.libraryWindowPresenter = nil
         let popOut = makeAutoStartInstance(
             in: viewModel.library, name: "Pop Out", hostState: VMHostState(displayPreference: .popOut))
         let inline = makeAutoStartInstance(in: viewModel.library, name: "Inline")
@@ -6043,6 +5952,7 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         await viewModel.loadVMs()
 
         #expect(viewModel.instances.map(\.name) == ["Third", "First", "Second"])
@@ -6133,6 +6043,7 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         await viewModel.loadVMs()
 
         #expect(viewModel.instances.count == 1)
@@ -6524,6 +6435,7 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         let instance = viewModel.library.admitFixture(name: "Work")
         viewModel.library.wireHooks(for: instance)
         instance.seedUSBPairings(

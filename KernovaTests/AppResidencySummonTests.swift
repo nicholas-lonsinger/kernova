@@ -87,7 +87,8 @@ struct AppResidencySummonTests {
         let registry = makeWindowRegistry(viewModel)
         foreground.registry = registry
         let controller = AppResidencyController(
-            viewModel: viewModel, windows: registry, foreground: foreground.control)
+            viewModel: viewModel, windows: registry, heldAlerts: HeldAlerts(),
+            foreground: foreground.control)
         return (controller, registry, viewModel)
     }
 

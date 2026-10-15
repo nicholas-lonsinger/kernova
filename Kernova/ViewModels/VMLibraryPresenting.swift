@@ -127,9 +127,19 @@ struct GuestAccountPasswordRequest {
     let answer: @MainActor (PresenterAnswer<GuestAccountPasswordAnswer>) -> Void
 }
 
+/// What an alert is about.
+enum AlertSubject {
+    /// One VM.
+    case vm(VMInstance)
+    /// The library as a whole — an arrival, a bundle on disk, or several VMs.
+    case library
+}
+
 /// A confirmation a verb the user started refused without, put to the user
 /// while that verb waits for the answer.
 struct ConfirmationRequest {
+    /// The VM the verb that raised the prompt acts on.
+    let instance: VMInstance
     /// What the core is asking, in its own words.
     let prompt: ConfirmationPrompt
     /// Answers the prompt: `true` to go ahead, `false` to walk away.
@@ -139,6 +149,8 @@ struct ConfirmationRequest {
 /// The routes a refusal a verb the user started raised names, put to the
 /// user while that verb waits for the answer.
 struct StepRouteRequest {
+    /// The VM the verb that raised the refusal acts on.
+    let instance: VMInstance
     /// What the core refused with, in its own words.
     let requirement: StepRequirement
     /// The verb a route ending in ``StepRoute/Ending/refusedVerb`` asks
@@ -149,15 +161,26 @@ struct StepRouteRequest {
     let answer: @MainActor (PresenterAnswer<StepRoute?>) -> Void
 }
 
-/// Imperative presentation interface the view model calls to surface alerts,
-/// sheets, and the creation wizard.
+/// The alerts and sheets the view model raises, each shown on the window the
+/// user is working in for what it is about.
+///
+/// A request with nowhere to show yet waits; a question a suspended verb
+/// waits on is answered unasked instead, as each method says.
 @MainActor
 protocol VMLibraryPresenting: AnyObject {
-    /// Show an error alert headed `title` with `message`.
-    func presentError(_ message: String, title: String)
+    /// Show an error alert about `subject`, headed `title` with `message` —
+    /// as one about no VM when `subject` names a VM the library no longer
+    /// lists, such as the one a delete just removed.
+    func presentError(_ message: String, title: String, about subject: AlertSubject)
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance)
+    /// Show a start of `instance` that failed with only a message to give.
+    func presentStartFailure(_ message: String, title: String, for instance: VMInstance)
+    /// Show the launch pass's one account of the `undone` VMs it did not start.
+    /// A VM that leaves the library before the account is shown drops out of
+    /// it.
+    func presentStartSummary(title: String, undone: [VMGroupActionResult])
     /// Show the unified delete sheet: the VM's in-bundle disks plus any external
     /// files, each individually selectable for deletion. `permanently` selects
     /// the immediate (bypass-Trash) variant.
@@ -177,11 +200,12 @@ protocol VMLibraryPresenting: AnyObject {
     func presentStopPaused(for instance: VMInstance)
     /// Show the cancel-preparing (create/clone/import) confirmation.
     func presentCancelPreparing(for arrival: VMArrival)
-    /// Show the "guest agent disk attached, here are the next steps" alert,
-    /// worded for `purpose` (install vs. install-or-uninstall) and for how
-    /// `delivery` put the disk in front of the guest.
+    /// Show the "guest agent disk attached, here are the next steps" alert
+    /// about `instance`, worded for `purpose` (install vs. install-or-uninstall)
+    /// and for how `delivery` put the disk in front of the guest.
     func presentInstallerMounted(
-        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery)
+        for instance: VMInstance, purpose: GuestAgentInstallerPurpose,
+        delivery: GuestAgentDiskDelivery)
     /// Ask which running guest a newly assigned USB accessory should be passed
     /// through to.
     ///
@@ -209,6 +233,12 @@ protocol VMLibraryPresenting: AnyObject {
     /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
     /// there is nowhere to ask right now.
     func presentStepRoutes(_ request: StepRouteRequest)
+}
+
+/// What the library window does for the view model beyond alerts: the
+/// creation wizard and its inline guest display.
+@MainActor
+protocol LibraryWindowPresenting: AnyObject {
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

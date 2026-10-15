@@ -47,6 +47,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// The one owner of which user-facing windows exist; every presentation and
     /// the window half of every reconcile goes through it.
     private let windows: AppWindowRegistry
+    /// The alerts waiting for a window, which the status item reports.
+    private let heldAlerts: HeldAlerts
     /// The launch cluster this residency reaches back into.
     weak var host: (any AppLaunchHosting)?
 
@@ -89,11 +91,12 @@ final class AppResidencyController: WindowResidencyHosting {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppResidency")
 
     init(
-        viewModel: VMLibraryViewModel, windows: AppWindowRegistry,
+        viewModel: VMLibraryViewModel, windows: AppWindowRegistry, heldAlerts: HeldAlerts,
         foreground: ForegroundControl = .live
     ) {
         self.viewModel = viewModel
         self.windows = windows
+        self.heldAlerts = heldAlerts
         self.foreground = foreground
     }
 
@@ -329,6 +332,7 @@ final class AppResidencyController: WindowResidencyHosting {
     private func makeStatusItemController() -> HostAgentStatusItemController {
         HostAgentStatusItemController(
             viewModel: viewModel,
+            heldAlerts: heldAlerts,
             onOpen: { [weak self] entryID in self?.summonStatusItemTarget(for: entryID) },
             onOpenClipboard: { [weak self] vmID in
                 guard let self else { return }

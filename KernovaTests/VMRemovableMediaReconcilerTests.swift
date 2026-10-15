@@ -38,8 +38,8 @@ struct VMRemovableMediaReconcilerTests {
             usbAccessoryService: usbAccessoryService, fileSystem: fileSystem)
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage, lifecycle: lifecycle, fileSystem: fileSystem)
-        library.onFailure = { [failures] title, message in
-            failures.record(title: title, message: message)
+        library.onFailure = { [failures] title, message, subject in
+            failures.record(title: title, message: message, subject: subject)
         }
         return Harness(
             library: library, storage: storage, lifecycle: lifecycle, virtualization: virtualization)

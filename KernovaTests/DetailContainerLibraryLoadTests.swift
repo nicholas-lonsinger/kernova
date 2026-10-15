@@ -168,8 +168,8 @@ struct DetailContainerLibraryLoadTests {
         #expect(labels(in: controller).contains("Kernova can\u{2019}t read \u{201C}Bad VM\u{201D}"))
     }
 
-    @Test("A load that finds an unreadable file brings up the check once a presenter attaches")
-    func theCheckWaitsForAPresenter() async throws {
+    @Test("A load that finds an unreadable file brings up the check once a library window attaches")
+    func theCheckWaitsForALibraryWindow() async throws {
         let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
         var checks: [VMLibraryViewModel.ConfigCheckRequest] = []
         viewModel.onShowConfigCheck = { checks.append($0) }
@@ -178,7 +178,7 @@ struct DetailContainerLibraryLoadTests {
         #expect(checks.isEmpty)
 
         let controller = DetailContainerViewController(viewModel: viewModel)
-        #expect(viewModel.presenter === controller)
+        #expect(viewModel.libraryWindowPresenter === controller)
         #expect(checks == [.automatic])
 
         // Reported once: a reconcile that finds the same bundle asks for nothing.

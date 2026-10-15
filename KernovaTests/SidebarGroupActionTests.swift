@@ -104,6 +104,7 @@ struct SidebarGroupActionTests {
         let viewModel = makeViewModel()
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         let a = viewModel.library.admitFixture(name: "A")
         let b = viewModel.library.admitFixture(name: "B")
         let folder = try viewModel.library.createFolder(named: "Lab", members: [a.id, b.id])
@@ -123,6 +124,7 @@ struct SidebarGroupActionTests {
         let viewModel = makeViewModel(virtualization: virtualization)
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         let a = viewModel.library.admitFixture(name: "A")
         let b = viewModel.library.admitFixture(name: "B")
         let c = viewModel.library.admitFixture(name: "C")
@@ -146,6 +148,7 @@ struct SidebarGroupActionTests {
         let viewModel = makeViewModel(virtualization: virtualization)
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
         viewModel.library.admitFixture(name: "A")
 
         await viewModel.performGroupAction(.start, on: VMGroupReference(.folder, named: UUID().uuidString))

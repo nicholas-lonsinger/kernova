@@ -117,7 +117,9 @@ struct VMOtherCopyHoldTests {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
         let failures = MockLibraryFailureSink()
-        library.onFailure = { [failures] title, message in failures.record(title: title, message: message) }
+        library.onFailure = { [failures] title, message, subject in
+            failures.record(title: title, message: message, subject: subject)
+        }
         let instance = library.registerFixture()
         let url = instance.bundleURL
 

@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// installs.
     private let termination: AppTerminationController
     private let viewModel: VMLibraryViewModel
+    /// The one owner of where every alert the view model raises is shown,
+    /// attached to the view model before the library's first read.
+    private let alerts: AppAlertPresenter
     /// The library's first read from disk, started in
     /// `applicationWillFinishLaunching`, answering the VMs it found marked to
     /// start automatically.
@@ -120,7 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: .app),
             autosaveScope: .app)
         self.windows = windows
-        let lifecycle = AppResidencyController(viewModel: viewModel, windows: windows)
+        let alerts = AppAlertPresenter(viewModel: viewModel, windows: windows)
+        self.alerts = alerts
+        viewModel.presenter = alerts
+        let lifecycle = AppResidencyController(
+            viewModel: viewModel, windows: windows, heldAlerts: alerts.held)
         self.lifecycle = lifecycle
         self.mainMenu = MainMenuController(viewModel: viewModel, windows: windows)
         self.termination = AppTerminationController(viewModel: viewModel, residency: lifecycle)
@@ -420,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func newVM(_ sender: Any?) {
         windows.showLibrary(bringToFront: true)
-        viewModel.presenter?.presentCreationWizard()
+        viewModel.libraryWindowPresenter?.presentCreationWizard()
     }
 
     @objc func openVMsFolder(_ sender: Any?) {

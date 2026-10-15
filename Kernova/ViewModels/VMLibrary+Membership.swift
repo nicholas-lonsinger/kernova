@@ -218,7 +218,7 @@ extension VMLibrary {
             return apply(scan)
         } catch {
             #log(Self.logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
-            presentError(error)
+            presentError(error, about: .library)
             return []
         }
     }
@@ -401,7 +401,7 @@ extension VMLibrary {
         } catch {
             #log(
                 Self.logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
-            presentError(error)
+            presentError(error, about: .library)
         }
     }
 

@@ -32,10 +32,10 @@ extension VMLibraryViewModel {
             surfaceUnawaitedFailure(failure)
             return
         } catch {
-            surfaceError(error.localizedDescription)
+            present(error, about: .library)
             return
         }
         guard !report.undone.isEmpty else { return }
-        surfaceError(report.undoneMessage, title: report.undoneTitle)
+        surfaceError(report.undoneMessage, title: report.undoneTitle, about: .library)
     }
 }

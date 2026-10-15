@@ -79,8 +79,8 @@ final class VMLibrary: VMAdmissionPeers {
     /// Receives every failure the library needs a user to see.
     ///
     /// The library presents nothing itself; the adapter routes these to its
-    /// presenter, buffering them until one is attached.
-    @ObservationIgnored var onFailure: ((_ title: String, _ message: String) -> Void)?
+    /// presenter.
+    @ObservationIgnored var onFailure: ((_ title: String, _ message: String, _ subject: AlertSubject) -> Void)?
 
     /// Fires when a VM's guest agent handshakes a current version, for the
     /// installer auto-eject.
@@ -545,8 +545,8 @@ final class VMLibrary: VMAdmissionPeers {
         removableMedia.onSettle = { [weak self] permit, media in
             self?.settleRemovableMedia(permit, toLive: media)
         }
-        removableMedia.onFailure = { [weak self] error in
-            self?.presentError(error)
+        removableMedia.onFailure = { [weak self] error, instance in
+            self?.presentError(error, about: .vm(instance))
         }
         macAddresses.roster = self
         liveIdentities.roster = self
@@ -685,7 +685,7 @@ final class VMLibrary: VMAdmissionPeers {
             )
             surfaceError(
                 "\u{201C}\(bundleName)\u{201D} has the same identifier as \u{201C}\(holderName)\u{201D}, which is already in the library, so Kernova didn\u{2019}t add it.",
-                title: "Duplicate Virtual Machine")
+                title: "Duplicate Virtual Machine", about: .library)
         }
         return .duplicate(of: existing, at: url)
     }
@@ -887,21 +887,24 @@ final class VMLibrary: VMAdmissionPeers {
         }
     }
 
-    /// A settings write that did not land whole: the file whose write failed,
-    /// and the files the same write had already committed.
+    /// A settings write that did not land whole: the VM it was for, the file
+    /// whose write failed, and the files the same write had already committed.
     struct SettingsWriteFailure: LocalizedError {
         enum File: Sendable, Equatable {
             case configuration
             case hostState
         }
 
+        let vmName: String
         let failed: File
         let landed: [File]
         let underlying: any Error
 
         var errorDescription: String? {
-            guard !landed.isEmpty else { return underlying.localizedDescription }
-            return "The change was saved only in part \u{2014} the virtual machine\u{2019}s configuration changed, "
+            guard !landed.isEmpty else {
+                return "The change to \u{201C}\(vmName)\u{201D} wasn\u{2019}t saved: \(underlying.localizedDescription)"
+            }
+            return "The change to \u{201C}\(vmName)\u{201D} was saved only in part \u{2014} its configuration changed, "
                 + "but Kernova\u{2019}s own settings for it did not: \(underlying.localizedDescription)"
         }
     }
@@ -1016,9 +1019,10 @@ final class VMLibrary: VMAdmissionPeers {
                 Self.logger, .error,
                 "Failed to save the configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            presentError(error)
-            return .stopped(
-                .notSaved(SettingsWriteFailure(failed: .configuration, landed: [], underlying: error)))
+            let failure = SettingsWriteFailure(
+                vmName: instance.name, failed: .configuration, landed: [], underlying: error)
+            presentError(failure, about: .vm(instance))
+            return .stopped(.notSaved(failure))
         }
         return .committed(wrote: wrote)
     }
@@ -1090,8 +1094,9 @@ final class VMLibrary: VMAdmissionPeers {
                 Self.logger, .error,
                 "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            let failure = SettingsWriteFailure(failed: .hostState, landed: landed, underlying: error)
-            presentError(failure)
+            let failure = SettingsWriteFailure(
+                vmName: instance.name, failed: .hostState, landed: landed, underlying: error)
+            presentError(failure, about: .vm(instance))
             return .notSaved(failure)
         }
         return .saved
@@ -1118,7 +1123,7 @@ final class VMLibrary: VMAdmissionPeers {
                 Self.logger, .error,
                 "Failed to settle the removable media config for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            presentError(error)
+            presentError(error, about: .vm(instance))
             return
         }
         guard instance.bundle.configuration.removableMedia != old else { return }
@@ -1193,13 +1198,13 @@ final class VMLibrary: VMAdmissionPeers {
 
     // MARK: - Error Handling
 
-    func presentError(_ error: Error) {
-        surfaceError(error.localizedDescription)
+    func presentError(_ error: Error, about subject: AlertSubject) {
+        surfaceError(error.localizedDescription, about: subject)
     }
 
     /// Hands an error message to ``onFailure``.
-    func surfaceError(_ message: String, title: String = "Error") {
-        onFailure?(title, message)
+    func surfaceError(_ message: String, title: String = "Error", about subject: AlertSubject) {
+        onFailure?(title, message, subject)
     }
 }
 
