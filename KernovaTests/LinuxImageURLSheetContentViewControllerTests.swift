@@ -151,32 +151,40 @@ struct LinuxImageURLSheetContentViewControllerTests {
         #expect(findLabel(containing: "Nothing is hosted at that URL", in: vc.view) != nil)
     }
 
-    @Test("Choosing hands the checked image to the delegate")
-    func chooseReportsToDelegate() async {
+    @Test("Choosing hands the checked image to onChoose")
+    func chooseReports() async {
         let resolve = MockLinuxImageResolveService()
         let vc = makeSheet(resolve: resolve, initialURL: Self.isoURL, initialChecksum: Self.digest)
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: CustomLinuxImage?
+        var chosenSizeBytes: UInt64?
+        var cancelCount = 0
+        vc.onChoose = { image, sizeBytes in
+            chosen = image
+            chosenSizeBytes = sizeBytes
+        }
+        vc.onCancel = { cancelCount += 1 }
 
         await check(vc)
         findButton(titled: "Use", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen?.url.absoluteString == Self.isoURL)
-        #expect(delegate.chosen?.sha256 == Self.digest)
-        #expect(delegate.chosenSizeBytes == resolve.resolveResult.sizeBytes)
-        #expect(delegate.cancelCount == 0)
+        #expect(chosen?.url.absoluteString == Self.isoURL)
+        #expect(chosen?.sha256 == Self.digest)
+        #expect(chosenSizeBytes == resolve.resolveResult.sizeBytes)
+        #expect(cancelCount == 0)
     }
 
     @Test("Cancel reports a dismissal and no choice")
-    func cancelReportsToDelegate() {
+    func cancelReports() {
         let vc = makeSheet(resolve: MockLinuxImageResolveService())
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: CustomLinuxImage?
+        var cancelCount = 0
+        vc.onChoose = { image, _ in chosen = image }
+        vc.onCancel = { cancelCount += 1 }
 
         findButton(titled: "Cancel", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen == nil)
-        #expect(delegate.cancelCount == 1)
+        #expect(chosen == nil)
+        #expect(cancelCount == 1)
     }
 
     @Test("Editing the checksum invalidates the previous verdict")
@@ -217,27 +225,6 @@ struct LinuxImageURLSheetContentViewControllerTests {
         // Back to idle, so the edited URL can be checked in turn.
         #expect(findLabel(containing: "Reading the file's size", in: vc.view) == nil)
         #expect(findButton(titled: "Check", in: vc.view)?.isEnabled == true)
-    }
-
-    // MARK: - Helpers
-
-    private final class RecordingDelegate: LinuxImageURLSheetContentViewControllerDelegate {
-        var chosen: CustomLinuxImage?
-        var chosenSizeBytes: UInt64?
-        var cancelCount = 0
-
-        func linuxImageURLSheet(
-            _ vc: LinuxImageURLSheetContentViewController,
-            didChoose image: CustomLinuxImage,
-            sizeBytes: UInt64
-        ) {
-            chosen = image
-            chosenSizeBytes = sizeBytes
-        }
-
-        func linuxImageURLSheetDidCancel(_ vc: LinuxImageURLSheetContentViewController) {
-            cancelCount += 1
-        }
     }
 }
 

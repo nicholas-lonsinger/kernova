@@ -8,9 +8,7 @@ import AppKit
 /// Click opens an `NSPopover` hosting an
 /// ``AgentStatusPopoverContentViewController``.
 @MainActor
-final class SidebarAgentStatusButtonView: NSView,
-    AgentStatusPopoverContentViewControllerDelegate
-{
+final class SidebarAgentStatusButtonView: NSView {
     /// Invoked when the user activates the popover's guest-agent disk control.
     var onDiskControl: (() -> Void)?
 
@@ -37,7 +35,17 @@ final class SidebarAgentStatusButtonView: NSView,
 
         configureIconButton()
         configureSpinner()
-        contentVC.delegate = self
+        contentVC.onDiskControl = { [weak self] in
+            guard let self else { return }
+            onDiskControl?()
+            popoverPresenter.close()
+        }
+        contentVC.onDone = { [weak self] in self?.popoverPresenter.close() }
+        contentVC.onDismiss = { [weak self] in
+            guard let self else { return }
+            onDismiss?()
+            popoverPresenter.close()
+        }
 
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.width),
@@ -134,22 +142,6 @@ final class SidebarAgentStatusButtonView: NSView,
         } else {
             popoverPresenter.show(content: contentVC, from: self, preferredEdge: .maxX)
         }
-    }
-
-    // MARK: - AgentStatusPopoverContentViewControllerDelegate
-
-    func agentStatusPopoverDidTapDiskControl(_ vc: AgentStatusPopoverContentViewController) {
-        onDiskControl?()
-        popoverPresenter.close()
-    }
-
-    func agentStatusPopoverDidTapDone(_ vc: AgentStatusPopoverContentViewController) {
-        popoverPresenter.close()
-    }
-
-    func agentStatusPopoverDidTapDismiss(_ vc: AgentStatusPopoverContentViewController) {
-        onDismiss?()
-        popoverPresenter.close()
     }
 
     // MARK: - Per-status visual mapping

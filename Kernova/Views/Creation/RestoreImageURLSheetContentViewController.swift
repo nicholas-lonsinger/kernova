@@ -1,21 +1,6 @@
 import AppKit
 import Foundation
 
-/// Delegate for ``RestoreImageURLSheetContentViewController``.
-@MainActor
-protocol RestoreImageURLSheetContentViewControllerDelegate: AnyObject {
-    /// The user accepted a checked image.
-    func restoreImageURLSheet(
-        _ vc: RestoreImageURLSheetContentViewController,
-        didChoose image: ProbedRestoreImage
-    )
-
-    /// The user dismissed without choosing.
-    func restoreImageURLSheetDidCancel(
-        _ vc: RestoreImageURLSheetContentViewController
-    )
-}
-
 /// Nested sheet that takes a restore image URL and checks it before anything is
 /// downloaded.
 ///
@@ -24,12 +9,15 @@ protocol RestoreImageURLSheetContentViewControllerDelegate: AnyObject {
 /// hardware model, which costs about 150 KB rather than the whole file.
 @MainActor
 final class RestoreImageURLSheetContentViewController: NSViewController {
-    weak var delegate: RestoreImageURLSheetContentViewControllerDelegate?
+    /// Fires when the user accepts a checked image.
+    var onChoose: ((ProbedRestoreImage) -> Void)?
+    /// Fires when the user dismisses without choosing.
+    var onCancel: (() -> Void)?
 
     private let probeService: any RestoreImageProbing
     private let hostVersion: OperatingSystemVersion
 
-    /// The last successful probe, and what **Use** hands to the delegate.
+    /// The last successful probe, and what **Use** hands to `onChoose`.
     private(set) var checkedImage: ProbedRestoreImage?
 
     private let urlField = NSTextField()
@@ -365,12 +353,12 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
     @objc private func cancelTapped() {
         probeTask?.cancel()
         probeTask = nil
-        delegate?.restoreImageURLSheetDidCancel(self)
+        onCancel?()
     }
 
     @objc private func useTapped() {
         guard let image = checkedImage else { return }
-        delegate?.restoreImageURLSheet(self, didChoose: image)
+        onChoose?(image)
     }
 
     // MARK: - Helpers

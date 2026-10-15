@@ -1,21 +1,6 @@
 import AppKit
 import Foundation
 
-/// Delegate for ``RestoreImageCatalogSheetContentViewController``.
-@MainActor
-protocol RestoreImageCatalogSheetContentViewControllerDelegate: AnyObject {
-    /// The user committed a version, by Choose or by double-click.
-    func restoreImageCatalogSheet(
-        _ vc: RestoreImageCatalogSheetContentViewController,
-        didChoose entry: RestoreImageCatalogEntry
-    )
-
-    /// The user dismissed without choosing.
-    func restoreImageCatalogSheetDidCancel(
-        _ vc: RestoreImageCatalogSheetContentViewController
-    )
-}
-
 /// Nested sheet listing every macOS restore image in the bundled catalog.
 ///
 /// Rows for guests newer than this host are dimmed and unselectable:
@@ -23,7 +8,10 @@ protocol RestoreImageCatalogSheetContentViewControllerDelegate: AnyObject {
 /// verdict is unavailable until the image is downloaded.
 @MainActor
 final class RestoreImageCatalogSheetContentViewController: NSViewController {
-    weak var delegate: RestoreImageCatalogSheetContentViewControllerDelegate?
+    /// Fires when the user commits a version, by Choose or by double-click.
+    var onChoose: ((RestoreImageCatalogEntry) -> Void)?
+    /// Fires when the user dismisses without choosing.
+    var onCancel: (() -> Void)?
 
     /// Every entry the catalog offers, newest first.
     private let entries: [RestoreImageCatalogEntry]
@@ -324,12 +312,12 @@ final class RestoreImageCatalogSheetContentViewController: NSViewController {
     }
 
     @objc private func cancelTapped() {
-        delegate?.restoreImageCatalogSheetDidCancel(self)
+        onCancel?()
     }
 
     @objc private func chooseTapped() {
         guard let entry = selectedEntry else { return }
-        delegate?.restoreImageCatalogSheet(self, didChoose: entry)
+        onChoose?(entry)
     }
 
     @objc private func rowDoubleClicked() {

@@ -1,26 +1,5 @@
 import AppKit
 
-/// Delegate for ``VMCreationWizardViewController``.
-///
-/// The host implements these methods to dismiss the sheet and perform the actual
-/// VM creation.
-@MainActor
-protocol VMCreationWizardViewControllerDelegate: AnyObject {
-    /// Invoked when the user clicks Cancel (or presses Escape).
-    func wizardDidCancel(_ vc: VMCreationWizardViewController)
-
-    /// Invoked when the user clicks Create on the final step.
-    ///
-    /// - Parameters:
-    ///   - vc: The wizard reporting the event.
-    ///   - creationVM: The fully-populated wizard model the host turns into the
-    ///     create verb's configuration.
-    func wizardDidRequestCreate(
-        _ vc: VMCreationWizardViewController,
-        creationVM: VMCreationViewModel
-    )
-}
-
 /// The multi-step VM creation wizard, presented as a fixed-size sheet.
 ///
 /// Owns three regions — a step-progress indicator, a swappable content area
@@ -30,7 +9,12 @@ protocol VMCreationWizardViewControllerDelegate: AnyObject {
 /// the transition, so menu-driven and button-driven state take one path.
 @MainActor
 final class VMCreationWizardViewController: NSViewController {
-    weak var delegate: VMCreationWizardViewControllerDelegate?
+    /// Fires when the user clicks Cancel (or presses Escape).
+    var onCancel: (() -> Void)?
+    /// Fires when the user clicks Create on the final step, with the
+    /// fully-populated wizard model the host turns into the create verb's
+    /// configuration.
+    var onCreate: ((VMCreationViewModel) -> Void)?
 
     private let creationVM: VMCreationViewModel
 
@@ -54,7 +38,7 @@ final class VMCreationWizardViewController: NSViewController {
     /// ``presentCreationFailure(message:)``.
     ///
     /// The sheet dismisses asynchronously, so the second click of a double
-    /// click — or a held Return — reaches the button again after the delegate
+    /// click — or a held Return — reaches the button again after the host
     /// has already made a VM. This is the one-shot that keeps the second
     /// activation from making another.
     private var didRequestCreate = false
@@ -306,7 +290,7 @@ final class VMCreationWizardViewController: NSViewController {
     // MARK: - Actions
 
     @objc private func cancelTapped() {
-        delegate?.wizardDidCancel(self)
+        onCancel?()
     }
 
     @objc private func backTapped() {
@@ -328,7 +312,7 @@ final class VMCreationWizardViewController: NSViewController {
         commitPendingEdits()
         didRequestCreate = true
         apply()
-        delegate?.wizardDidRequestCreate(self, creationVM: creationVM)
+        onCreate?(creationVM)
     }
 
     /// Forces the active text field (if any) to end editing so its value is

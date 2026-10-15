@@ -94,7 +94,7 @@ final class VMSettingsViewController: NSViewController {
             micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
             activationCenter: activationCenter)
         super.init(nibName: nil, bundle: nil)
-        panelContext.host = self
+        panelContext.onSetToggle = { [weak self] toggle, isOn in self?.apply(toggle, to: isOn) }
         panelContext.overview.onCategoryResolved = { [weak self] category in
             self?.repaint(category)
         }
@@ -194,7 +194,9 @@ final class VMSettingsViewController: NSViewController {
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
 
-        overviewVC.delegate = self
+        overviewVC.onShow = { [weak self] category in self?.showCategory(category) }
+        overviewVC.onToggle = { [weak self] toggle, isOn in self?.apply(toggle, to: isOn) }
+        overviewVC.onAction = { [weak self] action in self?.run(action) }
         addChild(overviewVC)
         addPanelContent(overviewVC.view)
         headerContent.addArrangedSubview(identityHeader)
@@ -548,41 +550,15 @@ extension VMSettingsViewController {
     }
 }
 
-// MARK: - VMSettingsOverviewDelegate
+// MARK: - Overview cards and mirrored toggles
 
-extension VMSettingsViewController: VMSettingsOverviewDelegate {
-    func overview(
-        _ vc: VMSettingsOverviewViewController, didSelect category: VMSettingsCategory
-    ) {
-        showCategory(category)
-    }
-
-    /// Routes a card switch into the same write path the panel's own switch
-    /// takes, so a setting shown twice is still written once.
-    func overview(
-        _ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool
-    ) {
-        apply(toggle, to: isOn)
-    }
-
+extension VMSettingsViewController {
     /// Runs a card's foot command through the view model's own gate — the same
     /// one the category's panel runs it through.
-    func overview(_ vc: VMSettingsOverviewViewController, didInvoke action: VMOverviewAction) {
+    private func run(_ action: VMOverviewAction) {
         switch action {
         case .takeSnapshot: viewModel.requestTakeSnapshot(instance)
         }
-    }
-}
-
-// MARK: - VMSettingsPanelHost
-
-extension VMSettingsViewController: VMSettingsPanelHost {
-    /// The panel's own switch, arriving at the same dispatcher the overview
-    /// card's does — one write path per mirrored setting, not two.
-    func settingsPanel(
-        _ panel: any VMSettingsPanel, setToggle toggle: VMOverviewToggle, to isOn: Bool
-    ) {
-        apply(toggle, to: isOn)
     }
 
     /// The one dispatcher for every mirrored toggle, whichever surface flipped.

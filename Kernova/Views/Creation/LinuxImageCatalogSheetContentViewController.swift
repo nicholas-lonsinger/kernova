@@ -1,28 +1,16 @@
 import AppKit
 import Foundation
 
-/// Delegate for ``LinuxImageCatalogSheetContentViewController``.
-@MainActor
-protocol LinuxImageCatalogSheetContentViewControllerDelegate: AnyObject {
-    /// The user committed a distribution, by Choose or by double-click.
-    func linuxImageCatalogSheet(
-        _ vc: LinuxImageCatalogSheetContentViewController,
-        didChoose entry: LinuxImageCatalogEntry
-    )
-
-    /// The user dismissed without choosing.
-    func linuxImageCatalogSheetDidCancel(
-        _ vc: LinuxImageCatalogSheetContentViewController
-    )
-}
-
 /// Nested sheet listing every Linux installer image in the bundled catalog.
 ///
 /// Every row is selectable: the catalog carries arm64 images only, so there is
 /// no host-compatibility verdict to render.
 @MainActor
 final class LinuxImageCatalogSheetContentViewController: NSViewController {
-    weak var delegate: LinuxImageCatalogSheetContentViewControllerDelegate?
+    /// Fires when the user commits a distribution, by Choose or by double-click.
+    var onChoose: ((LinuxImageCatalogEntry) -> Void)?
+    /// Fires when the user dismisses without choosing.
+    var onCancel: (() -> Void)?
 
     /// Every entry the catalog offers, in display order.
     private let entries: [LinuxImageCatalogEntry]
@@ -314,12 +302,12 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
     }
 
     @objc private func cancelTapped() {
-        delegate?.linuxImageCatalogSheetDidCancel(self)
+        onCancel?()
     }
 
     @objc private func chooseTapped() {
         guard let entry = selectedEntry else { return }
-        delegate?.linuxImageCatalogSheet(self, didChoose: entry)
+        onChoose?(entry)
     }
 
     @objc private func rowDoubleClicked() {

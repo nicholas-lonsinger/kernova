@@ -57,7 +57,27 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
     /// section would otherwise draw itself.
     private func buildSnapshotsSection() -> NSView {
         let section = SnapshotSectionView(showsHeader: false)
-        section.delegate = self
+        section.onTakeSnapshot = { [weak self] in
+            guard let self else { return }
+            viewModel.requestTakeSnapshot(instance)
+        }
+        section.onRevert = { [weak self] snapshot in
+            guard let self else { return }
+            viewModel.requestRevert(instance, to: snapshot)
+        }
+        section.onDelete = { [weak self] snapshot in
+            guard let self else { return }
+            viewModel.requestDeleteSnapshot(instance, snapshot: snapshot)
+        }
+        section.onRename = { [weak self] snapshot, newName in
+            self?.commitRename(of: snapshot, to: newName)
+        }
+        section.onSetNotes = { [weak self] snapshot, notes in
+            self?.commitNotes(notes, on: snapshot)
+        }
+        section.onRequestInfo = { [weak self] snapshot, anchor in
+            self?.presentSnapshotInfoPopover(snapshot, from: anchor)
+        }
         snapshotSection = section
         chrome = VMSettingsPanelChrome(
             leading: [section.infoButton], trailing: [section.countReadout])
@@ -113,27 +133,13 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
     }
 }
 
-// MARK: - SnapshotSectionViewDelegate
+// MARK: - Inline edits
 
-extension VMSettingsSnapshotsPanelViewController: SnapshotSectionViewDelegate {
-    func snapshotSectionRequestedTakeSnapshot(_ view: SnapshotSectionView) {
-        viewModel.requestTakeSnapshot(instance)
-    }
-
-    func snapshotSection(_ view: SnapshotSectionView, requestedRevertTo snapshot: VMSnapshot) {
-        viewModel.requestRevert(instance, to: snapshot)
-    }
-
-    func snapshotSection(_ view: SnapshotSectionView, requestedDeleteOf snapshot: VMSnapshot) {
-        viewModel.requestDeleteSnapshot(instance, snapshot: snapshot)
-    }
-
+extension VMSettingsSnapshotsPanelViewController {
     /// Commits an inline rename, deferred to the next runloop turn so the field
     /// editor's end-editing callback fully unwinds before the rebuild tears down
     /// and recreates the editing row.
-    func snapshotSection(
-        _ view: SnapshotSectionView, renamed snapshot: VMSnapshot, to newName: String
-    ) {
+    private func commitRename(of snapshot: VMSnapshot, to newName: String) {
         Task { [weak self] in
             guard let self else { return }
             self.viewModel.renameSnapshot(snapshot, newName: newName, on: self.instance)
@@ -144,9 +150,7 @@ extension VMSettingsSnapshotsPanelViewController: SnapshotSectionViewDelegate {
     }
 
     /// Commits an inline note edit, deferred for the same reason a rename is.
-    func snapshotSection(
-        _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot
-    ) {
+    private func commitNotes(_ notes: String, on snapshot: VMSnapshot) {
         Task { [weak self] in
             guard let self else { return }
             self.viewModel.setSnapshotNotes(snapshot, notes: notes, on: self.instance)
@@ -154,11 +158,5 @@ extension VMSettingsSnapshotsPanelViewController: SnapshotSectionViewDelegate {
             // to pick up anything suppressed during the edit.
             self.refresh()
         }
-    }
-
-    func snapshotSection(
-        _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView
-    ) {
-        presentSnapshotInfoPopover(snapshot, from: anchor)
     }
 }

@@ -86,28 +86,32 @@ struct RestoreImageCatalogSheetContentViewControllerTests {
         #expect(vc.selectedEntry == nil)
     }
 
-    @Test("Choosing reports the entry to the delegate")
-    func choosingReportsToDelegate() {
+    @Test("Choosing reports the entry to onChoose")
+    func choosingReports() {
         let vc = makeSheet(selectedBuild: "24G90")
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: RestoreImageCatalogEntry?
+        var cancelCount = 0
+        vc.onChoose = { chosen = $0 }
+        vc.onCancel = { cancelCount += 1 }
 
         findButton(titled: "Choose", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen?.build == "24G90")
-        #expect(delegate.cancelCount == 0)
+        #expect(chosen?.build == "24G90")
+        #expect(cancelCount == 0)
     }
 
     @Test("Cancel reports a dismissal and no choice")
-    func cancelReportsToDelegate() {
+    func cancelReports() {
         let vc = makeSheet()
-        let delegate = RecordingDelegate()
-        vc.delegate = delegate
+        var chosen: RestoreImageCatalogEntry?
+        var cancelCount = 0
+        vc.onChoose = { chosen = $0 }
+        vc.onCancel = { cancelCount += 1 }
 
         findButton(titled: "Cancel", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen == nil)
-        #expect(delegate.cancelCount == 1)
+        #expect(chosen == nil)
+        #expect(cancelCount == 1)
     }
 
     @Test("Choose is disabled while nothing selectable is selected")
@@ -122,25 +126,5 @@ struct RestoreImageCatalogSheetContentViewControllerTests {
         let vc = makeSheet()
         #expect(findLabel(containing: "July 2026", in: vc.view) != nil)
         #expect(findLabel(containing: "Download Latest", in: vc.view) != nil)
-    }
-
-    // MARK: - Helpers
-
-    private final class RecordingDelegate: RestoreImageCatalogSheetContentViewControllerDelegate {
-        var chosen: RestoreImageCatalogEntry?
-        var cancelCount = 0
-
-        func restoreImageCatalogSheet(
-            _ vc: RestoreImageCatalogSheetContentViewController,
-            didChoose entry: RestoreImageCatalogEntry
-        ) {
-            chosen = entry
-        }
-
-        func restoreImageCatalogSheetDidCancel(
-            _ vc: RestoreImageCatalogSheetContentViewController
-        ) {
-            cancelCount += 1
-        }
     }
 }

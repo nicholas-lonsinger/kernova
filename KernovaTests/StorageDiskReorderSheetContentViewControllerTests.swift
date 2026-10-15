@@ -27,12 +27,12 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         #expect(table.numberOfRows == disks.count)
     }
 
-    @Test("performReorder downward shifts disk forward and fires delegate")
-    func reorderDownwardFiresDelegate() {
+    @Test("performReorder downward shifts disk forward and fires onReorder")
+    func reorderDownwardFiresCallback() {
         let disks = [disk("A"), disk("B"), disk("C")]
         let vc = make(disks: disks)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var reorderedOrderings: [[StorageDisk]] = []
+        vc.onReorder = { reorderedOrderings.append($0) }
         vc.loadViewIfNeeded()
 
         // Move "A" (row 0) past "C" — proposedRow == 3 means "after the
@@ -40,16 +40,16 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         let didReorder = vc.performReorder(sourceRow: 0, proposedRow: 3)
         #expect(didReorder)
         #expect(vc.disks.map(\.label) == ["B", "C", "A"])
-        #expect(delegate.reorderedOrderings.count == 1)
-        #expect(delegate.reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
+        #expect(reorderedOrderings.count == 1)
+        #expect(reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
     }
 
-    @Test("performReorder upward shifts disk back and fires delegate")
-    func reorderUpwardFiresDelegate() {
+    @Test("performReorder upward shifts disk back and fires onReorder")
+    func reorderUpwardFiresCallback() {
         let disks = [disk("A"), disk("B"), disk("C")]
         let vc = make(disks: disks)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var reorderedOrderings: [[StorageDisk]] = []
+        vc.onReorder = { reorderedOrderings.append($0) }
         vc.loadViewIfNeeded()
 
         // Move "C" (row 2) to the top — proposedRow == 0 means "before
@@ -57,15 +57,15 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         let didReorder = vc.performReorder(sourceRow: 2, proposedRow: 0)
         #expect(didReorder)
         #expect(vc.disks.map(\.label) == ["C", "A", "B"])
-        #expect(delegate.reorderedOrderings.last?.map(\.label) == ["C", "A", "B"])
+        #expect(reorderedOrderings.last?.map(\.label) == ["C", "A", "B"])
     }
 
     @Test("performReorder no-ops when source and target collapse to the same index")
     func reorderNoOp() {
         let disks = [disk("A"), disk("B"), disk("C")]
         let vc = make(disks: disks)
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var reorderedOrderings: [[StorageDisk]] = []
+        vc.onReorder = { reorderedOrderings.append($0) }
         vc.loadViewIfNeeded()
 
         // Drag row 1 to proposedRow 1 — target collapses to 1 == source.
@@ -75,7 +75,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         let droppedJustAfter = vc.performReorder(sourceRow: 1, proposedRow: 2)
         #expect(!droppedJustAfter)
         #expect(vc.disks.map(\.label) == ["A", "B", "C"])
-        #expect(delegate.reorderedOrderings.isEmpty)
+        #expect(reorderedOrderings.isEmpty)
     }
 
     @Test("performReorder rejects out-of-range source")
@@ -89,8 +89,8 @@ struct StorageDiskReorderSheetContentViewControllerTests {
     @Test("pasteboard round-trip via tableView(_:acceptDrop:row:dropOperation:)")
     func acceptDropRoundTrip() {
         let vc = make(disks: [disk("A"), disk("B"), disk("C")])
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var reorderedOrderings: [[StorageDisk]] = []
+        vc.onReorder = { reorderedOrderings.append($0) }
         vc.loadViewIfNeeded()
         guard let table = firstSubview(NSTableView.self, in: vc.view) else {
             Issue.record("Expected an NSTableView")
@@ -121,7 +121,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         )
         #expect(accepted)
         #expect(vc.disks.map(\.label) == ["B", "C", "A"])
-        #expect(delegate.reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
+        #expect(reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
     }
 
     @Test("validateDrop returns .move only for .above")
@@ -144,11 +144,11 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         )
     }
 
-    @Test("Done button fires delegate's didDismiss")
-    func doneFiresDelegate() {
+    @Test("Done button fires onDone")
+    func doneFiresCallback() {
         let vc = make(disks: [disk("A"), disk("B")])
-        let delegate = MockDelegate()
-        vc.delegate = delegate
+        var doneCount = 0
+        vc.onDone = { doneCount += 1 }
         vc.loadViewIfNeeded()
 
         guard let done = findButton(titled: "Done", in: vc.view) else {
@@ -156,7 +156,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
             return
         }
         done.performClick(nil)
-        #expect(delegate.dismissCount == 1)
+        #expect(doneCount == 1)
     }
 
     @Test("Done button is keyed to Return")
@@ -190,25 +190,6 @@ struct StorageDiskReorderSheetContentViewControllerTests {
             isInternal: false,
             kind: .virtio
         )
-    }
-
-    @MainActor
-    private final class MockDelegate: StorageDiskReorderSheetContentViewControllerDelegate {
-        var reorderedOrderings: [[StorageDisk]] = []
-        var dismissCount = 0
-
-        func storageDiskReorderSheet(
-            _ vc: StorageDiskReorderSheetContentViewController,
-            didReorderTo disks: [StorageDisk]
-        ) {
-            reorderedOrderings.append(disks)
-        }
-
-        func storageDiskReorderSheetDidDismiss(
-            _ vc: StorageDiskReorderSheetContentViewController
-        ) {
-            dismissCount += 1
-        }
     }
 }
 

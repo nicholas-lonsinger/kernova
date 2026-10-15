@@ -6,36 +6,19 @@ import Testing
 @Suite("TakeSnapshotSheet Tests", .caseScoped)
 @MainActor
 struct TakeSnapshotSheetContentViewControllerTests {
-    private final class Recorder: TakeSnapshotSheetContentViewControllerDelegate {
-        var cancels = 0
-        var confirmations: [(name: String, notes: String)] = []
-
-        func takeSnapshotSheetDidCancel(_ vc: TakeSnapshotSheetContentViewController) {
-            cancels += 1
-        }
-        func takeSnapshotSheet(
-            _ vc: TakeSnapshotSheetContentViewController, didConfirmName name: String,
-            notes: String
-        ) {
-            confirmations.append((name, notes))
-        }
-    }
-
     private func makeSheet(
         vmName: String = "Dev Mac", suggestedName: String = "Snapshot",
         mode: VMCaptureMode = .live, purpose: TakeSnapshotPurpose = .restorePoint
-    ) -> (TakeSnapshotSheetContentViewController, Recorder) {
-        let recorder = Recorder()
+    ) -> TakeSnapshotSheetContentViewController {
         let sheet = TakeSnapshotSheetContentViewController(
             vmName: vmName, suggestedName: suggestedName, mode: mode, purpose: purpose)
-        sheet.delegate = recorder
         sheet.loadViewIfNeeded()
-        return (sheet, recorder)
+        return sheet
     }
 
     @Test("A baseline capture names what the new baseline returns the VM to")
     func baselineCaptureNamesTheBaseline() {
-        let (sheet, _) = makeSheet(mode: .live, purpose: .ephemeralBaseline)
+        let sheet = makeSheet(mode: .live, purpose: .ephemeralBaseline)
         #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .warm), in: sheet.view) != nil)
 
         // The VM finishing its shutdown makes the capture cold, and the note
@@ -47,7 +30,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("A restore point says nothing about Ephemeral Mode")
     func restorePointHasNoBaselineNote() {
-        let (sheet, _) = makeSheet(mode: .live)
+        let sheet = makeSheet(mode: .live)
         for kind in [VMSnapshotKind.warm, .cold] {
             #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: kind), in: sheet.view) == nil)
         }
@@ -55,14 +38,14 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("The title names the VM")
     func titleNamesTheVM() {
-        let (sheet, _) = makeSheet(vmName: "Dev Mac")
+        let sheet = makeSheet(vmName: "Dev Mac")
         #expect(
             findLabel(withText: "Take Snapshot of \u{201C}Dev Mac\u{201D}", in: sheet.view) != nil)
     }
 
     @Test("The Name field is prefilled with the suggestion and Notes is optional")
     func fieldsStartPrefilled() {
-        let (sheet, _) = makeSheet(suggestedName: "Snapshot 3")
+        let sheet = makeSheet(suggestedName: "Snapshot 3")
         #expect(sheet.enteredName == "Snapshot 3")
         #expect(sheet.enteredNotes.isEmpty)
         #expect(findLabel(withText: "Optional", in: sheet.view) != nil)
@@ -70,7 +53,9 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("Confirming hands back what was typed, newlines and all")
     func confirmSendsTheEnteredValues() {
-        let (sheet, recorder) = makeSheet()
+        let sheet = makeSheet()
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
         firstSubview(NSTextField.self, in: sheet.view) { $0.placeholderString == "Name" }?
             .stringValue = "Before Xcode"
         firstSubview(NSTextView.self, in: sheet.view)?.string = "tools configured\nand licensed"
@@ -78,25 +63,27 @@ struct TakeSnapshotSheetContentViewControllerTests {
         let confirm = findButton(titled: "Take Snapshot", in: sheet.view)
         confirm.map { _ = $0.target?.perform($0.action, with: $0) }
 
-        #expect(recorder.confirmations.count == 1)
-        #expect(recorder.confirmations.first?.name == "Before Xcode")
-        #expect(recorder.confirmations.first?.notes == "tools configured\nand licensed")
+        #expect(confirmations.count == 1)
+        #expect(confirmations.first?.name == "Before Xcode")
+        #expect(confirmations.first?.notes == "tools configured\nand licensed")
     }
 
     @Test("Cancel is the Escape button and reports a cancel")
     func cancelReportsACancel() {
-        let (sheet, recorder) = makeSheet()
+        let sheet = makeSheet()
+        var cancels = 0
+        sheet.onCancel = { cancels += 1 }
         let cancel = findButton(titled: "Cancel", in: sheet.view)
 
         #expect(cancel?.keyEquivalent == "\u{1B}")
         cancel.map { _ = $0.target?.perform($0.action, with: $0) }
 
-        #expect(recorder.cancels == 1)
+        #expect(cancels == 1)
     }
 
     @Test("Take Snapshot is the Return default")
     func confirmIsTheDefaultButton() {
-        let (sheet, _) = makeSheet()
+        let sheet = makeSheet()
         #expect(findButton(titled: "Take Snapshot", in: sheet.view)?.keyEquivalent == "\r")
     }
 
@@ -114,33 +101,39 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("A commit from the Notes box confirms the sheet")
     func notesCommitConfirmsTheSheet() throws {
-        let (sheet, recorder) = makeSheet()
+        let sheet = makeSheet()
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
         let (editor, textView) = try notesBox(sheet)
 
         textView.string = "tools configured"
         editor.commitIfChanged()
 
-        #expect(recorder.confirmations.count == 1)
-        #expect(recorder.confirmations.first?.notes == "tools configured")
+        #expect(confirmations.count == 1)
+        #expect(confirmations.first?.notes == "tools configured")
     }
 
     @Test("Escape in the Notes box cancels the sheet rather than erasing the note")
     func escapeInNotesCancelsTheSheet() throws {
-        let (sheet, recorder) = makeSheet()
+        let sheet = makeSheet()
+        var cancels = 0
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onCancel = { cancels += 1 }
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
         let (_, textView) = try notesBox(sheet)
         textView.string = "tools configured"
 
         textView.cancelOperation(nil)
 
-        #expect(recorder.cancels == 1)
-        #expect(recorder.confirmations.isEmpty)
+        #expect(cancels == 1)
+        #expect(confirmations.isEmpty)
     }
 
     // MARK: - Per-mode copy
 
     @Test("A memory-and-disks capture says so, and warns about the pause")
     func warmCopyNamesMemoryAndThePause() {
-        let (sheet, _) = makeSheet(mode: .live)
+        let sheet = makeSheet(mode: .live)
         #expect(sheet.headerBodyText.contains("memory, disks, and settings"))
         #expect(sheet.captionText?.contains("pauses briefly") == true)
         #expect(findLabel(containing: "pauses briefly", in: sheet.view)?.isHidden == false)
@@ -148,14 +141,14 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("A suspended-state capture names the suspended session, and says nothing about pausing")
     func suspendedCopyNamesTheSuspendedSession() {
-        let (sheet, _) = makeSheet(mode: .suspended)
+        let sheet = makeSheet(mode: .suspended)
         #expect(sheet.headerBodyText.contains("suspended session"))
         #expect(sheet.captionText == "The virtual machine stays suspended.")
     }
 
     @Test("A capture of a stopped VM says the VM comes back powered off, with no caption")
     func coldCopyNamesTheOutcome() {
-        let (sheet, _) = makeSheet(mode: .stopped)
+        let sheet = makeSheet(mode: .stopped)
         #expect(sheet.headerBodyText.contains("disks and settings"))
         #expect(sheet.headerBodyText.contains("powered off"))
         #expect(!sheet.headerBodyText.contains("memory, disks, and settings"))
@@ -164,7 +157,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("The shared-blocks explanation sits behind the title's info button")
     func sharedBlocksLiveInTitleInfo() throws {
-        let (sheet, _) = makeSheet(mode: .live)
+        let sheet = makeSheet(mode: .live)
         let info = try #require(firstSubview(InfoButtonView.self, in: sheet.view))
         #expect(info.paragraphs == [.body(TakeSnapshotSheetContentViewController.sharedBlocksExplanation)])
         #expect(findLabel(containing: "share their blocks", in: sheet.view) == nil)
@@ -172,7 +165,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     @Test("A guest powering off while the sheet is up moves its copy to a capture with no memory")
     func updatingTheModeRewritesTheRenderedCopy() {
-        let (sheet, _) = makeSheet(mode: .live)
+        let sheet = makeSheet(mode: .live)
         let body = findLabel(containing: "memory, disks, and settings", in: sheet.view)
         #expect(body != nil)
 

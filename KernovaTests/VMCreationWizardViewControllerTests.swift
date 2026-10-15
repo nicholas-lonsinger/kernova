@@ -64,8 +64,8 @@ struct VMCreationWizardViewControllerTests {
         let vm = VMCreationViewModel()
         vm.currentStep = .review
         let wizard = VMCreationWizardViewController(creationVM: vm)
-        let delegate = MockDelegate()
-        wizard.delegate = delegate
+        var createRequests: [VMCreationViewModel] = []
+        wizard.onCreate = { createRequests.append($0) }
         wizard.loadViewIfNeeded()
 
         #expect(findButton(titled: "Next", in: wizard.view)?.isHidden == true)
@@ -74,8 +74,8 @@ struct VMCreationWizardViewControllerTests {
         #expect(create?.isEnabled == true)
 
         create?.performClick(nil)
-        #expect(delegate.createRequests.count == 1)
-        #expect(delegate.createRequests.first === vm)
+        #expect(createRequests.count == 1)
+        #expect(createRequests.first === vm)
     }
 
     @Test("Create is disabled on review when the name is blank")
@@ -89,15 +89,15 @@ struct VMCreationWizardViewControllerTests {
         #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == false)
     }
 
-    @Test("Cancel reports to the delegate")
-    func cancelFiresDelegate() {
+    @Test("Cancel fires onCancel")
+    func cancelFiresCallback() {
         let wizard = VMCreationWizardViewController(creationVM: VMCreationViewModel())
-        let delegate = MockDelegate()
-        wizard.delegate = delegate
+        var cancelCount = 0
+        wizard.onCancel = { cancelCount += 1 }
         wizard.loadViewIfNeeded()
 
         findButton(titled: "Cancel", in: wizard.view)?.performClick(nil)
-        #expect(delegate.cancelCount == 1)
+        #expect(cancelCount == 1)
     }
 
     @Test("A second Create activation makes no second request")
@@ -106,8 +106,8 @@ struct VMCreationWizardViewControllerTests {
         vm.currentStep = .review
         vm.vmName = "Double Clicked"
         let wizard = VMCreationWizardViewController(creationVM: vm)
-        let delegate = MockDelegate()
-        wizard.delegate = delegate
+        var createRequests: [VMCreationViewModel] = []
+        wizard.onCreate = { createRequests.append($0) }
         wizard.loadViewIfNeeded()
 
         // The sheet dismisses asynchronously, so a double click reaches the
@@ -116,7 +116,7 @@ struct VMCreationWizardViewControllerTests {
         create?.performClick(nil)
         create?.performClick(nil)
 
-        #expect(delegate.createRequests.count == 1)
+        #expect(createRequests.count == 1)
         #expect(create?.isEnabled == false)
         #expect(findButton(titled: "Back", in: wizard.view)?.isEnabled == false)
         #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == false)
@@ -128,12 +128,12 @@ struct VMCreationWizardViewControllerTests {
         vm.currentStep = .review
         vm.vmName = "Retry VM"
         let wizard = VMCreationWizardViewController(creationVM: vm)
-        let delegate = MockDelegate()
-        wizard.delegate = delegate
+        var createRequests: [VMCreationViewModel] = []
+        wizard.onCreate = { createRequests.append($0) }
         wizard.loadViewIfNeeded()
 
         findButton(titled: "Create", in: wizard.view)?.performClick(nil)
-        #expect(delegate.createRequests.count == 1)
+        #expect(createRequests.count == 1)
 
         // The host calls this for the refusal raised before anything was
         // written. (No window in the test, so no alert is presented.)
@@ -144,7 +144,7 @@ struct VMCreationWizardViewControllerTests {
 
         // And the retry goes through, rather than tripping the one-shot again.
         findButton(titled: "Create", in: wizard.view)?.performClick(nil)
-        #expect(delegate.createRequests.count == 2)
+        #expect(createRequests.count == 2)
     }
 
     @Test("Validation message displays and gates Next when the model is invalid")
@@ -252,24 +252,5 @@ struct VMCreationWizardViewControllerTests {
 
         #expect(vm.currentStep == .review)
         #expect(wizard.children.first is ReviewContentViewController)
-    }
-
-    // MARK: - Helpers
-
-    @MainActor
-    private final class MockDelegate: VMCreationWizardViewControllerDelegate {
-        var cancelCount = 0
-        var createRequests: [VMCreationViewModel] = []
-
-        func wizardDidCancel(_ vc: VMCreationWizardViewController) {
-            cancelCount += 1
-        }
-
-        func wizardDidRequestCreate(
-            _ vc: VMCreationWizardViewController,
-            creationVM: VMCreationViewModel
-        ) {
-            createRequests.append(creationVM)
-        }
     }
 }
