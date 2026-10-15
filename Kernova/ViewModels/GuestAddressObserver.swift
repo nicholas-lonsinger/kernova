@@ -37,9 +37,6 @@ final class GuestAddressObserver {
     /// which networks an app-managed vmnet network realizes.
     @ObservationIgnored private let entitlements: EntitlementService
     @ObservationIgnored private let clock: any EngineClock
-    /// The wall clock the table's expiries are measured against, in Unix
-    /// seconds.
-    @ObservationIgnored private let now: @Sendable () -> Int
 
     /// Which VMs exist. Weak and assigned after construction: the library owns
     /// this observer, so a strong reference back would be a cycle.
@@ -53,14 +50,12 @@ final class GuestAddressObserver {
         reader: any ARPTableReading,
         vmnetNetworks: VmnetNetworkService,
         entitlements: EntitlementService,
-        clock: any EngineClock = makePlatformEngineClock(),
-        now: @escaping @Sendable () -> Int = { Int(Date().timeIntervalSince1970) }
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
         self.reader = reader
         self.vmnetNetworks = vmnetNetworks
         self.entitlements = entitlements
         self.clock = clock
-        self.now = now
     }
 
     /// What `instance`'s guest is seen using for an address on the network it
@@ -122,7 +117,10 @@ final class GuestAddressObserver {
             readIsFailing = true
             entries = []
         }
-        let addresses = Self.addresses(in: entries, for: keys, on: subnets, at: now())
+        // The table stamps each expiry in Unix seconds, so it is measured
+        // against the calendar rather than the monotonic `clock`.
+        let addresses = Self.addresses(
+            in: entries, for: keys, on: subnets, at: Int(Date().timeIntervalSince1970))
         if addresses != observedAddresses { observedAddresses = addresses }
     }
 

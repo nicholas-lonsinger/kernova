@@ -4,13 +4,14 @@ import KernovaKit
 /// A `ClipboardTransferReporter` plus every report it has published, for a test
 /// asserting on what a surface would render.
 ///
-/// The dwell is zeroed rather than disabled: a completed operation's readout
-/// retires on the next main-queue turn, so a wait on the readout clearing is
-/// event-driven. A refusal never dwells, so it stands for the whole test.
+/// The dwell runs on a `TestEngineClock`, so it passes as soon as it is armed
+/// rather than being disabled: a completed operation's readout retires on its
+/// own, and a wait on the readout clearing is event-driven. A refusal never
+/// dwells, so it stands for the whole test.
 @MainActor
 public final class ClipboardTransferReports {
-    /// The reporter under test, with the dwell zeroed.
-    public let reporter = ClipboardTransferReporter(dwell: 0)
+    /// The reporter under test, its dwell passing as soon as it is armed.
+    public let reporter = ClipboardTransferReporter(clock: TestEngineClock())
 
     /// Every distinct report, oldest first.
     public private(set) var reports: [ClipboardTransferReport] = []

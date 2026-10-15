@@ -80,15 +80,13 @@ public final class ClipboardEndpoint {
         public var staging: ClipboardFileStaging?
         /// How long a pull waits without progress before giving up.
         public var lazyPullTimeout: TimeInterval
-        /// Runs an offered drop's ``ClipboardStreamTuning/dropClaimTimeout``
-        /// deadline after its delay; tests fire it by hand.
-        public var dropClaimSchedule: @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void
         /// How long a transfer runs before its readout surfaces.
         public var progressRevealDelay: TimeInterval
         /// How long a readout waits after its last unit before calling the
         /// gesture over.
         public var progressIdleGap: TimeInterval
-        /// Time source for the refusal-burst window.
+        /// Time source for the refusal-burst window and an offered drop's
+        /// ``ClipboardStreamTuning/dropClaimTimeout`` deadline.
         public var clock: any EngineClock
         /// How each transfer's data connection is obtained: the guest dials the
         /// kind's data port, the host takes what its listener accepted.
@@ -110,10 +108,6 @@ public final class ClipboardEndpoint {
             maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
             staging: ClipboardFileStaging? = nil,
             lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
-            dropClaimSchedule:
-                @escaping @Sendable (
-                    TimeInterval, @escaping @MainActor @Sendable () -> Void
-                ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue,
             progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
             progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
             clock: any EngineClock = makePlatformEngineClock(),
@@ -128,7 +122,6 @@ public final class ClipboardEndpoint {
             self.maxPasteBytes = maxPasteBytes
             self.staging = staging
             self.lazyPullTimeout = lazyPullTimeout
-            self.dropClaimSchedule = dropClaimSchedule
             self.progressRevealDelay = progressRevealDelay
             self.progressIdleGap = progressIdleGap
             self.clock = clock
@@ -206,7 +199,7 @@ public final class ClipboardEndpoint {
             session: session, reporter: reporter, peerName: configuration.peerName,
             progressRevealDelay: configuration.progressRevealDelay,
             progressIdleGap: configuration.progressIdleGap,
-            dropClaimSchedule: configuration.dropClaimSchedule,
+            clock: configuration.clock,
             firstGeneration: configuration.firstGeneration)
         // A send-only connection has no staging and never receives a byte; the
         // session raises the fault for any other combination.

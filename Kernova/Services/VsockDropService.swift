@@ -92,10 +92,7 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
         runOffMainActor: @escaping (@escaping @Sendable () -> Void) -> Void = { work in
             DispatchQueue.global(qos: .userInitiated).async(execute: work)
         },
-        scheduleDropDeadline:
-            @escaping @Sendable (
-                TimeInterval, @escaping @MainActor @Sendable () -> Void
-            ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
         self.label = label
         self.reporter = reporter
@@ -105,8 +102,8 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
             channel: channel,
             configuration: ClipboardEndpoint.Configuration(
                 role: .host, kind: .drop, label: label, peerName: label,
-                dropClaimSchedule: scheduleDropDeadline,
-                progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap),
+                progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
+                clock: clock),
             reporter: reporter)
         endpoint.delegate = self
         endpoint.onDropSettled = { [weak self] generation in

@@ -43,35 +43,31 @@ final class FetchProgressCoalescer: @unchecked Sendable {
     private var lastForwardedBytes: UInt64 = 0
     /// When the last update was forwarded; `nil` until the first, so the first
     /// forward chunk always passes (elapsed reads as effectively infinite).
-    private var lastForwardAt: DispatchTime?
+    private var lastForwardAt: EngineInstant?
 
     /// Creates a coalescer with empty watermarks, so its first forward-progress
     /// update always passes.
     init() {}
 
-    /// Records that an update was forwarded without asking `shouldForward` —
-    /// a consumer that bypasses the throttle for something the user must see
-    /// (a reveal, a terminal, an item finishing).
+    /// Records that an update was forwarded at `now` without asking
+    /// `shouldForward` — a consumer that bypasses the throttle for something
+    /// the user must see (a reveal, a terminal, an item finishing).
     ///
     /// Without it the watermarks would still describe the last *throttled*
     /// forward, so the next update would measure its delta from a byte count
     /// already on screen and sail through the policy however small it was.
-    func markForwarded(bytesTransferred: UInt64) {
+    func markForwarded(bytesTransferred: UInt64, at now: EngineInstant) {
         lock.withLock {
             lastForwardedBytes = max(lastForwardedBytes, bytesTransferred)
-            lastForwardAt = DispatchTime.now()
+            lastForwardAt = now
         }
     }
 
-    /// Whether `(bytesTransferred, totalBytes)` should be forwarded now,
-    /// advancing the watermarks when it should.
-    func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64) -> Bool {
-        let now = DispatchTime.now()
-        return lock.withLock {
-            let elapsed =
-                lastForwardAt.map {
-                    Double(now.uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000_000
-                } ?? .greatestFiniteMagnitude
+    /// Whether `(bytesTransferred, totalBytes)`, observed at `now`, should be
+    /// forwarded, advancing the watermarks when it should.
+    func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64, at now: EngineInstant) -> Bool {
+        lock.withLock {
+            let elapsed = lastForwardAt.map { $0.seconds(to: now) } ?? .greatestFiniteMagnitude
             guard
                 FetchProgressThrottle.shouldPush(
                     bytes: bytesTransferred, total: totalBytes,

@@ -29,7 +29,7 @@ struct AppClipboardReadoutTests {
         let cancelled = Box(false)
         let operation = ClipboardTransferOperation(
             gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
-            now: { 0 }, schedule: { _, _ in }, onCancelRequested: { cancelled.value = true },
+            clock: GatedEngineClock(), onCancelRequested: { cancelled.value = true },
             reporter: instance.clipboardTransfers)
         instance.clipboardTransfers.publish(
             from: operation,

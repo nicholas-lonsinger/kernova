@@ -302,7 +302,7 @@ struct VMToolbarManagerTests {
     ) -> ClipboardTransferOperation {
         let operation = ClipboardTransferOperation(
             gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
-            now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
+            clock: GatedEngineClock(), reporter: instance.clipboardTransfers)
         instance.clipboardTransfers.publish(
             from: operation,
             .running(

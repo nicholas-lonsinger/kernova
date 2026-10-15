@@ -11,8 +11,10 @@ struct GuestAddressObserverTests {
     /// observer's reference is weak — the real one is owned by its library.
     private let roster = StubVMInstanceRoster()
 
-    /// The wall clock every expiry here is measured against.
-    nonisolated private static let now = 1_790_000_000
+    /// The wall clock every expiry here is measured against, read when the
+    /// entry is scripted: the observer reads it again at the table read, and
+    /// no expiry here sits within a minute of that read.
+    nonisolated private static var now: Int { Int(Date().timeIntervalSince1970) }
 
     private static let mac = "aa:bb:cc:dd:ee:01"
 
@@ -36,7 +38,7 @@ struct GuestAddressObserverTests {
             entitlements: EntitlementService(
                 hasVMNetworking: entitled, hasAccessoryAccess: false,
                 hasTopologyObservation: canObserve),
-            clock: clock, now: { Self.now })
+            clock: clock)
         observer.roster = roster
         return observer
     }

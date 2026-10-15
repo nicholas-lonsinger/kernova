@@ -78,7 +78,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var hasUserEdit = false
 
     /// Quiet period before a keystroke burst commits off-actor.
-    private let editDebounceInterval: Duration
+    private static let editDebounceInterval: TimeInterval = 0.2
+
+    /// What the edit debounce is measured on.
+    private let clock: any EngineClock
 
     /// Last refusal already shown as a transient, so re-observation doesn't
     /// re-show it; a repeat of the same kind carries a newer `date` and does
@@ -119,13 +122,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         instance: VMInstance, viewModel: VMLibraryViewModel,
         readPasteboard: NSPasteboard = .general,
         publisher: HostClipboardPublisher,
-        editDebounceInterval: Duration = .milliseconds(200)
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.readPasteboard = readPasteboard
         self.publisher = publisher
-        self.editDebounceInterval = editDebounceInterval
+        self.clock = clock
 
         let textView = ClipboardEditorTextView()
         textView.isEditable = true
@@ -304,8 +307,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// any still-pending commit.
     private func scheduleEditCommit(text: String, seq: UInt64) {
         editDebounceTask?.cancel()
-        editDebounceTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.editDebounceInterval ?? .milliseconds(200))
+        editDebounceTask = clock.schedule(after: Self.editDebounceInterval) { @MainActor [weak self] in
             guard !Task.isCancelled else { return }
             await self?.commitEdit(text: text, seq: seq)
         }

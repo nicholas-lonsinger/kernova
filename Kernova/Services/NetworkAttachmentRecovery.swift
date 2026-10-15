@@ -565,8 +565,7 @@ final class NetworkAttachmentCoordinator {
         }
         let delay = retryDelays[nextRetryIndex]
         nextRetryIndex += 1
-        retryTask = Task { [weak self, clock] in
-            do { try await clock.sleep(for: delay) } catch { return }
+        retryTask = clock.schedule(after: delay) { @MainActor [weak self] in
             guard let self, !Task.isCancelled else { return }
             self.retryTask = nil
             self.reconcile(trigger: "retry", resetBackoff: false)

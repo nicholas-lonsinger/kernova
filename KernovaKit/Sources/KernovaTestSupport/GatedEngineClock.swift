@@ -29,6 +29,8 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// How a parked sleep ended.
     private enum Outcome {
         case released
+        /// Released, with its caller held suspended until ``resume(_:)``.
+        case held
         case cancelled
     }
 
@@ -36,7 +38,8 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// continuation to resume once the test releases it.
     ///
     /// A reference type so the continuation can be filled in after the sleeper
-    /// is registered; it never leaves the lock.
+    /// is registered; it is mutated only under the lock, and only while
+    /// ``sleepers`` still holds it.
     private final class Sleeper {
         let id: Int
         let seconds: TimeInterval
@@ -58,9 +61,23 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     private var settledEarly: [Int: Outcome] = [:]
     private var nextID = 1
 
+    /// Continuations of sleeps released by ``releaseHeld(_:)``, kept until
+    /// ``resume(_:)``; `nil` while the caller has not reached its park yet.
+    private var held: [Int: CheckedContinuation<Void, Error>?] = [:]
+
+    /// Held sleeps ``resume(_:)`` reached before their caller parked.
+    private var resumedEarly: Set<Int> = []
+
+    /// The task each ``schedule(after:_:)`` call returned, by sleep id.
+    private var scheduled: [Int: Task<Void, Never>] = [:]
+
     /// Fires whenever a `sleep` call parks; await it instead of polling
     /// ``parked`` or ``requestedSeconds``.
     public let sleepRequested = AsyncGate()
+
+    /// Fires whenever ``parked`` changes — a sleep parking, or one released or
+    /// cancelled — so a test can await a superseded timer leaving it.
+    public let parkedChanged = AsyncGate()
 
     /// Creates a clock with no parked sleeps.
     public init() {}
@@ -95,10 +112,59 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
         settle(id: sleep.id, as: .released)
     }
 
+    /// Releases a parked sleep but holds its caller suspended until
+    /// ``resume(_:)``, so a test can act between the interval passing and the
+    /// caller running on — cancelling a timer whose sleep has already passed.
+    ///
+    /// The sleep leaves ``parked`` here; cancelling its caller afterwards no
+    /// longer makes the sleep throw.
+    public func releaseHeld(_ sleep: ParkedSleep) {
+        settle(id: sleep.id, as: .held)
+    }
+
+    /// Lets the caller of a sleep released by ``releaseHeld(_:)`` run on.
+    public func resume(_ sleep: ParkedSleep) {
+        let continuation: CheckedContinuation<Void, Error>? = lock.withLock {
+            guard let entry = held.removeValue(forKey: sleep.id) else { return nil }
+            guard let continuation = entry else {
+                resumedEarly.insert(sleep.id)
+                return nil
+            }
+            return continuation
+        }
+        continuation?.resume()
+    }
+
+    /// Waits until the work ``schedule(after:_:)`` armed with `sleep` has
+    /// finished — run, or returned without running.
+    public func completion(of sleep: ParkedSleep) async {
+        await lock.withLock { scheduled[sleep.id] }?.value
+    }
+
     /// Parks until the test releases this call, throwing `CancellationError` if
     /// the task is cancelled first.
     public func sleep(for interval: TimeInterval) async throws {
         try Task.checkCancellation()
+        try await park(register(interval))
+    }
+
+    /// Parks `body` until the test releases it, recording the arming before
+    /// this returns — so ``parked`` and ``requestedSeconds`` already show a
+    /// timer the code under test armed synchronously.
+    public func schedule(
+        after interval: TimeInterval, _ body: @escaping @Sendable () async -> Void
+    ) -> Task<Void, Never> {
+        let id = register(interval)
+        let task = Task {
+            do { try await park(id) } catch { return }
+            await body()
+        }
+        lock.withLock { scheduled[id] = task }
+        return task
+    }
+
+    /// Records a sleep of `interval` as parked and announces it.
+    private func register(_ interval: TimeInterval) -> Int {
         let id: Int = lock.withLock {
             let id = nextID
             nextID += 1
@@ -107,18 +173,29 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
             return id
         }
         sleepRequested.notify()
+        parkedChanged.notify()
+        return id
+    }
+
+    /// Suspends until the sleep `id` is released, throwing `CancellationError`
+    /// if the task is cancelled first.
+    private func park(_ id: Int) async throws {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 // A release or a cancellation racing this registration settles
                 // the sleep before there is a continuation to resume, so it
                 // leaves the outcome here for us to act on instead.
                 let early: Outcome? = lock.withLock {
-                    if let outcome = settledEarly.removeValue(forKey: id) { return outcome }
-                    sleepers.first { $0.id == id }?.continuation = continuation
+                    guard let outcome = settledEarly.removeValue(forKey: id) else {
+                        sleepers.first { $0.id == id }?.continuation = continuation
+                        return nil
+                    }
+                    guard outcome == .held, resumedEarly.remove(id) == nil else { return outcome }
+                    held[id] = continuation
                     return nil
                 }
                 switch early {
-                case .released: continuation.resume()
+                case .released, .held: continuation.resume()
                 case .cancelled: continuation.resume(throwing: CancellationError())
                 case nil: break
                 }
@@ -134,15 +211,19 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// A settled sleep leaves ``sleepers``, so its presence there is what makes
     /// this fire at most once per call.
     private func settle(id: Int, as outcome: Outcome) {
-        let continuation: CheckedContinuation<Void, Error>? = lock.withLock {
+        let removed: Sleeper? = lock.withLock {
             guard let index = sleepers.firstIndex(where: { $0.id == id }) else { return nil }
             let sleeper = sleepers.remove(at: index)
+            if outcome == .held { held[id] = .some(sleeper.continuation) }
             if sleeper.continuation == nil { settledEarly[id] = outcome }
-            return sleeper.continuation
+            return sleeper
         }
-        guard let continuation else { return }
+        guard let removed else { return }
+        parkedChanged.notify()
+        guard let continuation = removed.continuation else { return }
         switch outcome {
         case .released: continuation.resume()
+        case .held: break
         case .cancelled: continuation.resume(throwing: CancellationError())
         }
     }

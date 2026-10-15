@@ -114,15 +114,12 @@ public final class ClipboardOutboundOffers {
         var isCancelled = false
         /// Whether the peer has asked for at least one of this offer's items.
         var isClaimed = false
-        /// Whether a deadline is scheduled for this offer, which is true in every
-        /// state but "something else is streaming".
-        var isClaimDeadlineArmed = false
+        /// The deadline armed for this offer, which is armed in every state but
+        /// "something else is streaming"; a stand-down cancels it.
+        var claimDeadline: Task<Void, Never>?
         /// How far this offer's bytes have got, in events, so its deadline can
         /// tell a peer that has gone quiet from one still moving them.
         let activity = ActivityCount()
-        /// Which arming of that deadline is live: a stand-down or a re-arm bumps
-        /// it, so one already scheduled can tell it was superseded.
-        var claimArming: UInt64 = 0
         /// The items of this drop this side had nothing to send for, so the
         /// verdict can say what it left out.
         let unreadable: UnreadableReps
@@ -146,11 +143,9 @@ public final class ClipboardOutboundOffers {
     private let peerName: String
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
-    /// Runs the unclaimed-drop deadline after a delay — its only trigger, since
-    /// by definition nothing arrives to drive it.
-    private let dropClaimSchedule:
-        @Sendable (_ after: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) ->
-            Void
+    /// What a drop's deadline is measured on — its only trigger, since by
+    /// definition nothing arrives to drive it.
+    private let clock: any EngineClock
 
     /// Called with what this side just did, for a surface to render.
     ///
@@ -184,16 +179,6 @@ public final class ClipboardOutboundOffers {
 
     private var kind: ClipboardControlSession.Kind { session.kind }
 
-    /// The production deadline scheduler: the main queue, where every other
-    /// readout event is already serialized.
-    nonisolated public static let scheduleOnMainQueue:
-        @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void = {
-            after, work in
-            DispatchQueue.main.asyncAfter(deadline: .now() + after) {
-                MainActor.assumeIsolated { work() }
-            }
-        }
-
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardOutboundOffers")
 
@@ -208,10 +193,7 @@ public final class ClipboardOutboundOffers {
         peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
-        dropClaimSchedule:
-            @escaping @Sendable (
-                TimeInterval, @escaping @MainActor @Sendable () -> Void
-            ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue,
+        clock: any EngineClock = makePlatformEngineClock(),
         firstGeneration: UInt64 = 1
     ) {
         self.session = session
@@ -219,7 +201,7 @@ public final class ClipboardOutboundOffers {
         self.peerName = peerName
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
-        self.dropClaimSchedule = dropClaimSchedule
+        self.clock = clock
         self.nextGenerationStorage = max(1, firstGeneration)
     }
 
@@ -519,7 +501,7 @@ public final class ClipboardOutboundOffers {
             entry.live.set(0)
             session.outbox?.cancel(generation: generation)
             try? session.sendRelease(generation: generation)
-            entries[generation] = nil
+            forget(entry)
             onDropSettled(generation)
             // The readout dwells at the fraction it stopped on, so the cancel is
             // visibly what happened.
@@ -534,7 +516,8 @@ public final class ClipboardOutboundOffers {
 
     /// Applies the peer's verdict on a drop.
     public func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
-        guard let entry = entries.removeValue(forKey: complete.generation) else { return }
+        guard let entry = entries[complete.generation] else { return }
+        forget(entry)
         entry.live.set(0)
         // Ahead of the readout's terminal: the peer has said what became of the
         // drop, so nothing will be pulled from what this side staged for it.
@@ -610,8 +593,10 @@ public final class ClipboardOutboundOffers {
         }
         pasteOperation?.operation.abandon()
         pasteOperation = nil
-        for entry in entries.values { entry.live.set(0) }
-        entries.removeAll()
+        for entry in entries.values {
+            entry.live.set(0)
+            forget(entry)
+        }
         currentGeneration = 0
     }
 
@@ -640,15 +625,13 @@ public final class ClipboardOutboundOffers {
 
     /// Schedules one entry's deadline, sampling the activity it must beat.
     private func armClaimDeadline(for entry: Entry) {
-        guard !entry.isClaimDeadlineArmed else { return }
-        entry.isClaimDeadlineArmed = true
-        entry.claimArming &+= 1
+        guard entry.claimDeadline == nil else { return }
         let generation = entry.generation
-        let arming = entry.claimArming
         let activity = entry.activity.count
-        dropClaimSchedule(ClipboardStreamTuning.dropClaimTimeout) { [weak self] in
-            self?.claimDeadlineExpired(
-                generation: generation, arming: arming, activityWhenArmed: activity)
+        entry.claimDeadline = clock.schedule(after: ClipboardStreamTuning.dropClaimTimeout) {
+            @MainActor [weak self] in
+            guard !Task.isCancelled else { return }
+            self?.claimDeadlineExpired(generation: generation, activityWhenArmed: activity)
         }
     }
 
@@ -656,18 +639,15 @@ public final class ClipboardOutboundOffers {
     /// is streaming is not called off for waiting its turn.
     private func standDownClaimDeadlines() {
         for entry in entries.values {
-            entry.claimArming &+= 1
-            entry.isClaimDeadlineArmed = false
+            entry.claimDeadline?.cancel()
+            entry.claimDeadline = nil
         }
     }
 
     /// Calls off a drop the peer never began, or one it began and went quiet on.
-    private func claimDeadlineExpired(
-        generation: UInt64, arming: UInt64, activityWhenArmed: UInt64
-    ) {
-        guard let entry = entries[generation], entry.claimArming == arming, !entry.isCancelled
-        else { return }
-        entry.isClaimDeadlineArmed = false
+    private func claimDeadlineExpired(generation: UInt64, activityWhenArmed: UInt64) {
+        guard let entry = entries[generation], !entry.isCancelled else { return }
+        entry.claimDeadline = nil
         // An inactivity window, never an absolute deadline: a job that has moved
         // since this was armed starts the clock again rather than being called
         // off for needing more than one window to stream.
@@ -677,7 +657,7 @@ public final class ClipboardOutboundOffers {
         }
         let wasClaimed = entry.isClaimed
         entry.live.set(0)
-        entries[generation] = nil
+        forget(entry)
         // The peer may be wedged rather than gone, so the release is what stops
         // it pulling an offer this side has already answered for.
         try? session.sendRelease(generation: generation)
@@ -693,8 +673,15 @@ public final class ClipboardOutboundOffers {
     /// Drops `entry` from the live set and ends the transfers still riding it.
     private func retire(_ entry: Entry) {
         entry.live.set(0)
-        entries[entry.generation] = nil
+        forget(entry)
         if entry.generation == currentGeneration { currentGeneration = 0 }
+    }
+
+    /// Removes `entry` from the live set, calling off its deadline with it.
+    private func forget(_ entry: Entry) {
+        entry.claimDeadline?.cancel()
+        entry.claimDeadline = nil
+        entries[entry.generation] = nil
     }
 
     /// The readout serving `entry`, opening one when a clipboard offer's first

@@ -224,15 +224,16 @@ struct ClipboardContentViewControllerEditTests {
     private let stagingRoot = TestStagingRoot()
     private let preferences = makeTestPreferences()
 
+    /// A controller whose edit debounce runs on `clock` — by default one nothing
+    /// releases, so the only path to the model is a synchronous flush.
     private func makeController(
-        service: FakeClipboardService, debounce: Duration
+        service: FakeClipboardService, clock: any EngineClock = GatedEngineClock()
     ) -> ClipboardContentViewController {
         let instance = makeClipboardInstance()
         instance.sessionContext?.clipboardService = service
         return ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root),
-            editDebounceInterval: debounce)
+            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root), clock: clock)
     }
 
     @Test("a keystroke burst commits the buffer to the model off-actor after the debounce")
@@ -240,19 +241,22 @@ struct ClipboardContentViewControllerEditTests {
         let service = FakeClipboardService(content: .empty)
         let committed = AsyncGate()
         service.onChangeForTesting = { committed.notify() }
-        let vc = makeController(service: service, debounce: .milliseconds(1))
+        let clock = GatedEngineClock()
+        let vc = makeController(service: service, clock: clock)
 
         vc.setEditorTextForTesting("hello off-actor")
+        #expect(service.clipboardContent.isEmpty)  // the keystroke itself commits nothing
 
+        clock.release(try #require(clock.parked.first))
         try await committed.wait { service.clipboardContent == ClipboardContent(text: "hello off-actor") }
     }
 
     @Test("flushPendingEdit commits the latest text before the debounce fires")
     func flushCommitsPendingEdit() {
-        // A debounce long enough that it never fires during the test, so the only
-        // path to the model is the synchronous flush.
+        // A debounce nothing releases, so the only path to the model is the
+        // synchronous flush.
         let service = FakeClipboardService(content: .empty)
-        let vc = makeController(service: service, debounce: .seconds(60))
+        let vc = makeController(service: service)
 
         vc.setEditorTextForTesting("typed then copied")
         #expect(service.clipboardContent.isEmpty)  // not yet committed by the debounce
@@ -264,7 +268,7 @@ struct ClipboardContentViewControllerEditTests {
     @Test("flushPendingEdit is a no-op with nothing pending")
     func flushWithoutPendingEditIsNoOp() {
         let service = FakeClipboardService(content: ClipboardContent(text: "guest content"))
-        let vc = makeController(service: service, debounce: .seconds(60))
+        let vc = makeController(service: service)
 
         vc.flushPendingEdit()  // no keystroke happened
         #expect(service.clipboardContent == ClipboardContent(text: "guest content"))
@@ -273,7 +277,7 @@ struct ClipboardContentViewControllerEditTests {
     @Test("an external update cancels a pending edit so a later flush can't resurrect stale text")
     func externalUpdateCancelsPendingEdit() {
         let service = FakeClipboardService(content: .empty)
-        let vc = makeController(service: service, debounce: .seconds(60))
+        let vc = makeController(service: service)
 
         // The user types, then a guest update lands and rebuilds the editor before
         // the debounce fires.
@@ -291,7 +295,7 @@ struct ClipboardContentViewControllerEditTests {
     @Test("blur doesn't even ask the transport when the user didn't edit the buffer")
     func blurWithoutAnEditAnnouncesNothing() {
         let service = FakeClipboardService(content: .empty)
-        let vc = makeController(service: service, debounce: .seconds(60))
+        let vc = makeController(service: service)
         _ = vc.view
 
         // Written past the editor and left unannounced, as a passthrough forward
@@ -315,7 +319,7 @@ struct ClipboardContentViewControllerEditTests {
     func blurKeepsAnEditOwedWhileDisconnected() {
         let service = FakeClipboardService(content: .empty)
         service.isConnected = false
-        let vc = makeController(service: service, debounce: .seconds(60))
+        let vc = makeController(service: service)
         _ = vc.view
 
         vc.setEditorTextForTesting("typed before the agent connected")
@@ -333,7 +337,7 @@ struct ClipboardContentViewControllerEditTests {
     @Test("blur publishes a typed edit once however many times focus bounces")
     func blurAnnouncesEachEditOnce() {
         let service = FakeClipboardService(content: .empty)
-        let vc = makeController(service: service, debounce: .seconds(60))
+        let vc = makeController(service: service)
         _ = vc.view
 
         vc.setEditorTextForTesting("first edit")
@@ -358,7 +362,7 @@ struct ClipboardContentViewControllerEditTests {
         let service = FakeClipboardService(content: .empty)
         let committed = AsyncGate()
         service.onChangeForTesting = { committed.notify() }
-        let vc = makeController(service: service, debounce: .milliseconds(1))
+        let vc = makeController(service: service, clock: TestEngineClock())
         _ = vc.view
 
         vc.setEditorTextForTesting("committed off-actor")
@@ -377,7 +381,7 @@ struct ClipboardContentViewControllerEditTests {
         let service = FakeClipboardService(content: .empty)
         let committed = AsyncGate()
         service.onChangeForTesting = { committed.notify() }
-        let vc = makeController(service: service, debounce: .milliseconds(1))
+        let vc = makeController(service: service, clock: TestEngineClock())
         _ = vc.view
 
         vc.setEditorTextForTesting("user edit")
@@ -771,7 +775,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         // shows it too.
         let operation = ClipboardTransferOperation(
             gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
-            now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
+            clock: GatedEngineClock(), reporter: instance.clipboardTransfers)
         instance.clipboardTransfers.publish(
             from: operation,
             .running(
