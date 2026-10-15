@@ -265,39 +265,33 @@ final class AppWindowRegistry {
 
     // MARK: - Presence
 
-    /// Whether any window this registry tracks is on screen, optionally counting
-    /// a miniaturized one as present.
-    func hasTrackedUserWindow(countingMiniaturized: Bool) -> Bool {
-        func onScreen(_ window: NSWindow?) -> Bool {
+    /// Whether any window this registry tracks is on screen, counting a
+    /// miniaturized one as present.
+    var hasTrackedUserWindow: Bool {
+        func isPresent(_ window: NSWindow?) -> Bool {
             guard let window else { return false }
-            return window.isVisible || (countingMiniaturized && window.isMiniaturized)
+            return window.isVisible || window.isMiniaturized
         }
-        if onScreen(libraryWindow) { return true }
-        if displayPlacement.hasWindow(where: { onScreen($0) }) { return true }
-        if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
-        if onScreen(settingsWindow) { return true }
-        if onScreen(configCheckWindow) { return true }
+        if isPresent(libraryWindow) { return true }
+        if displayPlacement.hasWindow(where: { isPresent($0) }) { return true }
+        if clipboardWindows.values.contains(where: { isPresent($0.window) }) { return true }
+        if isPresent(settingsWindow) { return true }
+        if isPresent(configCheckWindow) { return true }
         return false
     }
 
-    /// Whether any user-facing Kernova window is currently on screen, optionally
-    /// counting a miniaturized one as present.
+    /// Whether any user-facing Kernova window is currently on screen, counting
+    /// a miniaturized one as present.
     ///
     /// Does NOT special-case `NSApp.isHidden`, which turns every window's
     /// `isVisible` false without closing one: this answers what is on screen,
     /// and hiding is a term of the residency decision instead — see
     /// ``AppResidencyController/residencyOutcome(hasVisibleUserWindow:isHidden:keepInMenuBar:hasUninterruptibleWork:)``.
-    func hasUserWindow(countingMiniaturized: Bool) -> Bool {
-        if hasTrackedUserWindow(countingMiniaturized: countingMiniaturized) { return true }
+    var hasUserWindow: Bool {
+        if hasTrackedUserWindow { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
         // so a reconcile can't strip the Dock icon while one is the last visible.
-        // `isUntrackedUserPanel` itself always admits a miniaturized panel, so
-        // the parameter is honored here by additionally requiring `isVisible`
-        // when miniaturized windows don't count.
-        func isOnScreenUntrackedPanel(_ window: NSWindow) -> Bool {
-            Self.isUntrackedUserPanel(window) && (countingMiniaturized || window.isVisible)
-        }
-        return NSApp.windows.contains(where: isOnScreenUntrackedPanel)
+        return NSApp.windows.contains(where: Self.isUntrackedUserPanel)
     }
 
     /// Whether `window` is an untracked, AppKit-owned top-level panel whose

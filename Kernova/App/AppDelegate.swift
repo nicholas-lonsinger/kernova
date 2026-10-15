@@ -254,9 +254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool)
         -> Bool
     {
-        // AppKit's visible-window count answers a different question than
-        // `AppResidencyController.reopenPresentation(hasOnScreenUserWindow:)`:
-        // it counts no untracked panel and reads a miniaturized window as absent.
+        // AppKit's flag counts no `NSPanel` — the About panel is one Kernova
+        // counts — and is computed before `handleReopen()` takes the app out
+        // of hiding. Returning `true` lets AppKit deminiaturize a miniaturized
+        // window, which `handleReopen()` counts as present.
         lifecycle.handleReopen()
         return true
     }

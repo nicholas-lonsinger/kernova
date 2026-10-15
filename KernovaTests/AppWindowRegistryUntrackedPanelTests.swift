@@ -4,10 +4,9 @@ import Testing
 @testable import Kernova
 
 /// Unit tests for `AppWindowRegistry.isUntrackedUserPanel(_:)` — the pure
-/// classifier `hasUserWindow(countingMiniaturized:)` uses to count AppKit-owned
-/// top-level panels (the standard About panel) that the registry doesn't
-/// otherwise track, so the Dock icon isn't stripped while one is the last window
-/// on screen.
+/// classifier `hasUserWindow` uses to count AppKit-owned top-level panels (the
+/// standard About panel) that the registry doesn't otherwise track, so the Dock
+/// icon isn't stripped while one is the last window on screen.
 ///
 /// Regression coverage for #437: closing a tracked auxiliary window (a display or
 /// clipboard window) while only the About panel remains visible must not drop the

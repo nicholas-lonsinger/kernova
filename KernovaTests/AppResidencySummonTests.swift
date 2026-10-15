@@ -4,9 +4,15 @@ import Testing
 @testable import Kernova
 
 /// Covers the summon an in-app click runs —
-/// ``AppResidencyController/summonUserInterface()`` — against a
+/// ``AppResidencyController/summonUserInterface()`` — and the reopen leg —
+/// ``AppResidencyController/handleReopen()`` — against a
 /// ``AppResidencyController/ForegroundControl`` that records its calls instead
 /// of hiding, unhiding or activating the test host.
+///
+/// No reopen here asserts a library show: the presence read scans
+/// `NSApp.windows`, which also holds the windows of every test running
+/// alongside this one, so only the no-show outcome is deterministic;
+/// `AppResidencyReopenPresentationTests` pins the decision itself.
 ///
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``,
 /// for the reason `AppResidencyPresentationTests` gives.
@@ -62,6 +68,16 @@ struct AppResidencySummonTests {
                     record(.activate(libraryOnScreen: window?.isVisible == true))
                 })
         }
+    }
+
+    /// Counts the windows the registry puts up, standing in for the residency
+    /// that answers ``WindowResidencyHosting/prepareToPresentWindow()``.
+    private final class PresentationCounter: WindowResidencyHosting {
+        private(set) var count = 0
+        let guiPosture = GUIPosture.foreground
+
+        func prepareToPresentWindow() { count += 1 }
+        func syncActivationPolicy() {}
     }
 
     private func makeController(
@@ -135,5 +151,59 @@ struct AppResidencySummonTests {
 
         #expect(viewModel.selectedID == arrival.id)
         #expect(foreground.steps == [.activate(libraryOnScreen: true)])
+    }
+
+    @Test("A reopen while hidden leaves the hidden state before it decides")
+    func hiddenReopenUnhidesBeforeDeciding() async throws {
+        let foreground = RecordingForeground(isHidden: true)
+        let (controller, registry, _) = makeController(foreground: foreground)
+        registry.showLibrary(bringToFront: true)
+        let library = try #require(registry.libraryWindow)
+        adoptAppWindow(library)
+        // A hidden app's windows read `isVisible == false` until the unhide
+        // brings them back.
+        library.orderOut(nil)
+        foreground.onUnhide = { [foreground] in
+            library.orderFront(nil)
+            Task { @MainActor in foreground.record(.laterJob) }
+        }
+        let presentations = PresentationCounter()
+        registry.residency = presentations
+
+        controller.handleReopen()
+        // The unhide belongs to the deferred decision, never to the call itself.
+        #expect(foreground.steps.isEmpty)
+        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+
+        #expect(foreground.steps == [.unhide, .laterJob])
+        #expect(presentations.count == 0)
+    }
+
+    @Test("A reopen whose only user window is miniaturized shows no library")
+    func miniaturizedWindowOwnsTheReopen() async throws {
+        let foreground = RecordingForeground(isHidden: false)
+        let (controller, registry, _) = makeController(foreground: foreground)
+        registry.showLibrary(bringToFront: true)
+        let library = try #require(registry.libraryWindow)
+        adoptAppWindow(library)
+        // AppKit reports the miniaturize a runloop turn later, through the
+        // notification the wait is driven by.
+        let miniaturized = AsyncGate()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMiniaturizeNotification, object: library, queue: .main
+        ) { _ in miniaturized.notify() }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        library.miniaturize(nil)
+        try await miniaturized.wait { library.isMiniaturized && !library.isVisible }
+        let presentations = PresentationCounter()
+        registry.residency = presentations
+
+        controller.handleReopen()
+        // Enqueued behind the reopen's job, so it records once that job has run.
+        Task { @MainActor in foreground.record(.laterJob) }
+        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+
+        #expect(presentations.count == 0)
+        #expect(foreground.steps == [.laterJob])
     }
 }
