@@ -1,7 +1,7 @@
 import Foundation
 
-/// What this VM's pending guest setup means for the Start control, and for the
-/// verb behind it.
+/// What this VM's pending guest setup means for the Start control, the verb
+/// behind it, and the download it may share with other VMs.
 extension VMInstance {
     /// The flavor of the Start control for this VM: setup-flavored when a macOS
     /// install or a Linux image download is pending, reflecting what Start will
@@ -55,7 +55,7 @@ extension VMInstance {
     /// A Linux catalog pick has no destination until its first resolution names
     /// the file; a URL pick names its own and carries one from the moment the VM
     /// is created.
-    private var pendingSetupDownloadDestination: URL? {
+    var pendingSetupDownloadDestination: URL? {
         switch configuration.pendingGuestSetup {
         case .macOSInstall(let context):
             return context.source.downloadsImage ? context.downloadDestinationURL : nil
@@ -63,6 +63,24 @@ extension VMInstance {
             return context.downloadDestinationURL
         case nil:
             return nil
+        }
+    }
+
+    /// Whether another VM in this VM's library has a pending setup that
+    /// downloads into `destination` — and so may be streaming into, or waiting
+    /// to resume from, the `.kernovadownload` bundle there.
+    ///
+    /// Destinations compare by ``DownloadService/destinationKey(for:)``, the
+    /// identity the download's own claim uses. A VM outside a library has no
+    /// peers, so nothing else targets its destination.
+    func anotherSetupDownloads(into destination: URL) -> Bool {
+        guard let peers else { return false }
+        let key = DownloadService.destinationKey(for: destination)
+        return peers.instances.contains { other in
+            guard other !== self, let theirs = other.pendingSetupDownloadDestination else {
+                return false
+            }
+            return DownloadService.destinationKey(for: theirs) == key
         }
     }
 }

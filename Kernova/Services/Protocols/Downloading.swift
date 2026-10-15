@@ -33,6 +33,8 @@ protocol Downloading: Sendable {
     ///
     /// Safe when no sidecar exists. `permanently` bypasses the Trash, so a
     /// "Delete Immediately" VM delete disposes of the partial download the same
-    /// way.
+    /// way. Consults no other VM: a setup that leaves a destination discards
+    /// through ``VMLifecycleCoordinator/discardSetupResumeData(at:leftBy:permanently:)``,
+    /// which keeps a bundle another VM's setup still downloads into.
     func discardResumeData(at destinationURL: URL, permanently: Bool)
 }

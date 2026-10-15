@@ -664,7 +664,7 @@ struct VMLibraryViewModelTests {
 
         let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
-        let instance = viewModel.library.admitFixture {
+        let instance = viewModel.library.registerFixture {
             $0.installContext = MacOSInstallContext(
                 source: source,
                 downloadDestinationPath: destination.path(percentEncoded: false)
@@ -693,7 +693,7 @@ struct VMLibraryViewModelTests {
 
         let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
-        let instance = viewModel.library.admitFixture {
+        let instance = viewModel.library.registerFixture {
             $0.installContext = MacOSInstallContext(
                 source: .downloadLatest,
                 downloadDestinationPath: destination.path(percentEncoded: false)
@@ -709,6 +709,104 @@ struct VMLibraryViewModelTests {
         #expect(downloadService.lastDiscardResumeDataPermanently == true)
         #expect(storage.permanentlyDeleteVMBundleCallCount == 1)
         #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test(
+        "Deleting one of two VMs whose setups share a destination keeps the bundle",
+        arguments: [false, true]
+    )
+    func deleteVMKeepsSharedResumeData(permanently: Bool) async {
+        // Two VMs installing one build share one destination and one bundle:
+        // the other VM is streaming into it, or will resume from it.
+        let downloadService = MockDownloadService()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
+
+        let directory = scratch.url.appendingPathComponent(UUID().uuidString)
+        let destination = directory.appendingPathComponent("RestoreImage.ipsw")
+        let deleted = viewModel.library.registerFixture(name: "First") {
+            $0.installContext = MacOSInstallContext(
+                source: .downloadLatest,
+                downloadDestinationPath: destination.path(percentEncoded: false))
+        }
+        // Spelled differently, as a hand-edited config might: the download's
+        // own destination key is what decides they are one file.
+        viewModel.library.registerFixture(name: "Second") {
+            $0.installContext = MacOSInstallContext(
+                source: .catalogVersion,
+                downloadDestinationPath: directory.path(percentEncoded: false)
+                    + "/./RestoreImage.ipsw")
+        }
+
+        await viewModel.delete(deleted, permanently: permanently)
+
+        #expect(downloadService.discardResumeDataCallCount == 0)
+        #expect(viewModel.instances.map(\.name) == ["Second"])
+    }
+
+    @Test(
+        "The last of two VMs sharing a setup destination to be deleted discards the bundle",
+        arguments: [false, true]
+    )
+    func deleteLastSharingVMDiscardsResumeData(permanently: Bool) async {
+        let downloadService = MockDownloadService()
+        let (viewModel, _, _, _, _) = makeViewModel(downloadService: downloadService)
+
+        let destination = scratch.url
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("RestoreImage.ipsw")
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false))
+        let first = viewModel.library.registerFixture(name: "First") {
+            $0.installContext = context
+        }
+        let second = viewModel.library.registerFixture(name: "Second") {
+            $0.installContext = context
+        }
+
+        await viewModel.delete(first, permanently: permanently)
+        #expect(downloadService.discardedResumeDataURLs.isEmpty)
+
+        await viewModel.delete(second, permanently: permanently)
+        #expect(downloadService.discardedResumeDataURLs == [destination])
+        #expect(downloadService.lastDiscardResumeDataPermanently == permanently)
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("Deleting a VM discards its bundle when no other VM's setup downloads into it")
+    func deleteVMDiscardsResumeDataNoOtherVMTargets() async {
+        let downloadService = MockDownloadService()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
+
+        let directory = scratch.url.appendingPathComponent(UUID().uuidString)
+        let destination = directory.appendingPathComponent("RestoreImage.ipsw")
+        let deleted = viewModel.library.registerFixture(name: "First") {
+            $0.installContext = MacOSInstallContext(
+                source: .downloadLatest,
+                downloadDestinationPath: destination.path(percentEncoded: false))
+        }
+        viewModel.library.registerFixture(name: "Second") {
+            $0.installContext = MacOSInstallContext(
+                source: .downloadLatest,
+                downloadDestinationPath: directory.appendingPathComponent("Other.ipsw")
+                    .path(percentEncoded: false))
+        }
+        // A local-file install names a destination it never downloads into.
+        viewModel.library.registerFixture(name: "Third") {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile,
+                downloadDestinationPath: destination.path(percentEncoded: false),
+                localIPSWPath: "/tmp/UserPicked.ipsw")
+        }
+
+        await viewModel.delete(deleted)
+
+        #expect(downloadService.discardedResumeDataURLs == [destination])
+        #expect(downloadService.lastDiscardResumeDataPermanently == false)
     }
 
     @Test("deleteVM leaves resume-data alone for a local-file install")
@@ -4098,6 +4196,20 @@ struct VMLibraryViewModelTests {
         await viewModel.delete(instance, permanently: true)
 
         #expect(downloadService.lastDiscardResumeDataPermanently == true)
+    }
+
+    @Test("Deleting one of two Linux VMs downloading one image keeps the bundle")
+    func deleteKeepsSharedLinuxResumeData() async {
+        let downloadService = MockDownloadService()
+        let (viewModel, _, _, _, _) = makeViewModel(downloadService: downloadService)
+        let destination = "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
+        let deleted = makePendingLinuxVM(in: viewModel, destinationPath: destination)
+        let other = makePendingLinuxVM(in: viewModel, destinationPath: destination)
+
+        await viewModel.delete(deleted)
+
+        #expect(downloadService.discardResumeDataCallCount == 0)
+        #expect(viewModel.instances.map(\.id) == [other.id])
     }
 
     @Test("A Linux context with no destination yet has no bundle to discard")

@@ -504,6 +504,39 @@ struct VMLifecycleCoordinatorTests {
         #expect(downloadService.lastDiscardResumeDataPermanently == false)
     }
 
+    @Test("A latest destination that moved keeps the old bundle while another VM's setup targets it")
+    func installMacOSLatestKeepsSharedResumeDataOnAMove() async {
+        // The other VM's setup still downloads into the old path — streaming
+        // into its bundle, or waiting to resume from it — so the move abandons
+        // the old path for this VM only.
+        // Read on the failure path: a successful install clears the context.
+        let downloads = scratch.url
+            .appendingPathComponent("latestSharedMove", isDirectory: true)
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(
+            downloadsDirectory: downloads)
+        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: persisted.path(percentEncoded: false)
+        )
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture(name: "Moving") { $0.installContext = context }
+        library.registerFixture(name: "Staying") { $0.installContext = context }
+        defer { withExtendedLifetime(library) {} }
+
+        await #expect(throws: DownloadError.self) {
+            try await coordinator.launchGuestSetup(on: instance).value()
+        }
+
+        let expected = downloads.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
+        #expect(
+            instance.configuration.installContext?.downloadDestinationPath
+                == expected.path(percentEncoded: false))
+        #expect(downloadService.discardResumeDataCallCount == 0)
+    }
+
     @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
     func installMacOSCatalogUsesPinnedURL() async throws {
         let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator()
@@ -1338,6 +1371,25 @@ struct VMLifecycleCoordinatorTests {
         // The partial at the abandoned path can never be resumed, so it goes
         // before the only pointer to it moves.
         #expect(fixture.downloadService.discardedResumeDataURLs == [stale])
+    }
+
+    @Test("A moved Linux resolution keeps the old bundle while another VM's setup targets it")
+    func downloadLinuxImageKeepsSharedResumeDataOnAMove() async throws {
+        let fixture = try makeLinuxFixture()
+        // A resolution since superseded by the mirror's rename.
+        let previous = fixture.downloads.appendingPathComponent("debian-previous.iso")
+        let context = LinuxInstallContext(
+            source: .catalogEntry(makeLinuxCatalogEntry()),
+            downloadDestinationPath: previous.path(percentEncoded: false))
+        let instance = makeLinuxInstance(context: context, in: fixture)
+        _ = makeLinuxInstance(context: context, in: fixture)
+
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+
+        let expected = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.destinationFilename)
+        #expect(fixture.downloadService.lastDownloadDestinationURL == expected)
+        #expect(fixture.downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("linuxDownloadDestination names the file inside Downloads, never from the persisted path")
