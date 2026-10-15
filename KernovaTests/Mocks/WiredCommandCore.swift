@@ -26,7 +26,6 @@ final class WiredCommandCore {
 
     let diskImages: MockDiskImageService
     let removableMedia: MockRemovableMediaDeviceService
-    let liveShares: MockLiveDirectorySharing
     /// The accessory service the harness was given, if any.
     let usbAccessories: MockUSBAccessoryService?
 
@@ -60,7 +59,6 @@ final class WiredCommandCore {
         diskImages: MockDiskImageService = MockDiskImageService(),
         usbAccessoryService: MockUSBAccessoryService? = nil,
         removableMedia: MockRemovableMediaDeviceService = MockRemovableMediaDeviceService(),
-        liveShares: MockLiveDirectorySharing = MockLiveDirectorySharing(),
         storage: MockVMStorageService = MockVMStorageService(),
         fileSystem: MockFileSystem = MockFileSystem(),
         entitlements: EntitlementService = .entitled,
@@ -77,7 +75,6 @@ final class WiredCommandCore {
             virtualization: virtualization,
             installService: installService,
             removableMedia: removableMedia,
-            liveDirectorySharing: liveShares,
             usbAccessoryService: usbAccessoryService,
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
@@ -117,7 +114,6 @@ final class WiredCommandCore {
         self.usbAccessories = usbAccessoryService
         self.diskImages = diskImages
         self.removableMedia = removableMedia
-        self.liveShares = liveShares
 
         let pairingCoordinator = USBAccessoryCoordinator(lifecycle: lifecycle, library: library)
         core.usbAccessoryPairings = pairingCoordinator

@@ -836,19 +836,20 @@ extension VMCommandCore {
     /// the VM's own. The completed image at `downloadDestinationPath` lives at a
     /// user-known path and is left alone.
     private func cleanupSetupResumeData(for instance: VMInstance, permanently: Bool) {
+        let destinationURL: URL
         if let context = instance.configuration.installContext,
             context.source.downloadsImage,
-            let destinationURL = context.downloadDestinationURL
+            let macOSDestination = context.downloadDestinationURL
         {
-            lifecycle.ipswService.discardResumeData(at: destinationURL, permanently: permanently)
-        } else if let destinationURL = instance.configuration.linuxInstallContext?
+            destinationURL = macOSDestination
+        } else if let linuxDestination = instance.configuration.linuxInstallContext?
             .downloadDestinationURL
         {
-            lifecycle.downloadService.discardResumeData(
-                at: destinationURL, permanently: permanently)
+            destinationURL = linuxDestination
         } else {
             return
         }
+        lifecycle.downloadService.discardResumeData(at: destinationURL, permanently: permanently)
         #log(
             Self.logger, .notice,
             "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"

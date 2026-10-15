@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     init(copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>) {
         self.copyClaim = copyClaim
-        let entitlements = EntitlementService(reader: ProcessEntitlementReader())
+        let entitlements = EntitlementService.readFromProcess()
         let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),

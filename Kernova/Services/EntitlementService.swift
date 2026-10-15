@@ -2,39 +2,6 @@ import Foundation
 import KernovaLogging
 import Security
 
-/// Reads entitlement values from a process's code signature, abstracted so
-/// tests can inject a fake in place of the Security framework.
-protocol EntitlementReading: Sendable {
-    /// Whether the signature claims `key` with a boolean `true` value.
-    func hasEntitlement(_ key: String) -> Bool
-}
-
-/// The real reader, answering from this process's own signature via
-/// `SecTaskCopyValueForEntitlement`.
-struct ProcessEntitlementReader: EntitlementReading {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ProcessEntitlementReader")
-
-    func hasEntitlement(_ key: String) -> Bool {
-        guard let task = SecTaskCreateFromSelf(nil) else {
-            #log(
-                Self.logger, .fault,
-                "SecTaskCreateFromSelf returned nil — treating entitlement '\(key, privacy: .public)' as absent"
-            )
-            assertionFailure("SecTaskCreateFromSelf returned nil")
-            return false
-        }
-        var error: Unmanaged<CFError>?
-        let value = SecTaskCopyValueForEntitlement(task, key as CFString, &error)
-        if let error = error?.takeRetainedValue() {
-            #log(
-                Self.logger, .warning,
-                "Entitlement query for '\(key, privacy: .public)' failed — treating as absent: \(String(describing: error), privacy: .public)"
-            )
-        }
-        return (value as? Bool) == true
-    }
-}
-
 /// Answers what this build's signature authorizes, so feature UI can degrade
 /// gracefully in builds signed without a restricted entitlement.
 ///
@@ -82,13 +49,6 @@ struct EntitlementService: Sendable {
         if #available(macOS 27.0, *) { hasTopologyObservation } else { true }
     }
 
-    init(reader: any EntitlementReading) {
-        hasVMNetworking = reader.hasEntitlement("com.apple.vm.networking")
-        hasAccessoryAccess = reader.hasEntitlement("com.apple.developer.accessory-access.usb")
-        hasTopologyObservation = reader.hasEntitlement(
-            "com.apple.developer.networking.topology-observation")
-    }
-
     /// The attachment that realizes `network` in this build, `nil` when this
     /// build cannot attach it — the one mapping every path that builds,
     /// recovers, observes, refuses or offers a network reads.
@@ -111,6 +71,43 @@ struct EntitlementService: Sendable {
     /// Whether this build can attach a guest to `network`.
     func canAttach(_ network: VMJoinedNetwork) -> Bool {
         realization(of: network) != nil
+    }
+}
+
+// MARK: - Reading the Signature
+
+extension EntitlementService {
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "EntitlementService")
+
+    /// What this process's own signature authorizes.
+    static func readFromProcess() -> EntitlementService {
+        EntitlementService(
+            hasVMNetworking: processClaims("com.apple.vm.networking"),
+            hasAccessoryAccess: processClaims("com.apple.developer.accessory-access.usb"),
+            hasTopologyObservation: processClaims(
+                "com.apple.developer.networking.topology-observation"))
+    }
+
+    /// Whether this process's signature claims `key` with a boolean `true`
+    /// value, via `SecTaskCopyValueForEntitlement`.
+    static func processClaims(_ key: String) -> Bool {
+        guard let task = SecTaskCreateFromSelf(nil) else {
+            #log(
+                logger, .fault,
+                "SecTaskCreateFromSelf returned nil — treating entitlement '\(key, privacy: .public)' as absent"
+            )
+            assertionFailure("SecTaskCreateFromSelf returned nil")
+            return false
+        }
+        var error: Unmanaged<CFError>?
+        let value = SecTaskCopyValueForEntitlement(task, key as CFString, &error)
+        if let error = error?.takeRetainedValue() {
+            #log(
+                logger, .warning,
+                "Entitlement query for '\(key, privacy: .public)' failed — treating as absent: \(String(describing: error), privacy: .public)"
+            )
+        }
+        return (value as? Bool) == true
     }
 }
 
