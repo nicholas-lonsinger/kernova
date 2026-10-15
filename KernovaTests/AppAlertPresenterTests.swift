@@ -35,10 +35,13 @@ struct AppAlertPresenterTests {
         let viewModel: VMLibraryViewModel
         let registry: AppWindowRegistry
         let presenter: AppAlertPresenter
+        let storage = MockVMStorageService()
+        let fileSystem = MockFileSystem()
         private var adopted = false
 
         init(preferences: AppPreferences) {
-            viewModel = makeLibraryViewModel(preferences: preferences)
+            viewModel = makeLibraryViewModel(
+                preferences: preferences, storageService: storage, fileSystem: fileSystem)
             registry = makeWindowRegistry(viewModel)
             presenter = AppAlertPresenter(viewModel: viewModel, windows: registry)
         }
@@ -113,15 +116,14 @@ struct AppAlertPresenterTests {
         // ⌘⌫ (Trash) starts the in-flight delete; ⌥⌘⌫ (Immediate) fires before
         // the first resolves and folds in — one sheet, latest gesture wins.
         presenter.presentDeleteSheet(for: vmA, permanently: false)
-        let task = presenter.deleteResolutionTaskForTesting
+        let task = presenter.deleteResolutionForTesting(of: vmA.id)
         presenter.presentDeleteSheet(for: vmA, permanently: true)
         await task?.value
 
         #expect(presenter.waitingCountForTesting == 1)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
-        // The show step reads `pendingDelete` directly, so this is the disposition
-        // the sheet would carry — the immediate request is not downgraded to Trash.
-        #expect(presenter.pendingDeletePermanentlyForTesting == true)
+        // The show reads the disposition then, so this is what the sheet would
+        // carry — the immediate request is not downgraded to Trash.
+        #expect(presenter.deleteDispositionsForTesting == [vmA.id: true])
     }
 
     @Test("⌥⌘⌫ then ⌘⌫ on one VM downgrades to Trash (last gesture wins both ways)")
@@ -131,124 +133,85 @@ struct AppAlertPresenterTests {
         let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA, permanently: true)
-        let task = presenter.deleteResolutionTaskForTesting
+        let task = presenter.deleteResolutionForTesting(of: vmA.id)
         presenter.presentDeleteSheet(for: vmA, permanently: false)
         await task?.value
 
         #expect(presenter.waitingCountForTesting == 1)
         // Last wins is symmetric: a later plain ⌘⌫ backs off bypass-Trash.
-        #expect(presenter.pendingDeletePermanentlyForTesting == false)
+        #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
     }
 
-    // MARK: - Single in flight + different-VM retarget (#364)
+    // MARK: - One delete per VM
 
-    @Test("A different-VM request during the resolve retargets the in-flight sheet")
-    func differentVMRetargets() async {
+    @Test("A delete for a second VM is a sheet of its own, with its own disposition")
+    func eachVMHasItsOwnDelete() async {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         let vmA = makeInstance(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
 
-        // vmA starts the in-flight delete; a vmB request before it resolves wins
-        // (last gesture) — still a single sheet, now targeting vmB (#364).
-        presenter.presentDeleteSheet(for: vmA)
-        let task = presenter.deleteResolutionTaskForTesting
-        presenter.presentDeleteSheet(for: vmB)
-        await task?.value
-
-        #expect(presenter.waitingCountForTesting == 1)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
-    }
-
-    @Test("Retargeting to a different VM carries that VM's own disposition")
-    func retargetCarriesNewVMMode() async {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        let vmA = makeInstance(name: "A", in: viewModel)
-        let vmB = makeInstance(name: "B", in: viewModel)
-
-        // The request is a single {instance, permanently} unit, so retargeting
-        // swaps both — vmA's Immediate intent does not leak onto vmB's Trash.
         presenter.presentDeleteSheet(for: vmA, permanently: true)
-        let task = presenter.deleteResolutionTaskForTesting
         presenter.presentDeleteSheet(for: vmB, permanently: false)
-        await task?.value
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
+        await presenter.deleteResolutionForTesting(of: vmB.id)?.value
 
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
-        #expect(presenter.pendingDeletePermanentlyForTesting == false)
-    }
-
-    @Test("A retarget after the resolve is re-resolved for the new VM before its sheet shows")
-    func retargetAfterResolveReResolvesAtShow() async throws {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        let vmA = makeInstanceWithExternalDisk(name: "A", in: viewModel)
-        let vmB = makeInstance(name: "B", in: viewModel)
-
-        // No window yet, so vmA's resolved show waits in the queue.
-        presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
-        #expect(presenter.waitingCountForTesting == 1)
-        presenter.presentDeleteSheet(for: vmB)
-        let shownBefore = presenter.deleteSheetTokenForTesting
-
-        // The show finds vmA's externals under a vmB request: it shows nothing
-        // and resolves again, and only that resolve's show puts the sheet up.
-        h.showLibrary()
-        #expect(presenter.deleteSheetTokenForTesting == shownBefore)
-        let reResolve = try #require(presenter.deleteResolutionTaskForTesting)
-        await reResolve.value
-
-        #expect(presenter.deleteSheetTokenForTesting == shownBefore + 1)
-        #expect(presenter.waitingCountForTesting == 0)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
+        // No window, so both wait — neither retargets nor drops the other.
+        #expect(presenter.waitingCountForTesting == 2)
+        #expect(presenter.deleteDispositionsForTesting == [vmA.id: true, vmB.id: false])
     }
 
     // MARK: - Shown sheet is authoritative (no silent drop)
 
-    @Test("A delete gesture while the sheet is shown is ignored, not dropped")
-    func ignoreWhileSheetShown() async {
+    @Test("A gesture for the VM whose delete sheet is up is ignored; another VM's waits its turn")
+    func shownSheetIgnoresItsVMAndQueuesAnother() async {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         h.showLibrary()
         let vmA = makeInstance(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
 
-        // With a window, the resolved delete actually shows a sheet.
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
         #expect(presenter.waitingCountForTesting == 0)  // drained → shown, not queued
 
-        // A different-VM gesture while that sheet is on screen is ignored (the
-        // modal sheet is authoritative), NOT coalesced into the in-flight request
-        // and then silently dropped when the shown sheet closes.
+        // The modal sheet is authoritative: a repeat gesture cannot change it.
+        presenter.presentDeleteSheet(for: vmA, permanently: true)
+        #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
+
         presenter.presentDeleteSheet(for: vmB)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+        await presenter.deleteResolutionForTesting(of: vmB.id)?.value
+        #expect(presenter.waitingCountForTesting == 1)
+
+        #expect(h.dismissShownAlert(.cancel))
+
+        #expect(h.isShowingAlert)
+        #expect(presenter.waitingCountForTesting == 0)
+        #expect(presenter.deleteDispositionsForTesting == [vmB.id: false])
     }
 
-    @Test("A delete after teardown during a shown sheet is accepted, not blocked")
-    func deleteAcceptedAfterStopDuringShownSheet() async {
+    @Test("A delete after the window under a shown sheet closed is accepted, not blocked")
+    func deleteAcceptedAfterTheWindowUnderTheSheetCloses() async {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         h.showLibrary()
         let vmA = makeInstance(name: "A", in: viewModel)
-        let vmB = makeInstance(name: "B", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value  // vmA's sheet is shown
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value  // vmA's sheet is shown
 
-        // The window closing must clear the shown-sheet state synchronously;
-        // otherwise the ignore guard would still see the shown delete and reject
-        // the next one after the window reappears.
+        // The window closing must end the shown delete synchronously;
+        // otherwise the next gesture for the VM would find it still on screen.
         h.closeLibrary()
         h.showLibrary()
-        presenter.presentDeleteSheet(for: vmB)
-        await presenter.deleteResolutionTaskForTesting?.value
+        presenter.presentDeleteSheet(for: vmA)
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
 
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
-        // The close took the prior sheet down with it, so vmB's sheet goes up
-        // at once rather than waiting.
+        #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
+        // The close took the prior sheet down with it, so the new sheet goes
+        // up at once rather than waiting.
         #expect(presenter.waitingCountForTesting == 0)
+        #expect(h.isShowingAlert)
     }
 
     // MARK: - Teardown
@@ -260,19 +223,14 @@ struct AppAlertPresenterTests {
         h.showLibrary()
         let vmA = makeInstance(name: "A", in: viewModel)
         presenter.presentDeleteSheet(for: vmA, permanently: true)
-        await presenter.deleteResolutionTaskForTesting?.value
-        let shownToken = presenter.deleteSheetTokenForTesting
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
         #expect(h.isShowingAlert)
 
         h.closeLibrary()
 
         #expect(presenter.waitingCountForTesting == 0)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == nil)
-        // Both halves of the request are cleared symmetrically (no latched mode).
-        #expect(presenter.pendingDeletePermanentlyForTesting == nil)
-        #expect(presenter.deleteResolutionTaskForTesting == nil)
-        // The token moved on, so the closed sheet's late close is stale.
-        #expect(presenter.deleteSheetTokenForTesting == shownToken + 1)
+        #expect(presenter.deleteDispositionsForTesting.isEmpty)
+        #expect(presenter.deleteResolutionForTesting(of: vmA.id) == nil)
     }
 
     @Test("A new delete is accepted after the window under the sheet closes")
@@ -282,47 +240,15 @@ struct AppAlertPresenterTests {
         h.showLibrary()
         let vmA = makeInstance(name: "A", in: viewModel)
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
         h.closeLibrary()
 
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
+        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
 
         // No window to show it on, so it waits.
         #expect(presenter.waitingCountForTesting == 1)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
-    }
-
-    // MARK: - Close-handler token guard (#362 same-VM clobber)
-
-    @Test("A close with the current token clears the in-flight delete")
-    func currentTokenCloseClears() async {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        let vmA = makeInstance(name: "A", in: viewModel)
-
-        presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
-
-        // The shown sheet's onClose carries the current token — it clears.
-        presenter.handleDeleteSheetClosedForTesting(token: presenter.deleteSheetTokenForTesting)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == nil)
-    }
-
-    @Test("A stale-token close does NOT clobber a newer delete (#362)")
-    func staleTokenCloseDoesNotClobber() async {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        let vmA = makeInstance(name: "A", in: viewModel)
-
-        presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
-
-        // A stale sheet's late close (older token, e.g. after a stop()/start()
-        // bumped the token) must not clear the newer in-flight delete — even for
-        // the same VM, which an id-keyed guard could not distinguish.
-        presenter.handleDeleteSheetClosedForTesting(token: presenter.deleteSheetTokenForTesting - 1)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+        #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
     }
 
     // MARK: - Real off-main resolve path (#366)
@@ -337,13 +263,37 @@ struct AppAlertPresenterTests {
         // off-main `FileManager.fileExists` probe (not the synchronous []-return
         // path the other tests take).
         presenter.presentDeleteSheet(for: vm, permanently: false)
-        let task = presenter.deleteResolutionTaskForTesting
+        let task = presenter.deleteResolutionForTesting(of: vm.id)
         presenter.presentDeleteSheet(for: vm, permanently: true)
         await task?.value
 
         #expect(presenter.waitingCountForTesting == 1)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vm.id)
-        #expect(presenter.pendingDeletePermanentlyForTesting == true)
+        #expect(presenter.deleteDispositionsForTesting == [vm.id: true])
+    }
+
+    // MARK: - Files a delete kept
+
+    @Test("A delete whose kept file can't be trashed shows the files-kept report on the library window")
+    func filesKeptReportShowsOnTheLibrary() async {
+        let h = makeHarness()
+        h.viewModel.presenter = h.presenter
+        let library = h.showLibrary()
+        h.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let lockedID = UUID()
+        let vm = h.viewModel.library.admitFixture(name: "Leaving") {
+            $0.removableMedia = [
+                RemovableMediaItem(
+                    id: lockedID, path: "/tmp/kernova-locked-\(UUID().uuidString).iso", readOnly: true)
+            ]
+        }
+        h.storage.bundles[vm.bundleURL] = vm.configuration
+
+        await h.viewModel.delete(vm, deletingExternalIDs: [lockedID])
+
+        // The report is raised about the VM after it left the library, so it
+        // goes up as one about no VM rather than being dropped for its absence.
+        #expect(h.viewModel.instances.isEmpty)
+        #expect(sheetText(on: library).contains("Couldn\u{2019}t Move a File to the Trash"))
     }
 
     // MARK: - Snapshots
@@ -361,6 +311,29 @@ struct AppAlertPresenterTests {
         presenter.presentTakeSnapshotSheet(for: vm, purpose: .restorePoint)
 
         #expect(presenter.waitingCountForTesting == 1)
+    }
+
+    @Test("Take Snapshot from a VM's display window shows while another VM's sheet is up on the library")
+    func takeSnapshotSheetsForTwoVMsCoexist() throws {
+        let h = makeHarness()
+        let library = h.showLibrary()
+        let vmX = makeRunningInstance(name: "Popped", in: h.viewModel)
+        let display = try showDisplayWindow(for: vmX, in: h)
+        let vmY = makeInstance(name: "Listed", in: h.viewModel)
+        #expect(vmY.snapshotCaptureMode != nil)
+        h.presenter.presentTakeSnapshotSheet(for: vmY, purpose: .restorePoint)
+        let ySheet = try #require(library.attachedSheet)
+
+        h.presenter.presentTakeSnapshotSheet(for: vmX, purpose: .restorePoint)
+
+        let xSheet = try #require(display.attachedSheet)
+        #expect(library.attachedSheet === ySheet)
+        #expect(h.presenter.waitingCountForTesting == 0)
+
+        // A second gesture for a VM whose sheet is up is still ignored.
+        h.presenter.presentTakeSnapshotSheet(for: vmX, purpose: .restorePoint)
+        #expect(display.attachedSheet === xSheet)
+        #expect(h.presenter.waitingCountForTesting == 0)
     }
 
     @Test("The revert alert on a suspended VM names the suspended session it replaces")
@@ -1299,11 +1272,14 @@ struct AppAlertPresenterTests {
         return window
     }
 
-    /// Every label on the sheet attached to `window` — an alert's title and
-    /// message among them.
+    /// Every label and button title on the sheet attached to `window` — an
+    /// alert's title, message, and buttons among them.
     private func sheetText(on window: NSWindow) -> [String] {
         func labels(in view: NSView) -> [String] {
-            ((view as? NSTextField).map { [$0.stringValue] } ?? []) + view.subviews.flatMap(labels(in:))
+            let own =
+                (view as? NSTextField).map { [$0.stringValue] }
+                ?? (view as? NSButton).map { [$0.title] } ?? []
+            return own + view.subviews.flatMap(labels(in:))
         }
         return window.attachedSheet?.contentView.map(labels(in:)) ?? []
     }
@@ -1509,5 +1485,78 @@ struct AppAlertPresenterTests {
 
         #expect(sheetText(on: library).contains("Waiting Notice"))
         #expect(h.presenter.waitingCountForTesting == 0)
+    }
+
+    // MARK: - Where a held alert shows
+
+    /// Answers the placement controller with a fixed posture, standing in for
+    /// the residency controller that reads the live one.
+    private final class StubResidency: WindowResidencyHosting {
+        let guiPosture: GUIPosture
+
+        init(posture: GUIPosture) { guiPosture = posture }
+
+        func prepareToPresentWindow() {}
+        func syncActivationPolicy() {}
+    }
+
+    @Test("A held removal offer, shown when the library window appears, still offers the removal and runs it")
+    func heldRemovalOfferKeepsItsRecovery() async throws {
+        let h = makeHarness()
+        let item = RemovableMediaItem(path: "/tmp/stale-\(UUID().uuidString).iso", readOnly: true, label: "Stale ISO")
+        let vm = h.viewModel.library.admitFixture(name: "Stale") { $0.removableMedia = [item] }
+        let failure = StartFailedAttachment(
+            verb: .start, kind: .removableMedia, reason: .notFound, id: item.id, label: "Stale ISO",
+            message: "The file isn\u{2019}t there.")
+
+        h.presenter.presentStartFailedAttachment(failure, for: vm)
+        #expect(h.presenter.held.alerts == [.startReport(vmIDs: [vm.id])])
+
+        let library = h.showLibrary()
+
+        #expect(sheetText(on: library).contains("Remove and Start"))
+        #expect(h.presenter.held.alerts.isEmpty)
+        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+        try await waitForChange { vm.configuration.removableMedia?.isEmpty ?? true }
+        try await vm.waitUntilIdle()
+    }
+
+    @Test("A held alert about a VM is shown when its display window is readied behind")
+    func heldAlertShowsOnADisplayWindowReadiedBehind() throws {
+        let h = makeHarness()
+        let residency = StubResidency(posture: .background)
+        h.registry.residency = residency
+        let vm = h.viewModel.library.admitFixture(
+            name: "Readied", phase: .running(sessionID: UUID()),
+            hostState: VMHostState(displayPreference: .popOut))
+        h.presenter.presentError("A notice.", title: "VM Notice", about: .vm(vm))
+        #expect(h.presenter.held.alerts == [.other(vmID: vm.id)])
+
+        h.registry.displayPlacement.readyDisplay(for: vm, presence: .unattended)
+
+        let display = try #require(h.registry.displayPlacement.window(for: vm.id))
+        adoptAppWindow(display)
+        #expect(sheetText(on: display).contains("VM Notice"))
+        #expect(h.presenter.held.alerts.isEmpty)
+        withExtendedLifetime(residency) {}
+    }
+
+    @Test("Closing the library window under the creation wizard holds the alert waiting behind it")
+    func closingTheLibraryUnderTheWizardHoldsItsAlert() throws {
+        let h = makeHarness()
+        let library = h.showLibrary()
+        let detail = try #require(h.registry.libraryDetailContainer)
+        detail.presentCreationWizard()
+        #expect(library.attachedSheet != nil)
+        h.presenter.presentError("Later.", title: "Library Notice", about: .library)
+        #expect(h.presenter.waitingCountForTesting == 1)
+
+        h.closeLibrary()
+
+        // The wizard ending under the closing window frees it while it still
+        // reads as visible; the alert must not go up on it.
+        #expect(!sheetText(on: library).contains("Library Notice"))
+        #expect(h.presenter.waitingCountForTesting == 1)
+        #expect(h.presenter.held.alerts == [.other(vmID: nil)])
     }
 }

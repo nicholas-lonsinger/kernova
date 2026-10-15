@@ -50,7 +50,7 @@ struct AppWindowRegistryWorkingWindowTests {
         // sheet.
         let scene = fixture.registry.alertScene(keyWindow: sheet, mainWindow: nil)
         #expect(scene.working.first?.window === clipboard)
-        #expect(scene.working.first?.vmID == instance.id)
+        #expect(scene.working.first?.vmIDs == [instance.id])
     }
 
     @Test("The library window answers for its selection while it is key")

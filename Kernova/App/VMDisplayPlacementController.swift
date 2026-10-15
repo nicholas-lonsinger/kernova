@@ -8,8 +8,8 @@ protocol VMDisplayPlacementHosting: AnyObject {
     /// The screen the library window is on, or nil when it has none.
     var libraryScreen: NSScreen? { get }
     func showLibrary(bringToFront: Bool)
-    /// A display window was put on screen.
-    func displayWindowShown()
+    /// `window`, a display window, was put on screen.
+    func displayWindowShown(_ window: NSWindow)
 }
 
 /// The one owner of where each VM's display lives.
@@ -295,7 +295,7 @@ final class VMDisplayPlacementController {
             case .front: existing.window?.makeKeyAndOrderFront(nil)
             case .behind: existing.window?.orderFront(nil)
             }
-            host?.displayWindowShown()
+            if let window = existing.window { host?.displayWindowShown(window) }
             return
         }
         residency?.prepareToPresentWindow()
@@ -346,7 +346,7 @@ final class VMDisplayPlacementController {
         case .front: controller.showWindow(nil)
         case .behind: controller.showWindowBehind()
         }
-        host?.displayWindowShown()
+        if let window = controller.window { host?.displayWindowShown(window) }
     }
 
     /// The best screen for entering fullscreen: the display the VM was last

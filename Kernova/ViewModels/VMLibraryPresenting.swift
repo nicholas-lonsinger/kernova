@@ -168,7 +168,9 @@ struct StepRouteRequest {
 /// waits on is answered unasked instead, as each method says.
 @MainActor
 protocol VMLibraryPresenting: AnyObject {
-    /// Show an error alert about `subject`, headed `title` with `message`.
+    /// Show an error alert about `subject`, headed `title` with `message` —
+    /// as one about no VM when `subject` names a VM the library no longer
+    /// lists, such as the one a delete just removed.
     func presentError(_ message: String, title: String, about subject: AlertSubject)
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.

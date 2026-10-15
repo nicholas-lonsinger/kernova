@@ -28,8 +28,8 @@ extension AlertWindowState {
 struct AlertWindowScene<Window: Hashable> {
     /// The window the user is working in: the key window, then the main
     /// window, each answering through the window a sheet on it is attached to,
-    /// with the VM each shows (``AppWindowRegistry/instance(shownIn:)``).
-    var working: [(window: Window, vmID: UUID?)]
+    /// with the VMs each can act on (``AppWindowRegistry/vmIDs(actedOnIn:)``).
+    var working: [(window: Window, vmIDs: Set<UUID>)]
     /// Each VM's display window — one exists only while the display is popped
     /// out or full screen.
     var displayWindows: [UUID: Window]
@@ -43,11 +43,11 @@ struct AlertWindowScene<Window: Hashable> {
     /// the alert is held.
     ///
     /// An alert about a VM goes where the user is working with it: the working
-    /// window when it shows that VM, else the VM's display window, else the
-    /// library window. An alert about no VM goes to the library window.
+    /// window when it can act on that VM, else the VM's display window, else
+    /// the library window. An alert about no VM goes to the library window.
     func destination(about vmID: UUID?) -> Window? {
         if let vmID {
-            if let working = working.first(where: { $0.vmID == vmID && canTake($0.window) }) {
+            if let working = working.first(where: { $0.vmIDs.contains(vmID) && canTake($0.window) }) {
                 return working.window
             }
             if let display = displayWindows[vmID], canTake(display) { return display }

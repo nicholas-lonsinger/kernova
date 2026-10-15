@@ -129,8 +129,7 @@ final class AppAlertPresenter {
         case startFailedAttachment(StartFailedAttachment, VMInstance)
         case startFailure(title: String, message: String, VMInstance)
         case startSummary(title: String, undone: [VMGroupActionResult])
-        /// The delete sheet for the in-flight ``pendingDelete``.
-        case deleteSheet
+        case deleteSheet(DeleteRequest)
         case takeSnapshot(VMInstance, TakeSnapshotPurpose)
         case revertSnapshot(VMSnapshot, VMInstance)
         case deleteSnapshot(VMSnapshot, VMInstance)
@@ -159,11 +158,15 @@ final class AppAlertPresenter {
 
     private enum Occupant {
         case alert(ShownAlert)
-        case deleteSheet
-        case snapshotSheet
+        case deleteSheet(DeleteRequest)
+        case snapshotSheet(SnapshotSheet)
 
         var alert: ShownAlert? {
             if case .alert(let shown) = self { shown } else { nil }
+        }
+
+        var snapshotSheet: SnapshotSheet? {
+            if case .snapshotSheet(let sheet) = self { sheet } else { nil }
         }
     }
 
@@ -203,53 +206,51 @@ final class AppAlertPresenter {
     }
 
     private var slots: [ObjectIdentifier: WindowSlot] = [:]
-    /// The windows whose close is being handled: still visible until the close
-    /// finishes, and a target for nothing.
-    private var closingWindows: Set<ObjectIdentifier> = []
     private var observers: [(center: NotificationCenter, token: any NSObjectProtocol)] = []
 
     // MARK: - Sheets
 
-    private let deleteSheetPresenter = SheetPresenter()
-    /// The Take Snapshot sheet's slot, and the VM the shown one names; `nil`
-    /// when no sheet is on screen.
-    private let snapshotSheetPresenter = SheetPresenter()
-    private var shownSnapshotInstance: VMInstance?
-    /// Keeps the shown Take Snapshot sheet's copy on the kind its VM would
-    /// capture *now*, which a guest finishing its shutdown moves while the
-    /// sheet is up; cancelled when the sheet closes.
-    private var snapshotSheetKindObservation: ObservationLoop?
-    /// A requested VM deletion (target + disposition).
-    private struct PendingDelete {
+    /// One VM's Take Snapshot sheet while it is on screen, with a sheet
+    /// presenter of its own, so sheets for two VMs on two windows stand side
+    /// by side.
+    @MainActor
+    private final class SnapshotSheet {
         let instance: VMInstance
-        let permanently: Bool
+        let presenter = SheetPresenter()
+        /// Keeps the sheet's copy on the kind its VM would capture *now*, which
+        /// a guest finishing its shutdown moves while the sheet is up;
+        /// cancelled when the sheet closes.
+        var kindObservation: ObservationLoop?
+
+        init(instance: VMInstance) { self.instance = instance }
     }
-    /// The request the *shown* delete sheet is presenting, read by the sheet's
-    /// confirm callback; `nil` when no sheet is on screen.
+
+    /// One VM's delete, from the gesture to its sheet's close — resolving its
+    /// external files off-main, waiting for its window, or shown.
     ///
-    /// Frozen as a single value at show time so the displayed sheet and the
-    /// confirm disposition can never disagree. Distinct from ``pendingDelete``:
-    /// a stale-token close clears this but preserves the in-flight
-    /// ``pendingDelete``.
-    private var shownDelete: PendingDelete?
-    /// The latest in-flight delete request — resolving externals off-main,
-    /// waiting, or shown — used to de-dup and to let the latest gesture win.
-    ///
-    /// A repeat request updates this last-wins, and the show step reads it as the
-    /// single source of truth, so the sheet reflects the latest request *up until
-    /// it is shown*. Once on screen the displayed sheet is authoritative — a later
-    /// gesture can't silently change a visible modal sheet.
-    private var pendingDelete: PendingDelete?
-    /// Externals resolved off-main for the delete sheet, tagged with the VM they
-    /// belong to, and re-resolved if `pendingDelete` retargets to a different VM
-    /// before the sheet is shown.
-    private var resolvedDelete: (instanceID: UUID, externals: [ExternalAttachment])?
-    /// Identifies the currently-shown delete sheet so a stale sheet's late async
-    /// `onClose` can't clear state belonging to a newer sheet — even for the
-    /// same VM.
-    private var deleteSheetToken = 0
-    /// The off-main external-resolution task.
-    private var deleteResolutionTask: Task<Void, Never>?
+    /// A repeat gesture for the same VM sets ``permanently`` until the sheet is
+    /// shown, and the show reads it then; once on screen the sheet is
+    /// authoritative, and a later gesture can't silently change a visible
+    /// modal sheet.
+    @MainActor
+    private final class DeleteRequest {
+        let instance: VMInstance
+        var permanently: Bool
+        /// The VM's external files, once resolved.
+        var externals: [ExternalAttachment]?
+        /// The off-main resolution of ``externals``.
+        var resolution: Task<Void, Never>?
+        /// This delete's own sheet, for the reason ``SnapshotSheet`` has one.
+        let presenter = SheetPresenter()
+
+        init(instance: VMInstance, permanently: Bool) {
+            self.instance = instance
+            self.permanently = permanently
+        }
+    }
+
+    /// Every delete in flight, by its VM's id — one per VM.
+    private var deletes: [UUID: DeleteRequest] = [:]
 
     init(viewModel: VMLibraryViewModel, windows: AppWindowRegistry) {
         self.viewModel = viewModel
@@ -265,21 +266,15 @@ final class AppAlertPresenter {
     /// Number of requests waiting for a window.
     var waitingCountForTesting: Int { waiting.count }
 
-    /// The VM whose delete is in flight, or `nil` if none.
-    var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
+    /// Each delete in flight's disposition — `true` to delete immediately — by
+    /// its VM's id.
+    var deleteDispositionsForTesting: [UUID: Bool] { deletes.mapValues(\.permanently) }
 
-    /// The latest requested disposition for the in-flight delete.
-    var pendingDeletePermanentlyForTesting: Bool? { pendingDelete?.permanently }
-
-    /// Per-shown-sheet identity.
-    var deleteSheetTokenForTesting: Int { deleteSheetToken }
-
-    /// The tracked off-main resolution task, so tests can `await` its `.value`.
-    var deleteResolutionTaskForTesting: Task<Void, Never>? { deleteResolutionTask }
-
-    /// Drives the delete sheet's close handler directly, with no live window to
-    /// present a real sheet.
-    func handleDeleteSheetClosedForTesting(token: Int) { handleDeleteSheetClosed(token: token) }
+    /// The off-main resolution of the delete in flight for `vmID`, so tests can
+    /// `await` its `.value`.
+    func deleteResolutionForTesting(of vmID: UUID) -> Task<Void, Never>? {
+        deletes[vmID]?.resolution
+    }
     #endif
 
     // MARK: - Events
@@ -287,7 +282,7 @@ final class AppAlertPresenter {
     /// Re-runs the routing on every event that can let a waiting alert show:
     /// a window shown, made key or main, deminiaturized, or freed of a sheet,
     /// the app unhidden, or the active Space changed — and handles a window
-    /// closing.
+    /// closing, which the registry reports once the window takes no alert.
     private func observeWindowEvents() {
         let center = NotificationCenter.default
         for name in [
@@ -297,14 +292,11 @@ final class AppAlertPresenter {
         ] {
             observe(name, in: center) { presenter, _ in presenter.pump() }
         }
-        observe(NSWindow.willCloseNotification, in: center) { presenter, window in
-            guard let window else { return }
-            presenter.windowWillClose(window)
-        }
         observe(
             NSWorkspace.activeSpaceDidChangeNotification, in: NSWorkspace.shared.notificationCenter
         ) { presenter, _ in presenter.pump() }
         windows.onWindowShown = { [weak self] in self?.pump() }
+        windows.onWindowWillClose = { [weak self] window in self?.windowWillClose(window) }
     }
 
     private func observe(
@@ -324,13 +316,9 @@ final class AppAlertPresenter {
 
     // MARK: - Routing
 
-    /// The windows as they stand now, less any whose close is being handled.
+    /// The windows as they stand now.
     private func currentScene() -> AlertWindowScene<NSWindow> {
-        var scene = windows.alertScene(keyWindow: NSApp.keyWindow, mainWindow: NSApp.mainWindow)
-        for window in scene.states.keys where closingWindows.contains(ObjectIdentifier(window)) {
-            scene.states[window]?.isVisible = false
-        }
-        return scene
+        windows.alertScene(keyWindow: NSApp.keyWindow, mainWindow: NSApp.mainWindow)
     }
 
     /// The VM `request` is about, or `nil` for one about no VM.
@@ -338,7 +326,7 @@ final class AppAlertPresenter {
         switch request {
         case .error(_, _, .vm(let instance)): instance
         case .error(_, _, .library), .startSummary, .cancelPreparing: nil
-        case .deleteSheet: pendingDelete?.instance
+        case .deleteSheet(let delete): delete.instance
         case .startFailedAttachment(_, let instance), .startFailure(_, _, let instance),
             .takeSnapshot(let instance, _), .revertSnapshot(_, let instance),
             .deleteSnapshot(_, let instance), .forceStop(let instance), .recoveryBoot(let instance),
@@ -362,15 +350,28 @@ final class AppAlertPresenter {
         undone.filter { result in viewModel.instances.contains { $0.id == result.vm.id } }
     }
 
+    /// `request` with its subject settled as it is raised: an acknowledgement
+    /// about a VM the library no longer lists — a delete's report of the files
+    /// it kept, raised once the VM is gone — is about no VM. A request that
+    /// acts on its VM keeps it, and ``stillHolds(_:)`` drops it.
+    private func settled(_ request: Request) -> Request {
+        switch request {
+        case .error(let title, let message, .vm(let instance)) where !lists(instance),
+            .startFailure(let title, let message, let instance) where !lists(instance):
+            .error(title: title, message: message, subject: .library)
+        default:
+            request
+        }
+    }
+
     /// Whether what `request` says is still true: its VM is still in the
     /// library, and the state the alert was raised for still holds, read from
     /// the capability model the menus validate with.
     private func stillHolds(_ request: Request) -> Bool {
         let capabilities = viewModel.capabilities
         switch request {
-        case .deleteSheet:
-            guard let pendingDelete else { return false }
-            return lists(pendingDelete.instance)
+        case .deleteSheet(let delete):
+            return deletes[delete.instance.id] === delete && lists(delete.instance)
         case .cancelPreparing(_, let arrival):
             return viewModel.arrivals.contains { $0 === arrival }
         case .startSummary(_, let undone):
@@ -405,11 +406,8 @@ final class AppAlertPresenter {
 
     /// Releases what a request dropped before it was shown was holding.
     private func discard(_ request: Request) {
-        guard case .deleteSheet = request else { return }
-        deleteResolutionTask?.cancel()
-        deleteResolutionTask = nil
-        pendingDelete = nil
-        resolvedDelete = nil
+        guard case .deleteSheet(let delete) = request else { return }
+        end(delete)
     }
 
     private func heldAlert(for request: Request) -> HeldAlerts.Alert {
@@ -424,7 +422,7 @@ final class AppAlertPresenter {
     }
 
     private func enqueue(_ request: Request) {
-        waiting.append(QueuedAlert(sequence: nextSequence, request: request))
+        waiting.append(QueuedAlert(sequence: nextSequence, request: settled(request)))
         nextSequence += 1
         pump()
     }
@@ -526,8 +524,8 @@ final class AppAlertPresenter {
             showAlert(
                 installerMountedConfig(instance.name, purpose: purpose, delivery: delivery),
                 on: window, onWindowClose: .requeue(entry))
-        case .deleteSheet:
-            showDeleteSheet(on: window)
+        case .deleteSheet(let delete):
+            showDeleteSheet(delete, on: window)
         case .takeSnapshot(let instance, let purpose):
             showTakeSnapshotSheet(for: instance, purpose: purpose, on: window)
         case .revertSnapshot(let snapshot, let instance):
@@ -587,20 +585,16 @@ final class AppAlertPresenter {
     /// the queue. Everything waiting is routed again with the window out of
     /// the running.
     private func windowWillClose(_ window: NSWindow) {
-        let id = ObjectIdentifier(window)
-        closingWindows.insert(id)
-        defer {
-            closingWindows.remove(id)
-        }
-        if let slot = slots.removeValue(forKey: id), let occupant = slot.occupant {
+        if let slot = slots.removeValue(forKey: ObjectIdentifier(window)), let occupant = slot.occupant {
             slot.occupant = nil
             switch occupant {
             case .alert(let shown):
                 takeDown(shown, from: window)
-            case .deleteSheet:
-                tearDownDeleteSheet()
-            case .snapshotSheet:
-                tearDownSnapshotSheet()
+            case .deleteSheet(let delete):
+                end(delete)
+                delete.presenter.close()
+            case .snapshotSheet(let sheet):
+                sheet.presenter.close()
             }
         }
         pump()
@@ -644,59 +638,59 @@ final class AppAlertPresenter {
     }
 
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool = false) {
-        // Once a delete sheet is on screen it is an authoritative, window-modal
-        // confirmation — ignore further delete gestures (the menu key-equivalents
-        // stay live under a window-modal sheet) until it closes. Coalescing them
-        // would overwrite `pendingDelete`, which the shown sheet's close then
-        // clears without it ever being shown — silently dropping the delete.
-        guard shownDelete == nil else {
-            #log(
-                Self.logger, .debug,
-                "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
-            return
-        }
-        // De-dup to one delete sheet at a time, with the LATEST request winning
-        // until the sheet is shown: a follow-up ⌘⌫ → ⌥⌘⌫ upgrades the mode and a
-        // different VM retargets, both by updating `pendingDelete`.
-        let wasIdle = pendingDelete == nil
-        pendingDelete = PendingDelete(instance: instance, permanently: permanently)
-        guard wasIdle else {
+        // One delete per VM. Once its sheet is on screen it is an
+        // authoritative, window-modal confirmation, so a further gesture for
+        // the VM (the menu key equivalents stay live under a window-modal
+        // sheet) is ignored; until then the latest gesture's disposition wins —
+        // ⌘⌫ then ⌥⌘⌫ upgrades to Delete Immediately.
+        if let delete = deletes[instance.id] {
+            guard !delete.presenter.isShown else {
+                #log(
+                    Self.logger, .debug,
+                    "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
+                return
+            }
+            delete.permanently = permanently
             #log(
                 Self.logger, .debug,
                 "Delete sheet already in flight; coalescing repeat request for '\(instance.name, privacy: .public)'")
             return
         }
-        startDeleteResolution()
-    }
-
-    /// Resolves the in-flight delete's external files off-main *before* showing,
-    /// so the synchronous presentation step never blocks the main actor on a
-    /// stale mount.
-    private func startDeleteResolution() {
-        deleteResolutionTask = Task { @MainActor [weak self] in
-            await self?.resolveAndEnqueueDelete()
+        let delete = DeleteRequest(instance: instance, permanently: permanently)
+        deletes[instance.id] = delete
+        // The external files are resolved off-main *before* the sheet is
+        // queued, so the synchronous show never blocks the main actor on a
+        // stale mount.
+        delete.resolution = Task { @MainActor [weak self, viewModel] in
+            let externals = await viewModel.externalAttachments(for: instance)
+            guard let self, !Task.isCancelled, deletes[instance.id] === delete else { return }
+            delete.externals = externals
+            delete.resolution = nil
+            enqueue(.deleteSheet(delete))
         }
     }
 
-    private func resolveAndEnqueueDelete() async {
-        guard let request = pendingDelete else { return }
-        let externals = await viewModel.externalAttachments(for: request.instance)
-        // A teardown cancelled or cleared the request.
-        guard !Task.isCancelled, pendingDelete != nil else { return }
-        resolvedDelete = (request.instance.id, externals)
-        deleteResolutionTask = nil
-        enqueue(.deleteSheet)
+    /// Ends `delete`: cancels its resolution and frees its VM for the next
+    /// one. Its sheet, if shown, is closed by the caller.
+    private func end(_ delete: DeleteRequest) {
+        delete.resolution?.cancel()
+        delete.resolution = nil
+        if deletes[delete.instance.id] === delete {
+            deletes.removeValue(forKey: delete.instance.id)
+        }
     }
 
     func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
-        // A window-modal sheet is authoritative while it is up: a second
-        // gesture (the menu key equivalent stays live under it) is dropped
-        // rather than queued behind it, and so is one made while the first
-        // waits for its window.
+        // One Take Snapshot sheet per VM, shown or waiting. A window-modal
+        // sheet is authoritative while it is up: a second gesture for its VM
+        // (the menu key equivalent stays live under it) is dropped rather than
+        // queued behind it, and so is one made while the first waits for its
+        // window.
         let isWaiting = waiting.contains {
-            if case .takeSnapshot = $0.request { true } else { false }
+            if case .takeSnapshot(let waiting, _) = $0.request { waiting.id == instance.id } else { false }
         }
-        guard shownSnapshotInstance == nil, !isWaiting else {
+        let isShown = slots.values.contains { $0.occupant?.snapshotSheet?.instance.id == instance.id }
+        guard !isWaiting, !isShown else {
             #log(
                 Self.logger, .debug,
                 "Take Snapshot sheet already requested; ignoring request for '\(instance.name, privacy: .public)'"
@@ -710,24 +704,21 @@ final class AppAlertPresenter {
         for instance: VMInstance, purpose: TakeSnapshotPurpose, on window: NSWindow
     ) {
         guard let mode = instance.snapshotCaptureMode else { return }
+        let sheet = SnapshotSheet(instance: instance)
         let content = TakeSnapshotSheetContentViewController(
             vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
             mode: mode, purpose: purpose)
-        content.onCancel = { [weak self] in self?.snapshotSheetPresenter.close() }
-        content.onConfirm = { [weak self] name, notes in
-            guard let self else { return }
-            if let instance = shownSnapshotInstance {
-                viewModel.takeSnapshot(instance, name: name, notes: notes, for: purpose)
-            }
-            snapshotSheetPresenter.close()
+        content.onCancel = { [weak sheet] in sheet?.presenter.close() }
+        content.onConfirm = { [weak self, weak sheet] name, notes in
+            guard let self, let sheet else { return }
+            viewModel.takeSnapshot(sheet.instance, name: name, notes: notes, for: purpose)
+            sheet.presenter.close()
         }
-        shownSnapshotInstance = instance
         // The capture's mode is decided at confirm time, so the sheet's copy
         // tracks the VM rather than freezing at what it was when it opened. A
         // VM that leaves every capturable state while the sheet is up keeps its
         // last-rendered copy — the confirm gate refuses either way.
-        snapshotSheetKindObservation?.cancel()
-        snapshotSheetKindObservation = observeRecurring(
+        sheet.kindObservation = observeRecurring(
             track: { [weak instance] in
                 _ = instance?.snapshotCaptureMode
             },
@@ -739,20 +730,15 @@ final class AppAlertPresenter {
             }
         )
         let slot = slot(for: window)
-        snapshotSheetPresenter.onClose = { [weak self, weak slot] in
-            if case .snapshotSheet? = slot?.occupant { slot?.occupant = nil }
-            self?.shownSnapshotInstance = nil
-            self?.snapshotSheetKindObservation?.cancel()
-            self?.snapshotSheetKindObservation = nil
+        sheet.presenter.onClose = { [weak self, weak slot, weak sheet] in
+            if let sheet {
+                sheet.kindObservation?.cancel()
+                if slot?.occupant?.snapshotSheet === sheet { slot?.occupant = nil }
+            }
             self?.pump()
         }
-        slot.occupant = .snapshotSheet
-        snapshotSheetPresenter.show(content: content, in: window)
-    }
-
-    /// Takes the Take Snapshot sheet off a window that is closing.
-    private func tearDownSnapshotSheet() {
-        snapshotSheetPresenter.close()
+        slot.occupant = .snapshotSheet(sheet)
+        sheet.presenter.show(content: content, in: window)
     }
 
     func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
@@ -931,74 +917,39 @@ final class AppAlertPresenter {
 
     // MARK: - Delete sheet
 
-    private func showDeleteSheet(on window: NSWindow) {
-        guard let request = pendingDelete else { return }
-        // If the request retargeted to a different VM since its externals'
-        // resolve began (during the resolve, or while the show waited for its
-        // window), they belong to the wrong VM — re-resolve for the new one
-        // instead of showing stale data.
-        guard let resolved = resolvedDelete, resolved.instanceID == request.instance.id else {
-            resolvedDelete = nil
-            deleteResolutionTask?.cancel()
-            startDeleteResolution()
-            return
-        }
-        deleteSheetToken += 1
-        let token = deleteSheetToken
+    private func showDeleteSheet(_ delete: DeleteRequest, on window: NSWindow) {
+        guard let externals = delete.externals else { return }
+        // Frozen here, so the displayed sheet and the confirmed disposition
+        // can never disagree.
+        let permanently = delete.permanently
+        let instance = delete.instance
         let content = DeleteVMSheetContentViewController(
             prompt: VMCommandCore.deletePrompt(
-                request.instance, permanently: request.permanently,
-                externals: resolved.externals),
-            bundledDisks: request.instance.bundledStorageDisks,
-            externals: resolved.externals,
-            hasSavedState: request.instance.hasSaveFile,
-            snapshotCount: request.instance.snapshotManifest.snapshots.count,
-            mode: request.permanently ? .immediate : .trash
+                instance, permanently: permanently, externals: externals),
+            bundledDisks: instance.bundledStorageDisks,
+            externals: externals,
+            hasSavedState: instance.hasSaveFile,
+            snapshotCount: instance.snapshotManifest.snapshots.count,
+            mode: permanently ? .immediate : .trash
         )
-        content.onCancel = { [weak self] in self?.deleteSheetPresenter.close() }
-        content.onConfirm = { [weak self] ids in
-            guard let self else { return }
-            if let shown = shownDelete {
-                Task { [viewModel] in
-                    await viewModel.delete(
-                        shown.instance, deletingExternalIDs: ids, permanently: shown.permanently)
-                }
+        content.onCancel = { [weak delete] in delete?.presenter.close() }
+        content.onConfirm = { [weak delete, viewModel] ids in
+            guard let delete else { return }
+            Task {
+                await viewModel.delete(instance, deletingExternalIDs: ids, permanently: permanently)
             }
-            deleteSheetPresenter.close()
+            delete.presenter.close()
         }
-        shownDelete = request
         let slot = slot(for: window)
-        deleteSheetPresenter.onClose = { [weak self, weak slot] in
-            if case .deleteSheet? = slot?.occupant { slot?.occupant = nil }
-            self?.handleDeleteSheetClosed(token: token)
+        delete.presenter.onClose = { [weak self, weak slot, weak delete] in
+            if let delete {
+                if case .deleteSheet(let shown)? = slot?.occupant, shown === delete { slot?.occupant = nil }
+                self?.end(delete)
+            }
+            self?.pump()
         }
-        slot.occupant = .deleteSheet
-        deleteSheetPresenter.show(content: content, in: window)
-    }
-
-    private func handleDeleteSheetClosed(token: Int) {
-        shownDelete = nil
-        // Clear the in-flight delete only if THIS is still the current sheet — a
-        // teardown bumps `deleteSheetToken`, so a stale sheet's late close can't
-        // clobber the newer delete and reopen the duplicate-sheet path.
-        if token == deleteSheetToken {
-            pendingDelete = nil
-            resolvedDelete = nil
-        }
-        pump()
-    }
-
-    /// Takes the delete sheet off a window that is closing, as a cancel.
-    private func tearDownDeleteSheet() {
-        deleteResolutionTask?.cancel()
-        deleteResolutionTask = nil
-        pendingDelete = nil
-        resolvedDelete = nil
-        shownDelete = nil
-        // Invalidates the sheet's `onClose`, so its close cannot clear a delete
-        // requested after this one.
-        deleteSheetToken += 1
-        deleteSheetPresenter.close()
+        slot.occupant = .deleteSheet(delete)
+        delete.presenter.show(content: content, in: window)
     }
 }
 

@@ -21,19 +21,21 @@ func makeWindowRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
 @MainActor
 func makeLibraryViewModel(
     preferences: AppPreferences,
+    storageService: MockVMStorageService = MockVMStorageService(),
+    fileSystem: MockFileSystem = MockFileSystem(),
     usbAccessoryService: (any USBAccessoryProviding)? = nil,
     diskImageService: MockDiskImageService = MockDiskImageService(),
     organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
-        storageService: MockVMStorageService(),
+        storageService: storageService,
         diskImageService: diskImageService,
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         usbAccessoryService: usbAccessoryService,
-        fileSystem: MockFileSystem(),
+        fileSystem: fileSystem,
         downloadsDirectory: nil,
         preferences: preferences,
         vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,

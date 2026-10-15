@@ -31,6 +31,16 @@ final class AppWindowRegistry {
     /// Reports that this registry put a window on screen — an event no
     /// notification carries for a window ordered in without becoming key.
     var onWindowShown: (@MainActor () -> Void)?
+    /// Reports a window's `willClose`, once the window is out of
+    /// ``alertScene(keyWindow:mainWindow:)``.
+    var onWindowWillClose: (@MainActor (NSWindow) -> Void)?
+
+    /// The windows that began closing and that this registry has not shown
+    /// since. A window still reads as visible for the whole of its close —
+    /// sheets ending under it post their own events meanwhile — so this, not
+    /// `isVisible`, is what keeps a closing window from taking an alert.
+    private let closedWindows = NSHashTable<NSWindow>.weakObjects()
+    private var willCloseObserver: (any NSObjectProtocol)?
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppWindowRegistry")
 
@@ -45,6 +55,30 @@ final class AppWindowRegistry {
         self.autosaveScope = autosaveScope
         self.activateApp = activateApp
         displayPlacement.host = self
+        // Synchronous on the posting thread (`queue: nil`), so the window is
+        // out of the scene before anything else hears of the close.
+        willCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated { self?.windowWillClose(window) }
+        }
+    }
+
+    isolated deinit {
+        if let willCloseObserver { NotificationCenter.default.removeObserver(willCloseObserver) }
+    }
+
+    private func windowWillClose(_ window: NSWindow) {
+        closedWindows.add(window)
+        onWindowWillClose?(window)
+    }
+
+    /// Reports that this registry put `window` on screen, making it an alert
+    /// target again if it had closed.
+    private func shown(_ window: NSWindow?) {
+        if let window { closedWindows.remove(window) }
+        onWindowShown?()
     }
 
     // MARK: - Library
@@ -77,7 +111,7 @@ final class AppWindowRegistry {
             }
             mainWindowController = windowController
         }
-        onWindowShown?()
+        shown(mainWindowController?.window)
     }
 
     func revealLibrarySidebar() {
@@ -151,7 +185,7 @@ final class AppWindowRegistry {
         let vmID = instance.instanceID
         if let existing = clipboardWindows[vmID] {
             existing.window?.makeKeyAndOrderFront(nil)
-            onWindowShown?()
+            shown(existing.window)
             return
         }
 
@@ -162,7 +196,7 @@ final class AppWindowRegistry {
         }
         clipboardWindows[vmID] = controller
         controller.showWindow(nil)
-        onWindowShown?()
+        shown(controller.window)
     }
 
     func clipboardWindow(for vmID: UUID) -> NSWindow? { clipboardWindows[vmID]?.window }
@@ -174,12 +208,26 @@ final class AppWindowRegistry {
     /// other window. A sheet answers for the window it is attached to.
     func instance(shownIn window: NSWindow) -> VMInstance? {
         let window = Self.sheetRoot(of: window)
-        if let instance = displayPlacement.instance(forDisplayWindow: window) { return instance }
-        if let clipboard = clipboardWindows.values.first(where: { $0.window === window }) {
-            return clipboard.instance
-        }
+        if let instance = ownInstance(of: window) { return instance }
         guard window === libraryWindow, window.isVisible else { return nil }
         return viewModel.selectedInstance
+    }
+
+    /// The VMs `window` can act on: a display or clipboard window's own VM, or
+    /// every VM the library lists while the library window is visible — its
+    /// sidebar acts on any of them, not only the selection. A sheet answers
+    /// for the window it is attached to.
+    func vmIDs(actedOnIn window: NSWindow) -> Set<UUID> {
+        let window = Self.sheetRoot(of: window)
+        if let instance = ownInstance(of: window) { return [instance.id] }
+        guard window === libraryWindow, window.isVisible else { return [] }
+        return Set(viewModel.instances.map(\.id))
+    }
+
+    /// The VM a display or clipboard window belongs to.
+    private func ownInstance(of window: NSWindow) -> VMInstance? {
+        displayPlacement.instance(forDisplayWindow: window)
+            ?? clipboardWindows.values.first { $0.window === window }?.instance
     }
 
     /// The VM the user is working on, found the way AppKit finds a menu
@@ -191,13 +239,16 @@ final class AppWindowRegistry {
 
     /// The windows an alert can go to, read from the key and main windows the
     /// caller passes and the library and display windows this registry holds.
+    /// A window that began closing takes no alert until this registry shows it
+    /// again.
     func alertScene(keyWindow: NSWindow?, mainWindow: NSWindow?) -> AlertWindowScene<NSWindow> {
         let working = [keyWindow, mainWindow].compactMap { $0 }.map { window in
-            (window: Self.sheetRoot(of: window), vmID: instance(shownIn: window)?.id)
+            (window: Self.sheetRoot(of: window), vmIDs: vmIDs(actedOnIn: window))
         }
         let displayWindows = displayPlacement.windowsByVM
         var states: [NSWindow: AlertWindowState] = [:]
-        for window in working.map(\.window) + displayWindows.values + [libraryWindow].compactMap({ $0 }) {
+        for window in working.map(\.window) + displayWindows.values + [libraryWindow].compactMap({ $0 })
+        where !closedWindows.contains(window) {
             states[window] = AlertWindowState(window)
         }
         return AlertWindowScene(
@@ -285,5 +336,5 @@ final class AppWindowRegistry {
 extension AppWindowRegistry: VMDisplayPlacementHosting {
     var libraryScreen: NSScreen? { libraryWindow?.screen }
 
-    func displayWindowShown() { onWindowShown?() }
+    func displayWindowShown(_ window: NSWindow) { shown(window) }
 }
