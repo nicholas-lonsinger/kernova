@@ -746,7 +746,6 @@ extension VMCommandCore {
                     throw CommandError.failed(
                         verb: .delete, error: error)
                 }
-                cleanupSetupResumeData(for: instance, permanently: permanently)
                 if permanently {
                     #log(
                         Self.logger, .notice,
@@ -774,6 +773,14 @@ extension VMCommandCore {
                 // Dropped in the step that removes the VM, with nothing
                 // suspending in between.
                 library.evict(instance)
+                // After the evict with no suspension between: a delete sharing
+                // this destination that suspends on its externals still counts
+                // as a peer until its own evict, so only the last one out
+                // finds none and discards.
+                if let destination = instance.pendingSetupDownloadDestination {
+                    lifecycle.discardSetupResumeData(
+                        at: destination, leftBy: instance, permanently: permanently)
+                }
                 library.persistOrder()
                 return kept
             }
@@ -824,36 +831,6 @@ extension VMCommandCore {
             message: "\(name) moves to the Trash with \(taken)\(externalsClause).",
             confirmTitle: "Move to Trash",
             dismissTitle: "Cancel")
-    }
-
-    /// Trashes any in-progress image download bundle for a VM that's being
-    /// deleted.
-    ///
-    /// Every setup source that fetches its image — a macOS restore image from
-    /// any of its three downloading sources, or a Linux installer ISO — writes
-    /// the same `.kernovadownload` sidecar, so all of them are covered; the
-    /// "delete externals" toggle does not gate it, and the disposition matches
-    /// the VM's own. The completed image at `downloadDestinationPath` lives at a
-    /// user-known path and is left alone.
-    private func cleanupSetupResumeData(for instance: VMInstance, permanently: Bool) {
-        let destinationURL: URL
-        if let context = instance.configuration.installContext,
-            context.source.downloadsImage,
-            let macOSDestination = context.downloadDestinationURL
-        {
-            destinationURL = macOSDestination
-        } else if let linuxDestination = instance.configuration.linuxInstallContext?
-            .downloadDestinationURL
-        {
-            destinationURL = linuxDestination
-        } else {
-            return
-        }
-        lifecycle.downloadService.discardResumeData(at: destinationURL, permanently: permanently)
-        #log(
-            Self.logger, .notice,
-            "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
-        )
     }
 
     // MARK: - Attachment Projections

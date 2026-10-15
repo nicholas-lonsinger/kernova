@@ -648,9 +648,10 @@ struct VMAdmissionRefusal: Error, Equatable {
     let refusal: VMAdmission.Refusal
 }
 
-/// What a VM's library contributes to its admission facts.
+/// What a VM's library contributes to its admission facts, and the other VMs
+/// in it.
 @MainActor
-protocol VMAdmissionPeers: AnyObject {
+protocol VMAdmissionPeers: VMInstanceRoster {
     /// Whether this build can pass a host USB accessory through to a guest.
     var supportsUSBAccessories: Bool { get }
 

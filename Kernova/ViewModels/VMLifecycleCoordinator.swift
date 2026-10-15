@@ -425,7 +425,9 @@ final class VMLifecycleCoordinator {
                     // re-point it, so the invariant is enforced at use time.
                     downloadDestination = normalizedDownloadDestination(
                         for: persistedDestination, remoteURL: remoteURL)
-                    if downloadDestination != persistedDestination {
+                    if DownloadService.destinationKey(for: downloadDestination)
+                        != DownloadService.destinationKey(for: persistedDestination)
+                    {
                         #log(
                             Self.logger, .notice,
                             "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
@@ -435,7 +437,9 @@ final class VMLifecycleCoordinator {
                     remoteURL = try await ipswService.fetchLatestRestoreImage().url
                     downloadDestination = latestDownloadDestination(
                         persisted: persistedDestination, resolvedURL: remoteURL)
-                    if downloadDestination != persistedDestination {
+                    if DownloadService.destinationKey(for: downloadDestination)
+                        != DownloadService.destinationKey(for: persistedDestination)
+                    {
                         #log(
                             Self.logger, .notice,
                             "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
@@ -446,11 +450,11 @@ final class VMLifecycleCoordinator {
                         // lapses rather than retargets.
                         requestedFreshDownload = false
                         // A moved destination also means the fetch changed
-                        // builds, so the old path's partial download can
-                        // never be resumed — discard its sidecar before the
-                        // only pointer to it moves.
-                        downloadService.discardResumeData(
-                            at: persistedDestination, permanently: false)
+                        // builds, so this VM can never resume the old path's
+                        // partial download — discard it before this VM's only
+                        // pointer to it moves.
+                        discardSetupResumeData(
+                            at: persistedDestination, leftBy: instance, permanently: false)
                         // Keep the persisted path on the file the download
                         // actually writes, so resume across relaunches and
                         // delete-time cleanup stay keyed to it — a step the
@@ -632,7 +636,10 @@ final class VMLifecycleCoordinator {
         let candidate = downloads.appendingPathComponent(candidateName)
         // A source is free to publish a name already shaped like a
         // discriminated one; a file may not be linked onto itself.
-        guard candidate.standardizedFileURL != destination.standardizedFileURL else { return nil }
+        guard
+            DownloadService.destinationKey(for: candidate)
+                != DownloadService.destinationKey(for: destination)
+        else { return nil }
 
         // The length the mirror states, checked with a stat before gigabytes
         // are read: a truncated or unrelated file under the same name costs
@@ -740,7 +747,8 @@ final class VMLifecycleCoordinator {
             }
 
             if let persisted = context.downloadDestinationURL,
-                persisted != downloadDestination
+                DownloadService.destinationKey(for: persisted)
+                    != DownloadService.destinationKey(for: downloadDestination)
             {
                 #log(
                     Self.logger, .notice,
@@ -748,8 +756,8 @@ final class VMLifecycleCoordinator {
                 )
                 // The partial at the abandoned path belongs to an image
                 // this download is no longer fetching, so discard it before
-                // the only pointer to it moves.
-                downloadService.discardResumeData(at: persisted, permanently: false)
+                // this VM's only pointer to it moves.
+                discardSetupResumeData(at: persisted, leftBy: instance, permanently: false)
             }
             // Keep the persisted path on the file the download writes, so
             // resume across relaunches and delete-time cleanup stay keyed
@@ -835,6 +843,27 @@ final class VMLifecycleCoordinator {
             )
             throw error
         }
+    }
+
+    /// Discards the `.kernovadownload` bundle at `destination` that
+    /// `instance`'s setup no longer needs — unless another VM's pending setup
+    /// still downloads into it (``VMInstance/anotherSetupDownloads(into:)``).
+    ///
+    /// Two VMs installing the same build share one destination and one bundle,
+    /// so the bundle is either the other VM's live transfer or the bytes it
+    /// resumes from; the last VM targeting the destination discards it.
+    /// `permanently` bypasses the Trash.
+    func discardSetupResumeData(
+        at destination: URL, leftBy instance: VMInstance, permanently: Bool
+    ) {
+        guard !instance.anotherSetupDownloads(into: destination) else {
+            #log(
+                Self.logger, .notice,
+                "Kept the in-progress download '\(destination.lastPathComponent, privacy: .public)' that '\(instance.name, privacy: .public)' left — another VM's setup downloads into it"
+            )
+            return
+        }
+        downloadService.discardResumeData(at: destination, permanently: permanently)
     }
 
     /// Trashes an image whose digest did not match, and any resume bundle left

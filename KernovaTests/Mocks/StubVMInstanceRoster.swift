@@ -8,7 +8,7 @@ import Foundation
 /// Like the library, it is its instances' ``VMAdmissionPeers``: no identity
 /// conflict, and USB passthrough or a termination only once a test says so.
 @MainActor
-final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
+final class StubVMInstanceRoster: VMAdmissionPeers {
     var instances: [VMInstance] {
         didSet { wirePeers() }
     }

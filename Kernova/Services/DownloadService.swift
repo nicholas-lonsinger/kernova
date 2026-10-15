@@ -60,7 +60,7 @@ final class DownloadService: Sendable {
         expectedSizeBytes: UInt64? = nil,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
-        let key = destinationURL.standardizedFileURL.path(percentEncoded: false)
+        let key = Self.destinationKey(for: destinationURL)
         var discardsExisting = discardsExistingDownload
         while true {
             try Task.checkCancellation()
@@ -259,7 +259,7 @@ final class DownloadService: Sendable {
     /// the caller downloads. `false` also when the destination is occupied or
     /// the link is refused. The file at `sourceURL` is never written to.
     func adoptExistingFile(at sourceURL: URL, as destinationURL: URL) async -> Bool {
-        let key = destinationURL.standardizedFileURL.path(percentEncoded: false)
+        let key = Self.destinationKey(for: destinationURL)
         let claim = await Self.claimDownload(forKey: key) { [self] in
             try performAdoption(of: sourceURL, as: destinationURL)
         }
@@ -427,7 +427,13 @@ final class DownloadService: Sendable {
 
     // MARK: - Destination Serialization
 
-    /// Downloads currently streaming, keyed by standardized destination path.
+    /// The identity of a download destination: destinations with one key share
+    /// one per-destination claim and one `.kernovadownload` bundle.
+    static func destinationKey(for destinationURL: URL) -> String {
+        destinationURL.standardizedFileURL.path(percentEncoded: false)
+    }
+
+    /// Downloads currently streaming, keyed by ``destinationKey(for:)``.
     ///
     /// A destination's `.kernovadownload` bundle takes one writer at a time: the
     /// truncate / append / move sequence produces a corrupt file when two
