@@ -72,10 +72,12 @@ final class DragSpyMachineView: VZVirtualMachineView {
 }
 
 /// Watches a press that starts on the display, starts a host drag session when
-/// it leaves the display, and hands the guest a synthetic mouseUp.
+/// it leaves the display, and one second later hands the guest a synthetic
+/// mouseUp — preceded by a 1-px synthetic drag when the press left through the
+/// left edge.
 @MainActor
 final class DragOutSpike: NSObject, NSDraggingSource {
-    private enum Mode: String { case handoff, late }
+    private enum Mode: String { case up, wiggle }
 
     private static let pasteboardType = NSPasteboard.PasteboardType("app.kernova.spike.drag-out")
 
@@ -87,7 +89,7 @@ final class DragOutSpike: NSObject, NSDraggingSource {
     private var stashedDown: NSEvent?
     private var lastInsidePoint: NSPoint?
     private var sessionStarted = false
-    private var mode = Mode.late
+    private var mode = Mode.up
 
     init(hostView: NSView, machineView: DragSpyMachineView) {
         self.hostView = hostView
@@ -200,7 +202,7 @@ final class DragOutSpike: NSObject, NSDraggingSource {
         sessionStarted = true
         stopPolling()
         machineView.flushDragCount(at: "sessionStart")
-        mode = edge == "left" ? .handoff : .late
+        mode = edge == "left" ? .wiggle : .up
 
         let pasteboardItem = NSPasteboardItem()
         pasteboardItem.setString("spike", forType: Self.pasteboardType)
@@ -212,10 +214,61 @@ final class DragOutSpike: NSObject, NSDraggingSource {
         )
         #log(spikeLogger, .notice, "SPIKE session begin mode=\(self.mode.rawValue, privacy: .public)")
         hostView.beginDraggingSession(with: [item], event: down, source: self)
+        scheduleInjection()
+    }
 
-        if mode == .handoff {
-            injectUp(label: "handoff")
+    /// One second after the session begins — long enough for the guest-side
+    /// catcher to arm under the frozen guest pointer — injects the release.
+    private func scheduleInjection() {
+        let mode = self.mode
+        let fire = Timer(timeInterval: 1.0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                switch mode {
+                case .up:
+                    self.injectUp(label: "up only")
+                    self.endGesture()
+                case .wiggle:
+                    self.injectDrag()
+                    let release = Timer(timeInterval: 0.1, repeats: false) { [weak self] _ in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            self.injectUp(label: "after wiggle")
+                            self.endGesture()
+                        }
+                    }
+                    RunLoop.main.add(release, forMode: .common)
+                }
+            }
         }
+        RunLoop.main.add(fire, forMode: .common)
+    }
+
+    private func injectDrag() {
+        guard
+            let window = machineView.window,
+            let base = lastInsidePoint ?? stashedDown.map({ machineView.convert($0.locationInWindow, from: nil) })
+        else {
+            #log(spikeLogger, .notice, "SPIKE could not build drag event")
+            return
+        }
+        let point = NSPoint(x: base.x + (base.x < machineView.bounds.midX ? 1 : -1), y: base.y)
+        guard
+            let drag = NSEvent.mouseEvent(
+                with: .leftMouseDragged, location: machineView.convert(point, to: nil),
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                clickCount: 1, pressure: 1
+            )
+        else {
+            #log(spikeLogger, .notice, "SPIKE could not build drag event")
+            return
+        }
+        lastInsidePoint = point
+        machineView.isInjecting = true
+        machineView.mouseDragged(with: drag)
+        machineView.isInjecting = false
+        #log(spikeLogger, .notice, "SPIKE injected drag (wiggle) \(Self.xy(point), privacy: .public)")
     }
 
     private func injectUp(label: String) {
@@ -273,19 +326,6 @@ final class DragOutSpike: NSObject, NSDraggingSource {
         let text = Self.xy(screenPoint)
         let op = operation.rawValue
         #log(spikeLogger, .notice, "SPIKE session end op=\(op, privacy: .public) \(text, privacy: .public)")
-        MainActor.assumeIsolated {
-            guard self.mode == .late else {
-                self.endGesture()
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.injectUp(label: "late")
-                    self.endGesture()
-                }
-            }
-        }
     }
 
     // MARK: - Helpers
