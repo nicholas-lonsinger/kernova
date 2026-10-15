@@ -373,7 +373,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         let fileManager = FileManager.default
         try fileManager.createDirectory(
             at: downloadsDirectory, withIntermediateDirectories: true)
-        let destination = FinderStyleUniquing.uniqueDestination(
+        let destination = NameUniquing.uniqueDestination(
             in: downloadsDirectory,
             filename: filename.isEmpty ? source.lastPathComponent : filename)
         do {

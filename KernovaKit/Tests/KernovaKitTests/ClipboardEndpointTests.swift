@@ -299,7 +299,7 @@ struct ClipboardEndpointTests {
         #expect(pair.guest.recorder.activityCount(.transferServed) == 1)
 
         // The inline payload is staged once and re-served, never minting a
-        // second `shot (2).png`.
+        // second `shot 2.png`.
         let again = await pair.host.serveFileURLOffMain(generation: 1, repIndex: 0)
         #expect(again == url)
     }
