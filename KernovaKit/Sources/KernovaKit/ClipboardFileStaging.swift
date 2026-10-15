@@ -178,7 +178,9 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         defer { lock.unlock() }
 
         let dir = try directory(for: generation)
-        let url = Self.uniqueDestination(in: dir, filename: filename)
+        // One multi-file copy can carry two payloads that share a name; reusing
+        // the first's path would collapse the two files into one.
+        let url = NameUniquing.uniqueDestination(in: dir, filename: filename)
         // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache.
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
@@ -191,8 +193,8 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     ///
     /// Nested under a fresh UUID parent so the folder keeps its *exact* name: a
     /// same-named sibling in the generation directory would otherwise force a
-    /// Finder-style ` (n)` suffix onto it. `name` is sanitized to one path
-    /// component so a crafted offer can't escape the generation directory.
+    /// ` 2` suffix onto it. `name` is sanitized to one path component so a
+    /// crafted offer can't escape the generation directory.
     ///
     /// - Throws: a filesystem error if the directory can't be created.
     public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
@@ -201,7 +203,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         let dir = try directory(for: generation)
         let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let url = parent.appendingPathComponent(
-            FinderStyleUniquing.sanitizedComponent(name), isDirectory: true)
+            NameUniquing.sanitizedComponent(name), isDirectory: true)
         try processRoot.createDirectory(at: url)
         return url
     }
@@ -286,29 +288,6 @@ public final class ClipboardFileStaging: @unchecked Sendable {
             try? FileManager.default.removeItem(at: oldest.dir)
         }
         return dir
-    }
-
-    /// A destination URL under `dir` named `filename` (sanitized), uniquified
-    /// with a ` (n)` suffix before the extension when that name is already
-    /// taken.
-    ///
-    /// One multi-file copy can carry two payloads that share a name; without
-    /// this the second sink in the generation reuses the first's path and the
-    /// two files collapse into one. Caller holds the lock.
-    private static func uniqueDestination(in dir: URL, filename: String) -> URL {
-        let sanitized = FinderStyleUniquing.sanitizedComponent(filename)
-        let candidate = dir.appendingPathComponent(sanitized)
-        guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
-        let name = sanitized as NSString
-        let base = name.deletingPathExtension
-        let ext = name.pathExtension
-        var counter = 2
-        while true {
-            let suffixed = ext.isEmpty ? "\(base) (\(counter))" : "\(base) (\(counter)).\(ext)"
-            let url = dir.appendingPathComponent(suffixed)
-            if !FileManager.default.fileExists(atPath: url.path) { return url }
-            counter += 1
-        }
     }
 
     /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`

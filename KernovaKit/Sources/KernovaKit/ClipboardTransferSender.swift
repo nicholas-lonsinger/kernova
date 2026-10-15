@@ -382,7 +382,7 @@ final class ClipboardTransferSender: @unchecked Sendable {
     /// The archive entry name for a one-entry payload: the representation's
     /// filename, which is what the receiver's extract will name the file.
     private static func entryName(for representation: ClipboardContent.Representation) -> String {
-        FinderStyleUniquing.sanitizedComponent(
+        NameUniquing.sanitizedComponent(
             representation.filename.isEmpty ? "data" : representation.filename)
     }
 

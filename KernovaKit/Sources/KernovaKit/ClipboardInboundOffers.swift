@@ -56,7 +56,7 @@ public final class ClipboardInboundOffers {
         var materialized: [Int: ClipboardContent.Representation] = [:]
         /// Temp-file URLs for inline payloads staged on demand, so a repeated
         /// `.fileURL` fire returns the same file instead of minting
-        /// `name (2).ext`.
+        /// `name 2.ext`.
         var stagedInlineURLs: [Int: URL] = [:]
         /// Monotonic count of cache writes, so an owner hashing off its actor can
         /// tell one landed while it worked.

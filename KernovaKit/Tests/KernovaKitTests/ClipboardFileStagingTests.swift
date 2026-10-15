@@ -96,9 +96,32 @@ struct ClipboardFileStagingTests {
 
         #expect(urlA != urlB)
         #expect(urlA.lastPathComponent == "dup.txt")
-        #expect(urlB.lastPathComponent == "dup (2).txt")
+        #expect(urlB.lastPathComponent == "dup 2.txt")
         #expect(try Data(contentsOf: urlA) == Data("first".utf8))
         #expect(try Data(contentsOf: urlB) == Data("second".utf8))
+    }
+
+    @Test("a sink's name is sanitized and counts up Finder-style past every taken name")
+    func sinkNamingCountsUpFinderStyle() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        func sinkName(_ filename: String) throws -> String {
+            try staging.makeSink(generation: 1, filename: filename).commit().lastPathComponent
+        }
+        #expect(try sinkName("dup.txt") == "dup.txt")
+        #expect(try sinkName("dup.txt") == "dup 2.txt")
+        #expect(try sinkName("dup.txt") == "dup 3.txt")
+        #expect(try sinkName("notes") == "notes")
+        #expect(try sinkName("notes") == "notes 2")
+        #expect(try sinkName("archive.tar.gz") == "archive.tar.gz")
+        #expect(try sinkName("archive.tar.gz") == "archive.tar 2.gz")
+
+        let escaped = try staging.makeSink(generation: 1, filename: "../escape.txt")
+        let generationDir = try staging.makeSink(generation: 1, filename: "x.bin").url
+            .deletingLastPathComponent()
+        #expect(escaped.url.lastPathComponent == "escape.txt")
+        #expect(escaped.url.deletingLastPathComponent() == generationDir)
     }
 
     @Test("sweep removes the staging root")
@@ -287,7 +310,7 @@ struct ClipboardFileStagingTests {
     func reserveDirectoryNameSurvivesSameNamedSibling() throws {
         // One copy can carry two folders of the same name. Nesting each under a
         // fresh UUID parent keeps both names exact instead of degrading the
-        // second to "MyFolder (2)".
+        // second to "MyFolder 2".
         let staging = makeStaging()
         defer { staging.sweep() }
 
