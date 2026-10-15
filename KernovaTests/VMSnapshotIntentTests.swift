@@ -32,11 +32,6 @@ struct VMSnapshotIntentTests {
         return instance
     }
 
-    /// The core's own summary of `vm`, as a refusal naming it carries it.
-    private func summary(of vm: VMInstance, in wired: WiredCommandCore) throws -> VMSummary {
-        try #require(wired.core.list(.all).first { $0.id == vm.id })
-    }
-
     /// What a manifest lists of a snapshot that a verb could change. The
     /// manifest stores `createdAt` at a coarser precision than `Date()`, so a
     /// whole-snapshot comparison against the fixture fails on the date alone.
@@ -186,7 +181,7 @@ struct VMSnapshotIntentTests {
         let elsewhere = register(in: wired, name: "Elsewhere", snapshots: [other])
         let stale = SnapshotEntityID(vm: elsewhere.id, snapshot: other.id)
         let refusal = CommandError.itemNotFound(
-            vm: try summary(of: named, in: wired),
+            vm: wired.core.summary(named),
             item: "snapshot with the identifier \(other.id.uuidString)")
         let gateway = makeGateway(wired)
 
@@ -220,7 +215,7 @@ struct VMSnapshotIntentTests {
         let vm = register(in: wired, snapshots: [kept])
         let gone = SnapshotEntityID(vm: vm.id, snapshot: UUID())
         let refusal = CommandError.itemNotFound(
-            vm: try summary(of: vm, in: wired),
+            vm: wired.core.summary(vm),
             item: "snapshot with the identifier \(gone.snapshot.uuidString)")
         let gateway = makeGateway(wired)
 
@@ -247,7 +242,7 @@ struct VMSnapshotIntentTests {
 
         await #expect(
             throws: CommandError.itemNotFound(
-                vm: try summary(of: clone, in: wired),
+                vm: wired.core.summary(clone),
                 item: "snapshot with the identifier \(shared.id.uuidString)")
         ) {
             try await makeGateway(wired).renameSnapshot(

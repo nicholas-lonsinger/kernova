@@ -10,29 +10,13 @@ import Testing
 struct VMCommandCoreNetworkTests {
     private let preferences = makeTestPreferences()
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-    }
-
-    private func makeHarness(entitlements: EntitlementService = .entitled) -> Harness {
-        let storage = MockVMStorageService()
-        let fileSystem = MockFileSystem()
-        let lifecycle = makeTestLifecycle(
-            virtualization: MockVirtualizationService(), fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: MockVMBundleMachineFiles(), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences, entitlements: entitlements)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
-            preferences: preferences)
-        return Harness(core: core, library: library)
+    private func makeHarness(entitlements: EntitlementService = .entitled) -> WiredCommandCore {
+        WiredCommandCore(entitlements: entitlements, preferences: preferences)
     }
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String, phase: VMLifecyclePhase = .stopped,
+        in harness: WiredCommandCore, name: String, phase: VMLifecyclePhase = .stopped,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
@@ -117,13 +101,7 @@ struct VMCommandCoreNetworkTests {
             $0.networkMembership = .network(lab.id)
         }
 
-        let error = try #require(
-            { () -> CommandError? in
-                do { try harness.core.deleteNetwork("Lab") } catch let error as CommandError {
-                    return error
-                } catch { return nil }
-                return nil
-            }())
+        let error = try #require(throws: CommandError.self) { try harness.core.deleteNetwork("Lab") }
         let requirement = try #require(error.stepRequirement)
         #expect(
             requirement.message
@@ -149,13 +127,7 @@ struct VMCommandCoreNetworkTests {
         }
         try VMInstanceFixture.writeSaveFile(for: suspended)
 
-        let error = try #require(
-            { () -> CommandError? in
-                do { try harness.core.deleteNetwork("Lab") } catch let error as CommandError {
-                    return error
-                } catch { return nil }
-                return nil
-            }())
+        let error = try #require(throws: CommandError.self) { try harness.core.deleteNetwork("Lab") }
 
         guard case .invalidState(let vm, _, _, let settings) = error else {
             Issue.record("expected the member's own refusal, got \(error)")

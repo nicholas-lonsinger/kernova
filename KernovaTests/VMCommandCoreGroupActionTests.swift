@@ -12,28 +12,16 @@ struct VMCommandCoreGroupActionTests {
     private let preferences = makeTestPreferences()
     private let scratch = TestScratchDirectory(prefix: "VMCommandCoreGroupActionTests")
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let virtualization: MockVirtualizationService
-        let storage: MockVMStorageService
-    }
+    private typealias Harness = WiredCommandCore.Scripted<MockVirtualizationService>
 
     private func makeHarness(
         networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
     ) -> Harness {
-        let storage = MockVMStorageService()
-        let fileSystem = MockFileSystem()
-        let virtualization = MockVirtualizationService()
-        let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences, networks: networks, organization: organization)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
-        return Harness(core: core, library: library, virtualization: virtualization, storage: storage)
+        Harness(
+            WiredCommandCore(
+                virtualization: MockVirtualizationService(), networks: networks, organization: organization,
+                preferences: preferences))
     }
 
     @discardableResult
@@ -279,18 +267,14 @@ struct VMCommandCoreGroupActionTests {
         let a = makeInstance(in: harness, name: "A")
         let b = makeInstance(in: harness, name: "B")
         try harness.library.organization.createFolder(named: "Both", members: [a.id, b.id])
-        var surfaced: [String] = []
-        var revealed: [UUID] = []
-        harness.core.surfaceDisplay = { surfaced.append($0.name) }
-        harness.core.revealInLibrary = { revealed.append($0) }
         let selected = harness.library.selectedID
 
         _ = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Both"))
 
         #expect(a.status == .running && b.status == .running)
         #expect(harness.library.selectedID == selected)
-        #expect(surfaced.isEmpty)
-        #expect(revealed.isEmpty)
+        #expect(harness.surfacedDisplays.isEmpty)
+        #expect(harness.revealedInLibrary.isEmpty)
     }
 
     // MARK: - Unattended bring-ups
@@ -472,27 +456,15 @@ struct VMCommandCoreGroupActionTests {
 
     // MARK: - Order and cancellation
 
-    private struct SuspendingHarness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let virtualization: SuspendingMockVirtualizationService
-        let storage: MockVMStorageService
-    }
+    private typealias SuspendingHarness = WiredCommandCore.Scripted<SuspendingMockVirtualizationService>
 
     private func makeSuspendingHarness(
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
     ) -> SuspendingHarness {
-        let storage = MockVMStorageService()
-        let fileSystem = MockFileSystem()
-        let virtualization = SuspendingMockVirtualizationService()
-        let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences, organization: organization)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
-        return SuspendingHarness(core: core, library: library, virtualization: virtualization, storage: storage)
+        SuspendingHarness(
+            WiredCommandCore(
+                virtualization: SuspendingMockVirtualizationService(), organization: organization,
+                preferences: preferences))
     }
 
     /// Two stopped VMs in a folder, in that order.

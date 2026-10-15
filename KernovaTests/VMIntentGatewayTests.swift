@@ -511,17 +511,14 @@ struct VMIntentGatewayTests {
             name: "Busy", phase: .operating(.saving, from: .running(sessionID: UUID())))
         let gateway = makeGateway(over: harness)
         var asked = 0
-        var failure: CommandError?
 
-        do {
+        let failure = try await #require(throws: CommandError.self) {
             try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
                 try await gateway.stop(vm.id, disposition: .graceful, consent: consent)
             }
-        } catch let error as CommandError {
-            failure = error
         }
 
-        #expect(failure?.isBusy == true)
+        #expect(failure.isBusy)
         #expect(asked == 0)
         #expect(virtualization.stopCallCount == 0)
     }

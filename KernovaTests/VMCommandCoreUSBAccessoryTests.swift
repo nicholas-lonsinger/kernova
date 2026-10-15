@@ -18,60 +18,15 @@ struct VMCommandCoreUSBAccessoryTests {
     private let unsupportedByBuild = CommandError.unsupportedByBuild(
         capability: "USB accessory passthrough")
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let lifecycle: VMLifecycleCoordinator
-        let storage: MockVMStorageService
-        let accessories: MockUSBAccessoryService?
-        /// Wired the way `VMLibraryViewModel` wires it, so what an attach and a
-        /// detach mean for the pairings is exercised rather than stubbed — and
-        /// held, because the core references it weakly.
-        let pairingCoordinator: USBAccessoryCoordinator?
-    }
-
-    private func makeHarness(withAccessorySupport: Bool = true) -> Harness {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles(files: storage.files)
-        let fileSystem = MockFileSystem()
-        let accessories = withAccessorySupport ? MockUSBAccessoryService() : nil
-        let lifecycle = makeTestLifecycle(
-            virtualization: MockVirtualizationService(),
-            usbAccessoryService: accessories,
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage,
-            machineFiles: snapshots,
-            lifecycle: lifecycle,
-            fileSystem: fileSystem,
+    private func makeHarness(withAccessorySupport: Bool = true) -> WiredCommandCore {
+        WiredCommandCore(
+            usbAccessoryService: withAccessorySupport ? MockUSBAccessoryService() : nil,
             preferences: preferences)
-        let core = VMCommandCore(
-            library: library,
-            lifecycle: lifecycle,
-            storageService: storage,
-            diskImageService: MockDiskImageService(),
-            fileSystem: fileSystem,
-            preferences: preferences
-        )
-        let pairingCoordinator = USBAccessoryCoordinator(
-            lifecycle: lifecycle, library: library)
-        core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
-            try pairingCoordinator?.userAttached(accessory, permit)
-        }
-        core.onUserDetachingAccessory = { [weak pairingCoordinator] _, accessory in
-            pairingCoordinator?.userDetaching(accessory)
-        }
-        core.onUserReleasedAccessory = { [weak pairingCoordinator] permit, accessory in
-            try pairingCoordinator?.userReleased(accessory, permit)
-        }
-        return Harness(
-            core: core, library: library, lifecycle: lifecycle, storage: storage,
-            accessories: accessories, pairingCoordinator: pairingCoordinator)
     }
 
     /// A VM with a live session an accessory can be attached to.
     @discardableResult
-    private func makeRunningInstance(in harness: Harness, name: String = "Core VM") -> VMInstance {
+    private func makeRunningInstance(in harness: WiredCommandCore, name: String = "Core VM") -> VMInstance {
         let instance = RegisteredVMInstanceFixture.register(
             name: name, phase: .running(sessionID: UUID()), guestOS: .linux,
             library: harness.library, preferences: preferences)
@@ -79,29 +34,18 @@ struct VMCommandCoreUSBAccessoryTests {
         return instance
     }
 
-    private func makeStoppedInstance(in harness: Harness, name: String = "Core VM") -> VMInstance {
+    private func makeStoppedInstance(in harness: WiredCommandCore, name: String = "Core VM") -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: .stopped, guestOS: .linux, library: harness.library,
             preferences: preferences)
     }
 
-    private func commandError(_ body: () async throws -> Void) async -> CommandError? {
-        do {
-            try await body()
-            return nil
-        } catch let error as CommandError {
-            return error
-        } catch {
-            return nil
-        }
-    }
-
     /// Attaches `accessory` to `instance` and answers the attachment's
     /// identifier — the setup every detach and every listing assertion needs.
     private func attach(
-        _ accessory: USBAccessoryInfo, to instance: VMInstance, in harness: Harness
+        _ accessory: USBAccessoryInfo, to instance: VMInstance, in harness: WiredCommandCore
     ) async throws -> UUID {
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         service.accessories.append(accessory)
         let deviceID = UUID()
         service.nextDeviceID = deviceID
@@ -117,11 +61,11 @@ struct VMCommandCoreUSBAccessoryTests {
         let harness = makeHarness(withAccessorySupport: false)
         let instance = makeRunningInstance(in: harness)
 
-        let listing = await commandError {
+        let listing = try #require(throws: CommandError.self) {
             _ = try harness.core.usbAccessories(of: .id(instance.id))
         }
-        let available = await commandError { _ = try harness.core.availableUSBAccessories() }
-        let edit = await commandError {
+        let available = try #require(throws: CommandError.self) { _ = try harness.core.availableUSBAccessories() }
+        let edit = try await #require(throws: CommandError.self) {
             try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
         }
 
@@ -131,20 +75,19 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(listing == unsupportedByBuild)
         #expect(edit == unsupportedByBuild)
         #expect(available == unsupportedByBuild)
-        #expect(available?.message == "This build of Kernova does not support USB accessory passthrough.")
+        #expect(available.message == "This build of Kernova does not support USB accessory passthrough.")
     }
 
     @Test("An accessory macOS has not assigned to Kernova is a miss, not a failed attach")
     func attachingAnUnassignedAccessoryIsRefusedAsAMiss() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
 
-        let refusal = try #require(
-            await commandError {
-                try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
-            })
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
+        }
 
         // Host-scoped: the VM is not what is missing, and a script reads this
         // as the same kind of miss as a name nothing answers to.
@@ -176,7 +119,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("The available listing leaves out what another guest is already holding")
     func availableListingExcludesHeldAccessories() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let holder = makeRunningInstance(in: harness, name: "Holder")
         makeRunningInstance(in: harness, name: "Bystander")
         let free = MockUSBAccessoryService.accessory(registryID: 1)
@@ -208,19 +151,19 @@ struct VMCommandCoreUSBAccessoryTests {
         makeRunningInstance(in: harness, name: "Twin")
         makeRunningInstance(in: harness, name: "Twin")
 
-        let missingListing = await commandError {
+        let missingListing = try #require(throws: CommandError.self) {
             _ = try harness.core.usbAccessories(of: .name("Nobody"))
         }
-        let missingEdit = await commandError {
+        let missingEdit = try await #require(throws: CommandError.self) {
             try await harness.core.detachUSBAccessory(.name("Nobody"), device: UUID())
         }
-        #expect(missingListing?.isNotFound == true)
-        #expect(missingEdit?.isNotFound == true)
+        #expect(missingListing.isNotFound)
+        #expect(missingEdit.isNotFound)
 
-        let ambiguous = await commandError {
+        let ambiguous = try #require(throws: CommandError.self) {
             _ = try harness.core.usbAccessories(of: .name("Twin"))
         }
-        guard case .ambiguous(_, let candidates) = try #require(ambiguous) else {
+        guard case .ambiguous(_, let candidates) = ambiguous else {
             Issue.record("expected an ambiguous refusal")
             return
         }
@@ -232,7 +175,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("Attaching hands the accessory to the live session and records the attachment")
     func attachRecordsTheAttachment() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         let accessory = MockUSBAccessoryService.accessory(registryID: 7)
 
@@ -246,7 +189,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("Detaching gives the accessory back and drops the attachment")
     func detachDropsTheAttachment() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         let accessory = MockUSBAccessoryService.accessory(registryID: 7)
         let deviceID = try await attach(accessory, to: instance, in: harness)
@@ -265,17 +208,17 @@ struct VMCommandCoreUSBAccessoryTests {
             .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
         ] {
             let harness = makeHarness()
-            let service = try #require(harness.accessories)
+            let service = try #require(harness.usbAccessories)
             service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
             let instance = RegisteredVMInstanceFixture.register(
                 name: "Core VM", phase: phase, guestOS: .linux, library: harness.library,
                 preferences: preferences)
 
-            let refusal = await commandError {
+            let refusal = try await #require(throws: CommandError.self) {
                 try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 7)
             }
 
-            #expect(refusal?.isInvalidState == true, "\(phase)")
+            #expect(refusal.isInvalidState, "\(phase)")
             #expect(service.attachedRegistryIDs.isEmpty, "\(phase)")
         }
     }
@@ -296,15 +239,14 @@ struct VMCommandCoreUSBAccessoryTests {
 
         for (thrown, matches) in cases {
             let harness = makeHarness()
-            let service = try #require(harness.accessories)
+            let service = try #require(harness.usbAccessories)
             let instance = makeRunningInstance(in: harness)
             service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
             service.attachError = thrown
 
-            let thrownRefusal = await commandError {
+            let refusal = try await #require(throws: CommandError.self) {
                 try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 7)
             }
-            let refusal = try #require(thrownRefusal)
 
             #expect(matches(refusal), "\(thrown)")
             #expect(instance.liveUSBAccessories.isEmpty, "\(thrown)")
@@ -314,7 +256,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("A detach of a device the guest no longer holds succeeds and clears the entry")
     func detachOfAnAlreadyGoneDeviceSucceeds() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         let deviceID = try await attach(
             MockUSBAccessoryService.accessory(registryID: 11), to: instance, in: harness)
@@ -331,16 +273,15 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("A detach naming a device the guest does not hold is refused, not quietly accepted")
     func detachOfAnUnknownDeviceIsRefused() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         _ = try await attach(
             MockUSBAccessoryService.accessory(registryID: 11), to: instance, in: harness)
         let stranger = UUID()
 
-        let refusal = try #require(
-            await commandError {
-                try await harness.core.detachUSBAccessory(.id(instance.id), device: stranger)
-            })
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.detachUSBAccessory(.id(instance.id), device: stranger)
+        }
 
         // "Already gone" is a success only for a device the guest was recorded
         // as holding; an identifier nothing answers to is a mistake, and
@@ -359,7 +300,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("Two accessories that would read alike are told apart by their ports")
     func duplicateNamesAreQualifiedAcrossBothListings() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         let held = MockUSBAccessoryService.accessory(
             registryID: 1, serial: "AAA", receptacle: "hub/Port-USB-C@2", vendorName: "Samsung",
@@ -382,7 +323,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("A lone accessory keeps its plain name")
     func aLoneAccessoryIsNotQualified() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         service.accessories.append(
             MockUSBAccessoryService.accessory(
                 registryID: 1, serial: "AAA", receptacle: "hub/Port-USB-C@2", vendorName: "Samsung",
@@ -410,16 +351,15 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("A detach that fails for any other reason reports what it was told")
     func detachFailureCarriesItsMessage() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         let deviceID = try await attach(
             MockUSBAccessoryService.accessory(registryID: 12), to: instance, in: harness)
         service.detachError = USBAccessoryError.accessoryNotFound
 
-        let thrownRefusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
         }
-        let refusal = try #require(thrownRefusal)
 
         #expect(refusal.isOperationFailure)
         #expect(refusal.message == USBAccessoryError.accessoryNotFound.errorDescription)
@@ -435,14 +375,14 @@ struct VMCommandCoreUSBAccessoryTests {
         _ = try await attach(
             MockUSBAccessoryService.accessory(registryID: 5), to: holder, in: harness)
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.attachUSBAccessory(.id(other.id), accessory: 5)
         }
 
         // A guest captures an accessory exclusively, so the second attach could
         // otherwise only fail inside VZ.
-        #expect(refusal?.isOperationFailure == true)
-        #expect(refusal?.message == "That USB accessory is in use by \u{201C}Holder\u{201D}.")
+        #expect(refusal.isOperationFailure)
+        #expect(refusal.message == "That USB accessory is in use by \u{201C}Holder\u{201D}.")
         #expect(other.liveUSBAccessories.isEmpty)
         #expect(holder.liveUSBAccessories.count == 1)
     }
@@ -450,7 +390,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("Two guests attaching one accessory: the second is refused while the first is in flight")
     func aSecondAttachDuringTheFirstIsRefused() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let first = makeRunningInstance(in: harness, name: "First")
         let second = makeRunningInstance(in: harness, name: "Second")
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 5))
@@ -460,7 +400,7 @@ struct VMCommandCoreUSBAccessoryTests {
             try? await harness.core.attachUSBAccessory(.id(first.id), accessory: 5)
         }()
         try await service.attachStarted()
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.attachUSBAccessory(.id(second.id), accessory: 5)
         }
         service.resumeAttach()
@@ -469,7 +409,7 @@ struct VMCommandCoreUSBAccessoryTests {
         // The first attach holds the accessory from its admission, not from
         // the moment VZ has captured it — so the second is refused before VZ
         // is asked twice for one device.
-        #expect(refusal?.message == "That USB accessory is in use by \u{201C}First\u{201D}.")
+        #expect(refusal.message == "That USB accessory is in use by \u{201C}First\u{201D}.")
         #expect(service.attachedRegistryIDs == [5])
         #expect(first.liveUSBAccessories.map(\.accessory.registryID) == [5])
         #expect(second.liveUSBAccessories.isEmpty)
@@ -527,10 +467,8 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("An attach whose pairing cannot be written is reported and remembers nothing")
     func attachWhosePairingWriteFailsIsReportedAndRemembersNothing() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
         harness.storage.files.setReplaceError(
             CocoaError(.fileWriteNoPermission), for: VMBundleLayout.usbPairingsRelativePath)
         let accessory = MockUSBAccessoryService.accessory(
@@ -541,7 +479,7 @@ struct VMCommandCoreUSBAccessoryTests {
         // The device change stands; only its remembering did not land.
         #expect(service.attachedRegistryIDs == [7])
         #expect(instance.liveUSBAccessories.map(\.deviceID) == [deviceID])
-        #expect(reported.count == 1)
+        #expect(harness.failures.count == 1)
         #expect(instance.usbPairings.isEmpty)
         #expect(harness.storage.files.pairings(at: instance.bundleURL)?.isEmpty == true)
     }
@@ -549,7 +487,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("A pairing move the VM holding the pairing refuses is reported as that VM being busy")
     func pairingMoveRefusalNamesTheHoldingVM() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let holder = makeStoppedInstance(in: harness, name: "Holder")
         let target = makeRunningInstance(in: harness, name: "Target")
         let accessory = MockUSBAccessoryService.accessory(
@@ -559,15 +497,13 @@ struct VMCommandCoreUSBAccessoryTests {
             try harness.library.updateUSBPairings($0) { $0.upsert(pairing) }
         }
         holder.activity.placeForTesting(.operating(.deleting, from: .stopped))
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
 
         _ = try await attach(accessory, to: target, in: harness)
 
         #expect(service.attachedRegistryIDs == [7])
         let busy = harness.core.commandError(for: .busy(.deleting), on: holder)
-        #expect(reported.count == 1)
-        #expect(reported.first?.message.hasSuffix(busy.message) == true)
+        #expect(harness.failures.count == 1)
+        #expect(harness.failures.first?.message.hasSuffix(busy.message) == true)
         #expect(holder.usbPairings.pairings.map(\.key) == [pairing.key])
         #expect(target.usbPairings.isEmpty)
     }
@@ -594,10 +530,8 @@ struct VMCommandCoreUSBAccessoryTests {
     )
     func detachWhoseForgetFailsStillSuppressesTheEcho() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
         let accessory = MockUSBAccessoryService.accessory(
             registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
         let deviceID = try await attach(accessory, to: instance, in: harness)
@@ -607,9 +541,9 @@ struct VMCommandCoreUSBAccessoryTests {
 
         try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
 
-        #expect(reported.count == 1)
+        #expect(harness.failures.count == 1)
         #expect(
-            reported.first?.message.hasPrefix(
+            harness.failures.first?.message.hasPrefix(
                 "\(accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there. "
             ) == true)
         #expect(instance.usbPairings.pairing(forKey: key) != nil)
@@ -628,7 +562,7 @@ struct VMCommandCoreUSBAccessoryTests {
     @Test("A detach's echo that arrives while the detach is in flight stays with the Mac")
     func echoDuringTheDetachIsNotReattached() async throws {
         let harness = makeHarness()
-        let service = try #require(harness.accessories)
+        let service = try #require(harness.usbAccessories)
         let instance = makeRunningInstance(in: harness)
         let accessory = MockUSBAccessoryService.accessory(
             registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
@@ -743,8 +677,9 @@ struct VMCommandCoreUSBAccessoryTests {
             MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"), to: instance,
             in: harness)
 
-        let refusal = try #require(
-            await commandError { try harness.core.forgetUSBPairing(.id(instance.id), key: "nope") })
+        let refusal = try #require(throws: CommandError.self) {
+            try harness.core.forgetUSBPairing(.id(instance.id), key: "nope")
+        }
 
         #expect(refusal.isItemNotFound)
         #expect(
@@ -759,8 +694,8 @@ struct VMCommandCoreUSBAccessoryTests {
         let harness = makeHarness(withAccessorySupport: false)
         let instance = makeRunningInstance(in: harness)
 
-        let listing = await commandError { _ = try harness.core.usbPairings(of: nil) }
-        let forget = await commandError {
+        let listing = try #require(throws: CommandError.self) { _ = try harness.core.usbPairings(of: nil) }
+        let forget = try #require(throws: CommandError.self) {
             try harness.core.forgetUSBPairing(.id(instance.id), key: "k")
         }
 

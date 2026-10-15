@@ -264,8 +264,9 @@ struct VMCommandSocketListenerTests {
     @Test("A client that hangs up cancels the verb it left running")
     func closingAConnectionCancelsItsRequest() async throws {
         let harness = try makeHarness()
-        let authority = ParkedSourceAuthority()
-        harness.wired.core.sourceAuthority = authority
+        let authority = harness.wired.authority
+        let park = CancellationPark()
+        authority.parkUntilCancelled = park
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -277,14 +278,14 @@ struct VMCommandSocketListenerTests {
                 verb: .importVM(path: "/Users/somebody/Desktop/Alpha.kernova", waitForOutcome: true)))
         // The verb has to be running before the hang-up, or the close would be
         // cancelling nothing and the test would prove nothing.
-        try await authority.entered.wait { authority.requestCount == 1 }
+        try await authority.requested.wait { authority.requests.count == 1 }
 
         client.close()
 
         // A verb suspended on something only the caller wanted — an import's
         // permission panel — would otherwise outlive the request that asked.
-        try await authority.park.released.wait { authority.park.wasCancelled }
-        #expect(authority.park.wasCancelled)
+        try await park.released.wait { park.wasCancelled }
+        #expect(park.wasCancelled)
         #expect(harness.wired.library.entries.isEmpty)
     }
 
@@ -516,22 +517,5 @@ private final class TestCommandClient: @unchecked Sendable {
         guard !isClosed else { return }
         isClosed = true
         Darwin.close(fd)
-    }
-}
-
-/// A permission panel the user never answers: the grant parks until the task
-/// asking for it is cancelled.
-@MainActor
-private final class ParkedSourceAuthority: SandboxSourceAuthorizing {
-    let park = CancellationPark()
-    /// Fires when a request arrives, so a test awaits the verb reaching it.
-    let entered = AsyncGate()
-    private(set) var requestCount = 0
-
-    func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL {
-        requestCount += 1
-        entered.notify()
-        await park.park()
-        throw CancellationError()
     }
 }

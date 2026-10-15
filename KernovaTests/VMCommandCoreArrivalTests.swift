@@ -15,18 +15,7 @@ struct VMCommandCoreArrivalTests {
     private let storage = MockVMStorageService()
     private let scratch = TestScratchDirectory(prefix: "ArrivalTests")
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let reports: Reports
-        let virtualization: MockVirtualizationService
-    }
-
-    /// Every failure the core handed its unattended hook.
-    private final class Reports {
-        var failures: [CommandError] = []
-        let changed = AsyncGate()
-    }
+    private typealias Harness = WiredCommandCore.Scripted<MockVirtualizationService>
 
     /// Every `.failure` event the core emitted.
     private final class EventLog {
@@ -35,24 +24,9 @@ struct VMCommandCoreArrivalTests {
     }
 
     private func makeHarness() -> Harness {
-        let virtualization = MockVirtualizationService()
-        let lifecycle = makeTestLifecycle(virtualization: virtualization)
-        let library = makeWiredLibrary(
-            storage: storage, lifecycle: lifecycle, preferences: preferences)
-        let core = VMCommandCore(
-            library: library,
-            lifecycle: lifecycle,
-            storageService: storage,
-            diskImageService: MockDiskImageService(),
-            fileSystem: MockFileSystem(),
-            preferences: preferences)
-        let reports = Reports()
-        core.onFailure = { failure, _ in
-            reports.failures.append(failure)
-            reports.changed.notify()
-        }
-        return Harness(
-            core: core, library: library, reports: reports, virtualization: virtualization)
+        Harness(
+            WiredCommandCore(
+                virtualization: MockVirtualizationService(), storage: storage, preferences: preferences))
     }
 
     private func makeSource(in harness: Harness) -> VMInstance {
@@ -105,7 +79,7 @@ struct VMCommandCoreArrivalTests {
             try await harness.core.importVM(from: unreadableSource(), waitForOutcome: true)
         }
 
-        #expect(harness.reports.failures.isEmpty)
+        #expect(harness.failures.isEmpty)
         #expect(harness.library.entries.isEmpty)
         // Recorded as an event all the same: the event stream observes the
         // library, whoever the failure is reported to.
@@ -161,9 +135,9 @@ struct VMCommandCoreArrivalTests {
         // The failed copy let go of its source where it found it.
         #expect(source.phase == .stopped)
 
-        try await harness.reports.changed.wait { !harness.reports.failures.isEmpty }
+        try await harness.failureReported.wait { !harness.failures.isEmpty }
         try await events.changed.wait { !events.failures.isEmpty }
-        #expect(harness.reports.failures.count == 1)
+        #expect(harness.failures.count == 1)
         #expect(events.failures.map(\.id) == [row.id])
     }
 
@@ -183,7 +157,7 @@ struct VMCommandCoreArrivalTests {
         hold.signal()
 
         await #expect(throws: CommandError.self) { try await waiter.value }
-        try await harness.reports.changed.wait { harness.reports.failures.count == 1 }
+        try await harness.failureReported.wait { harness.failures.count == 1 }
     }
 
     @Test("A cancelled waited clone throws its cancel and reports nothing")
@@ -203,16 +177,13 @@ struct VMCommandCoreArrivalTests {
         #expect(source.phase.operation?.kind == .copyingOut(.stopped))
         hold.signal()
 
-        let outcome = await waiter.result
-        guard case .failure(let error) = outcome,
-            case .operationFailed(_, _, let message, _)? =
-                error as? CommandError
-        else {
-            Issue.record("expected the clone's cancel, got \(outcome)")
+        let error = try await #require(throws: CommandError.self) { try await waiter.value }
+        guard case .operationFailed(_, _, let message, _) = error else {
+            Issue.record("expected the clone's cancel, got \(error)")
             return
         }
         #expect(message.contains("cancelled"))
-        #expect(harness.reports.failures.isEmpty)
+        #expect(harness.failures.isEmpty)
         #expect(source.phase == .stopped)
         #expect(harness.library.instances.map(\.id) == [source.id])
         #expect(storage.publishBundleCallCount == 0)
@@ -305,7 +276,7 @@ struct VMCommandCoreArrivalTests {
         #expect(storage.bundleIdentity(at: destination) == nil)
         #expect(harness.library.entries.isEmpty)
         #expect(harness.virtualization.startCallCount == 0)
-        #expect(harness.reports.failures.isEmpty)
+        #expect(harness.failures.isEmpty)
     }
 
     @Test("A create publishing when the termination begins is adopted, and its start is refused unreported")
@@ -328,7 +299,7 @@ struct VMCommandCoreArrivalTests {
         // The start-after-create is decided in the step that adopts the VM.
         #expect(instance.phase == .stopped)
         #expect(harness.virtualization.startCallCount == 0)
-        #expect(harness.reports.failures.isEmpty)
+        #expect(harness.failures.isEmpty)
     }
 
     @Test("A create's auto-start is admitted in the step that adopts the new VM")
@@ -336,13 +307,10 @@ struct VMCommandCoreArrivalTests {
         // The boot parks inside Virtualization, so the VM is still held by it
         // when the arrival's outcome is read.
         let virtualization = SuspendingMockVirtualizationService()
-        let lifecycle = makeTestLifecycle(virtualization: virtualization)
-        let library = makeWiredLibrary(
-            storage: storage, lifecycle: lifecycle, preferences: preferences)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: MockFileSystem(),
-            preferences: preferences)
+        let wired = WiredCommandCore(
+            virtualization: virtualization, storage: storage, preferences: preferences)
+        let core = wired.core
+        let library = wired.library
         let configuration = VMConfiguration(name: "Fresh", guestOS: .linux, bootMode: .efi)
 
         try core.create(
@@ -379,17 +347,15 @@ struct VMCommandCoreArrivalTests {
         try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
         hold.signal()
 
-        let outcome = await waiter.result
-        guard case .failure(let error) = outcome,
-            case .operationFailed(_, _, let message, _)? = error as? CommandError
-        else {
-            Issue.record("expected the clone's cancel, got \(outcome)")
+        let error = try await #require(throws: CommandError.self) { try await waiter.value }
+        guard case .operationFailed(_, _, let message, _) = error else {
+            Issue.record("expected the clone's cancel, got \(error)")
             return
         }
         #expect(message == "The clone was cancelled.")
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(harness.library.instances.map(\.id) == [source.id])
-        #expect(harness.reports.failures.isEmpty)
+        #expect(harness.failures.isEmpty)
     }
 
     @Test("A cancel during the rename whose trash fails keeps the VM and reports the failure once")
@@ -414,7 +380,7 @@ struct VMCommandCoreArrivalTests {
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(Set(harness.library.instances.map(\.id)) == [source.id, row.id])
         #expect(harness.library.arrivals.isEmpty)
-        try await harness.reports.changed.wait { harness.reports.failures.count == 1 }
+        try await harness.failureReported.wait { harness.failures.count == 1 }
     }
 
     @Test("A cancel that arrives after adoption is refused and deletes nothing")
@@ -425,14 +391,12 @@ struct VMCommandCoreArrivalTests {
             .id(source.id), outcome: .newMachine, waitForOutcome: true)
         #expect(clone.status == VMStatus.stopped.rawValue)
 
-        do {
+        let refusal = try #require(throws: CommandError.self) {
             try harness.core.cancelPreparing(.id(clone.id), consent: .all)
-            Issue.record("expected the cancel to be refused")
-        } catch let refusal as CommandError {
-            guard case .invalidState = refusal else {
-                Issue.record("expected an invalid-state refusal, got \(refusal)")
-                return
-            }
+        }
+        guard case .invalidState = refusal else {
+            Issue.record("expected an invalid-state refusal, got \(refusal)")
+            return
         }
         #expect(storage.deleteVMBundleCallCount == 0)
         #expect(Set(harness.library.instances.map(\.id)) == [source.id, clone.id])
@@ -666,20 +630,18 @@ struct VMCommandCoreArrivalTests {
         }
         if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: source) }
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.beginClone(.id(source.id), outcome: .exactCopy)
-            Issue.record("expected the clone to be refused")
-        } catch let error as CommandError {
-            guard case .changeTakesStoppedVM(_, _, let change) = error else {
-                Issue.record("expected a stopped-VM refusal, got \(error)")
-                return
-            }
-            #expect(change == .cloneWritingOutsideBundle)
-            #expect(
-                error.message
-                    == "\u{201C}Source\u{201D} is \(source.status.phrase(heldByAnotherCopy: false)). "
-                    + "Cloning a virtual machine with a writable external disk needs it stopped.")
         }
+        guard case .changeTakesStoppedVM(_, _, let change) = error else {
+            Issue.record("expected a stopped-VM refusal, got \(error)")
+            return
+        }
+        #expect(change == .cloneWritingOutsideBundle)
+        #expect(
+            error.message
+                == "\u{201C}Source\u{201D} is \(source.status.phrase(heldByAnotherCopy: false)). "
+                + "Cloning a virtual machine with a writable external disk needs it stopped.")
         #expect(storage.cloneVMBundleCallCount == 0)
         #expect(harness.library.entries.map(\.id) == [source.id])
     }

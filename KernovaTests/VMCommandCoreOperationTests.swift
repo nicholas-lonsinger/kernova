@@ -13,40 +13,19 @@ import Testing
 struct VMCommandCoreOperationTests {
     private let preferences = makeTestPreferences()
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let lifecycle: VMLifecycleCoordinator
-        let storage: MockVMStorageService
-        let snapshots: MockVMBundleMachineFiles
-    }
-
     private func makeHarness(
         virtualization: any VirtualizationProviding,
         usbAccessories: MockUSBAccessoryService? = nil,
         clock: any EngineClock = makePlatformEngineClock()
-    ) -> Harness {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles(files: storage.files)
-        let fileSystem = MockFileSystem()
-        let lifecycle = makeTestLifecycle(
+    ) -> WiredCommandCore {
+        WiredCommandCore(
             virtualization: virtualization, usbAccessoryService: usbAccessories,
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: snapshots, lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
             preferences: preferences, clock: clock)
-        return Harness(
-            core: core, library: library, lifecycle: lifecycle, storage: storage,
-            snapshots: snapshots)
     }
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String = "Core VM", phase: VMLifecyclePhase = .stopped,
+        in harness: WiredCommandCore, name: String = "Core VM", phase: VMLifecyclePhase = .stopped,
         guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = [],
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
@@ -55,33 +34,9 @@ struct VMCommandCoreOperationTests {
             library: harness.library, preferences: preferences,
             mutate: mutate)
         for snapshot in snapshots {
-            harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
+            harness.machineFiles.setCapturedConfiguration(instance.configuration, for: snapshot.id)
         }
         return instance
-    }
-
-    private func commandError(_ body: () async throws -> Void) async -> CommandError? {
-        do {
-            try await body()
-            return nil
-        } catch let error as CommandError {
-            return error
-        } catch {
-            Issue.record("Expected a command error, got \(error)")
-            return nil
-        }
-    }
-
-    private func commandError(_ body: () throws -> Void) -> CommandError? {
-        do {
-            try body()
-            return nil
-        } catch let error as CommandError {
-            return error
-        } catch {
-            Issue.record("Expected a command error, got \(error)")
-            return nil
-        }
     }
 
     // MARK: - R2: a stop releases nothing
@@ -110,7 +65,7 @@ struct VMCommandCoreOperationTests {
         try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
         #expect(virtualization.stopCallCount == 1)
 
-        let refused = try #require(await commandError { try await harness.core.suspend(.id(instance.id)) })
+        let refused = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
         #expect(refused.isBusy)
         #expect(instance.phase == held)
         #expect(virtualization.saveCallCount == 0)
@@ -140,7 +95,7 @@ struct VMCommandCoreOperationTests {
         try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
         #expect(virtualization.requestStopCallCount == 1)
 
-        let refused = try #require(await commandError { try await harness.core.suspend(.id(instance.id)) })
+        let refused = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
         #expect(refused.isBusy)
         #expect(instance.phase == held)
 
@@ -177,10 +132,9 @@ struct VMCommandCoreOperationTests {
         #expect(instance.isHeldByRevert)
         #expect(instance.liveSessionID == session)
 
-        let refused = try #require(
-            await commandError {
-                try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
-            })
+        let refused = try await #require(throws: CommandError.self) {
+            try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        }
         #expect(refused.isBusy)
         #expect(virtualization.forceStopCallCount == 0)
 
@@ -194,15 +148,16 @@ struct VMCommandCoreOperationTests {
         // Parked again with the files staged and not yet installed.
         await virtualization.waitUntilSuspended()
         #expect(instance.isHeldByRevert)
-        #expect(harness.snapshots.events == [.stageRestore])
-        let start = try #require(
-            await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) })
+        #expect(harness.machineFiles.events == [.stageRestore])
+        let start = try await #require(throws: CommandError.self) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
         #expect(start.isBusy)
         #expect(virtualization.startCallCount == 0)
 
         virtualization.resumeSuspended()
         try await revert.value
-        #expect(harness.snapshots.events == [.stageRestore, .installRestore])
+        #expect(harness.machineFiles.events == [.stageRestore, .installRestore])
         #expect(!instance.isHeldByRevert)
         #expect(instance.phase == .suspended)
     }
@@ -229,15 +184,16 @@ struct VMCommandCoreOperationTests {
 
         #expect(!harness.library.capabilities.accepts(.rename, on: instance))
         #expect(!harness.library.capabilities.accepts(.editLiveConfiguration, on: instance))
-        let rename = try #require(commandError { try harness.core.rename(.id(instance.id), to: "Renamed") })
+        let rename = try #require(throws: CommandError.self) {
+            try harness.core.rename(.id(instance.id), to: "Renamed")
+        }
         #expect(rename.isBusy)
-        let edit = try #require(
-            commandError {
-                try harness.core.setConfiguration(
-                    .id(instance.id),
-                    assignments: [ConfigurationEntry(key: "serial.socket", value: String(!relays))],
-                    consent: .all)
-            })
+        let edit = try #require(throws: CommandError.self) {
+            try harness.core.setConfiguration(
+                .id(instance.id),
+                assignments: [ConfigurationEntry(key: "serial.socket", value: String(!relays))],
+                consent: .all)
+        }
         #expect(edit.isBusy)
         #expect(instance.name == "Reverting")
         #expect(instance.configuration.serialSocketRelayEnabled == relays)
@@ -271,46 +227,42 @@ struct VMCommandCoreOperationTests {
         // The verbs a surface holding the instance itself reaches, past the
         // library lookup a selector would already fail.
         let notFound = CommandError.notFound(.id(instance.id))
-        #expect(
-            await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) }
-                == notFound)
-        #expect(
-            await commandError {
-                try await harness.core.stop(instance, disposition: .graceful, consent: .all)
-            } == notFound)
-        #expect(
-            await commandError {
-                try await harness.core.stop(instance, disposition: .force, consent: .all)
-            } == notFound)
-        #expect(await commandError { try await harness.core.suspend(instance) } == notFound)
+        await #expect(throws: notFound) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        await #expect(throws: notFound) {
+            try await harness.core.stop(instance, disposition: .graceful, consent: .all)
+        }
+        await #expect(throws: notFound) {
+            try await harness.core.stop(instance, disposition: .force, consent: .all)
+        }
+        await #expect(throws: notFound) { try await harness.core.suspend(instance) }
         // No capture mode is left to name a request for, so this one refuses
         // with the state rather than the removal — refused all the same, and
         // offering nothing.
-        let snapshotRefusal = await commandError {
+        let snapshotRefusal = try await #require(throws: CommandError.self) {
             _ = try await harness.core.takeSnapshot(instance, name: "Late", notes: "")
         }
-        if case .invalidState(let vm, let current, let allowed, _)? = snapshotRefusal {
+        if case .invalidState(let vm, let current, let allowed, _) = snapshotRefusal {
             #expect(vm.id == instance.id)
             #expect(current == .stopped)
             #expect(allowed.isEmpty)
         } else {
-            Issue.record("Expected an invalid-state refusal, got \(String(describing: snapshotRefusal))")
+            Issue.record("Expected an invalid-state refusal, got \(snapshotRefusal)")
         }
-        #expect(commandError { _ = try harness.core.startRevert(instance, to: snapshot) } == notFound)
+        #expect(throws: notFound) { _ = try harness.core.startRevert(instance, to: snapshot) }
         await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
             try await harness.lifecycle.pause(instance)
         }
 
         // And every selector verb, which no longer finds it.
         let selector = VMSelector.id(instance.id)
-        #expect(await commandError { try await harness.core.resume(selector, consent: .none) } == notFound)
-        #expect(
-            await commandError { try await harness.core.restart(selector, timeout: nil, consent: .none) } == notFound)
-        #expect(commandError { try harness.core.rename(selector, to: "Late") } == notFound)
-        #expect(
-            await commandError {
-                try await harness.core.delete(selector, permanently: false, alsoRemoving: [], consent: .all)
-            } == notFound)
+        await #expect(throws: notFound) { try await harness.core.resume(selector, consent: .none) }
+        await #expect(throws: notFound) { try await harness.core.restart(selector, timeout: nil, consent: .none) }
+        #expect(throws: notFound) { try harness.core.rename(selector, to: "Late") }
+        await #expect(throws: notFound) {
+            try await harness.core.delete(selector, permanently: false, alsoRemoving: [], consent: .all)
+        }
         #expect(virtualization.startCallCount == 0)
         #expect(virtualization.saveCallCount == 0)
         #expect(virtualization.revertedSnapshots.isEmpty)
@@ -327,8 +279,7 @@ struct VMCommandCoreOperationTests {
         let harness = makeHarness(virtualization: virtualization, clock: clock)
         let session = UUID()
         let instance = makeInstance(in: harness, name: "Doomed", phase: .running(sessionID: session))
-        let reported = FailureRecorder()
-        harness.core.onFailure = { failure, _ in reported.failures.append(failure) }
+        let deletion = StartedDeletion()
 
         // The delete is admitted in the very step the power-off rests the VM —
         // entered synchronously from the hook, so no other request, the
@@ -337,7 +288,7 @@ struct VMCommandCoreOperationTests {
         let poweredOff = instance.activity.onPoweredOff
         instance.activity.onPoweredOff = {
             let owed = poweredOff?() ?? []
-            reported.deletion = Task.immediate { @MainActor in
+            deletion.task = Task.immediate { @MainActor in
                 try await core.delete(
                     .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
             }
@@ -353,13 +304,13 @@ struct VMCommandCoreOperationTests {
 
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
         #expect(instance.activity.decide(.start(recovery: false), posture: .commit) != .admit)
-        try await reported.deletion?.value
+        try await deletion.task?.value
         #expect(instance.phase == .removed)
 
-        let error = await commandError { try await restart.value }
+        let error = try await #require(throws: CommandError.self) { try await restart.value }
         #expect(error == .notFound(.id(instance.id)))
         #expect(virtualization.startCallCount == 0)
-        #expect(reported.failures.isEmpty)
+        #expect(harness.failures.isEmpty)
     }
 
     // MARK: - R11: a revert holds the VM from its admission
@@ -394,13 +345,15 @@ struct VMCommandCoreOperationTests {
             #expect(!capabilities.isAvailable(.resume, on: instance), "\(resting)")
 
             await virtualization.waitUntilSuspended()
-            #expect(harness.snapshots.events.isEmpty)
+            #expect(harness.machineFiles.events.isEmpty)
             #expect(
-                await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) }?
-                    .isBusy == true)
-            let resumed = await commandError { try await harness.core.resume(.id(instance.id), consent: .none) }
-            #expect(resumed?.isBusy == (resting == .suspended), "\(resting)")
-            #expect(resumed != nil, "\(resting)")
+                try await #require(throws: CommandError.self) {
+                    try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+                }.isBusy)
+            let resumed = try await #require(throws: CommandError.self) {
+                try await harness.core.resume(.id(instance.id), consent: .none)
+            }
+            #expect(resumed.isBusy == (resting == .suspended), "\(resting)")
             #expect(virtualization.startCallCount == 0)
 
             virtualization.resumeSuspended()
@@ -434,8 +387,9 @@ struct VMCommandCoreOperationTests {
         #expect(!original.hasLiveVirtualMachine)
         #expect(original.status == .starting)
 
-        let refused = try #require(
-            await commandError { try await harness.core.start(.id(clone.id), recovery: false, consent: .none) })
+        let refused = try await #require(throws: CommandError.self) {
+            try await harness.core.start(.id(clone.id), recovery: false, consent: .none)
+        }
         guard case .conflict(let vm, let other, _) = refused else {
             Issue.record("Expected an identity conflict, got \(refused)")
             return
@@ -451,10 +405,8 @@ struct VMCommandCoreOperationTests {
     }
 }
 
-/// What a command core reported with nobody waiting, and the delete a hook
-/// started.
+/// The delete a hook started.
 @MainActor
-private final class FailureRecorder {
-    var failures: [CommandError] = []
-    var deletion: Task<Void, any Error>?
+private final class StartedDeletion {
+    var task: Task<Void, any Error>?
 }

@@ -11,29 +11,13 @@ import Testing
 struct VMCommandCoreListingTests {
     private let preferences = makeTestPreferences()
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-    }
-
-    private func makeHarness() -> Harness {
-        let storage = MockVMStorageService()
-        let fileSystem = MockFileSystem()
-        let lifecycle = makeTestLifecycle(
-            virtualization: MockVirtualizationService(), fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: MockVMBundleMachineFiles(), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
-            preferences: preferences)
-        return Harness(core: core, library: library)
+    private func makeHarness() -> WiredCommandCore {
+        WiredCommandCore(preferences: preferences)
     }
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String, guestOS: VMGuestOS = .linux,
+        in harness: WiredCommandCore, name: String, guestOS: VMGuestOS = .linux,
         phase: VMLifecyclePhase = .stopped, snapshots: [VMSnapshot] = [],
         hostState: VMHostState = VMHostState(), mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
@@ -43,7 +27,7 @@ struct VMCommandCoreListingTests {
     }
 
     /// Five VMs that tell every attribute apart, in library order.
-    private func makeMixedLibrary(in harness: Harness) {
+    private func makeMixedLibrary(in harness: WiredCommandCore) {
         makeInstance(in: harness, name: "Zed", guestOS: .macOS, phase: .running(sessionID: UUID()))
         makeInstance(in: harness, name: "Alpha", phase: .running(sessionID: UUID())) {
             $0.applyNetworkMode(.nat)
@@ -56,12 +40,12 @@ struct VMCommandCoreListingTests {
         makeInstance(in: harness, name: "Old", guestOS: .macOS) { $0.lastSeenAgentVersion = "0.0.1" }
     }
 
-    private func listed(_ harness: Harness, _ query: VMListQuery) throws -> [String] {
+    private func listed(_ harness: WiredCommandCore, _ query: VMListQuery) throws -> [String] {
         try harness.core.list(harness.core.selection(for: query, verb: .list)).map(\.name)
     }
 
     /// The refusal resolving `query` throws, `nil` for none.
-    private func refusal(_ harness: Harness, _ query: VMListQuery) -> CommandError? {
+    private func refusal(_ harness: WiredCommandCore, _ query: VMListQuery) -> CommandError? {
         #expect(throws: CommandError.self) { try harness.core.selection(for: query, verb: .list) }
     }
 
@@ -349,7 +333,7 @@ struct VMCommandCoreListingTests {
     // MARK: - Folders
 
     /// The mixed library's entries by name.
-    private func ids(_ harness: Harness) -> [String: UUID] {
+    private func ids(_ harness: WiredCommandCore) -> [String: UUID] {
         Dictionary(uniqueKeysWithValues: harness.library.entries.map { ($0.name, $0.id) })
     }
 

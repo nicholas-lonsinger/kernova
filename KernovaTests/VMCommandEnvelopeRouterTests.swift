@@ -50,7 +50,7 @@ struct VMCommandEnvelopeRouterTests {
     private func makeHarness(
         installService: any MacOSInstallProviding = MockMacOSInstallService(),
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
-        diskImages: any DiskImageProviding = MockDiskImageService(),
+        diskImages: MockDiskImageService = MockDiskImageService(),
         usbAccessoryService: MockUSBAccessoryService? = nil,
         clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {

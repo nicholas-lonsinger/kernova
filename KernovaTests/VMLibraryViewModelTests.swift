@@ -1914,13 +1914,7 @@ struct VMLibraryViewModelTests {
         }
         try VMInstanceFixture.writeSaveFile(for: suspended)
 
-        let error = try #require(
-            { () -> CommandError? in
-                do { try viewModel.deleteNetwork(lab.id) } catch let error as CommandError {
-                    return error
-                } catch { return nil }
-                return nil
-            }())
+        let error = try #require(throws: CommandError.self) { try viewModel.deleteNetwork(lab.id) }
 
         guard case .invalidState(let vm, _, _, _) = error else {
             Issue.record("expected the member's own refusal, got \(error)")

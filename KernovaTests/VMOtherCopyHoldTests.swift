@@ -138,10 +138,10 @@ struct VMOtherCopyHoldTests {
     func setIsRefusedWhileHeldElsewhere() throws {
         let harness = makeCore()
         let instance = harness.library.registerFixture(name: "Held")
-        harness.store.holdElsewhere(instance.bundleURL)
+        harness.storage.files.holdElsewhere(instance.bundleURL)
         let before = instance.configuration
 
-        do {
+        let error = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .id(instance.id),
                 assignments: [
@@ -149,16 +149,14 @@ struct VMOtherCopyHoldTests {
                         key: "serial.socket", value: String(!before.serialSocketRelayEnabled))
                 ],
                 consent: .all)
-            Issue.record("The set was not refused")
-        } catch let error as CommandError {
-            guard case .heldByAnotherCopy(let vm) = error else {
-                Issue.record("Refused as \(error)")
-                return
-            }
-            #expect(vm.id == instance.id)
-            #expect(vm.heldByAnotherCopy)
         }
-        #expect(harness.store.configuration(at: instance.bundleURL) == before)
+        guard case .heldByAnotherCopy(let vm) = error else {
+            Issue.record("Refused as \(error)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(vm.heldByAnotherCopy)
+        #expect(harness.storage.files.configuration(at: instance.bundleURL) == before)
     }
 
     // MARK: - Identity
@@ -254,7 +252,7 @@ struct VMOtherCopyHoldTests {
             let copy = harness.library.registerFixture(
                 name: "Copy", preferences: preferences,
                 mutate: Self.twin(twinning, index: 2, identity: Data([4, 2])))
-            if held { harness.store.holdElsewhere(source.bundleURL) }
+            if held { harness.storage.files.holdElsewhere(source.bundleURL) }
 
             guard
                 case .refuse(let refusal) = copy.activity.decide(.start(recovery: false), posture: .commit),
@@ -361,11 +359,11 @@ struct VMOtherCopyHoldTests {
             ),
         ]
         for (verb, read) in reads {
-            harness.store.holdElsewhere(url)
+            harness.storage.files.holdElsewhere(url)
             #expect(try read(), "\(verb)")
             #expect(instance.activity.heldByAnotherCopy, "\(verb)")
 
-            harness.store.releaseElsewhere(url)
+            harness.storage.files.releaseElsewhere(url)
             #expect(try !read(), "\(verb)")
             #expect(!instance.activity.heldByAnotherCopy, "\(verb)")
         }
@@ -377,7 +375,7 @@ struct VMOtherCopyHoldTests {
         let instance = harness.library.registerFixture()
         let enabled = instance.configuration.clipboardSharingEnabled
         // Another process's write, which this copy's memory has not seen.
-        try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.store)
+        try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.storage.files)
             .update(.configuration) { $0.clipboardSharingEnabled = !enabled }
         #expect(instance.configuration.clipboardSharingEnabled == enabled)
 
@@ -507,7 +505,7 @@ struct VMOtherCopyHoldTests {
         let harness = makeCore()
         let name = Self.uniqueName("Held set")
         let instance = harness.library.registerFixture(name: name)
-        harness.store.holdElsewhere(instance.bundleURL)
+        harness.storage.files.holdElsewhere(instance.bundleURL)
         let capture = LogCapture(naming: name)
         defer { capture.uninstall() }
 
@@ -531,7 +529,7 @@ struct VMOtherCopyHoldTests {
         let snapshot = VMSnapshot(name: "Only", kind: .cold, macAddress: nil)
         let instance = harness.library.registerFixture(
             name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
-        harness.store.holdElsewhere(instance.bundleURL)
+        harness.storage.files.holdElsewhere(instance.bundleURL)
         let capture = LogCapture(naming: name)
         defer { capture.uninstall() }
 
@@ -551,7 +549,7 @@ struct VMOtherCopyHoldTests {
         let harness = makeCore()
         let name = Self.uniqueName("Held delete")
         let instance = harness.library.registerFixture(name: name)
-        harness.store.holdElsewhere(instance.bundleURL)
+        harness.storage.files.holdElsewhere(instance.bundleURL)
         let capture = LogCapture(naming: name)
         defer { capture.uninstall() }
 
@@ -574,7 +572,7 @@ struct VMOtherCopyHoldTests {
         }
         let source = harness.library.registerFixture(name: Self.uniqueName("Source"), mutate: twin)
         let copy = harness.library.registerFixture(name: name, mutate: twin)
-        harness.store.holdElsewhere(source.bundleURL)
+        harness.storage.files.holdElsewhere(source.bundleURL)
         let capture = LogCapture(naming: name)
         defer { capture.uninstall() }
 
@@ -620,7 +618,7 @@ struct VMOtherCopyHoldTests {
         let instance = harness.library.registerFixture(
             snapshots: VMSnapshotManifest(snapshots: [snapshot]))
         // Another process's write, which this copy's memory has not seen.
-        try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.store)
+        try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.storage.files)
             .update(.hostState) { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
         #expect(!instance.hostState.ephemeralModeEnabled)
 
@@ -634,35 +632,13 @@ struct VMOtherCopyHoldTests {
 
         #expect(instance.ephemeralBaselineSnapshot?.id == snapshot.id)
         #expect(instance.snapshotManifest.snapshots.map(\.id) == [snapshot.id])
-        #expect(harness.store.manifest(at: instance.bundleURL)?.snapshots.map(\.id) == [snapshot.id])
+        #expect(harness.storage.files.manifest(at: instance.bundleURL)?.snapshots.map(\.id) == [snapshot.id])
         #expect(harness.machineFiles.discardedIDs.isEmpty)
     }
 
     // MARK: - Harness
 
-    private struct CoreHarness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let store: InMemoryVMBundleFiles
-        let machineFiles: MockVMBundleMachineFiles
-        let preferences: AppPreferences
-    }
-
-    private func makeCore() -> CoreHarness {
-        let storage = MockVMStorageService()
-        let fileSystem = MockFileSystem()
-        let preferences = makeTestPreferences()
-        let lifecycle = makeTestLifecycle(fileSystem: fileSystem)
-        let machineFiles = MockVMBundleMachineFiles(files: storage.files)
-        let library = makeWiredLibrary(
-            storage: storage, machineFiles: machineFiles, lifecycle: lifecycle, fileSystem: fileSystem,
-            preferences: preferences)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(), fileSystem: fileSystem,
-            preferences: preferences)
-        return CoreHarness(
-            core: core, library: library, store: storage.files, machineFiles: machineFiles,
-            preferences: preferences)
+    private func makeCore() -> WiredCommandCore {
+        WiredCommandCore()
     }
 }

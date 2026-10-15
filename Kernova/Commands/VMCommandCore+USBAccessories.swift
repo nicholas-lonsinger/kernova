@@ -122,7 +122,7 @@ extension VMCommandCore {
                     failure:
                         "\(attached.accessory.displayName) is attached to \u{201C}\(instance.name)\u{201D}, but Kernova could not record that it takes the accessory back automatically."
                 ) {
-                    try self.onUserAttachedAccessory?(permit, attached.accessory)
+                    try self.usbAccessoryPairings?.userAttached(attached.accessory, permit)
                 }
             }
             #log(
@@ -147,7 +147,7 @@ extension VMCommandCore {
             throw itemNotFound(
                 instance, item: "USB accessory with the device identifier \(deviceID.uuidString)")
         }
-        onUserDetachingAccessory?(instance, held.accessory)
+        usbAccessoryPairings?.userDetaching(held.accessory)
         do {
             // Taking a device back by hand is how a user ends a pairing
             // without opening settings, and it is the only way the returning
@@ -160,7 +160,7 @@ extension VMCommandCore {
                     failure:
                         "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there."
                 ) {
-                    try self.onUserReleasedAccessory?(permit, held.accessory)
+                    try self.usbAccessoryPairings?.userReleased(held.accessory, permit)
                 }
             }
             #log(

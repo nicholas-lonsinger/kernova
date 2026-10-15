@@ -252,16 +252,14 @@ struct VMConfigurationKeyRegistryTests {
     func valueRefusalsAreArgumentRefusals() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "cpus"))
         var config = makeConfiguration()
-        do {
+        let error = try #require(throws: CommandError.self) {
             try write(key, "999", to: &config)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidArgument(let message) = error else {
-                Issue.record("expected invalidArgument, got \(error)")
-                return
-            }
-            #expect(message.contains("cpus"))
         }
+        guard case .invalidArgument(let message) = error else {
+            Issue.record("expected invalidArgument, got \(error)")
+            return
+        }
+        #expect(message.contains("cpus"))
     }
 
     // MARK: - Display
@@ -477,27 +475,24 @@ struct VMConfigurationKeyRegistryTests {
         let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
         let membership = try #require(VMConfigurationKeyRegistry.key(named: "network.membership"))
         let unentitled = context(entitlements: .unentitled)
-        func refusal(_ key: VMConfigurationKey, _ value: String, on config: VMConfiguration) -> CommandError? {
+        func apply(_ key: VMConfigurationKey, _ value: String, on config: VMConfiguration) throws {
             var settings = VMSettings(configuration: config, hostState: VMHostState())
-            do {
-                try key.apply(value, to: &settings, context: unentitled)
-                return nil
-            } catch let error as CommandError {
-                return error
-            } catch {
-                Issue.record("Unexpected error \(error)")
-                return nil
-            }
+            try key.apply(value, to: &settings, context: unentitled)
         }
         let nat = makeConfiguration()
 
-        #expect(refusal(mode, "hostOnly", on: nat) == .unsupportedByBuild(capability: "host-only networking"))
-        #expect(refusal(mode, "bridged", on: nat) == .unsupportedByBuild(capability: "bridged networking"))
+        #expect(throws: CommandError.unsupportedByBuild(capability: "host-only networking")) {
+            try apply(mode, "hostOnly", on: nat)
+        }
+        #expect(throws: CommandError.unsupportedByBuild(capability: "bridged networking")) {
+            try apply(mode, "bridged", on: nat)
+        }
         #expect(
-            refusal(membership, "isolated", on: nat)
-                == .unsupportedByBuild(capability: "isolating a virtual machine from other virtual machines"))
-        #expect(refusal(mode, "nat", on: nat) == nil)
-        #expect(refusal(membership, "common", on: nat) == nil)
+            throws: CommandError.unsupportedByBuild(
+                capability: "isolating a virtual machine from other virtual machines")
+        ) { try apply(membership, "isolated", on: nat) }
+        #expect(throws: Never.self) { try apply(mode, "nat", on: nat) }
+        #expect(throws: Never.self) { try apply(membership, "common", on: nat) }
         #expect(
             !mode.accepts(
                 "hostOnly", settings: VMSettings(configuration: nat, hostState: VMHostState()), context: unentitled))
@@ -506,8 +501,8 @@ struct VMConfigurationKeyRegistryTests {
         // back what it holds is no move at all.
         var hostOnly = nat
         hostOnly.networkMode = .hostOnly
-        #expect(refusal(mode, "nat", on: hostOnly) == nil)
-        #expect(refusal(mode, "hostOnly", on: hostOnly) == nil)
+        #expect(throws: Never.self) { try apply(mode, "nat", on: hostOnly) }
+        #expect(throws: Never.self) { try apply(mode, "hostOnly", on: hostOnly) }
 
         // The same writes land in a build that can attach them.
         var settings = VMSettings(configuration: nat, hostState: VMHostState())

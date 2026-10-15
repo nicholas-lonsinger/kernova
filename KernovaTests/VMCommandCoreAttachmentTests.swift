@@ -14,52 +14,16 @@ struct VMCommandCoreAttachmentTests {
     private let preferences = makeTestPreferences()
     private let scratch = TestScratchDirectory(prefix: "VMCommandCoreAttachmentTests")
 
-    private struct Harness {
-        let core: VMCommandCore
-        let library: VMLibrary
-        let storage: MockVMStorageService
-        let diskImages: MockDiskImageService
-        let fileSystem: MockFileSystem
-        let removableMediaDevices: MockRemovableMediaDeviceService
-        let virtualization: MockVirtualizationService
-        let liveShares: MockLiveDirectorySharing
-    }
+    private typealias Harness = WiredCommandCore.Scripted<MockVirtualizationService>
 
     private func makeHarness(
         diskImages: MockDiskImageService = MockDiskImageService(),
-        usbAccessoryService: (any USBAccessoryProviding)? = nil
+        usbAccessoryService: MockUSBAccessoryService? = nil
     ) -> Harness {
-        let storage = MockVMStorageService()
-        let fileSystem = MockFileSystem()
-        let removableMediaDevices = MockRemovableMediaDeviceService()
-        let virtualization = MockVirtualizationService()
-        let liveShares = MockLiveDirectorySharing()
-        let lifecycle = makeTestLifecycle(
-            virtualization: virtualization,
-            removableMedia: removableMediaDevices,
-            liveDirectorySharing: liveShares,
-            usbAccessoryService: usbAccessoryService,
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage,
-            // Real, so the in-bundle disk a verb writes or trashes goes through
-            // the same recorded file system as every other.
-            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
-            lifecycle: lifecycle,
-            fileSystem: fileSystem,
-            preferences: preferences)
-        let core = VMCommandCore(
-            library: library,
-            lifecycle: lifecycle,
-            storageService: storage,
-            diskImageService: diskImages,
-            fileSystem: fileSystem,
-            preferences: preferences
-        )
-        return Harness(
-            core: core, library: library, storage: storage, diskImages: diskImages,
-            fileSystem: fileSystem, removableMediaDevices: removableMediaDevices,
-            virtualization: virtualization, liveShares: liveShares)
+        Harness(
+            WiredCommandCore(
+                virtualization: MockVirtualizationService(), diskImages: diskImages,
+                usbAccessoryService: usbAccessoryService, preferences: preferences))
     }
 
     @discardableResult
@@ -70,17 +34,6 @@ struct VMCommandCoreAttachmentTests {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, library: harness.library,
             preferences: preferences, mutate: mutate)
-    }
-
-    private func commandError(_ body: () async throws -> Void) async -> CommandError? {
-        do {
-            try await body()
-            return nil
-        } catch let error as CommandError {
-            return error
-        } catch {
-            return nil
-        }
     }
 
     private func externalPath(_ suffix: String) -> String {
@@ -144,11 +97,11 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness(diskImages: diskImages)
         let instance = makeInstance(in: harness)
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 32)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         // App-internal: the path was minted for this create and no entry names it.
         #expect(harness.fileSystem.removedURLs.count == 1)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -162,11 +115,11 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness(diskImages: diskImages)
         let instance = makeInstance(in: harness)
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 32)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
         #expect(harness.fileSystem.removedURLs.isEmpty)
         #expect(instance.configuration.storageDisks == nil)
@@ -186,21 +139,21 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase.operation?.kind == .creatingStorageDisk)
 
         let cpus = instance.configuration.cpuCount
-        let edit = await commandError {
+        let edit = try #require(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .id(instance.id), assignments: [ConfigurationEntry(key: "cpus", value: String(cpus + 1))],
                 consent: .all)
         }
-        #expect(edit?.isBusy == true)
-        let start = await commandError {
+        #expect(edit.isBusy)
+        let start = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
-        #expect(start?.isBusy == true)
-        let delete = await commandError {
+        #expect(start.isBusy)
+        let delete = try await #require(throws: CommandError.self) {
             try await harness.core.delete(
                 .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
-        #expect(delete?.isBusy == true)
+        #expect(delete.isBusy)
 
         diskImages.resumeCreateDiskImage()
         try await creation.value
@@ -343,12 +296,12 @@ struct VMCommandCoreAttachmentTests {
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
         let instance = makeInstance(in: harness) { $0.storageDisks = [external, keeper] }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: external.id, trashFile: true, consent: .none)
         }
-        #expect(refusal?.confirmationPrompt?.kind == .removeAttachment)
-        #expect(refusal?.confirmationPrompt?.confirmTitle == "Move to Trash")
+        #expect(refusal.confirmationPrompt?.kind == .removeAttachment)
+        #expect(refusal.confirmationPrompt?.confirmTitle == "Move to Trash")
         // Refused, so nothing moved.
         #expect(instance.configuration.storageDisks?.count == 2)
 
@@ -396,10 +349,10 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase.operation?.kind == .removingStorageDisk)
         // The entry went first; the file is what is still in flight.
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
-        let start = await commandError {
+        let start = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
-        #expect(start?.isBusy == true)
+        #expect(start.isBusy)
 
         harness.fileSystem.resumeTrash()
         try await removal.value
@@ -424,12 +377,12 @@ struct VMCommandCoreAttachmentTests {
         }
 
         // A shared file is offered detach-only, so that is what confirming does.
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(target.id), disk: disk.id, trashFile: true, consent: .none)
         }
-        #expect(refusal?.confirmationPrompt?.confirmTitle == "Remove from VM")
-        #expect(refusal?.confirmationPrompt?.message.contains("Other") == true)
+        #expect(refusal.confirmationPrompt?.confirmTitle == "Remove from VM")
+        #expect(refusal.confirmationPrompt?.message.contains("Other") == true)
 
         try await harness.core.removeStorageDisk(
             .id(target.id), disk: disk.id, trashFile: true, consent: .all)
@@ -443,8 +396,6 @@ struct VMCommandCoreAttachmentTests {
         arguments: [true, false])
     func removeStorageDiskTrashFailures(isInternal: Bool) async throws {
         let harness = makeHarness()
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
         let disk = { (name: String) in
             isInternal
                 ? StorageDisk(path: "AdditionalDisks/\(name)", label: name, isInternal: true)
@@ -460,7 +411,7 @@ struct VMCommandCoreAttachmentTests {
             .id(instance.id), disk: ghost.id, trashFile: true, consent: .all)
 
         harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
-        let failure = await commandError {
+        let failure = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: locked.id, trashFile: true, consent: .all)
         }
@@ -472,14 +423,14 @@ struct VMCommandCoreAttachmentTests {
             ? instance.bundleURL.appendingPathComponent(locked.path).path(percentEncoded: false)
             : locked.path
         guard case .filesKept(let kept) = failure else {
-            Issue.record("expected the files-kept outcome, got \(String(describing: failure))")
+            Issue.record("expected the files-kept outcome, got \(failure)")
             return
         }
         #expect(kept.removal == .attachment(label: "locked.img", vm: instance.name))
         #expect(kept.files.map(\.path) == [path])
-        #expect(failure?.message.contains("\u{201C}\(path)\u{201D}") == true)
+        #expect(failure.message.contains("\u{201C}\(path)\u{201D}"))
         // Told to the caller alone, never again as an unattended failure.
-        #expect(reported.isEmpty)
+        #expect(harness.failures.isEmpty)
     }
 
     @Test("The synthesized main disk is a VM's only disk, so its removal is refused")
@@ -489,12 +440,12 @@ struct VMCommandCoreAttachmentTests {
         let synthetic = StorageDisk.mainDisk(
             layout: VMBundleLayout(bundleURL: instance.bundleURL))
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: synthetic.id, trashFile: true, consent: .all)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         #expect(instance.configuration.storageDisks == nil)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
@@ -522,12 +473,12 @@ struct VMCommandCoreAttachmentTests {
         let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         let instance = makeInstance(in: harness) { $0.storageDisks = [extra] }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: extra.id, trashFile: true, consent: .all)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         #expect(instance.configuration.storageDisks?.map(\.id) == [extra.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
@@ -545,12 +496,12 @@ struct VMCommandCoreAttachmentTests {
             harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [external] }
         }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: external.id, trashFile: true, consent: .all)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
         #expect(instance.configuration.storageDisks?.map(\.id) == [external.id])
     }
@@ -568,12 +519,12 @@ struct VMCommandCoreAttachmentTests {
             harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [other] }
         }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
@@ -625,12 +576,12 @@ struct VMCommandCoreAttachmentTests {
             let destination = scratch.url
                 .appendingPathComponent("\(UUID().uuidString).asif")
 
-            let refusal = await commandError {
+            let refusal = try await #require(throws: CommandError.self) {
                 try await harness.core.createRemovableMedia(
                     .id(instance.id), sizeInGB: 16, destinationURL: destination)
             }
 
-            #expect(refusal?.isOperationFailure == true)
+            #expect(refusal.isOperationFailure)
             #expect(instance.configuration.removableMedia == nil)
             #expect(harness.fileSystem.trashedURLs.isEmpty != expectsCleanup, "\(error)")
         }
@@ -654,13 +605,13 @@ struct VMCommandCoreAttachmentTests {
         try await diskImages.parked.wait { diskImages.isParked }
         #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
         #expect(instance.status == .running)
-        let suspend = await commandError { try await harness.core.suspend(.id(instance.id)) }
-        #expect(suspend?.isBusy == true)
+        let suspend = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
+        #expect(suspend.isBusy)
         let other = externalPath("other.iso")
         try harness.core.attachRemovableMedia(
             .id(instance.id), paths: [PickedFile(path: other, bookmark: nil)])
         #expect(instance.configuration.removableMedia?.map(\.path) == [other])
-        #expect(harness.removableMediaDevices.attachCallCount == 0)
+        #expect(harness.removableMedia.attachCallCount == 0)
 
         diskImages.resumeCreateDiskImage()
         try await creation.value
@@ -671,8 +622,8 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.removableMedia?.map(\.path) == [other, path])
         // Both attached by the creation's own pass, before it let the VM go;
         // the edit's reconcile found nothing left to do.
-        #expect(harness.removableMediaDevices.attachCallCount == 2)
-        #expect(harness.removableMediaDevices.detachCallCount == 0)
+        #expect(harness.removableMedia.attachCallCount == 2)
+        #expect(harness.removableMedia.detachCallCount == 0)
         #expect(Set(instance.liveRemovableMedia.map(\.path)) == [other, path])
         try await harness.core.suspend(.id(instance.id))
         #expect(instance.phase == .suspended)
@@ -705,7 +656,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(
             instance.configuration.removableMedia?.map(\.path)
                 == [destination.path(percentEncoded: false)])
-        #expect(harness.removableMediaDevices.attachCallCount == 0)
+        #expect(harness.removableMedia.attachCallCount == 0)
     }
 
     @Test("A label or note edit leaves the mount identity alone")
@@ -754,11 +705,11 @@ struct VMCommandCoreAttachmentTests {
         try harness.core.ejectRemovableMedia(.id(instance.id), item: item.id)
         // The eject's reconcile holds the VM, so the save cannot tear the
         // session down under the detach.
-        let refusal = await commandError { try await harness.core.suspend(.id(instance.id)) }
-        #expect(refusal?.isBusy == true)
+        let refusal = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
+        #expect(refusal.isBusy)
 
         try await waitForChange { instance.phase.operation == nil }
-        #expect(harness.removableMediaDevices.detachCallCount == 1)
+        #expect(harness.removableMedia.detachCallCount == 1)
         #expect(instance.configuration.removableMedia == nil)
         try await harness.core.suspend(.id(instance.id))
         #expect(instance.phase == .suspended)
@@ -771,11 +722,11 @@ struct VMCommandCoreAttachmentTests {
         let item = RemovableMediaItem(path: path, readOnly: true)
         let instance = makeInstance(in: harness) { $0.removableMedia = [item] }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeRemovableMedia(
                 .id(instance.id), item: item.id, trashFile: true, consent: .none)
         }
-        #expect(refusal?.confirmationPrompt?.kind == .removeAttachment)
+        #expect(refusal.confirmationPrompt?.kind == .removeAttachment)
 
         try await harness.core.removeRemovableMedia(
             .id(instance.id), item: item.id, trashFile: true, consent: .all)
@@ -787,8 +738,6 @@ struct VMCommandCoreAttachmentTests {
     @Test("A removable medium whose file stays answers that file; a missing one answers success")
     func removeRemovableMediaTrashFailures() async throws {
         let harness = makeHarness()
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
         let ghost = RemovableMediaItem(path: externalPath("ghost.iso"), readOnly: true)
         let locked = RemovableMediaItem(path: externalPath("locked.iso"), readOnly: true)
         let instance = makeInstance(in: harness) { $0.removableMedia = [ghost, locked] }
@@ -798,19 +747,19 @@ struct VMCommandCoreAttachmentTests {
             .id(instance.id), item: ghost.id, trashFile: true, consent: .all)
 
         harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
-        let failure = await commandError {
+        let failure = try await #require(throws: CommandError.self) {
             try await harness.core.removeRemovableMedia(
                 .id(instance.id), item: locked.id, trashFile: true, consent: .all)
         }
 
         #expect(instance.configuration.removableMedia == nil)
         guard case .filesKept(let kept) = failure else {
-            Issue.record("expected the files-kept outcome, got \(String(describing: failure))")
+            Issue.record("expected the files-kept outcome, got \(failure)")
             return
         }
         #expect(kept.removal == .attachment(label: locked.label, vm: instance.name))
         #expect(kept.files.map(\.path) == [locked.path])
-        #expect(reported.isEmpty)
+        #expect(harness.failures.isEmpty)
     }
 
     @Test("The bundled Guest Agent installer is detached but never trashed")
@@ -822,11 +771,11 @@ struct VMCommandCoreAttachmentTests {
             path: agentPath, readOnly: true, label: KernovaMacOSAgentInfo.diskLabel)
         let instance = makeInstance(in: harness) { $0.removableMedia = [item] }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeRemovableMedia(
                 .id(instance.id), item: item.id, trashFile: true, consent: .none)
         }
-        #expect(refusal?.confirmationPrompt?.message.contains("isn't deleted") == true)
+        #expect(refusal.confirmationPrompt?.message.contains("isn't deleted") == true)
 
         try await harness.core.removeRemovableMedia(
             .id(instance.id), item: item.id, trashFile: true, consent: .all)
@@ -920,16 +869,16 @@ struct VMCommandCoreAttachmentTests {
         let gone = UUID()
 
         for refusal in [
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.removeSharedDirectory(.id(instance.id), directory: gone)
             },
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.setSharedDirectoryReadOnly(
                     .id(instance.id), directory: gone, readOnly: true)
             },
         ] {
-            guard case .operationFailed(let verb, _, _, _) = try #require(refusal) else {
-                Issue.record("expected an operation failure, got \(String(describing: refusal))")
+            guard case .operationFailed(let verb, _, _, _) = refusal else {
+                Issue.record("expected an operation failure, got \(refusal)")
                 continue
             }
             #expect(verb == .editSharedDirectory)
@@ -946,21 +895,21 @@ struct VMCommandCoreAttachmentTests {
         }
 
         for refusal in [
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.addSharedDirectories(
                     .id(instance.id), paths: [PickedFile(path: externalPath("new"), bookmark: nil)])
             },
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.removeSharedDirectory(
                     .id(instance.id), directory: directory.id)
             },
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.setSharedDirectoryReadOnly(
                     .id(instance.id), directory: directory.id, readOnly: true)
             },
         ] {
-            guard case .invalidState(_, let current, let allowed, _) = try #require(refusal) else {
-                Issue.record("expected an invalid-state refusal, got \(String(describing: refusal))")
+            guard case .invalidState(_, let current, let allowed, _) = refusal else {
+                Issue.record("expected an invalid-state refusal, got \(refusal)")
                 continue
             }
             #expect(current == .running)
@@ -1119,14 +1068,14 @@ struct VMCommandCoreAttachmentTests {
         let kept = SharedDirectory(path: try folder("kept"))
         let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
 
-        let refusal = await commandError {
+        let refusal = try #require(throws: CommandError.self) {
             try harness.core.addSharedDirectories(
                 .id(instance.id),
                 paths: [PickedFile(path: externalPath("never-created"), bookmark: nil)])
         }
 
-        guard case .invalidArgument = try #require(refusal) else {
-            Issue.record("expected an argument refusal, got \(String(describing: refusal))")
+        guard case .invalidArgument = refusal else {
+            Issue.record("expected an argument refusal, got \(refusal)")
             return
         }
         instance.activity.refreshFromBundle()
@@ -1145,27 +1094,25 @@ struct VMCommandCoreAttachmentTests {
         ) { $0.sharedDirectories = [only] }
 
         for refusal in [
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.addSharedDirectories(
                     .id(empty.id), paths: [PickedFile(path: try folder("first"), bookmark: nil)])
             },
-            await commandError {
+            try #require(throws: CommandError.self) {
                 try harness.core.removeSharedDirectory(.id(single.id), directory: only.id)
             },
         ] {
-            guard case .changeTakesStoppedVM(_, let current, let change) = try #require(refusal)
+            guard case .changeTakesStoppedVM(_, let current, let change) = refusal
             else {
-                Issue.record("expected the stopped-VM rule, got \(String(describing: refusal))")
+                Issue.record("expected the stopped-VM rule, got \(refusal)")
                 continue
             }
             #expect(current == .running)
             #expect(change == .firstOrLastSharedDirectory)
         }
-        let message = try #require(
-            await commandError {
-                try harness.core.removeSharedDirectory(.id(single.id), directory: only.id)
-            }
-        ).message
+        let message = try #require(throws: CommandError.self) {
+            try harness.core.removeSharedDirectory(.id(single.id), directory: only.id)
+        }.message
         #expect(
             message
                 == "\u{201C}Single\u{201D} is running. Adding the first share or removing the last needs the virtual machine stopped."
@@ -1188,12 +1135,12 @@ struct VMCommandCoreAttachmentTests {
         ) { $0.sharedDirectories = [kept] }
 
         for instance in [suspended, linux] {
-            let refusal = await commandError {
+            let refusal = try #require(throws: CommandError.self) {
                 try harness.core.addSharedDirectories(
                     .id(instance.id), paths: [PickedFile(path: try folder("new"), bookmark: nil)])
             }
-            guard case .invalidState(_, _, let allowed, _) = try #require(refusal) else {
-                Issue.record("expected an invalid-state refusal, got \(String(describing: refusal))")
+            guard case .invalidState(_, _, let allowed, _) = refusal else {
+                Issue.record("expected an invalid-state refusal, got \(refusal)")
                 continue
             }
             #expect(!allowed.contains(.editSharedDirectory), "\(instance.name)")
@@ -1214,10 +1161,10 @@ struct VMCommandCoreAttachmentTests {
             $0.removableMedia = [item]
         }
 
-        let refusal = await commandError {
+        let refusal = try #require(throws: CommandError.self) {
             try harness.core.renameStorageDisk(.id(instance.id), disk: disk.id, to: "New")
         }
-        guard case .invalidState(_, let current, let allowed, _) = try #require(refusal) else {
+        guard case .invalidState(_, let current, let allowed, _) = refusal else {
             Issue.record("expected an invalid-state refusal")
             return
         }
@@ -1246,14 +1193,14 @@ struct VMCommandCoreAttachmentTests {
                 .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
         }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
         }
 
         // The bring-up holds the VM, and the removal is what the VM takes
         // once it rests again.
-        #expect(try #require(refusal).isBusy)
+        #expect(refusal.isBusy)
         // Neither the entry nor the file moved: the disk is still the VM's.
         #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -1272,14 +1219,14 @@ struct VMCommandCoreAttachmentTests {
                 .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
         }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeRemovableMedia(
                 .id(instance.id), item: item.id, trashFile: true, consent: .all)
         }
 
         // The bring-up holds the VM, and the removal is what the VM takes
         // once it rests again.
-        #expect(try #require(refusal).isBusy)
+        #expect(refusal.isBusy)
         #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
@@ -1296,12 +1243,12 @@ struct VMCommandCoreAttachmentTests {
             harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = nil }
         }
 
-        let refusal = await commandError {
+        let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeRemovableMedia(
                 .id(instance.id), item: item.id, trashFile: true, consent: .all)
         }
 
-        #expect(refusal?.isOperationFailure == true)
+        #expect(refusal.isOperationFailure)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
@@ -1312,11 +1259,11 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .suspended) { $0.removableMedia = [item] }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
-        let refusal = await commandError {
+        let refusal = try #require(throws: CommandError.self) {
             try harness.core.renameRemovableMedia(.id(instance.id), item: item.id, to: "New")
         }
 
-        guard case .invalidState = try #require(refusal) else {
+        guard case .invalidState = refusal else {
             Issue.record("expected an invalid-state refusal")
             return
         }
@@ -1330,17 +1277,17 @@ struct VMCommandCoreAttachmentTests {
         let arrival = harness.library.beginGatedArrival(
             .cloning, named: "Copying", gate: gate)
 
-        let storageRefusal = await commandError {
+        let storageRefusal = try #require(throws: CommandError.self) {
             try harness.core.setStorageDiskReadOnly(
                 .id(arrival.id), disk: UUID(), readOnly: true)
         }
-        let removableRefusal = await commandError {
+        let removableRefusal = try #require(throws: CommandError.self) {
             try harness.core.attachRemovableMedia(
                 .id(arrival.id), paths: [PickedFile(path: "/tmp/x.iso", bookmark: nil)])
         }
 
-        #expect(storageRefusal?.isBusy == true)
-        #expect(removableRefusal?.isBusy == true)
+        #expect(storageRefusal.isBusy)
+        #expect(removableRefusal.isBusy)
         #expect(harness.storage.saveConfigurationCallCount == 0)
 
         gate.release()
@@ -1358,11 +1305,10 @@ struct VMCommandCoreAttachmentTests {
             .id(source.id), outcome: .newMachine, waitForOutcome: false)
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
 
-        let removeError = try #require(
-            await commandError {
-                try await harness.core.removeStorageDisk(
-                    .id(source.id), disk: disk.id, trashFile: false, consent: .all)
-            })
+        let removeError = try await #require(throws: CommandError.self) {
+            try await harness.core.removeStorageDisk(
+                .id(source.id), disk: disk.id, trashFile: false, consent: .all)
+        }
         guard case .busy(let vm, let operation) = removeError else {
             Issue.record("expected a busy refusal, got \(removeError)")
             return
@@ -1373,11 +1319,11 @@ struct VMCommandCoreAttachmentTests {
             removeError.message.contains(
                 "is busy being cloned. Wait for it to finish, then try again."))
 
-        let attachError = await commandError {
+        let attachError = try #require(throws: CommandError.self) {
             try harness.core.attachStorageDisks(
                 .id(source.id), paths: [PickedFile(path: "/tmp/x.img", bookmark: nil)])
         }
-        #expect(attachError?.isBusy == true)
+        #expect(attachError.isBusy)
         #expect(source.configuration.storageDisks?.count == 1)
 
         // Removable media isn't copied by a clone, so it takes an edit unblocked.
@@ -1399,21 +1345,21 @@ struct VMCommandCoreAttachmentTests {
         }
         let gone = UUID()
 
-        let renameRefusal = await commandError {
+        let renameRefusal = try #require(throws: CommandError.self) {
             try harness.core.renameStorageDisk(.id(instance.id), disk: gone, to: "New")
         }
-        let notesRefusal = await commandError {
+        let notesRefusal = try #require(throws: CommandError.self) {
             try harness.core.setRemovableMediaNotes(.id(instance.id), item: gone, notes: "New")
         }
-        let removeRefusal = await commandError {
+        let removeRefusal = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: gone, trashFile: false, consent: .all)
         }
 
-        #expect(renameRefusal?.isOperationFailure == true)
-        #expect(renameRefusal?.message.contains(instance.name) == true)
-        #expect(notesRefusal?.isOperationFailure == true)
-        #expect(removeRefusal?.isOperationFailure == true)
+        #expect(renameRefusal.isOperationFailure)
+        #expect(renameRefusal.message.contains(instance.name))
+        #expect(notesRefusal.isOperationFailure)
+        #expect(removeRefusal.isOperationFailure)
         #expect(instance.configuration.storageDisks?.count == 1)
     }
 
@@ -1488,7 +1434,7 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
         #expect(instance.hasGuestAgentInstallerMounted)
-        #expect(harness.removableMediaDevices.detachCallCount == 0)
+        #expect(harness.removableMedia.detachCallCount == 0)
 
         instance.activity.placeForTesting(.running(sessionID: sessionID))
         try harness.core.unmountGuestAgentDisk(.id(instance.id))
@@ -1520,14 +1466,14 @@ struct VMCommandCoreAttachmentTests {
 
         instance.onAgentBecameCurrent?()
         #expect(instance.configuration.removableMedia == nil)
-        #expect(harness.removableMediaDevices.detachCallCount == 0)
+        #expect(harness.removableMedia.detachCallCount == 0)
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
         gate.release()
         try await attach.value()
         try await waitForChange { instance.liveRemovableMedia.isEmpty }
         try await waitForChange { instance.phase == .running(sessionID: sessionID) }
-        #expect(harness.removableMediaDevices.detachCallCount == 1)
+        #expect(harness.removableMedia.detachCallCount == 1)
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
@@ -1537,15 +1483,13 @@ struct VMCommandCoreAttachmentTests {
         let stopped = makeInstance(in: harness, name: "Stopped", guestOS: .macOS)
         let linux = makeInstance(in: harness, name: "Linux", phase: .running(sessionID: UUID()))
 
-        let stoppedRefusal = await commandError {
+        #expect(throws: CommandError.self) {
             _ = try harness.core.mountGuestAgentDisk(.id(stopped.id))
         }
-        let linuxRefusal = await commandError {
+        #expect(throws: CommandError.self) {
             _ = try harness.core.mountGuestAgentDisk(.id(linux.id))
         }
 
-        #expect(stoppedRefusal != nil)
-        #expect(linuxRefusal != nil)
         #expect(stopped.configuration.removableMedia == nil)
         #expect(linux.configuration.removableMedia == nil)
     }
@@ -1701,7 +1645,7 @@ struct VMCommandCoreAttachmentTests {
                 [.posixPermissions: 0o755], ofItemAtPath: bundlePath)
         }
 
-        let error = await commandError {
+        let error = try await #require(throws: CommandError.self) {
             try await harness.core.removeStartFailedAttachment(
                 .id(instance.id),
                 attachment: StartFailedAttachment(
@@ -1709,7 +1653,7 @@ struct VMCommandCoreAttachmentTests {
                     label: "Scratch", message: "could not open"))
         }
 
-        let message = try #require(error?.message)
+        let message = error.message
         #expect(instance.hasSaveFile)
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(
