@@ -933,24 +933,58 @@ struct VMCommandCoreAttachmentTests {
     private func makeRunningMacOSGuest(
         in harness: Harness, name: String = "Core VM", sharing directories: [SharedDirectory],
         serving: MacOSDirectoryShare? = nil
-    ) throws -> (instance: VMInstance, sessionID: UUID) {
-        let sessionID = UUID()
+    ) throws -> VMInstance {
         let instance = makeInstance(
-            in: harness, name: name, phase: .running(sessionID: sessionID), guestOS: .macOS
+            in: harness, name: name, phase: .running(sessionID: UUID()), guestOS: .macOS
         ) { $0.sharedDirectories = directories.isEmpty ? nil : directories }
         let context = instance.beginSessionContextForTesting()
         if !directories.isEmpty {
             context.directoryShare =
                 try serving ?? ConfigurationBuilder.macOSDirectoryShare(for: directories)
         }
-        return (instance, sessionID)
+        return instance
+    }
+
+    @Test("A live share edit finds the device of the instance's live session, serving its boot share")
+    func liveShareDeviceTargetsTheLiveSession() throws {
+        let harness = makeHarness()
+        let kept = SharedDirectory(path: try folder("kept"))
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
+
+        let device = try #require(LiveShareDevice(of: instance))
+
+        #expect(device.sessionID == instance.liveSessionID)
+        #expect(device.serving == instance.sessionContext?.directoryShare)
+        let stopped = makeInstance(in: harness, name: "Stopped", guestOS: .macOS) {
+            $0.sharedDirectories = [kept]
+        }
+        #expect(LiveShareDevice(of: stopped) == nil)
+    }
+
+    @Test("A live swap holds what it adds, releases what it drops, and leaves a kept share alone")
+    func liveShareSwapHoldsAddedAndReleasesRemoved() throws {
+        let harness = makeHarness()
+        let kept = SharedDirectory(path: try folder("kept"))
+        let going = SharedDirectory(path: try folder("going"))
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept, going])
+        let device = try #require(LiveShareDevice(of: instance))
+        let added = SharedDirectory(path: try folder("added"))
+        let next = try ConfigurationBuilder.macOSDirectoryShare(
+            for: [kept, added], serving: device.serving)
+
+        let swap = device.swap(to: next)
+
+        #expect(swap.sessionID == instance.liveSessionID)
+        #expect(swap.share == next)
+        #expect(swap.held == [added.id])
+        #expect(swap.released == [going.id])
     }
 
     @Test("A running macOS guest with one share takes another live, its device given the list committed")
     func runningMacOSGuestAddsAShareLive() throws {
         let harness = makeHarness()
         let kept = SharedDirectory(path: try folder("kept"))
-        let (instance, sessionID) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
         let added = try folder("added")
 
         try harness.core.addSharedDirectories(
@@ -958,12 +992,7 @@ struct VMCommandCoreAttachmentTests {
 
         let directories = try #require(instance.configuration.sharedDirectories)
         #expect(directories.map(\.path) == [kept.path, added])
-        let install = try #require(harness.liveShares.installs.last)
-        #expect(harness.liveShares.installs.count == 1)
-        #expect(install.sessionID == sessionID)
-        #expect(install.share.entries.map(\.id) == directories.map(\.id))
-        #expect(install.released.isEmpty)
-        #expect(instance.sessionContext?.directoryShare == install.share)
+        #expect(instance.sessionContext?.directoryShare?.entries.map(\.id) == directories.map(\.id))
     }
 
     @Test("Removing one of two shares from a running macOS guest swaps live and lets the removed one go")
@@ -971,7 +1000,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let kept = SharedDirectory(path: try folder("kept"))
         let going = SharedDirectory(path: try folder("going"))
-        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept, going])
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept, going])
 
         try harness.core.removeSharedDirectory(.id(instance.id), directory: going.id)
         try harness.core.setSharedDirectoryReadOnly(
@@ -979,31 +1008,8 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.sharedDirectories?.map(\.id) == [kept.id])
         #expect(instance.configuration.sharedDirectories?.first?.readOnly == true)
-        #expect(harness.liveShares.installs.map(\.released) == [[going.id], []])
-        #expect(harness.liveShares.installs.last?.share.entries.map(\.readOnly) == [true])
-    }
-
-    @Test("A folder added live with a bookmark has its scope held under the share's id until removed")
-    func liveAddHoldsTheNewSharesScope() throws {
-        let harness = makeHarness()
-        let kept = SharedDirectory(path: try folder("kept"))
-        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
-        let added = URL(fileURLWithPath: try folder("added"))
-        let bookmark = try #require(SecurityScopedBookmark.make(for: added))
-
-        try harness.core.addSharedDirectories(
-            .id(instance.id),
-            paths: [PickedFile(path: added.path(percentEncoded: false), bookmark: bookmark)])
-
-        let share = try #require(instance.configuration.sharedDirectories?.last)
-        #expect(share.bookmark == bookmark)
-        #expect(harness.liveShares.installs.last?.opened == [share.id])
-        #expect(harness.liveShares.heldScopeIDs == [share.id])
-
-        try harness.core.removeSharedDirectory(.id(instance.id), directory: share.id)
-
-        #expect(harness.liveShares.installs.last?.released == [share.id])
-        #expect(harness.liveShares.heldScopeIDs.isEmpty)
+        #expect(instance.sessionContext?.directoryShare?.entries.map(\.id) == [kept.id])
+        #expect(instance.sessionContext?.directoryShare?.entries.map(\.readOnly) == [true])
     }
 
     /// Two folders of one name: the second is added under its id prefix, and
@@ -1015,7 +1021,7 @@ struct VMCommandCoreAttachmentTests {
         let first = SharedDirectory(path: try folder("a") + "/src")
         try FileManager.default.createDirectory(
             atPath: first.path, withIntermediateDirectories: true)
-        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [first])
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [first])
         let secondPath = try folder("b") + "/src"
         try FileManager.default.createDirectory(
             atPath: secondPath, withIntermediateDirectories: true)
@@ -1024,11 +1030,12 @@ struct VMCommandCoreAttachmentTests {
             .id(instance.id), paths: [PickedFile(path: secondPath, bookmark: nil)])
         let second = try #require(instance.configuration.sharedDirectories?.last)
         #expect(second.mountName == "\(second.id.uuidString.prefix(8))-src")
-        #expect(harness.liveShares.installs.last?.share.entries.map(\.name) == ["src", second.mountName])
+        #expect(
+            instance.sessionContext?.directoryShare?.entries.map(\.name) == ["src", second.mountName])
 
         try harness.core.removeSharedDirectory(.id(instance.id), directory: first.id)
 
-        #expect(harness.liveShares.installs.last?.share.entries.map(\.name) == [second.mountName])
+        #expect(instance.sessionContext?.directoryShare?.entries.map(\.name) == [second.mountName])
         let rebuilt = try ConfigurationBuilder.macOSDirectoryShare(
             for: instance.configuration.sharedDirectories ?? [])
         #expect(rebuilt.entries.map(\.name) == [second.mountName])
@@ -1051,13 +1058,13 @@ struct VMCommandCoreAttachmentTests {
             let serving = MacOSDirectoryShare(entries: [
                 .init(id: moved.id, name: "moved", url: URL(fileURLWithPath: served), readOnly: false)
             ])
-            let (instance, _) = try makeRunningMacOSGuest(
+            let instance = try makeRunningMacOSGuest(
                 in: harness, name: "Moved \(storedPathExists)", sharing: [moved], serving: serving)
 
             try harness.core.addSharedDirectories(
                 .id(instance.id), paths: [PickedFile(path: try folder("added"), bookmark: nil)])
 
-            let first = try #require(harness.liveShares.installs.last?.share.entries.first)
+            let first = try #require(instance.sessionContext?.directoryShare?.entries.first)
             #expect(first == serving.entries[0], "stored path exists: \(storedPathExists)")
         }
     }
@@ -1066,7 +1073,8 @@ struct VMCommandCoreAttachmentTests {
     func liveShareFailingValidationWritesNothing() async throws {
         let harness = makeHarness()
         let kept = SharedDirectory(path: try folder("kept"))
-        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
+        let serving = instance.sessionContext?.directoryShare
 
         let refusal = try #require(throws: CommandError.self) {
             try harness.core.addSharedDirectories(
@@ -1080,7 +1088,7 @@ struct VMCommandCoreAttachmentTests {
         }
         instance.activity.refreshFromBundle()
         #expect(instance.configuration.sharedDirectories == [kept])
-        #expect(harness.liveShares.installs.isEmpty)
+        #expect(instance.sessionContext?.directoryShare == serving)
     }
 
     @Test("A running macOS guest's first share and last share are refused by the rule that holds them")
@@ -1119,7 +1127,6 @@ struct VMCommandCoreAttachmentTests {
         )
         #expect(empty.configuration.sharedDirectories == nil)
         #expect(single.configuration.sharedDirectories == [only])
-        #expect(harness.liveShares.installs.isEmpty)
     }
 
     @Test("A share edit on a suspended macOS guest or a running Linux one is refused by the VM's state")
@@ -1146,7 +1153,6 @@ struct VMCommandCoreAttachmentTests {
             #expect(!allowed.contains(.editSharedDirectory), "\(instance.name)")
             #expect(instance.configuration.sharedDirectories == [kept], "\(instance.name)")
         }
-        #expect(harness.liveShares.installs.isEmpty)
     }
 
     // MARK: - State gates

@@ -598,8 +598,7 @@ extension VMCommandCore {
             }
             return
         }
-        guard let sessionID = instance.liveSessionID, let context = instance.sessionContext,
-            let serving = context.directoryShare
+        guard let device = LiveShareDevice(of: instance), let context = instance.sessionContext
         else {
             #log(
                 Self.logger, .fault,
@@ -608,6 +607,7 @@ extension VMCommandCore {
             throw invalidState(instance)
         }
 
+        let serving = device.serving
         let servedIDs = Set(serving.entries.map(\.id))
         var staged = instance.configuration
         staged.sharedDirectories = directories
@@ -636,12 +636,11 @@ extension VMCommandCore {
             opened.values.forEach { $0.release() }
             throw error
         }
-        let sharedIDs = Set(share.entries.map(\.id))
-        for (id, scope) in opened where !sharedIDs.contains(id) { scope.release() }
+        let swap = device.swap(to: share)
+        let holding = opened.filter { swap.held.contains($0.key) }
+        for (id, scope) in opened where holding[id] == nil { scope.release() }
         context.directoryShare = share
-        lifecycle.liveDirectorySharing.install(
-            share, holding: opened.filter { sharedIDs.contains($0.key) },
-            releasing: servedIDs.subtracting(sharedIDs), on: instance, for: sessionID)
+        lifecycle.liveDirectorySharing.install(swap, holding: holding, on: instance)
     }
 
     // MARK: - Guest Agent Disk

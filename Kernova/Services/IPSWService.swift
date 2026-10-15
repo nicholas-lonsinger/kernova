@@ -3,24 +3,10 @@ import KernovaKit
 import KernovaLogging
 import Virtualization
 
-/// Fetches and downloads macOS restore images (IPSWs) for macOS guest installation.
-///
-/// The transfer itself belongs to `DownloadService`; what stays here is the
-/// macOS-specific part — what VZ says the newest installable image is.
+/// Looks up the newest macOS restore image (IPSW) this host can install, as VZ
+/// reports it; the image itself downloads through ``Downloading``.
 struct IPSWService: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "IPSWService")
-
-    private let downloadService: DownloadService
-
-    init(
-        sessionConfiguration: URLSessionConfiguration? = nil,
-        fileSystem: any FileSystemOperating = FileManager.default
-    ) {
-        self.downloadService = DownloadService(
-            sessionConfiguration: sessionConfiguration, fileSystem: fileSystem)
-    }
-
-    // MARK: - Protocol Methods
 
     func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
         #log(Self.logger, .info, "Fetching latest supported macOS restore image...")
@@ -30,27 +16,6 @@ struct IPSWService: Sendable {
             version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
             build: restoreImage.buildVersion
         )
-    }
-
-    func downloadRestoreImage(
-        from remoteURL: URL,
-        to destinationURL: URL,
-        discardsExistingDownload: Bool = false,
-        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
-    ) async throws {
-        try await downloadService.download(
-            from: remoteURL,
-            to: destinationURL,
-            discardsExistingDownload: discardsExistingDownload,
-            // Apple publishes no size for a restore image ahead of the
-            // transfer, so there is no ceiling to hold this one to.
-            expectedSizeBytes: nil,
-            progressHandler: progressHandler
-        )
-    }
-
-    func discardResumeData(at destinationURL: URL, permanently: Bool = false) {
-        downloadService.discardResumeData(at: destinationURL, permanently: permanently)
     }
 }
 

@@ -23,16 +23,22 @@ struct VMLifecycleCoordinatorTests {
         MockVirtualizationService,
         MockMacOSInstallService,
         MockIPSWService,
-        MockRemovableMediaDeviceService
+        MockRemovableMediaDeviceService,
+        MockDownloadService
     ) {
         let virtService = MockVirtualizationService()
         let installService = MockMacOSInstallService()
         let ipswService = MockIPSWService()
         let removableMediaService = MockRemovableMediaDeviceService()
+        let downloadService = MockDownloadService()
         let coordinator = makeTestLifecycle(
             virtualization: virtService, installService: installService, ipswService: ipswService,
-            removableMedia: removableMediaService, downloadsDirectory: downloadsDirectory)
-        return (coordinator, virtService, installService, ipswService, removableMediaService)
+            removableMedia: removableMediaService, downloadService: downloadService,
+            downloadsDirectory: downloadsDirectory)
+        return (
+            coordinator, virtService, installService, ipswService, removableMediaService,
+            downloadService
+        )
     }
 
     private func makeSuspendingCoordinator() -> (
@@ -50,7 +56,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("start forwards to virtualization service")
     func startForwards() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
         try await coordinator.launchStart(instance, Self.coldBoot).value()
@@ -61,7 +67,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("start forwards a Recovery boot to the virtualization service")
     func startForwardsBootIntoRecovery() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         // Recovery is a macOS guest's boot, so only one is admitted to it.
         let instance = VMInstanceFixture.make(guestOS: .macOS)
 
@@ -73,7 +79,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop forwards to virtualization service")
     func stopForwards() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -84,7 +90,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("forceStop forwards to virtualization service")
     func forceStopForwards() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -95,7 +101,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("pause forwards to virtualization service")
     func pauseForwards() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -106,7 +112,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("launchResume forwards to virtualization service")
     func resumeForwards() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.livePaused(sessionID: UUID()))
 
@@ -117,7 +123,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("save forwards to virtualization service")
     func saveForwards() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -130,7 +136,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("start propagates error from virtualization service")
     func startPropagatesError() async {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         virtService.startError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
 
@@ -141,7 +147,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop propagates error from virtualization service")
     func stopPropagatesError() async {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
@@ -256,7 +262,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("an operation asked for during a media reconcile is refused as busy")
     func operationDuringAReconcileIsRefused() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         let live = VMLifecyclePhase.running(sessionID: UUID())
         instance.activity.placeForTesting(.operating(.reconcilingMedia, from: live))
@@ -273,7 +279,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop and forceStop reach a guest a media reconcile holds")
     func stopDoesNotWaitOutAReconcile() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         for forced in [false, true] {
             let instance = VMInstanceFixture.make()
             let live = VMLifecyclePhase.running(sessionID: UUID())
@@ -334,7 +340,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("the VM is free for the next operation once one succeeds")
     func releasedAfterSuccess() async throws {
-        let (coordinator, _, _, _, _) = makeCoordinator()
+        let (coordinator, _, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
         try await coordinator.launchStart(instance, Self.coldBoot).value()
@@ -346,7 +352,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("the VM is free for a retry once an operation fails")
     func releasedAfterError() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         virtService.startError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
 
@@ -391,7 +397,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("a stop takes no admission of its own")
     func stopTakesNoAdmission() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -402,7 +408,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("a stop that fails leaves the VM running and free")
     func stopErrorLeavesTheVMFree() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
         let sessionID = UUID()
@@ -421,7 +427,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS with localFile context sets hasDownloadStep to false")
     func installMacOSLocalFile() async throws {
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let library = makeWiredLibrary()
         let instance = library.registerFixture { $0.installContext = context }
@@ -436,7 +442,7 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSDownload() async throws {
         let downloads = scratch.url
             .appendingPathComponent("installLatest", isDirectory: true)
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator(
             downloadsDirectory: downloads)
         // What the wizard persisted: the fallback name it shows before its own
         // lookup answers.
@@ -454,9 +460,10 @@ struct VMLifecycleCoordinatorTests {
         let expected = downloads.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
         #expect(ipswService.fetchCallCount == 1)
-        #expect(ipswService.downloadCallCount == 1)
-        #expect(ipswService.lastDownloadRemoteURL == ipswService.fetchResult.url)
-        #expect(ipswService.lastDownloadDestinationURL == expected)
+        #expect(downloadService.downloadCallCount == 1)
+        #expect(downloadService.lastDownloadRemoteURL == ipswService.fetchResult.url)
+        #expect(downloadService.lastDownloadDestinationURL == expected)
+        #expect(downloadService.lastDownloadExpectedSizeBytes == nil)
         #expect(installService.installCallCount == 1)
         #expect(installService.lastRestoreImageURL == expected)
     }
@@ -469,8 +476,8 @@ struct VMLifecycleCoordinatorTests {
         // context before anything can inspect it.
         let downloads = scratch.url
             .appendingPathComponent("latestDestination", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
-        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
+        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -486,20 +493,20 @@ struct VMLifecycleCoordinatorTests {
 
         let expected = downloads.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-        #expect(ipswService.lastDownloadDestinationURL == expected)
+        #expect(downloadService.lastDownloadDestinationURL == expected)
         #expect(
             instance.configuration.installContext?.downloadDestinationPath
                 == expected.path(percentEncoded: false))
         // The old path's partial belongs to a build this install is no longer
         // fetching, and moving the only pointer to it would strand it.
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataURL == persisted)
-        #expect(ipswService.lastDiscardResumeDataPermanently == false)
+        #expect(downloadService.discardResumeDataCallCount == 1)
+        #expect(downloadService.discardedResumeDataURLs.last == persisted)
+        #expect(downloadService.lastDiscardResumeDataPermanently == false)
     }
 
     @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
     func installMacOSCatalogUsesPinnedURL() async throws {
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator()
+        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator()
         let pinned = try #require(Self.pinnedRestoreImageURL)
         let context = MacOSInstallContext(
             source: .catalogVersion,
@@ -517,14 +524,14 @@ struct VMLifecycleCoordinatorTests {
         try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(ipswService.fetchCallCount == 0)
-        #expect(ipswService.downloadCallCount == 1)
-        #expect(ipswService.lastDownloadRemoteURL == pinned)
+        #expect(downloadService.downloadCallCount == 1)
+        #expect(downloadService.lastDownloadRemoteURL == pinned)
         #expect(installService.installCallCount == 1)
     }
 
     @Test("installMacOS rejects a catalog context with no pinned URL")
     func installMacOSCatalogWithoutURLThrows() async {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let (coordinator, _, _, ipswService, _, _) = makeCoordinator()
         let context = MacOSInstallContext(
             source: .catalogVersion,
             downloadDestinationPath: scratch.url
@@ -541,7 +548,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("A catalog destination outside Downloads falls back to the pinned image's filename")
     func normalizedDestinationKeepsPinnedFilename() throws {
-        let (coordinator, _, _, _, _) = makeCoordinator()
+        let (coordinator, _, _, _, _, _) = makeCoordinator()
         let elsewhere = URL(fileURLWithPath: "/Users/Shared/UniversalMac_15.6.1_24G90_Restore.ipsw")
         let pinned = try #require(Self.pinnedRestoreImageURL)
 
@@ -555,7 +562,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS sets status to error on service failure")
     func installMacOSError() async {
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         installService.installError = DownloadError.downloadFailed(URLError(.badServerResponse))
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let instance = VMInstanceFixture.make { $0.installContext = context }
@@ -571,7 +578,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS returns the VM to .initialBoot on a transient failure")
     func installMacOSTransientFailureReturnsToInitialBoot() async {
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         installService.installError = makeInstallVMLimitExceededError()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let library = makeWiredLibrary()
@@ -591,7 +598,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS clears installContext on successful completion")
     func installMacOSClearsInstallContextOnSuccess() async throws {
-        let (coordinator, _, _, _, _) = makeCoordinator()
+        let (coordinator, _, _, _, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let library = makeWiredLibrary()
         let instance = library.registerFixture { $0.installContext = context }
@@ -605,7 +612,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS records the image the install ran from")
     func installMacOSRecordsTheInstalledImage() async throws {
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let library = makeWiredLibrary()
         let instance = library.registerFixture { $0.installContext = context }
@@ -621,7 +628,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("A failed install records no image")
     func installMacOSFailureRecordsNoImage() async {
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let library = makeWiredLibrary()
         let instance = library.registerFixture { $0.installContext = context }
@@ -637,8 +644,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSCancelPreservesContext() async {
         let downloads = scratch.url
             .appendingPathComponent("cancelPreservesContext", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
-        ipswService.downloadError = CancellationError()
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
+        downloadService.downloadError = CancellationError()
         // Already naming the file the resolved image derives, so nothing but the
         // cancel can touch the context.
         let originalContext = MacOSInstallContext(
@@ -665,7 +672,7 @@ struct VMLifecycleCoordinatorTests {
         // bundle another VM is streaming into.
         let temp = scratch.url
             .appendingPathComponent("freshDownloadTrash", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
 
         // The persisted destination is the one the resolved image derives, so
         // the file the user confirmed replacing is the file the download writes.
@@ -683,10 +690,10 @@ struct VMLifecycleCoordinatorTests {
 
         try await coordinator.launchGuestSetup(on: instance).value()
 
-        #expect(ipswService.lastDownloadDiscardsExisting == true)
-        #expect(ipswService.lastDownloadDestinationURL == destination)
+        #expect(downloadService.lastDownloadDiscardsExisting == true)
+        #expect(downloadService.lastDownloadDestinationURL == destination)
         // Nothing is trashed outside the download's claim.
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("A latest destination that moved lapses Download & Replace rather than retargeting it")
@@ -698,8 +705,8 @@ struct VMLifecycleCoordinatorTests {
         // Read on the failure path: a successful install clears the context.
         let temp = scratch.url
             .appendingPathComponent("freshDownloadMoved", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
+        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
 
         let persisted = temp.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
@@ -717,12 +724,12 @@ struct VMLifecycleCoordinatorTests {
 
         let derived = temp.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-        #expect(ipswService.lastDownloadDestinationURL == derived)
-        #expect(ipswService.lastDownloadDiscardsExisting == false)
+        #expect(downloadService.lastDownloadDestinationURL == derived)
+        #expect(downloadService.lastDownloadDiscardsExisting == false)
         // The lapse spares the file at the *derived* destination; the sidecar
         // left at the path being abandoned is still discarded.
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataURL == persisted)
+        #expect(downloadService.discardResumeDataCallCount == 1)
+        #expect(downloadService.discardedResumeDataURLs.last == persisted)
         // The lapse is persisted with the re-pointed path, so the retry Start
         // that reads this context does not resurrect the confirmation.
         #expect(
@@ -738,8 +745,8 @@ struct VMLifecycleCoordinatorTests {
         // trashing it and starting over.
         let temp = scratch.url
             .appendingPathComponent("freshDownloadOnce", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
+        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
 
         // Honored, not lapsed: the persisted destination is already the one the
         // resolved image derives.
@@ -758,7 +765,7 @@ struct VMLifecycleCoordinatorTests {
             try await coordinator.launchGuestSetup(on: instance).value()
         }
 
-        #expect(ipswService.lastDownloadDiscardsExisting == true)
+        #expect(downloadService.lastDownloadDiscardsExisting == true)
         #expect(instance.configuration.installContext?.requestedFreshDownload == false)
     }
 
@@ -769,13 +776,13 @@ struct VMLifecycleCoordinatorTests {
         // user asked to replace.
         let temp = scratch.url
             .appendingPathComponent("freshDownloadTrashFails", isDirectory: true)
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator(
             downloadsDirectory: temp)
         // The destination the resolved image derives, so the replacement is
         // actually requested and can fail.
         let destination = temp.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-        ipswService.downloadError = DownloadError.freshDownloadCleanupFailed(
+        downloadService.downloadError = DownloadError.freshDownloadCleanupFailed(
             path: destination.path(percentEncoded: false),
             underlying: NSError(
                 domain: NSCocoaErrorDomain,
@@ -813,7 +820,7 @@ struct VMLifecycleCoordinatorTests {
         // URL it resolved, which is always an `.ipsw`.
         let temp = scratch.url
             .appendingPathComponent("rejectNonIPSW", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        let (coordinator, _, _, _, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
         // Path doesn't end in .ipsw — guard must fire before any trash attempt.
         let context = MacOSInstallContext(
             source: .catalogVersion,
@@ -831,8 +838,8 @@ struct VMLifecycleCoordinatorTests {
             Issue.record("Expected invalidDownloadDestination")
         } catch DownloadError.invalidDownloadDestination {
             #expect(instance.status == .error)
-            #expect(ipswService.discardResumeDataCallCount == 0)
-            #expect(ipswService.downloadCallCount == 0)
+            #expect(downloadService.discardResumeDataCallCount == 0)
+            #expect(downloadService.downloadCallCount == 0)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -842,7 +849,7 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSWithoutFreshDownloadDoesNotTrash() async throws {
         let temp = scratch.url
             .appendingPathComponent("noFreshDownload", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -859,16 +866,16 @@ struct VMLifecycleCoordinatorTests {
         // Nothing at the destination is disturbed: the download resumes or
         // skips over whatever is already there. The destination did not move
         // either, so there is no superseded sidecar to discard.
-        #expect(ipswService.lastDownloadDiscardsExisting == false)
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.lastDownloadDiscardsExisting == false)
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("installMacOS preserves IPSW resume data when download is cancelled")
     func installMacOSCancelPreservesResumeData() async {
         let temp = scratch.url
             .appendingPathComponent("cancelResumeData", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        ipswService.downloadError = CancellationError()
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
+        downloadService.downloadError = CancellationError()
         // The destination the resolved image derives, so the cancel is the only
         // thing that could reach the partial sitting there.
         let context = MacOSInstallContext(
@@ -885,15 +892,15 @@ struct VMLifecycleCoordinatorTests {
 
         // User cancel must preserve resume data so a future Start can resume
         // the download from where it stopped (non-destructive cancel UX).
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
     func installMacOSURLCancelPreservesResumeData() async {
         let temp = scratch.url
             .appendingPathComponent("urlCancelResumeData", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        ipswService.downloadError = NSError(
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
+        downloadService.downloadError = NSError(
             domain: NSURLErrorDomain,
             code: NSURLErrorCancelled,
             userInfo: nil
@@ -910,15 +917,15 @@ struct VMLifecycleCoordinatorTests {
             try await coordinator.launchGuestSetup(on: instance).value()
         }
 
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("installMacOS preserves IPSW resume data on non-cancel download failure")
     func installMacOSFailurePreservesResumeData() async {
         let downloads = scratch.url
             .appendingPathComponent("networkFailure", isDirectory: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
-        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
+        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         // Already naming the file the resolved image derives, so the retry
         // context that survives is the one that went in.
         let originalContext = MacOSInstallContext(
@@ -935,7 +942,7 @@ struct VMLifecycleCoordinatorTests {
             try await coordinator.launchGuestSetup(on: instance).value()
             Issue.record("Expected error to be thrown")
         } catch {
-            #expect(ipswService.discardResumeDataCallCount == 0)
+            #expect(downloadService.discardResumeDataCallCount == 0)
             #expect(instance.status == .error)
             // installContext stays so the user can retry via Start.
             #expect(instance.configuration.installContext == originalContext)
@@ -957,7 +964,7 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSLatestWhoseDestinationMoveFailsStopsBeforeTheDownload() async {
         let downloads = scratch.url
             .appendingPathComponent("latestMoveUnsaved", isDirectory: true)
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+        let (coordinator, _, installService, _, _, downloadService) = makeCoordinator(
             downloadsDirectory: downloads)
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -972,7 +979,7 @@ struct VMLifecycleCoordinatorTests {
             try await coordinator.launchGuestSetup(on: instance).value()
         }
 
-        #expect(ipswService.downloadCallCount == 0)
+        #expect(downloadService.downloadCallCount == 0)
         #expect(installService.installCallCount == 0)
         #expect(instance.configuration.installContext == context)
         #expect(storage.bundles[instance.bundleURL]?.installContext == context)
@@ -983,7 +990,7 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSFreshDownloadWhoseClearFailsReplacesNothing() async {
         let downloads = scratch.url
             .appendingPathComponent("freshClearUnsaved", isDirectory: true)
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator(
             downloadsDirectory: downloads)
         // Honored, not lapsed: nothing is written before the flag's clear.
         let context = MacOSInstallContext(
@@ -1002,8 +1009,8 @@ struct VMLifecycleCoordinatorTests {
         }
 
         // The replace belongs to the download, which never ran.
-        #expect(ipswService.downloadCallCount == 0)
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.downloadCallCount == 0)
+        #expect(downloadService.discardResumeDataCallCount == 0)
         #expect(installService.installCallCount == 0)
         #expect(instance.configuration.installContext?.requestedFreshDownload == true)
         #expect(storage.bundles[instance.bundleURL]?.installContext == context)
@@ -1012,7 +1019,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("An install whose completion cannot be saved fails and keeps its context for the next Start")
     func installMacOSWhoseCompletionFailsKeepsTheContext() async {
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
@@ -1044,7 +1051,7 @@ struct VMLifecycleCoordinatorTests {
         let context = MacOSInstallContext(
             source: .localFile, localIPSWPath: picked.path(percentEncoded: false),
             localIPSWBookmark: bookmark)
-        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _, _) = makeCoordinator()
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
         defer { withExtendedLifetime(library) {} }
@@ -1860,7 +1867,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("attachRemovableMedia forwards to removable media device service")
     func attachRemovableMediaForwards() async throws {
-        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContextForTesting()
@@ -1884,7 +1891,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("detachRemovableMedia forwards to removable media device service")
     func detachRemovableMediaForwards() async throws {
-        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContextForTesting()
@@ -1905,7 +1912,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("attachRemovableMedia propagates error from removable media device service")
     func attachRemovableMediaPropagatesError() async {
-        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
         removableMediaService.attachError = RemovableMediaDeviceError.noVirtualMachine
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
@@ -1923,7 +1930,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("detachRemovableMedia propagates error from removable media device service")
     func detachRemovableMediaPropagatesError() async throws {
-        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContextForTesting()
@@ -1948,7 +1955,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("attachRemovableMedia and detachRemovableMedia never reach the service for a superseded session")
     func removableMediaPassThroughDropsASupersededSession() async throws {
-        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContextForTesting()
@@ -1996,7 +2003,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("attachRemovableMedia attaches the resolved URL but tracks the stored path")
     func attachRemovableMediaTracksStoredPathWithResolvedURL() async throws {
-        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContextForTesting()
@@ -2025,7 +2032,7 @@ struct VMLifecycleCoordinatorTests {
     func normalizedDownloadDestinationEnforcesDownloads() throws {
         let downloads = scratch.url
             .appendingPathComponent("Downloads", isDirectory: true)
-        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let inDownloads = downloads.appendingPathComponent("Custom.ipsw")
         #expect(coordinator.normalizedDownloadDestination(for: inDownloads) == inDownloads)
 
@@ -2040,7 +2047,7 @@ struct VMLifecycleCoordinatorTests {
     func normalizedDownloadDestinationContainsEveryCandidate() throws {
         let downloads = scratch.url
             .appendingPathComponent("normalizedDestination", isDirectory: true)
-        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
 
         // Traversal out of Downloads, the directory itself spelled two ways,
         // and a path that was never in Downloads at all.
@@ -2081,7 +2088,7 @@ struct VMLifecycleCoordinatorTests {
     func latestDestinationFollowsTheResolvedURL() throws {
         let downloads = scratch.url
             .appendingPathComponent("latestFollowsURL", isDirectory: true)
-        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let resolved = try #require(
             URL(
@@ -2101,7 +2108,7 @@ struct VMLifecycleCoordinatorTests {
     func latestDestinationForOffConventionURL() throws {
         let downloads = scratch.url
             .appendingPathComponent("latestOffConvention", isDirectory: true)
-        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let resolved = try #require(URL(string: "https://example.com/restore.ipsw"))
 

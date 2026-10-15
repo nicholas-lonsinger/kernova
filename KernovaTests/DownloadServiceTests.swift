@@ -1216,6 +1216,31 @@ struct DownloadServiceTests {
         #expect(requests.value == 0)
     }
 
+    // MARK: - Discarding Resume Data
+
+    @Test("discardResumeData trashes the bundle beside the destination")
+    func discardResumeDataTrashesBundle() throws {
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
+
+        let fileSystem = MockFileSystem()
+        Self.makeServiceWithStub(fileSystem: fileSystem).discardResumeData(at: destination)
+
+        #expect(fileSystem.trashedURLs == [DownloadService.resumeBundleURL(for: destination)])
+        #expect(fileSystem.removedURLs.isEmpty)
+    }
+
+    @Test("discardResumeData bypasses the Trash when asked to delete immediately")
+    func discardResumeDataPermanentlyRemovesBundle() throws {
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
+
+        let fileSystem = MockFileSystem()
+        Self.makeServiceWithStub(fileSystem: fileSystem)
+            .discardResumeData(at: destination, permanently: true)
+
+        #expect(fileSystem.removedURLs == [DownloadService.resumeBundleURL(for: destination)])
+        #expect(fileSystem.trashedURLs.isEmpty)
+    }
+
     // MARK: - Adopting a File Already on Disk
 
     @Test("Adoption links the file, moves no bytes and discards the superseded bundle")

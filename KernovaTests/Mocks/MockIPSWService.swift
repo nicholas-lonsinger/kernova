@@ -1,19 +1,10 @@
 import Foundation
 @testable import Kernova
 
-/// No-op mock for `IPSWProviding`.
+/// Scripted stand-in for `IPSWProviding`.
 final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var fetchCallCount = 0
-    var downloadCallCount = 0
-    var lastDownloadRemoteURL: URL?
-    var lastDownloadDestinationURL: URL?
-    var lastDownloadDiscardsExisting: Bool?
-    var discardResumeDataCallCount = 0
-    var lastDiscardResumeDataURL: URL?
-    var lastDiscardResumeDataPermanently: Bool?
-
     var fetchError: (any Error)?
-    var downloadError: (any Error)?
 
     /// Returned on success; defaults to a plausible newest release.
     var fetchResult = makeLatestImage()
@@ -22,25 +13,6 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
         fetchCallCount += 1
         if let error = fetchError { throw error }
         return fetchResult
-    }
-
-    func downloadRestoreImage(
-        from remoteURL: URL,
-        to destinationURL: URL,
-        discardsExistingDownload: Bool,
-        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
-    ) async throws {
-        downloadCallCount += 1
-        lastDownloadRemoteURL = remoteURL
-        lastDownloadDestinationURL = destinationURL
-        lastDownloadDiscardsExisting = discardsExistingDownload
-        if let error = downloadError { throw error }
-    }
-
-    func discardResumeData(at destinationURL: URL, permanently: Bool) {
-        discardResumeDataCallCount += 1
-        lastDiscardResumeDataURL = destinationURL
-        lastDiscardResumeDataPermanently = permanently
     }
 }
 

@@ -16,7 +16,7 @@ final class VMLifecycleCoordinator {
     let ipswService: any IPSWProviding
     let removableMediaDeviceService: any RemovableMediaAttaching
     /// Swaps a running macOS guest's shares on its directory-sharing device.
-    let liveDirectorySharing: any LiveDirectorySharing
+    let liveDirectorySharing = LiveDirectoryShareService()
     let linuxImageResolveService: any LinuxImageResolving
     let downloadService: any Downloading
 
@@ -39,7 +39,6 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
-        liveDirectorySharing: any LiveDirectorySharing = LiveDirectoryShareService(),
         // No default that builds one: ``USBAccessorySupport/makeService(entitlements:)``
         // is called in exactly one place, the composition root, and a
         // collaborator that mints its own would register a second
@@ -57,7 +56,6 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
-        self.liveDirectorySharing = liveDirectorySharing
         self.usbAccessoryService = usbAccessoryService
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
@@ -451,7 +449,7 @@ final class VMLifecycleCoordinator {
                         // builds, so the old path's partial download can
                         // never be resumed — discard its sidecar before the
                         // only pointer to it moves.
-                        ipswService.discardResumeData(
+                        downloadService.discardResumeData(
                             at: persistedDestination, permanently: false)
                         // Keep the persisted path on the file the download
                         // actually writes, so resume across relaunches and
@@ -497,10 +495,13 @@ final class VMLifecycleCoordinator {
                     }.get()
                 }
 
-                try await ipswService.downloadRestoreImage(
+                try await downloadService.download(
                     from: remoteURL,
                     to: downloadDestination,
-                    discardsExistingDownload: requestedFreshDownload
+                    discardsExistingDownload: requestedFreshDownload,
+                    // Apple publishes no size for a restore image ahead of the
+                    // transfer, so there is no ceiling to hold this one to.
+                    expectedSizeBytes: nil
                 ) { progress in
                     instance.setupState?.progress = .download(progress)
                 }

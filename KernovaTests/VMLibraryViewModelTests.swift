@@ -648,31 +648,6 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
-    /// Builds a `VMLibraryViewModel` wired to a caller-supplied `MockIPSWService`.
-    ///
-    /// The shared `makeViewModel` helper doesn't expose the IPSW service
-    /// in its return tuple, so this small builder avoids changing every
-    /// existing destructure just to observe resume-data cleanup.
-    private func makeViewModelWithIPSW(
-        ipswService: MockIPSWService,
-        storage: MockVMStorageService
-    ) -> VMLibraryViewModel {
-        let vm = VMLibraryViewModel(
-            storageService: storage,
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: ipswService,
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            fileSystem: fileSystem,
-            downloadsDirectory: nil,
-            preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
-        )
-        vm.presenter = presenter
-        return vm
-    }
-
     @Test(
         "deleteVM discards the IPSW resume-data sidecar",
         arguments: [
@@ -682,9 +657,10 @@ struct VMLibraryViewModelTests {
     func deleteVMDiscardsResumeData(source: MacOSInstallContext.Source) async {
         // Every source that downloads its image leaves a partial bundle at
         // `downloadDestinationPath`, so deleting the VM has to discard it.
-        let ipswService = MockIPSWService()
+        let downloadService = MockDownloadService()
         let storage = MockVMStorageService()
-        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
 
         let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
@@ -698,21 +674,22 @@ struct VMLibraryViewModelTests {
 
         await viewModel.delete(instance)
 
-        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(downloadService.discardResumeDataCallCount == 1)
         #expect(
-            ipswService.lastDiscardResumeDataURL?.path(percentEncoded: false)
+            downloadService.discardedResumeDataURLs.last?.path(percentEncoded: false)
                 == destination.path(percentEncoded: false)
         )
         // A move-to-Trash delete discards the partial download to the Trash too.
-        #expect(ipswService.lastDiscardResumeDataPermanently == false)
+        #expect(downloadService.lastDiscardResumeDataPermanently == false)
         #expect(viewModel.instances.isEmpty)
     }
 
     @Test("deleteVM permanently discards the IPSW resume-data immediately too")
     func deleteVMPermanentlyDiscardsResumeDataImmediately() async {
-        let ipswService = MockIPSWService()
+        let downloadService = MockDownloadService()
         let storage = MockVMStorageService()
-        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
 
         let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
@@ -728,17 +705,18 @@ struct VMLibraryViewModelTests {
 
         // The whole operation uses one disposition: the partial download is removed
         // immediately, not trashed, matching the bundle and externals.
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataPermanently == true)
+        #expect(downloadService.discardResumeDataCallCount == 1)
+        #expect(downloadService.lastDiscardResumeDataPermanently == true)
         #expect(storage.permanentlyDeleteVMBundleCallCount == 1)
         #expect(viewModel.instances.isEmpty)
     }
 
     @Test("deleteVM leaves resume-data alone for a local-file install")
     func deleteVMNoResumeDataForLocalFileSource() async {
-        let ipswService = MockIPSWService()
+        let downloadService = MockDownloadService()
         let storage = MockVMStorageService()
-        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
 
         // A destination path is set so the source — not a nil destination — is
         // what keeps the cleanup from firing.
@@ -755,20 +733,21 @@ struct VMLibraryViewModelTests {
 
         await viewModel.delete(instance)
 
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("deleteVM leaves resume-data alone when VM has no install context")
     func deleteVMNoResumeDataForNonInstallVM() async {
-        let ipswService = MockIPSWService()
+        let downloadService = MockDownloadService()
         let storage = MockVMStorageService()
-        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
         let instance = viewModel.library.admitFixture()
         storage.bundles[instance.bundleURL] = instance.configuration
 
         await viewModel.delete(instance)
 
-        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("deleteVM swallows missing-file errors for a selected external")

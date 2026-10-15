@@ -31,12 +31,11 @@ struct GuestAddressObserverTests {
         entitled: Bool = true,
         vmnet: ScriptedVmnetNetworks = Self.subnetted()
     ) -> GuestAddressObserver {
-        var granted: Set<String> = []
-        if canObserve { granted.insert("com.apple.developer.networking.topology-observation") }
-        if entitled { granted.insert("com.apple.vm.networking") }
         let observer = GuestAddressObserver(
             reader: table, vmnetNetworks: vmnet.service,
-            entitlements: EntitlementService(reader: MockEntitlementReader(granted: granted)),
+            entitlements: EntitlementService(
+                hasVMNetworking: entitled, hasAccessoryAccess: false,
+                hasTopologyObservation: canObserve),
             clock: clock, now: { Self.now })
         observer.roster = roster
         return observer
