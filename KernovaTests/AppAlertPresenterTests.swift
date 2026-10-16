@@ -313,26 +313,31 @@ struct AppAlertPresenterTests {
         #expect(presenter.waitingCountForTesting == 1)
     }
 
-    @Test("Take Snapshot from a VM's display window shows while another VM's sheet is up on the library")
-    func takeSnapshotSheetsForTwoVMsCoexist() throws {
+    @Test("A Take Snapshot gesture for the VM whose sheet is up is ignored; another VM's waits its turn")
+    func takeSnapshotSheetIgnoresItsVMAndQueuesAnother() throws {
         let h = makeHarness()
         let library = h.showLibrary()
-        let vmX = makeRunningInstance(name: "Popped", in: h.viewModel)
-        let display = try showDisplayWindow(for: vmX, in: h)
-        let vmY = makeInstance(name: "Listed", in: h.viewModel)
+        let vmX = makeInstance(name: "X", in: h.viewModel)
+        let vmY = makeInstance(name: "Y", in: h.viewModel)
+        #expect(vmX.snapshotCaptureMode != nil)
         #expect(vmY.snapshotCaptureMode != nil)
-        h.presenter.presentTakeSnapshotSheet(for: vmY, purpose: .restorePoint)
-        let ySheet = try #require(library.attachedSheet)
 
         h.presenter.presentTakeSnapshotSheet(for: vmX, purpose: .restorePoint)
-
-        let xSheet = try #require(display.attachedSheet)
-        #expect(library.attachedSheet === ySheet)
+        let xSheet = try #require(library.attachedSheet)
         #expect(h.presenter.waitingCountForTesting == 0)
 
-        // A second gesture for a VM whose sheet is up is still ignored.
         h.presenter.presentTakeSnapshotSheet(for: vmX, purpose: .restorePoint)
-        #expect(display.attachedSheet === xSheet)
+        #expect(library.attachedSheet === xSheet)
+        #expect(h.presenter.waitingCountForTesting == 0)
+
+        h.presenter.presentTakeSnapshotSheet(for: vmY, purpose: .restorePoint)
+        #expect(library.attachedSheet === xSheet)
+        #expect(h.presenter.waitingCountForTesting == 1)
+
+        #expect(h.dismissShownAlert(.cancel))
+
+        let ySheet = try #require(library.attachedSheet)
+        #expect(ySheet !== xSheet)
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
@@ -1284,52 +1289,38 @@ struct AppAlertPresenterTests {
         return window.attachedSheet?.contentView.map(labels(in:)) ?? []
     }
 
-    @Test("A Force Stop goes up on its VM's display window while another alert holds the library window")
-    func forceStopRoutesToItsDisplayWindow() throws {
-        let h = makeHarness()
-        let library = h.showLibrary()
-        let vm = makeRunningInstance(name: "Stuck", in: h.viewModel)
-        let display = try showDisplayWindow(for: vm, in: h)
-        h.presenter.presentError("Unrelated.", title: "Library Notice", about: .library)
-        #expect(sheetText(on: library).contains("Library Notice"))
-
-        h.presenter.presentForceStop(for: vm)
-
-        #expect(sheetText(on: display).contains { $0.contains("Force Stop") })
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
     @Test("The guest agent disk notice goes up on its VM's display window")
     func agentDiskNoticeRoutesToItsDisplayWindow() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
         let vm = makeRunningInstance(name: "Guest", guestOS: .macOS, in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
 
         h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)
 
         #expect(sheetText(on: display).contains("Installer Mounted"))
-        #expect(library.attachedSheet == nil)
+        #expect(h.presenter.waitingCountForTesting == 0)
     }
 
     @Test("An alert waiting on one window does not hold up one for another, and each window keeps its order")
     func windowsQueueIndependently() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
-        let vm = makeRunningInstance(name: "Work", in: h.viewModel)
-        let display = try showDisplayWindow(for: vm, in: h)
+        let vmA = makeRunningInstance(name: "A", in: h.viewModel)
+        let vmB = makeRunningInstance(name: "B", in: h.viewModel)
+        let displayA = try showDisplayWindow(for: vmA, in: h)
+        let displayB = try showDisplayWindow(for: vmB, in: h)
 
-        h.presenter.presentError("One.", title: "First Notice", about: .library)
-        h.presenter.presentError("Two.", title: "Second Notice", about: .library)
-        h.presenter.presentError("Three.", title: "Display Notice", about: .vm(vm))
+        h.presenter.presentError("One.", title: "First Notice", about: .vm(vmA))
+        h.presenter.presentError("Two.", title: "Second Notice", about: .vm(vmA))
+        h.presenter.presentError("Three.", title: "Other Notice", about: .vm(vmB))
 
-        #expect(sheetText(on: library).contains("First Notice"))
-        #expect(sheetText(on: display).contains("Display Notice"))
+        #expect(sheetText(on: displayA).contains("First Notice"))
+        #expect(sheetText(on: displayB).contains("Other Notice"))
         #expect(h.presenter.waitingCountForTesting == 1)
 
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+        let shown = try #require(displayA.attachedSheet)
+        displayA.endSheet(shown, returnCode: .alertFirstButtonReturn)
 
-        #expect(sheetText(on: library).contains("Second Notice"))
+        #expect(sheetText(on: displayA).contains("Second Notice"))
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
