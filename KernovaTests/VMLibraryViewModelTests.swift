@@ -35,10 +35,14 @@ struct VMLibraryViewModelTests {
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualizationService,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: removableMediaDeviceService,
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,
@@ -47,7 +51,8 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: .scripted(),
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -63,15 +68,22 @@ struct VMLibraryViewModelTests {
         let vm = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: suspending,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -2044,7 +2056,8 @@ struct VMLibraryViewModelTests {
 
     /// A CPU count the guest takes that is not `config`'s own.
     private func movedCPUCount(_ config: VMConfiguration) -> Int {
-        config.cpuCount == VMResourceLimits.cpuCount.lower ? config.cpuCount + 1 : config.cpuCount - 1
+        config.cpuCount == VirtualizationHost.frameworkResourceLimits.cpuCount.lower
+            ? config.cpuCount + 1 : config.cpuCount - 1
     }
 
     @Test("the configuration forward hands a consent refusal back without presenting it")
@@ -2935,15 +2948,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: installService,
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -3351,7 +3371,7 @@ struct VMLibraryViewModelTests {
     private func makeCreationWizard(
         name: String, startAfterCreate: Bool = true
     ) -> VMCreationViewModel {
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
         wizard.vmName = name
@@ -3362,7 +3382,7 @@ struct VMLibraryViewModelTests {
     /// A wizard filled in for a macOS VM whose image can be provisioned, with
     /// the account toggle on and the form filled.
     private func makeAccountCreationWizard(name: String) -> VMCreationViewModel {
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.vmName = name
         wizard.startAfterCreate = false
         wizard.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
@@ -3654,7 +3674,7 @@ struct VMLibraryViewModelTests {
         try Data(repeating: 0x12, count: 256).write(to: destination)
 
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "Overwrite VM"
@@ -3682,7 +3702,7 @@ struct VMLibraryViewModelTests {
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
 
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "No-overwrite VM"
@@ -3744,15 +3764,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: raceInstaller,
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -3850,7 +3877,7 @@ struct VMLibraryViewModelTests {
     @Test("createVM persists a catalog pick's download context for Linux")
     func createVMPersistsLinuxDownloadContext() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
         wizard.vmName = "Catalog Linux VM"
@@ -3871,7 +3898,7 @@ struct VMLibraryViewModelTests {
     @Test("createVM leaves a local-ISO Linux VM with no download context")
     func createVMLocalISOHasNoLinuxContext() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
         wizard.vmName = "Local ISO VM"
@@ -5771,14 +5798,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: RemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5863,14 +5898,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: RemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -6254,16 +6297,23 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             usbAccessoryService: MockUSBAccessoryService(),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter

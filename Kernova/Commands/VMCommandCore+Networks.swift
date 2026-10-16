@@ -87,7 +87,8 @@ extension VMCommandCore {
                 isolated, to: &settings,
                 context: VMConfigurationWriteContext(
                     instance, entitlements: library.entitlements,
-                    networks: library.networks.state))
+                    networks: library.networks.state,
+                    resourceLimits: library.virtualizationHost.resourceLimits))
         }
         let joining = naming.filter { instance in
             members.contains { $0 === instance }

@@ -75,7 +75,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         backing.applyDropRegistration()
         backing.update(
-            display: instance.session?.displayHandle,
+            display: instance.session?.virtualMachineSession?.displayHandle,
             isPaused: instance.isLivePaused,
             transitionText: instance.status.transitionLabel,
             settings: instance.displayViewSettings
@@ -228,7 +228,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     self.onRequestDismissal?()
                 } else {
                     self.backingView.update(
-                        display: self.instance.session?.displayHandle,
+                        display: self.instance.session?.virtualMachineSession?.displayHandle,
                         isPaused: self.instance.isLivePaused,
                         transitionText: status.transitionLabel,
                         settings: self.instance.displayViewSettings

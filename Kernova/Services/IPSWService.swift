@@ -22,16 +22,3 @@ struct IPSWService: Sendable {
 // MARK: - IPSWProviding
 
 extension IPSWService: IPSWProviding {}
-
-// MARK: - Errors
-
-enum IPSWError: LocalizedError {
-    case noDownloadURL
-
-    var errorDescription: String? {
-        switch self {
-        case .noDownloadURL:
-            "The restore image does not have a download URL."
-        }
-    }
-}

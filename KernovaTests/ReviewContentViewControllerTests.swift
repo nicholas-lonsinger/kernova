@@ -8,7 +8,7 @@ import Testing
 struct ReviewContentViewControllerTests {
     @Test("General rows reflect the model")
     func generalRowsReflectModel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.vmName = "My Test Box"
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -20,7 +20,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("The network Mode row names the mode a new VM starts in")
     func networkingReflectsModel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         #expect(vm.networkEnabled)
         let sharedVC = ReviewContentViewController(creationVM: vm)
         sharedVC.loadViewIfNeeded()
@@ -38,7 +38,7 @@ struct ReviewContentViewControllerTests {
     func macOSDownloadShowsLookedUpImage() async {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
-        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
         await vm.loadLatestImageDetails()?.value
 
         let vc = ReviewContentViewController(creationVM: vm)
@@ -55,7 +55,7 @@ struct ReviewContentViewControllerTests {
     func macOSDownloadFillsInLateLookup() async {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
-        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -77,8 +77,7 @@ struct ReviewContentViewControllerTests {
     func macOSDownloadSurvivesFailedLookup() async {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -94,8 +93,7 @@ struct ReviewContentViewControllerTests {
     @Test("A Linux review never reaches for a restore image")
     func linuxSkipsLatestImageLookup() {
         let ipswService = MockIPSWService()
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
         vm.selectedOS = .linux
 
         let vc = ReviewContentViewController(creationVM: vm)
@@ -108,7 +106,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("macOS + local file shows the file basename")
     func macOSLocalFileShowsFile() {
-        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
+        let vm = VMCreationViewModel.overEngine(localImageInspector: MockLocalRestoreImageInspector())
         vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -125,7 +123,7 @@ struct ReviewContentViewControllerTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 15_500_000_000)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
         await vm.localFileInspectionTask?.value
 
@@ -140,7 +138,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("Linux shows the ISO basename in the Boot section")
     func linuxShowsISO() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
         let vc = ReviewContentViewController(creationVM: vm)
@@ -151,7 +149,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("A Linux catalog pick names the distribution, its size, how it is checked, and where it lands")
     func linuxShowsCatalogPick() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLinuxCatalogEntry(
             makeLinuxCatalogEntry(
@@ -178,7 +176,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("A Linux URL pick names the file, its size, where it lands and how it is checked")
     func linuxShowsVerifiedURLPick() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         let image = makeCustomLinuxImage()
         vm.selectLinuxCustomURL(image, sizeBytes: 1_073_741_824)
@@ -205,7 +203,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("A Linux URL pick with no checksum says the download is not verified")
     func linuxShowsUnverifiedURLPick() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
         let vc = ReviewContentViewController(creationVM: vm)
@@ -221,7 +219,7 @@ struct ReviewContentViewControllerTests {
     private func makeAccountModel(
         password: String = "analytical-engine", remoteLogin: Bool = false
     ) -> VMCreationViewModel {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
         vm.unattendedSetupEnabled = true
         vm.guestAccountFullName = "Ada Lovelace"
@@ -313,7 +311,7 @@ struct ReviewContentViewControllerTests {
 
     @Test("Start-after-create switch writes back to the model")
     func startToggleWriteBack() {
-        let vm = VMCreationViewModel()  // startAfterCreate defaults to true
+        let vm = VMCreationViewModel.overEngine()  // startAfterCreate defaults to true
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 

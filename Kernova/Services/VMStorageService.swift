@@ -174,7 +174,7 @@ struct VMStorageService: Sendable {
     ) throws {
         try stagingRoot.createDirectory(at: destinationBundleURL)
 
-        try VMBundleMachineFiles.copyItems(
+        try VMBundleItems.copyItems(
             relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
 
         #log(

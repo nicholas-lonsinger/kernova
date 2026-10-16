@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import Virtualization
 
 /// The AppKit adapter over ``VMCommandCore``: the sheets and alerts that gather
 /// consent for a verb, the routing of a refused verb to the right surface, and
@@ -623,6 +622,17 @@ final class VMLibraryViewModel {
     /// The host notifications the library and its surfaces observe.
     @ObservationIgnored let hostNotifications: HostNotifications
 
+    /// Reads a restore image already on disk, for the creation wizard.
+    @ObservationIgnored private let localImageInspector: any LocalRestoreImageInspecting
+
+    /// A creation wizard over this library's Virtualization host and
+    /// restore-image lookups.
+    func makeCreationViewModel() -> VMCreationViewModel {
+        VMCreationViewModel(
+            host: library.virtualizationHost, localImageInspector: localImageInspector,
+            ipswService: lifecycle.ipswService)
+    }
+
     // MARK: - Initialization
 
     /// A collaborator over the user's own state — the VMs directory, the
@@ -630,19 +640,22 @@ final class VMLibraryViewModel {
     /// networks and their store, its ARP table, the signature's entitlements,
     /// the host's notifications and its pasteboard — takes no default: the test host
     /// runs as the app, in its container and with its signature, so a default
-    /// would hand that state to every test that left it out. ``AppDelegate``
+    /// would hand that state to every test that left it out. Nor does one the
+    /// Virtualization engine makes — the host's answers, the bundle machine
+    /// files, the restore-image lookups, the removable-media devices, the
+    /// bridged interfaces — which the core cannot build. ``AppDelegate``
     /// supplies each.
-    ///
-    /// `machineFiles` defaults to the real bundle file work, trashing through
-    /// `fileSystem`.
     init(
         storageService: any VMStorageProviding,
         diskImageService: any DiskImageProviding = DiskImageService(),
-        machineFiles: (any VMBundleMachineFileWorking)? = nil,
+        machineFiles: any VMBundleMachineFileWorking,
+        virtualizationHost: any VirtualizationHostProviding,
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
-        ipswService: any IPSWProviding = IPSWService(),
-        removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        ipswService: any IPSWProviding,
+        localImageInspector: any LocalRestoreImageInspecting,
+        removableMediaDeviceService: any RemovableMediaAttaching,
+        bridgedInterfaces: any BridgedInterfaceProviding,
         // Supplied by ``AppDelegate``, the one caller that should claim the
         // user's accessories — registering the listener is a side effect on
         // the whole process, and a default would hand it to every test that
@@ -665,6 +678,7 @@ final class VMLibraryViewModel {
         hostPasteboard: any ClipboardPasteboard
     ) {
         self.storageService = storageService
+        self.localImageInspector = localImageInspector
         self.hostNotifications = hostNotifications
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
@@ -683,7 +697,7 @@ final class VMLibraryViewModel {
         self.lifecycle = lifecycle
         let library = VMLibrary(
             storageService: storageService,
-            machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: fileSystem),
+            machineFiles: machineFiles,
             lifecycle: lifecycle,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
@@ -691,6 +705,8 @@ final class VMLibraryViewModel {
             entitlements: entitlements,
             networks: networks,
             organization: organization,
+            virtualizationHost: virtualizationHost,
+            bridgedInterfaces: bridgedInterfaces,
             appActivation: hostNotifications.appDidBecomeActive,
             hostPasteboard: hostPasteboard
         )

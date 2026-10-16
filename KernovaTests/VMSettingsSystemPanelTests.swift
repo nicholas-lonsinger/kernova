@@ -482,14 +482,24 @@ struct VMSettingsSystemPanelTests {
         let presenter = MockVMLibraryPresenting()
         let storage = MockVMStorageService()
         let viewModel = VMLibraryViewModel(
-            storageService: storage, diskImageService: MockDiskImageService(),
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(), ipswService: MockIPSWService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
+            preferences: preferences,
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
             entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard())
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard())
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(guestOS: .macOS) {
             $0.displayResolution = resolution
@@ -679,9 +689,12 @@ struct VMSettingsSystemPanelTests {
         func changedValue(from config: VMConfiguration) -> String {
             switch self {
             case .cpus:
-                String(config.cpuCount == VMResourceLimits.cpuCount.lower ? config.cpuCount + 1 : config.cpuCount - 1)
+                String(
+                    config.cpuCount == VirtualizationHost.frameworkResourceLimits.cpuCount.lower
+                        ? config.cpuCount + 1 : config.cpuCount - 1)
             case .memory:
-                VMResourceLimits.memorySize.contains(config.memorySizeInGB.adding(gibibytes: 1))
+                VirtualizationHost.frameworkResourceLimits.memorySize.contains(
+                    config.memorySizeInGB.adding(gibibytes: 1))
                     ? config.memorySizeInGB.adding(gibibytes: 1).gibibytesText
                     : config.memorySizeInGB.nextWholeGibibyte(upward: false).gibibytesText
             case .width: String(config.displayBaseSize.width == 1440 ? 1680 : 1440)

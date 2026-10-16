@@ -20,10 +20,11 @@ final class VirtualizationService {
     private let isProtectedDataAvailable: @MainActor () -> Bool
 
     init(
-        vmnetNetworks: VmnetNetworkService, entitlements: EntitlementService,
-        isProtectedDataAvailable: @escaping @MainActor () -> Bool
+        vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
+        entitlements: EntitlementService, isProtectedDataAvailable: @escaping @MainActor () -> Bool
     ) {
-        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
+        configBuilder = ConfigurationBuilder(
+            vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetAttachments, entitlements: entitlements)
         self.isProtectedDataAvailable = isProtectedDataAvailable
     }
 
@@ -59,11 +60,11 @@ final class VirtualizationService {
             }
         } catch {
             // A restore failure already logged itself with the full error chain.
-            if !Self.isRestoreFailure(error) {
+            if !VirtualizationFailure.isRestoreFailure(error) {
                 let nsError = error as NSError
                 #log(
                     Self.logger, .error,
-                    "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
+                    "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationFailure.underlyingChainDescription(nsError), privacy: .public)]"
                 )
             }
             throw error
@@ -85,7 +86,7 @@ final class VirtualizationService {
     // MARK: - Cold Boot
 
     /// Cold-boots `instance`, retrying with bounded backoff when the start fails on
-    /// VZ file-lock contention (see ``isFileLockContention(_:)``).
+    /// VZ file-lock contention (see ``VirtualizationFailure/isFileLockContention(_:)``).
     ///
     /// The contention it answers is this copy's own: a previous `VZVirtualMachine`
     /// on the same bundle releases its advisory lock on the auxiliary-storage and
@@ -107,7 +108,7 @@ final class VirtualizationService {
                     provisioning: provisioning)
                 return
             } catch let startError {
-                guard Self.isFileLockContention(startError),
+                guard VirtualizationFailure.isFileLockContention(startError),
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw startError }
                 attempt += 1
@@ -145,28 +146,6 @@ final class VirtualizationService {
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS,
             provisioning: provisioning)
         try await session.start(options: startOptions)
-    }
-
-    /// Detects VZ's advisory file-lock contention on a VM's backing files.
-    ///
-    /// Matches "Failed to lock auxiliary storage" (or the disk-image equivalent):
-    /// `.invalidVirtualMachineConfiguration` carrying a POSIX `EAGAIN` underneath,
-    /// which is what separates it from a genuinely invalid configuration (same VZ
-    /// code, no `EAGAIN`) — matching localized text would be locale-fragile. A
-    /// disk-image attach failure arrives wrapped in a `ConfigurationBuilderError`,
-    /// so unwrap before matching or the contention retry never fires.
-    nonisolated static func isFileLockContention(_ error: Error) -> Bool {
-        if let builderError = error as? ConfigurationBuilderError,
-            let underlying = builderError.underlyingAttachError
-        {
-            return isFileLockContention(underlying)
-        }
-        let nsError = error as NSError
-        guard nsError.domain == VZError.errorDomain,
-            VZError.Code(rawValue: nsError.code) == .invalidVirtualMachineConfiguration,
-            let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
-        else { return false }
-        return underlying.domain == NSPOSIXErrorDomain && underlying.code == Int(EAGAIN)
     }
 
     /// Backoff before file-lock-contention cold-boot retry number `attempt`.
@@ -753,87 +732,6 @@ final class VirtualizationService {
         return .rest(.live(.running), ())
     }
 
-    // MARK: - Error Classification
-
-    /// How far an `NSUnderlyingErrorKey` walk follows the chain — framework
-    /// `userInfo` can nest arbitrarily deep, or cyclically.
-    nonisolated private static let maxUnderlyingErrorDepth = 4
-
-    /// Returns `true` when the error is a transient environmental condition (e.g. too many
-    /// concurrent VMs) rather than a problem with the VM itself.
-    ///
-    /// Transient leaves a plain start in `.stopped` and an install in
-    /// `.initialBoot`, with no stored message; permanent rests at `.failed`
-    /// (red) carrying the message for the banner and tooltip.
-    nonisolated static func isTransientStartError(_ error: Error) -> Bool {
-        // Checked ahead of the builder-error rule below: contention on a disk image
-        // surfaces *as* a builder error and is still transient — the lock holder is
-        // a dying VZVirtualMachine that releases it at deallocation.
-        if isFileLockContention(error) { return true }
-
-        if error is ConfigurationBuilderError { return false }
-
-        if isVirtualMachineLimitExceeded(error) { return true }
-
-        // Top level only, unlike the limit code: a cancel nested under a failure
-        // describes a teardown step, not the failure that has to be classified.
-        let nsError = error as NSError
-        return nsError.domain == VZError.errorDomain
-            && VZError.Code(rawValue: nsError.code) == .operationCancelled
-    }
-
-    /// Returns `true` when `error`, or anything within
-    /// ``maxUnderlyingErrorDepth`` of its `NSUnderlyingErrorKey` chain, is
-    /// `VZError.Code.virtualMachineLimitExceeded`.
-    ///
-    /// `VZMacOSInstaller.install()` surfaces the cap as `.installationFailed`
-    /// carrying the real code underneath, so the top level alone identifies it
-    /// on the plain-start path only.
-    nonisolated static func isVirtualMachineLimitExceeded(_ error: Error) -> Bool {
-        underlyingErrorChain(error as NSError).contains {
-            $0.domain == VZError.errorDomain
-                && VZError.Code(rawValue: $0.code) == .virtualMachineLimitExceeded
-        }
-    }
-
-    /// `domain code` for each error *under* `error`, bounded by
-    /// ``maxUnderlyingErrorDepth``; `"none"` when nothing is nested.
-    static func underlyingChainDescription(_ error: NSError) -> String {
-        let nested = underlyingErrorChain(error).dropFirst()
-        guard !nested.isEmpty else { return "none" }
-        return nested.map { "\($0.domain) \($0.code)" }.joined(separator: " → ")
-    }
-
-    /// `error` followed by up to ``maxUnderlyingErrorDepth`` of its
-    /// `NSUnderlyingErrorKey` ancestors.
-    nonisolated private static func underlyingErrorChain(_ error: NSError) -> [NSError] {
-        var chain: [NSError] = []
-        var current: NSError? = error
-        while let nsError = current, chain.count <= maxUnderlyingErrorDepth {
-            chain.append(nsError)
-            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
-        }
-        return chain
-    }
-
-    /// `true` when `error` is a failed save-file restore — the one start/resume
-    /// failure that rests at `.suspended` instead of `.error` or `.stopped`.
-    static func isRestoreFailure(_ error: Error) -> Bool {
-        guard let virtualizationError = error as? VirtualizationError,
-            case .restoreFailed = virtualizationError
-        else { return false }
-        return true
-    }
-
-    /// `error` with one `restoreFailed` wrapper peeled off, so the contention
-    /// and transience classifiers can read the VZ failure underneath.
-    static func unwrappedRestoreFailure(_ error: Error) -> Error {
-        guard let virtualizationError = error as? VirtualizationError,
-            case .restoreFailed(let underlying, _) = virtualizationError
-        else { return error }
-        return underlying
-    }
-
     // MARK: - Private Helpers
 
     /// Builds a VZ configuration off the main actor to avoid blocking the UI,
@@ -855,7 +753,7 @@ final class VirtualizationService {
 
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes,
     /// retrying with bounded backoff when the attempt fails on VZ file-lock
-    /// contention (see ``isFileLockContention(_:)``) — the restore-path
+    /// contention (see ``VirtualizationFailure/isFileLockContention(_:)``) — the restore-path
     /// counterpart of
     /// ``coldBootRetryingLockContention(_:_:bootIntoRecovery:provisioning:)``,
     /// answering the same teardown lag.
@@ -873,7 +771,9 @@ final class VirtualizationService {
                 try await restoreFromSaveFileAttempt(instance, context)
                 return
             } catch let attemptError {
-                guard Self.isFileLockContention(Self.unwrappedRestoreFailure(attemptError)),
+                guard
+                    VirtualizationFailure.isFileLockContention(
+                        VirtualizationFailure.unwrappedRestoreFailure(attemptError)),
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw attemptError }
                 attempt += 1
@@ -929,7 +829,7 @@ final class VirtualizationService {
             let hostLocked = !isProtectedDataAvailable()
             #log(
                 logger, .error,
-                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlyingChainDescription(nsError), privacy: .public); host locked: \(hostLocked, privacy: .public)]"
+                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationFailure.underlyingChainDescription(nsError), privacy: .public); host locked: \(hostLocked, privacy: .public)]"
             )
             throw VirtualizationError.restoreFailed(underlying: error, hostLocked: hostLocked)
         }
@@ -939,64 +839,3 @@ final class VirtualizationService {
 // MARK: - VirtualizationProviding
 
 extension VirtualizationService: VirtualizationProviding {}
-
-// MARK: - Errors
-
-enum VirtualizationError: LocalizedError {
-    case invalidStateTransition(from: VMStatus, action: String)
-    case noVirtualMachine
-    case noSaveFile
-    /// The file system turned the removal of the suspend slot down, so the VM
-    /// is still resting on the session the discard was asked to end.
-    case savedStateNotDiscarded
-    /// `hostLocked` is whether this Mac's protected data was unavailable when
-    /// the restore failed: the VM helper's Secure Enclave key is when-unlocked
-    /// class (`docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md`),
-    /// so no restore succeeds until the Mac is unlocked.
-    case restoreFailed(underlying: any Error, hostLocked: Bool = false)
-    /// The revert wrote the snapshot back, and bringing the VM up on it failed.
-    case revertResumeFailed(underlying: any Error)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidStateTransition(let status, let action):
-            "Cannot \(action) VM in \(status.displayName) state."
-        case .noVirtualMachine:
-            "No virtual machine instance is available."
-        case .noSaveFile:
-            "No saved state file found."
-        case .savedStateNotDiscarded:
-            // The VM still holds the session, so it is still offered — nothing
-            // was lost, and the same command is the way to try again.
-            "The saved state could not be deleted."
-        case .restoreFailed(let underlying, let hostLocked):
-            // States what is known and stops. Nothing here can tell whether a
-            // second attempt would fare better — after the device set has
-            // diverged from the one the state was written with, none ever will
-            // — and which commands the VM offers is its own state's answer.
-            "Could not restore the saved state: \(underlying.localizedDescription)\n\n"
-                + (hostLocked
-                    ? "This Mac is locked, and a saved state can be restored only while it is unlocked. "
-                    : "")
-                + "The saved state was kept."
-        case .revertResumeFailed(let underlying):
-            "The virtual machine was reverted to the snapshot, but it could not be "
-                + "resumed: \(underlying.localizedDescription)\n\n"
-                + "The reverted state was kept — choose Resume to try again."
-        }
-    }
-}
-
-/// Bridges a wrapped underlying error into `NSUnderlyingErrorKey` so the
-/// chain-walking classifiers (`isVirtualMachineLimitExceeded`,
-/// `underlyingChainDescription`) see through the wrapper.
-extension VirtualizationError: CustomNSError {
-    var errorUserInfo: [String: Any] {
-        switch self {
-        case .restoreFailed(let underlying, _), .revertResumeFailed(let underlying):
-            [NSUnderlyingErrorKey: underlying as NSError]
-        default:
-            [:]
-        }
-    }
-}

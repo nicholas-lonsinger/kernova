@@ -265,9 +265,9 @@ struct VMInstanceVsockAdmissionTests {
     /// session's coordinator — the channel port's host, ahead of any data one.
     private func framedHost(
         for descriptor: VsockFeatureDescriptor, on instance: VMInstance, sessionID: UUID
-    ) throws -> VsockListenerHost {
+    ) throws -> VsockListener {
         let vsock = try #require(instance.sessionContext?.vsock)
-        return try #require(vsock.makeHosts(for: descriptor, sessionID: sessionID).first)
+        return try #require(vsock.makeListeners(for: descriptor, sessionID: sessionID).first)
     }
 
     /// An instance standing in for one with a live session, its handshake

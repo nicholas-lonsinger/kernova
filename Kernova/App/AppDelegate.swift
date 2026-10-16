@@ -109,15 +109,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.copyClaim = copyClaim
         self.presence = presence
         let entitlements = EntitlementService.readFromProcess()
-        let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
+        let vmnetOperator = HostVmnetNetworkOperator()
+        let vmnetNetworks = VmnetNetworkService(operations: vmnetOperator)
         let hostNotifications = HostNotifications.appKit()
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
+            machineFiles: VMBundleMachineFiles(fileSystem: FileManager.default),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
-                vmnetNetworks: vmnetNetworks, entitlements: entitlements,
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator, entitlements: entitlements,
                 isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
-                vmnetNetworks: vmnetNetworks, entitlements: entitlements),
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator, entitlements: entitlements),
+            ipswService: IPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: RemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             usbAccessoryService: USBAccessorySupport.makeService(entitlements: entitlements),
             systemSleep: SystemSleepWatcher(
                 systemWillSleep: hostNotifications.systemWillSleep,

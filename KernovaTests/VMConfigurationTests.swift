@@ -54,8 +54,8 @@ struct VMConfigurationTests {
         #expect(config.name == "Test macOS VM")
         #expect(config.guestOS == .macOS)
         #expect(config.bootMode == .macOS)
-        #expect(config.cpuCount == VMGuestOS.macOS.defaultCPUCount)
-        #expect(config.memorySizeInGB == VMGuestOS.macOS.defaultMemorySize)
+        #expect(config.cpuCount == VMGuestOS.macOS.preferredCPUCount)
+        #expect(config.memorySizeInGB == VMGuestOS.macOS.preferredMemorySize)
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
         #expect(config.networkEnabled == true)
         #expect(config.displayWidth == 1920)
@@ -73,8 +73,8 @@ struct VMConfigurationTests {
 
         #expect(config.guestOS == .linux)
         #expect(config.bootMode == .efi)
-        #expect(config.cpuCount == VMGuestOS.linux.defaultCPUCount)
-        #expect(config.memorySizeInGB == VMGuestOS.linux.defaultMemorySize)
+        #expect(config.cpuCount == VMGuestOS.linux.preferredCPUCount)
+        #expect(config.memorySizeInGB == VMGuestOS.linux.preferredMemorySize)
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 

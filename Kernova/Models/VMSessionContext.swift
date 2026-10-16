@@ -21,9 +21,9 @@ final class VMSessionContext {
 
     // MARK: - Session
 
-    /// The live VM's isolation domain — the only type that calls into the
+    /// The live VM's session — the isolation domain that alone calls into the
     /// `VZVirtualMachine` and its device objects.
-    var session: VMSession?
+    var session: (any VMSessionOperating)?
 
     /// When this session first settled running, `nil` until it has: a fact
     /// about this session, not the guest's uptime — a restore from a saved

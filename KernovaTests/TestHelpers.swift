@@ -89,6 +89,7 @@ func makeWiredLibrary(
         networks: networks,
         organization: organization,
         guestAccountPasswords: guestAccountPasswords,
+        virtualizationHost: VirtualizationHost(),
         bridgedInterfaces: bridgedInterfaces,
         appActivation: appActivation,
         hostPasteboard: hostPasteboard)

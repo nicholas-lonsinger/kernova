@@ -15,7 +15,7 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
         desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> RemovableMediaDeviceInfo {
-        guard let session = instance.session else {
+        guard let session = instance.session?.virtualMachineSession else {
             #log(
                 Self.logger, .error,
                 "Cannot attach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
@@ -137,33 +137,5 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
             Self.logger, .notice,
             "Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'"
         )
-    }
-}
-
-// MARK: - Errors
-
-enum RemovableMediaDeviceError: LocalizedError {
-    case noVirtualMachine
-    case noUSBController
-    case diskImageNotFound(String)
-    case diskImageIsDirectory(String)
-    case diskImageNotWritable(String)
-    case deviceNotFound
-
-    var errorDescription: String? {
-        switch self {
-        case .noVirtualMachine:
-            "No virtual machine is running."
-        case .noUSBController:
-            "No USB controller is available. Restart the VM to enable USB device support."
-        case .diskImageNotFound(let path):
-            "Disk image not found at \(path)."
-        case .diskImageIsDirectory(let path):
-            "Path is a directory, not a file: \(path)."
-        case .diskImageNotWritable(let path):
-            "Disk image is not writable: \(path). Try attaching as read-only."
-        case .deviceNotFound:
-            "The USB device could not be found on the controller."
-        }
     }
 }

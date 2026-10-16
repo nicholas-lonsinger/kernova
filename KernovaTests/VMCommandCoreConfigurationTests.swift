@@ -651,7 +651,8 @@ struct VMCommandCoreConfigurationTests {
         #expect(
             key.accepts(
                 VMConfigurationKeyRegistry.newMACAddressValue, for: instance,
-                entitlements: harness.library.entitlements, networks: harness.library.networks.state))
+                entitlements: harness.library.entitlements, networks: harness.library.networks.state,
+                resourceLimits: harness.library.virtualizationHost.resourceLimits))
     }
 
     @Test("network.mac=new is refused on a suspended VM, as any address is")

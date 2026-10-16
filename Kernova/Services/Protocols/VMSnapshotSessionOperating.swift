@@ -17,5 +17,3 @@ protocol VMSnapshotSessionOperating: Sendable {
     /// ``VirtualizationService/detachUSBAccessories(_:session:)``.
     func detachUSBDevice(uuid: UUID) async throws
 }
-
-extension VMSession: VMSnapshotSessionOperating {}

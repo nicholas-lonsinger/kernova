@@ -80,15 +80,21 @@ struct VMLibraryViewModelEphemeralTests {
             storageService: storage,
             diskImageService: MockDiskImageService(),
             machineFiles: snapshots,
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()

@@ -9,7 +9,8 @@ import Testing
 struct OSSelectionContentViewControllerTests {
     @Test("The step shows its subtitle and each OS's description")
     func showsSubtitleAndDescriptions() {
-        let vc = OSSelectionContentViewController(creationVM: VMCreationViewModel())
+        let vc = OSSelectionContentViewController(
+            creationVM: VMCreationViewModel.overEngine())
         vc.loadViewIfNeeded()
 
         for text in [
@@ -23,7 +24,7 @@ struct OSSelectionContentViewControllerTests {
 
     @Test("Initial selection reflects the model's selectedOS")
     func initialSelectionReflectsModel() {
-        let vm = VMCreationViewModel()  // defaults to .macOS
+        let vm = VMCreationViewModel.overEngine()  // defaults to .macOS
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
@@ -33,7 +34,7 @@ struct OSSelectionContentViewControllerTests {
 
     @Test("Selecting an OS updates the model and enforces radio exclusivity")
     func selectingUpdatesModelAndChrome() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 

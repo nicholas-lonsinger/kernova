@@ -9,22 +9,32 @@ extension VMGuestOS {
         }
     }
 
-    var defaultCPUCount: Int {
-        let preferred: Int
+    /// The CPU count a new guest of this OS asks for, before a host's bounds
+    /// apply.
+    var preferredCPUCount: Int {
         switch self {
-        case .macOS: preferred = 4
-        case .linux: preferred = 2
+        case .macOS: 4
+        case .linux: 2
         }
-        return VMResourceLimits.cpuCount.clamp(preferred)
     }
 
-    var defaultMemorySize: VMMemorySize {
-        let preferred: VMMemorySize
+    /// The memory a new guest of this OS asks for, before a host's bounds
+    /// apply.
+    var preferredMemorySize: VMMemorySize {
         switch self {
-        case .macOS: preferred = .gibibytes(8)
-        case .linux: preferred = .gibibytes(4)
+        case .macOS: .gibibytes(8)
+        case .linux: .gibibytes(4)
         }
-        return VMResourceLimits.memorySize.clamp(preferred)
+    }
+
+    /// The CPU count a new guest of this OS gets on a host bounded by `limits`.
+    func defaultCPUCount(within limits: VMResourceLimits) -> Int {
+        limits.cpuCount.clamp(preferredCPUCount)
+    }
+
+    /// The memory a new guest of this OS gets on a host bounded by `limits`.
+    func defaultMemorySize(within limits: VMResourceLimits) -> VMMemorySize {
+        limits.memorySize.clamp(preferredMemorySize)
     }
 
     /// Default size used when creating a new disk image; one of `allDiskSizes`.

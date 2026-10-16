@@ -71,7 +71,7 @@ struct VMBundleMachineFilesTests {
         let extraID = UUID()
         let fixture = try makeFixture(additionalDiskID: extraID)
 
-        let paths = VMBundleMachineFiles.capturedRelativePaths(
+        let paths = VMBundleItems.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(paths.contains("Disk.asif"))
         #expect(paths.contains("AdditionalDisks/\(extraID.uuidString).asif"))
@@ -82,7 +82,7 @@ struct VMBundleMachineFilesTests {
     func capturedPathsSkipExternalsAndIdentity() throws {
         let fixture = try makeFixture(externalDiskPath: "/Volumes/Elsewhere/Extra.asif")
 
-        let paths = VMBundleMachineFiles.capturedRelativePaths(
+        let paths = VMBundleItems.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(!paths.contains("/Volumes/Elsewhere/Extra.asif"))
         #expect(!paths.contains("HardwareModel"))
@@ -94,7 +94,7 @@ struct VMBundleMachineFilesTests {
         var fixture = try makeFixture(includeAuxiliaryStorage: false)
         fixture.configuration.storageDisks = nil
 
-        let paths = VMBundleMachineFiles.capturedRelativePaths(
+        let paths = VMBundleItems.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(paths == ["Disk.asif"])
     }

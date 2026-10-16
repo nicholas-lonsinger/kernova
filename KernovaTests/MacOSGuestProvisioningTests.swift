@@ -228,13 +228,19 @@ struct MacOSGuestProvisioningTests {
         ] {
             #expect(
                 MacOSGuestProvisioning.refusal(
-                    for: credentials, verifiedBy: credentials.password,
-                    gathering: .wholeAccount, incomplete: "Fill it in.") == "Fill it in.")
+                    for: credentials,
+                    verifiedBy: credentials.password,
+                    gathering: .wholeAccount,
+                    incomplete: "Fill it in.",
+                    host: VirtualizationHost()) == "Fill it in.")
         }
         #expect(
             MacOSGuestProvisioning.refusal(
-                for: makeCredentials(), verifiedBy: "", gathering: .wholeAccount,
-                incomplete: "Fill it in.") == "Fill it in.")
+                for: makeCredentials(),
+                verifiedBy: "",
+                gathering: .wholeAccount,
+                incomplete: "Fill it in.",
+                host: VirtualizationHost()) == "Fill it in.")
     }
 
     @available(macOS 27.0, *)
@@ -244,8 +250,11 @@ struct MacOSGuestProvisioningTests {
         // in a field it shows no editor for refuses whatever they type, forever.
         let message = try #require(
             MacOSGuestProvisioning.refusal(
-                for: makeCredentials(fullName: ""), verifiedBy: "analytical-engine",
-                gathering: .password, incomplete: "Enter the password to continue."))
+                for: makeCredentials(fullName: ""),
+                verifiedBy: "analytical-engine",
+                gathering: .password,
+                incomplete: "Enter the password to continue.",
+                host: VirtualizationHost()))
 
         #expect(message != "Enter the password to continue.")
         #expect(message == MacOSGuestProvisioning.validate(makeCredentials(fullName: ""))?.message)
@@ -255,15 +264,21 @@ struct MacOSGuestProvisioningTests {
     func aBlankGatheredPasswordIsIncomplete() {
         #expect(
             MacOSGuestProvisioning.refusal(
-                for: makeCredentials(password: ""), verifiedBy: "", gathering: .password,
-                incomplete: "Enter the password to continue.")
+                for: makeCredentials(password: ""),
+                verifiedBy: "",
+                gathering: .password,
+                incomplete: "Enter the password to continue.",
+                host: VirtualizationHost())
                 == "Enter the password to continue.")
         // The verification is the password's second spelling, so it is gathered
         // wherever the password is.
         #expect(
             MacOSGuestProvisioning.refusal(
-                for: makeCredentials(), verifiedBy: "", gathering: .password,
-                incomplete: "Enter the password to continue.")
+                for: makeCredentials(),
+                verifiedBy: "",
+                gathering: .password,
+                incomplete: "Enter the password to continue.",
+                host: VirtualizationHost())
                 == "Enter the password to continue.")
     }
 
@@ -272,8 +287,10 @@ struct MacOSGuestProvisioningTests {
         #expect(
             MacOSGuestProvisioning.refusal(
                 for: makeCredentials(password: "analytical-engine"),
-                verifiedBy: "difference-engine", gathering: .wholeAccount,
-                incomplete: "Fill it in.")
+                verifiedBy: "difference-engine",
+                gathering: .wholeAccount,
+                incomplete: "Fill it in.",
+                host: VirtualizationHost())
                 == "The passwords don\u{2019}t match.")
     }
 
@@ -282,8 +299,11 @@ struct MacOSGuestProvisioningTests {
     func aCompleteAccountIsAccepted() {
         #expect(
             MacOSGuestProvisioning.refusal(
-                for: makeCredentials(), verifiedBy: "analytical-engine",
-                gathering: .wholeAccount, incomplete: "Fill it in.") == nil)
+                for: makeCredentials(),
+                verifiedBy: "analytical-engine",
+                gathering: .wholeAccount,
+                incomplete: "Fill it in.",
+                host: VirtualizationHost()) == nil)
     }
 
     @available(macOS 27.0, *)
@@ -292,8 +312,11 @@ struct MacOSGuestProvisioningTests {
         let credentials = makeCredentials(username: "ada lovelace")
         let message = try #require(
             MacOSGuestProvisioning.refusal(
-                for: credentials, verifiedBy: credentials.password, gathering: .wholeAccount,
-                incomplete: "Fill it in."))
+                for: credentials,
+                verifiedBy: credentials.password,
+                gathering: .wholeAccount,
+                incomplete: "Fill it in.",
+                host: VirtualizationHost()))
 
         #expect(message == MacOSGuestProvisioning.validate(credentials)?.message)
         #expect(message != "Fill it in.")

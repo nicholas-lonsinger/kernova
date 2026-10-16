@@ -226,7 +226,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         // test that lays real files into the source reads them in the clone.
         try FileManager.default.createDirectory(
             at: destinationBundleURL, withIntermediateDirectories: true)
-        try VMBundleMachineFiles.copyItems(
+        try VMBundleItems.copyItems(
             relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
         // The same paths among the files this store holds — a snapshot's own
         // configuration above all, which the copy's manifest is read back from.

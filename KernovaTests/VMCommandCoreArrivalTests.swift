@@ -523,7 +523,7 @@ struct VMCommandCoreArrivalTests {
     /// The bundle files a running `source`'s guest writes — what a live
     /// copy takes inside its pause.
     private func guestWrittenPaths(of source: VMInstance) -> [String] {
-        VMBundleMachineFiles.capturedRelativePaths(
+        VMBundleItems.capturedRelativePaths(
             for: source.configuration, layout: source.bundleLayout)
     }
 

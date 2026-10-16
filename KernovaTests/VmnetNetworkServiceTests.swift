@@ -1,6 +1,5 @@
 import Foundation
 import Testing
-import vmnet
 
 @testable import Kernova
 
@@ -9,11 +8,6 @@ struct VmnetNetworkServiceTests {
     private let vmA = UUID()
     private let vmB = UUID()
 
-    /// The network the last attachment `operations` built joins.
-    private func lastJoined(_ operations: MockVmnetNetworkOperator) throws -> OpaquePointer {
-        try #require(operations.attachedNetworks.last)
-    }
-
     @Test("A common network is created once and every VM's session joins it")
     func theCommonNetworkIsCreatedOnceAndShared() throws {
         let operations = MockVmnetNetworkOperator()
@@ -21,11 +15,10 @@ struct VmnetNetworkServiceTests {
         let a = service.sessionNetworks(ownedBy: vmA)
         let b = service.sessionNetworks(ownedBy: vmB)
 
-        _ = try a.attachment(for: .common(.hostOnly))
-        let first = try lastJoined(operations)
-        _ = try b.attachment(for: .common(.hostOnly))
+        let first = try a.joinedNetwork(for: .common(.hostOnly)).network
+        let second = try b.joinedNetwork(for: .common(.hostOnly)).network
 
-        #expect(try lastJoined(operations) == first)
+        #expect(second == first)
         #expect(operations.createdKinds == [.hostOnly])
     }
 
@@ -35,11 +28,10 @@ struct VmnetNetworkServiceTests {
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
-        _ = try view.attachment(for: .common(.nat))
-        let nat = try lastJoined(operations)
-        _ = try view.attachment(for: .common(.hostOnly))
+        let nat = try view.joinedNetwork(for: .common(.nat)).network
+        let hostOnly = try view.joinedNetwork(for: .common(.hostOnly)).network
 
-        #expect(try lastJoined(operations) != nat)
+        #expect(hostOnly != nat)
         #expect(operations.createdKinds == [.nat, .hostOnly])
     }
 
@@ -50,12 +42,9 @@ struct VmnetNetworkServiceTests {
         let a = service.sessionNetworks(ownedBy: vmA)
         let b = service.sessionNetworks(ownedBy: vmB)
 
-        _ = try a.attachment(for: .own(.nat))
-        let aOwn = try lastJoined(operations)
-        _ = try b.attachment(for: .own(.nat))
-        let bOwn = try lastJoined(operations)
-        _ = try b.attachment(for: .common(.nat))
-        let common = try lastJoined(operations)
+        let aOwn = try a.joinedNetwork(for: .own(.nat)).network
+        let bOwn = try b.joinedNetwork(for: .own(.nat)).network
+        let common = try b.joinedNetwork(for: .common(.nat)).network
 
         #expect(Set([aOwn, bOwn, common].map { UInt(bitPattern: $0) }).count == 3)
         // Neither session sees the other's own network as one it can join.
@@ -71,8 +60,8 @@ struct VmnetNetworkServiceTests {
         let first = service.sessionNetworks(ownedBy: vmA)
         let second = service.sessionNetworks(ownedBy: vmA)
 
-        _ = try first.attachment(for: .own(.hostOnly))
-        #expect(second.attachmentIfMaterialized(for: .own(.hostOnly)) != nil)
+        _ = try first.joinedNetwork(for: .own(.hostOnly))
+        #expect(second.joinedNetworkIfMaterialized(for: .own(.hostOnly)) != nil)
         #expect(operations.createdKinds == [.hostOnly])
     }
 
@@ -83,14 +72,13 @@ struct VmnetNetworkServiceTests {
         let own = VmnetNetworkID(kind: .nat, scope: .vm(vmA))
         var first: VmnetSessionNetworks? = service.sessionNetworks(ownedBy: vmA)
         var second: VmnetSessionNetworks? = service.sessionNetworks(ownedBy: vmA)
-        _ = try first?.attachment(for: .common(.nat))
-        _ = try first?.attachment(for: .own(.nat))
-        let ownNetwork = try #require(operations.attachedNetworks.last)
+        _ = try first?.joinedNetwork(for: .common(.nat))
+        let ownNetwork = try #require(try first?.joinedNetwork(for: .own(.nat)).network)
         #expect(service.ipv4Subnet(for: own) != nil)
 
         first = nil
         #expect(operations.releasedNetworks.isEmpty)
-        #expect(second?.attachmentIfMaterialized(for: .own(.nat)) != nil)
+        #expect(second?.joinedNetworkIfMaterialized(for: .own(.nat)) != nil)
 
         second = nil
         #expect(operations.releasedNetworks == [ownNetwork])
@@ -106,11 +94,11 @@ struct VmnetNetworkServiceTests {
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
-        #expect(throws: TestFailure.self) { try view.attachment(for: .own(.nat)) }
-        #expect(view.attachmentIfMaterialized(for: .own(.nat)) == nil)
+        #expect(throws: TestFailure.self) { try view.joinedNetwork(for: .own(.nat)) }
+        #expect(view.joinedNetworkIfMaterialized(for: .own(.nat)) == nil)
 
         operations.createNetworkError = nil
-        _ = try view.attachment(for: .own(.nat))
+        _ = try view.joinedNetwork(for: .own(.nat))
         #expect(operations.createdKinds == [.nat, .nat])
     }
 
@@ -128,20 +116,18 @@ struct VmnetNetworkServiceTests {
         #expect(operations.createdKinds == [.hostOnly, .hostOnly])
     }
 
-    @Test("The non-blocking attachment is offered only once the network exists")
+    @Test("The non-blocking join answers only once the network exists")
     func theNonBlockingAttachmentWaitsForTheNetwork() throws {
         let operations = MockVmnetNetworkOperator()
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
-        #expect(view.attachmentIfMaterialized(for: .common(.nat)) == nil)
+        #expect(view.joinedNetworkIfMaterialized(for: .common(.nat)) == nil)
         #expect(operations.createdKinds.isEmpty)
 
-        _ = try view.attachment(for: .common(.nat))
-        #expect(view.attachmentIfMaterialized(for: .common(.nat)) != nil)
-        // Both attachments join the one network.
-        #expect(operations.attachedNetworks.count == 2)
-        #expect(Set(operations.attachedNetworks.map { UInt(bitPattern: $0) }).count == 1)
+        let joined = try view.joinedNetwork(for: .common(.nat))
+        // Both answers are the one network.
+        #expect(view.joinedNetworkIfMaterialized(for: .common(.nat))?.network == joined.network)
     }
 
     @Test("A network's subnet is known exactly while it is held")
@@ -152,7 +138,7 @@ struct VmnetNetworkServiceTests {
         let view = service.sessionNetworks(ownedBy: vmA)
 
         #expect(service.ipv4Subnet(for: .common(.nat)) == nil)
-        _ = try view.attachment(for: .common(.nat))
+        _ = try view.joinedNetwork(for: .common(.nat))
 
         #expect(service.ipv4Subnet(for: .common(.nat)) == .scripted("192.168.65.0"))
         #expect(service.ipv4Subnet(for: .common(.hostOnly)) == nil)
@@ -164,10 +150,8 @@ struct VmnetNetworkServiceTests {
         let operations = MockVmnetNetworkOperator()
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
-        _ = try view.attachment(for: .common(.hostOnly))
-        let hostOnly = try lastJoined(operations)
-        _ = try view.attachment(for: .common(.nat))
-        let nat = try lastJoined(operations)
+        let hostOnly = try view.joinedNetwork(for: .common(.hostOnly)).network
+        let nat = try view.joinedNetwork(for: .common(.nat)).network
 
         #expect(view.selection(ofNetwork: hostOnly) == .common(.hostOnly))
         #expect(view.selection(ofNetwork: nat) == .common(.nat))
@@ -187,15 +171,12 @@ struct VmnetNetworkServiceTests {
         var b: VmnetSessionNetworks? = service.sessionNetworks(ownedBy: vmB)
         let outsider = service.sessionNetworks(ownedBy: UUID())
 
-        _ = try a?.attachment(for: .named(lab, .hostOnly))
-        let network = try lastJoined(operations)
-        _ = try b?.attachment(for: .named(lab, .hostOnly))
-        #expect(try lastJoined(operations) == network)
+        let network = try #require(try a?.joinedNetwork(for: .named(lab, .hostOnly))).network
+        #expect(try b?.joinedNetwork(for: .named(lab, .hostOnly)).network == network)
         #expect(operations.createdKinds == [.hostOnly])
         #expect(b?.selection(ofNetwork: network) == .named(lab, .hostOnly))
         // Another kind under the same identifier is another network.
-        _ = try a?.attachment(for: .named(lab, .nat))
-        #expect(try lastJoined(operations) != network)
+        #expect(try a?.joinedNetwork(for: .named(lab, .nat)).network != network)
 
         a = nil
         #expect(!operations.releasedNetworks.contains(network))
@@ -205,7 +186,7 @@ struct VmnetNetworkServiceTests {
         #expect(operations.releasedNetworks.contains(network))
         #expect(service.ipv4Subnet(for: id) == nil)
         // A session that never joined it held nothing.
-        #expect(outsider.attachmentIfMaterialized(for: .named(lab, .hostOnly)) == nil)
+        #expect(outsider.joinedNetworkIfMaterialized(for: .named(lab, .hostOnly)) == nil)
     }
 
     @Test("A VM that joins another network leaves the one it was on, which goes with its last member")
@@ -217,17 +198,15 @@ struct VmnetNetworkServiceTests {
         let lab = UUID()
         let bench = UUID()
 
-        _ = try view.attachment(for: .named(lab, .nat))
-        let labNetwork = try lastJoined(operations)
-        _ = try other.attachment(for: .named(bench, .nat))
-        let benchNetwork = try lastJoined(operations)
-        _ = try view.attachment(for: .named(bench, .nat))
+        let labNetwork = try view.joinedNetwork(for: .named(lab, .nat)).network
+        let benchNetwork = try other.joinedNetwork(for: .named(bench, .nat)).network
+        _ = try view.joinedNetwork(for: .named(bench, .nat))
         #expect(operations.releasedNetworks == [labNetwork])
 
         // Bench still has its other member.
-        _ = try other.attachment(for: .common(.nat))
+        _ = try other.joinedNetwork(for: .common(.nat))
         #expect(!operations.releasedNetworks.contains(benchNetwork))
-        _ = try view.attachment(for: .own(.nat))
+        _ = try view.joinedNetwork(for: .own(.nat))
         #expect(operations.releasedNetworks.contains(benchNetwork))
     }
 }

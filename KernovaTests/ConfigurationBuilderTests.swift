@@ -29,12 +29,15 @@ struct ConfigurationBuilderTests {
         return tempDir
     }
 
-    /// A builder over `vmnetNetworks`, a service over a scripted operator by default.
+    /// A builder over `networks`' service, attaching through its scripted
+    /// operator — a fresh pair by default.
     private func makeBuilder(
-        vmnetNetworks: VmnetNetworkService = .scripted(),
+        _ networks: ScriptedVmnetNetworks = ScriptedVmnetNetworks(),
         entitlements: EntitlementService = .unentitled
     ) -> ConfigurationBuilder {
-        ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
+        ConfigurationBuilder(
+            vmnetNetworks: networks.service, vmnetAttachments: networks.operations,
+            entitlements: entitlements)
     }
 
     /// Fails the test when `error` is a path-validation refusal.
@@ -283,7 +286,7 @@ struct ConfigurationBuilderTests {
         let linkPath = bundleURL.appendingPathComponent("Projects").path(percentEncoded: false)
         try FileManager.default.createSymbolicLink(atPath: linkPath, withDestinationPath: targetPath)
         var share = SharedDirectory(path: linkPath, readOnly: true)
-        let serving = try ConfigurationBuilder.macOSDirectoryShare(for: [share])
+        let serving = try MacOSDirectoryShare.make(for: [share])
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: targetPath)
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetPath)
@@ -291,7 +294,7 @@ struct ConfigurationBuilderTests {
         share.readOnly = false
 
         #expect {
-            try ConfigurationBuilder.macOSDirectoryShare(for: [share], serving: serving)
+            try MacOSDirectoryShare.make(for: [share], serving: serving)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotWritable(let id, _, let label) = e
@@ -485,8 +488,8 @@ struct ConfigurationBuilderTests {
         let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
-        #expect(result.coldRemovableMedia.count == 1)
-        let info = try #require(result.coldRemovableMedia.first)
+        #expect(result.products.coldRemovableMedia.count == 1)
+        let info = try #require(result.products.coldRemovableMedia.first)
         #expect(info.id == configuredUUID)
         #expect(info.path == isoPath)
         #expect(info.readOnly == true)
@@ -503,7 +506,7 @@ struct ConfigurationBuilderTests {
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-        #expect(result.coldRemovableMedia.isEmpty)
+        #expect(result.products.coldRemovableMedia.isEmpty)
     }
 
     @Test("Builder throws for non-writable removable media when readOnly is false")
@@ -858,8 +861,8 @@ struct ConfigurationBuilderTests {
         let builder = makeBuilder()
         do {
             let result = try builder.build(from: config, bundleURL: bundleURL)
-            #expect(result.clipboardInputPipe != nil)
-            #expect(result.clipboardOutputPipe != nil)
+            #expect(result.products.clipboardInputPipe != nil)
+            #expect(result.products.clipboardOutputPipe != nil)
         } catch {
             let isVZError = (error as NSError).domain == "VZErrorDomain"
             if isVZError {
@@ -882,8 +885,8 @@ struct ConfigurationBuilderTests {
         let builder = makeBuilder()
         do {
             let result = try builder.build(from: config, bundleURL: bundleURL)
-            #expect(result.clipboardInputPipe == nil)
-            #expect(result.clipboardOutputPipe == nil)
+            #expect(result.products.clipboardInputPipe == nil)
+            #expect(result.products.clipboardOutputPipe == nil)
         } catch {
             let isVZError = (error as NSError).domain == "VZErrorDomain"
             if isVZError {
@@ -972,7 +975,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .unentitled)
+        let builder = makeBuilder(networks, entitlements: .unentitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
@@ -988,7 +991,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+        let builder = makeBuilder(networks, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
@@ -1005,7 +1008,7 @@ struct ConfigurationBuilderTests {
 
         let networks = ScriptedVmnetNetworks()
         networks.operations.createNetworkError = TestFailure("vmnet refused")
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+        let builder = makeBuilder(networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.
@@ -1070,7 +1073,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+        let builder = makeBuilder(networks, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
@@ -1086,7 +1089,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .unentitled)
+        let builder = makeBuilder(networks, entitlements: .unentitled)
 
         #expect {
             try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
@@ -1104,7 +1107,7 @@ struct ConfigurationBuilderTests {
     func isolatedModesAttachTheVMsOwnNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+        let builder = makeBuilder(networks, entitlements: .entitled)
 
         var nat = makeLinuxConfig()
         nat.networkMembership = .isolated
@@ -1113,7 +1116,7 @@ struct ConfigurationBuilderTests {
         for (config, kind) in [(nat, VmnetNetworkKind.nat), (hostOnly, .hostOnly)] {
             let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
             #expect(result.configuration.networkDevices[0].attachment === networks.operations.attachments.last)
-            #expect(result.vmnetNetworks.owner == config.id)
+            #expect(result.products.vmnetNetworks.owner == config.id)
             #expect(networks.service.ipv4Subnet(for: VmnetNetworkID(kind: kind, scope: .vm(config.id))) != nil)
         }
 
@@ -1138,9 +1141,9 @@ struct ConfigurationBuilderTests {
             // The build asks the VM's own session view for its own network.
             let networks = ScriptedVmnetNetworks()
             networks.operations.subnet = .scripted("192.168.70.0")
-            let result = try makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+            let result = try makeBuilder(networks, entitlements: .entitled)
                 .assemble(from: config, bundleURL: bundleURL, validate: false)
-            #expect(result.vmnetNetworks.owner == config.id)
+            #expect(result.products.vmnetNetworks.owner == config.id)
             #expect(networks.operations.createdKinds == [kind])
 
             // Recovery, through the session's view, attaches the same network
@@ -1148,7 +1151,7 @@ struct ConfigurationBuilderTests {
             let device = MockNetworkDeviceControl()
             let coordinator = NetworkAttachmentCoordinator(
                 vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
-                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: result.vmnetNetworks,
+                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: result.products.vmnetNetworks,
                 entitlements: .entitled, isEligible: { true }, choice: { config.networkChoice },
                 onPendingChange: { _ in })
             coordinator.activate()
@@ -1179,7 +1182,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
         let networks = ScriptedVmnetNetworks()
         networks.operations.createNetworkError = TestFailure("network limit reached")
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+        let builder = makeBuilder(networks, entitlements: .entitled)
         var config = makeLinuxConfig()
         config.networkMembership = .isolated
 
@@ -1213,7 +1216,7 @@ struct ConfigurationBuilderTests {
 
         let networks = ScriptedVmnetNetworks()
         networks.operations.createNetworkError = TestFailure("vmnet refused")
-        let builder = makeBuilder(vmnetNetworks: networks.service, entitlements: .entitled)
+        let builder = makeBuilder(networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.

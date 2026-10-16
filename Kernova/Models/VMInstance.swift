@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import Virtualization
 
 /// The VM display's current hosting location.
 enum VMDisplayMode: Sendable {
@@ -462,7 +461,7 @@ final class VMInstance {
     var status: VMStatus { activity.status }
     var errorMessage: String? { activity.errorMessage }
     var sessionContext: VMSessionContext? { activity.sessionContext }
-    var session: VMSession? { activity.session }
+    var session: (any VMSessionOperating)? { activity.session }
     var liveSessionID: UUID? { activity.liveSessionID }
     var hasLiveVirtualMachine: Bool { activity.hasLiveVirtualMachine }
     var hasLiveSession: Bool { activity.hasLiveSession }
@@ -502,10 +501,23 @@ final class VMInstance {
         activity.handleSessionEvent(event)
     }
 
-    func adoptBuildResult(
-        _ bringUp: borrowing VMBringUpContext, _ result: ConfigurationBuilder.BuildResult
+    func adoptBuildProducts(
+        _ bringUp: borrowing VMBringUpContext, _ products: VMSessionBuildProducts
     ) {
-        activity.adoptBuildResult(bringUp, result)
+        activity.adoptBuildProducts(bringUp, products)
+    }
+
+    func makeSessionEvents() -> VMSessionEvents {
+        activity.makeSessionEvents()
+    }
+
+    /// Binds `session` to the bring-up holding this VM
+    /// (``VMActivity/beginSession(_:_:)``), answering the context that now
+    /// holds it.
+    func beginSession(
+        _ bringUp: borrowing VMBringUpContext, _ session: any VMSessionOperating
+    ) -> VMSessionContext? {
+        activity.beginSession(bringUp, session)
     }
 
     // MARK: - Admission Facts
@@ -704,71 +716,6 @@ final class VMInstance {
         return context
     }
 
-    /// Brings a built configuration all the way up: adopts its pipes and media,
-    /// creates the `VZVirtualMachine`, and starts the serial, clipboard and
-    /// vsock plumbing that rides it.
-    ///
-    /// The whole of what a boot path does between building a configuration and
-    /// telling VZ to run, so a cold boot and a restore cannot drift apart. The
-    /// install path stops short of the vsock listeners and stays hand-wired.
-    ///
-    /// `nil` for the same reason ``attachSession(_:from:)`` returns `nil`, and
-    /// the caller must not proceed to start anything.
-    func bringUpSession(
-        _ context: borrowing VMBringUpContext, with result: ConfigurationBuilder.BuildResult
-    ) async -> VMSession? {
-        adoptBuildResult(context, result)
-        guard let session = await attachSession(context, from: result) else { return nil }
-        startSerialReading()
-        startClipboardService()
-        await startVsockServices()
-        return session
-    }
-
-    /// Attaches the session created from `result`
-    /// (``VMActivity/beginSession(_:from:)``) and builds the network-attachment
-    /// coordinator for network-enabled configurations.
-    ///
-    /// `nil` exactly when ``VMActivity/beginSession(_:from:)`` is.
-    func attachSession(
-        _ context: borrowing VMBringUpContext, from result: ConfigurationBuilder.BuildResult
-    ) async -> VMSession? {
-        guard let attached = await activity.beginSession(context, from: result) else { return nil }
-        await setupNetworkAttachmentCoordinator(
-            for: attached.session, in: attached.context, vmnetNetworks: result.vmnetNetworks,
-            entitlements: result.entitlements)
-        return attached.session
-    }
-
-    /// Builds this session's attachment-recovery coordinator, replacing any
-    /// prior one.
-    private func setupNetworkAttachmentCoordinator(
-        for session: VMSession, in context: VMSessionContext,
-        vmnetNetworks networks: VmnetSessionNetworks, entitlements: EntitlementService
-    ) async {
-        context.networkAttachmentCoordinator?.stop()
-        context.networkAttachmentCoordinator = nil
-        context.networkAttachmentPending = false
-        guard configuration.networkEnabled, session.hasNetworkDevice else { return }
-        let initialPlan = await session.inspectNetworkAttachment { attachment in
-            VZNetworkDeviceHandle.plan(of: attachment, in: networks)
-        }
-        guard self.session === session else { return }
-        context.networkAttachmentCoordinator = NetworkAttachmentCoordinator(
-            vmName: name,
-            device: VZNetworkDeviceHandle(
-                session: session, initialPlan: initialPlan, vmnetNetworks: networks),
-            interfaces: HostBridgedInterfaceProvider(),
-            linkObserver: HostNetworkLinkObserver(),
-            vmnetNetworks: networks,
-            entitlements: entitlements,
-            isEligible: { [weak self] in self?.hasLiveSession ?? false },
-            choice: { [weak self] in self?.configuration.networkChoice },
-            onPendingChange: { [weak context] pending in
-                context?.networkAttachmentPending = pending
-            })
-    }
-
     // MARK: - Activity Callbacks
 
     /// Called by ``activity`` once the session is released; `afterRunning`
@@ -944,8 +891,8 @@ final class VMInstance {
         else { return }
 
         await session.attach(
-            vsock.listenerHosts(for: configuration, sessionID: session.id))
-        // Torn down while installing: these hosts live and die with the
+            vsock.listeners(for: configuration, sessionID: session.id))
+        // Torn down while installing: these listeners live and die with the
         // session that retains them, so nothing is left dangling on a device
         // the teardown already walked — and there is no start to announce.
         guard self.session === session else { return }

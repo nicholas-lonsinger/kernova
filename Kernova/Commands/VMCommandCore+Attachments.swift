@@ -575,7 +575,7 @@ extension VMCommandCore {
     /// one before succeeded: the scopes of the folders the list adds are
     /// opened and the device's next share is built from the list the commit
     /// writes and the share the device serves
-    /// (``ConfigurationBuilder/macOSDirectoryShare(for:serving:)``); the list
+    /// (``MacOSDirectoryShare/make(for:serving:)``); the list
     /// is committed; the share is installed. So `config.json` never names
     /// shares the device was not given. A folder the swap cannot share is
     /// refused as the argument it is.
@@ -623,7 +623,7 @@ extension VMCommandCore {
                     library.updateConfiguration(permit) { config in
                         let committed = changed(config)
                         do {
-                            share = try ConfigurationBuilder.macOSDirectoryShare(
+                            share = try MacOSDirectoryShare.make(
                                 for: committed ?? [], serving: serving)
                         } catch {
                             throw CommandError.invalidArgument(error.localizedDescription)

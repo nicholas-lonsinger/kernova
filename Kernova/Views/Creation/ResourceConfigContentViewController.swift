@@ -118,14 +118,14 @@ final class ResourceConfigContentViewController: NSViewController {
 
     private func configureCPU() {
         configureGroupedFormCount(
-            field: cpuField, stepper: cpuStepper, bounds: VMResourceLimits.cpuCount,
+            field: cpuField, stepper: cpuStepper, bounds: creationVM.host.resourceLimits.cpuCount,
             value: creationVM.cpuCount, delegate: self, target: self,
             stepperAction: #selector(cpuStepperChanged))
     }
 
     private func configureMemory() {
         configureGroupedFormMemory(
-            field: memoryField, stepper: memoryStepper, bounds: VMResourceLimits.memorySize,
+            field: memoryField, stepper: memoryStepper, bounds: creationVM.host.resourceLimits.memorySize,
             value: creationVM.memorySize, delegate: self, target: self,
             stepperAction: #selector(memoryStepperChanged))
     }
@@ -158,7 +158,7 @@ final class ResourceConfigContentViewController: NSViewController {
 
     @objc private func memoryStepperChanged() {
         if let stepped = groupedFormMemoryStep(
-            memoryStepper, from: creationVM.memorySize, within: VMResourceLimits.memorySize)
+            memoryStepper, from: creationVM.memorySize, within: creationVM.host.resourceLimits.memorySize)
         {
             creationVM.memorySize = stepped
         }
@@ -180,7 +180,7 @@ final class ResourceConfigContentViewController: NSViewController {
     /// stepper to the minimum while the field still showed a partial value (e.g.
     /// typing "16" momentarily reads as 1), desyncing the two.
     private func applyCPUFieldEdit() {
-        let clamped = VMResourceLimits.cpuCount.clamp(cpuField.integerValue)
+        let clamped = creationVM.host.resourceLimits.cpuCount.clamp(cpuField.integerValue)
         creationVM.cpuCount = clamped
         cpuStepper.integerValue = clamped
         cpuField.integerValue = clamped
@@ -190,7 +190,7 @@ final class ResourceConfigContentViewController: NSViewController {
     /// dropped.
     private func applyMemoryFieldEdit() {
         if let typed = VMMemorySize(gibibytesText: memoryField.stringValue) {
-            creationVM.memorySize = VMResourceLimits.memorySize.clamp(typed)
+            creationVM.memorySize = creationVM.host.resourceLimits.memorySize.clamp(typed)
         }
         showMemorySize()
     }

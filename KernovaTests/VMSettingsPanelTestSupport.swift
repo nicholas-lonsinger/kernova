@@ -25,11 +25,14 @@ func makeSettingsViewModel(
     VMLibraryViewModel(
         storageService: storage,
         diskImageService: MockDiskImageService(),
-        machineFiles: machineFiles,
+        machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem()),
+        virtualizationHost: VirtualizationHost(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
+        localImageInspector: LocalRestoreImageInspector(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
+        bridgedInterfaces: HostBridgedInterfaceProvider(),
         fileSystem: MockFileSystem(),
         downloadsDirectory: nil,
         preferences: preferences,
@@ -37,7 +40,8 @@ func makeSettingsViewModel(
         arpTable: arpTable,
         entitlements: entitled ? .entitled : .unentitled,
         networks: networks,
-        hostNotifications: hostNotifications, hostPasteboard: FakePasteboard()
+        hostNotifications: hostNotifications,
+        hostPasteboard: FakePasteboard()
     )
 }
 

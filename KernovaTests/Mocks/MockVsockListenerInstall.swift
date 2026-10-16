@@ -5,7 +5,7 @@ import Synchronization
 /// Scripted stand-in for `VsockListenerInstalling`, so the live-policy tests
 /// drive listener installs without the running VM a `VMSession` needs.
 ///
-/// Records the ports of each call rather than the hosts: what the tests pin is
+/// Records the ports of each call rather than the listeners: what the tests pin is
 /// which ports move and which ones move together in one hop.
 final class MockVsockListenerInstall: VsockListenerInstalling {
     private let state = Mutex(State())
@@ -21,8 +21,8 @@ final class MockVsockListenerInstall: VsockListenerInstalling {
     /// One entry per `detach` call, in order, holding that call's ports.
     var detached: [[UInt32]] { state.withLock { $0.detached } }
 
-    func attach(_ hosts: [VsockListenerHost]) async {
-        state.withLock { $0.attached.append(hosts.map(\.port)) }
+    func attach(_ listeners: [VsockListener]) async {
+        state.withLock { $0.attached.append(listeners.map(\.port)) }
     }
 
     func detach(ports: [UInt32]) async {

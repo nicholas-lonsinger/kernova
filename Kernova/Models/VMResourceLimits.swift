@@ -1,15 +1,17 @@
 import KernovaKit
-import Virtualization
 
-/// The CPU and memory a virtual machine may be given, as the Virtualization
-/// framework reports them for this Mac — the same for every guest.
-enum VMResourceLimits {
-    static let cpuCount = InclusiveBounds(
-        lower: VZVirtualMachineConfiguration.minimumAllowedCPUCount,
-        upper: VZVirtualMachineConfiguration.maximumAllowedCPUCount)
+/// The CPU and memory a virtual machine may be given on this Mac — the same for
+/// every guest, as ``VirtualizationHostProviding/resourceLimits`` reports them.
+struct VMResourceLimits: Sendable, Equatable {
+    let cpuCount: InclusiveBounds<Int>
+    let memorySize: InclusiveBounds<VMMemorySize>
 
-    /// The framework's byte bounds, narrowed to whole mebibytes.
-    static let memorySize = InclusiveBounds(
-        lower: VMMemorySize(roundingUp: VZVirtualMachineConfiguration.minimumAllowedMemorySize),
-        upper: VMMemorySize(roundingDown: VZVirtualMachineConfiguration.maximumAllowedMemorySize))
+    /// Bounds from a CPU count range and a byte range, the byte bounds narrowed
+    /// to whole mebibytes.
+    init(cpuCount: InclusiveBounds<Int>, memoryBytes: InclusiveBounds<UInt64>) {
+        self.cpuCount = cpuCount
+        self.memorySize = InclusiveBounds(
+            lower: VMMemorySize(roundingUp: memoryBytes.lower),
+            upper: VMMemorySize(roundingDown: memoryBytes.upper))
+    }
 }

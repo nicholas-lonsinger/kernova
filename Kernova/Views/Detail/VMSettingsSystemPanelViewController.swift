@@ -17,6 +17,11 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
 
     private let panelStack = NSStackView()
 
+    /// The CPU and memory bounds this Mac holds the VM to.
+    private var resourceLimits: VMResourceLimits {
+        context.viewModel.library.virtualizationHost.resourceLimits
+    }
+
     init(context: VMSettingsPanelContext) {
         self.context = context
         super.init(nibName: nil, bundle: nil)
@@ -130,11 +135,11 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         memoryField = ModelValueField()
         memoryStepper = NSStepper()
         configureGroupedFormCount(
-            field: cpuField, stepper: cpuStepper, bounds: VMResourceLimits.cpuCount,
+            field: cpuField, stepper: cpuStepper, bounds: resourceLimits.cpuCount,
             value: instance.configuration.cpuCount, delegate: self, target: self,
             stepperAction: #selector(cpuStepperChanged))
         configureGroupedFormMemory(
-            field: memoryField, stepper: memoryStepper, bounds: VMResourceLimits.memorySize,
+            field: memoryField, stepper: memoryStepper, bounds: resourceLimits.memorySize,
             value: instance.configuration.memorySizeInGB, delegate: self, target: self,
             stepperAction: #selector(memoryStepperChanged))
         let card = makeGroupedFormCard(rows: [
@@ -586,7 +591,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     @objc private func memoryStepperChanged() {
         if let stepped = groupedFormMemoryStep(
             memoryStepper, from: instance.configuration.memorySizeInGB,
-            within: VMResourceLimits.memorySize)
+            within: resourceLimits.memorySize)
         {
             write(Keys.memory.assigning(stepped.gibibytesText))
         }
@@ -709,7 +714,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     /// shows what the VM holds.
     private func applyCPUFieldEdit() {
         if cpuField.holdsUserEdit {
-            let clamped = VMResourceLimits.cpuCount.clamp(cpuField.integerValue)
+            let clamped = resourceLimits.cpuCount.clamp(cpuField.integerValue)
             write(Keys.cpus.assigning(String(clamped)))
         }
         cpuField.showDiscardingEdit(String(instance.configuration.cpuCount))
@@ -720,7 +725,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     /// gigabytes; text that names no size is dropped.
     private func applyMemoryFieldEdit() {
         if memoryField.holdsUserEdit, let typed = VMMemorySize(gibibytesText: memoryField.stringValue) {
-            let clamped = VMResourceLimits.memorySize.clamp(typed)
+            let clamped = resourceLimits.memorySize.clamp(typed)
             write(Keys.memory.assigning(clamped.gibibytesText))
         }
         showStoredMemorySize()

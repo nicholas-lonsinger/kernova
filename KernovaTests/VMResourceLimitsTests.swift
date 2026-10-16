@@ -9,20 +9,33 @@ import Virtualization
 struct VMResourceLimitsTests {
     // MARK: - Framework bounds
 
+    private let limits = VirtualizationHost().resourceLimits
+
     @Test("CPU bounds are the Virtualization framework's")
     func cpuBoundsAreTheFrameworks() {
-        #expect(VMResourceLimits.cpuCount.lower == VZVirtualMachineConfiguration.minimumAllowedCPUCount)
-        #expect(VMResourceLimits.cpuCount.upper == VZVirtualMachineConfiguration.maximumAllowedCPUCount)
+        #expect(limits.cpuCount.lower == VZVirtualMachineConfiguration.minimumAllowedCPUCount)
+        #expect(limits.cpuCount.upper == VZVirtualMachineConfiguration.maximumAllowedCPUCount)
     }
 
     @Test("Memory bounds are the Virtualization framework's, in whole mebibytes")
     func memoryBoundsAreTheFrameworks() {
         let lower = VZVirtualMachineConfiguration.minimumAllowedMemorySize
         let upper = VZVirtualMachineConfiguration.maximumAllowedMemorySize
-        #expect(VMResourceLimits.memorySize.lower.bytes >= lower)
-        #expect(VMResourceLimits.memorySize.lower.bytes - lower < 1 << 20)
-        #expect(VMResourceLimits.memorySize.upper.bytes <= upper)
-        #expect(upper - VMResourceLimits.memorySize.upper.bytes < 1 << 20)
+        #expect(limits.memorySize.lower.bytes >= lower)
+        #expect(limits.memorySize.lower.bytes - lower < 1 << 20)
+        #expect(limits.memorySize.upper.bytes <= upper)
+        #expect(upper - limits.memorySize.upper.bytes < 1 << 20)
+    }
+
+    @Test("Byte bounds narrow inward to whole mebibytes")
+    func byteBoundsNarrowToWholeMebibytes() {
+        let mebibyte: UInt64 = 1 << 20
+        let narrowed = VMResourceLimits(
+            cpuCount: InclusiveBounds(lower: 1, upper: 8),
+            memoryBytes: InclusiveBounds(lower: 128 * mebibyte + 1, upper: 4096 * mebibyte - 1))
+        #expect(narrowed.memorySize.lower.bytes == 129 * mebibyte)
+        #expect(narrowed.memorySize.upper.bytes == 4095 * mebibyte)
+        #expect(narrowed.cpuCount == InclusiveBounds(lower: 1, upper: 8))
     }
 
     @Test("A bounds check with the bounds out of order refuses every value rather than trapping")

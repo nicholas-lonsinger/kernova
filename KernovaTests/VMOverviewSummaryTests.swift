@@ -72,7 +72,9 @@ struct VMOverviewSummaryTests {
 
                 let offered =
                     ephemeral
-                    ? key.accepts("false", for: instance, entitlements: .entitled, networks: .listed([]))
+                    ? key.accepts(
+                        "false", for: instance, entitlements: .entitled, networks: .listed([]),
+                        resourceLimits: VirtualizationHost.frameworkResourceLimits)
                     : VMCapabilityCatalog(library: library).isEphemeralModeEnableAvailable(on: instance)
                 #expect(state.isEnabled == offered, "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
             }

@@ -79,14 +79,25 @@ struct NetworksSettingsViewControllerTests {
         let bytes = Data("not json".utf8)
         try bytes.write(to: fileURL)
         let viewModel = VMLibraryViewModel(
-            storageService: MockVMStorageService(), diskImageService: MockDiskImageService(),
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(), ipswService: MockIPSWService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled, networks: VMNetworkDirectory(fileURL: fileURL),
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard())
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
+            preferences: preferences,
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            networks: VMNetworkDirectory(fileURL: fileURL),
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard())
         var checks = 0
         viewModel.onShowConfigCheck = { _ in checks += 1 }
 

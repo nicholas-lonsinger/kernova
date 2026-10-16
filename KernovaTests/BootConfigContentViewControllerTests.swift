@@ -8,7 +8,7 @@ import Testing
 struct BootConfigContentViewControllerTests {
     @Test("EFI mode shows the subtitle, its lead-in, and each source's description")
     func efiShowsSubtitleAndDescriptions() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -29,7 +29,7 @@ struct BootConfigContentViewControllerTests {
     /// when a download happens, which they don't say.
     @Test("The title popover says when a downloaded image is fetched")
     func titlePopoverSaysWhenImagesDownload() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -48,7 +48,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Linux Kernel mode shows its lead-in")
     func linuxKernelShowsLeadIn() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -62,7 +62,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("EFI mode offers all three image sources, with none picked to start")
     func efiShowsEveryImageSource() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -77,7 +77,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("A checked URL pick lights its radio, names the file and size, and says what it is checked against")
     func verifiedURLPickRendersBadge() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLinuxCustomURL(makeCustomLinuxImage(), sizeBytes: 1_073_741_824)
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -104,7 +104,7 @@ struct BootConfigContentViewControllerTests {
     /// it once, on the badge.
     @Test("An unverified URL pick says so on the badge alone")
     func unverifiedURLPickWarns() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -117,7 +117,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("A catalog pick lights its radio and names the image on a badge")
     func catalogPickRendersBadge() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLinuxCatalogEntry(
             makeLinuxCatalogEntry(
@@ -142,7 +142,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("A local ISO lights its radio and shows the file path")
     func localISORendersPathBadge() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -155,7 +155,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Clicking a source radio commits nothing until the picker returns")
     func radioClickAloneCommitsNothing() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -170,7 +170,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Choosing from the picker commits the entry and lights its radio")
     func catalogSheetChoiceCommits() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -184,7 +184,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Cancelling the picker leaves the earlier pick standing")
     func catalogSheetCancelKeepsThePick() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -198,7 +198,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Choosing from the URL sheet commits the image and lights its radio")
     func urlSheetChoiceCommits() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -212,7 +212,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Switching to Linux Kernel updates the model and shows kernel rows")
     func switchToKernel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -232,7 +232,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("Kernel command line writes back to the model on edit")
     func commandLineWriteBack() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
         let vc = BootConfigContentViewController(creationVM: vm)
@@ -255,7 +255,7 @@ struct BootConfigContentViewControllerTests {
 
     @Test("An explicitly cleared command line is not re-seeded with the default")
     func clearedCommandLineNotReseeded() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
         vm.kernelCommandLine = ""  // user cleared it intentionally

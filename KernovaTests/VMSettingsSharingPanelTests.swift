@@ -442,7 +442,7 @@ struct VMSettingsSharingPanelTests {
             guestOS: .macOS, phase: .running(sessionID: UUID())
         ) { $0.sharedDirectories = [share] }
         instance.beginSessionContextForTesting().directoryShare =
-            try ConfigurationBuilder.macOSDirectoryShare(for: [share])
+            try MacOSDirectoryShare.make(for: [share])
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: true)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

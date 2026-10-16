@@ -160,7 +160,7 @@ final class USBAccessoryService: USBAccessoryProviding {
     func attach(_ reservation: borrowing VMAccessoryReservation) async throws -> AttachedUSBAccessory {
         let registryID = reservation.registryID
         let instance = reservation.instance
-        guard let session = instance.session else { throw USBAccessoryError.noVirtualMachine }
+        guard let session = instance.session?.virtualMachineSession else { throw USBAccessoryError.noVirtualMachine }
         guard session.hasUSBController else { throw USBAccessoryError.noUSBController }
         guard let accessory = held[registryID],
             let info = accessories.first(where: { $0.registryID == registryID })
@@ -223,5 +223,25 @@ private final class AccessoryListener: NSObject, AAUSBAccessoryListener, @unchec
 
     func usbAccessoryDidDisconnect(_ usbAccessory: AAUSBAccessory) {
         didDisconnect(usbAccessory)
+    }
+}
+
+/// Where the capability's presence is decided, once.
+enum USBAccessorySupport {
+    /// The service when this build can pass accessories through, `nil` when it
+    /// cannot.
+    ///
+    /// `nil` collapses both causes of absence — an OS below macOS 27 and a
+    /// signature without the entitlement — into the one answer every caller
+    /// reads, so no surface has to ask which of them applies.
+    @MainActor
+    static func makeService(entitlements: EntitlementService)
+        -> (any USBAccessoryProviding)?
+    {
+        guard entitlements.supportsUSBAccessories else { return nil }
+        // `supportsUSBAccessories` already answers the OS question; the
+        // compiler needs it spelled here to allow the initializer.
+        guard #available(macOS 27.0, *) else { return nil }
+        return USBAccessoryService()
     }
 }

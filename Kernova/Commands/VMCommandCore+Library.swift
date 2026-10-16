@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import Virtualization
 
 /// The library verbs — create, clone, rename, delete, import, and the cancel
 /// that stops any of them still writing a bundle.
@@ -251,18 +250,17 @@ extension VMCommandCore {
                 clonedConfig.mintMACAddressIfNeeded()
             }
             if clonedConfig.guestOS == .macOS {
-                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
+                clonedConfig.machineIdentifierData = library.virtualizationHost.makeMacMachineIdentifier()
             }
             if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
-                clonedConfig.genericMachineIdentifierData =
-                    VZGenericMachineIdentifier().dataRepresentation
+                clonedConfig.genericMachineIdentifierData = library.virtualizationHost.makeGenericMachineIdentifier()
             }
         } else {
             // Keep mode mints only what there is no identity to keep: a source
             // whose identifier lives in the bundle file alone hands it to the
             // clone through ``CloneCopy``, untouched here.
             if clonedConfig.guestOS == .macOS, instance.effectiveMachineIdentifierData == nil {
-                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
+                clonedConfig.machineIdentifierData = library.virtualizationHost.makeMacMachineIdentifier()
                 #log(
                     Self.logger, .notice,
                     "Clone of '\(instance.name, privacy: .public)' had no machine identifier to keep — generated a new one"
@@ -271,8 +269,7 @@ extension VMCommandCore {
             if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel,
                 clonedConfig.genericMachineIdentifierData == nil
             {
-                clonedConfig.genericMachineIdentifierData =
-                    VZGenericMachineIdentifier().dataRepresentation
+                clonedConfig.genericMachineIdentifierData = library.virtualizationHost.makeGenericMachineIdentifier()
                 #log(
                     Self.logger, .notice,
                     "Clone of '\(instance.name, privacy: .public)' had no generic machine identifier to keep — generated a new one"
@@ -411,7 +408,7 @@ extension VMCommandCore {
         /// The bundle-relative files a running guest writes: its internal
         /// disks and firmware state — what a live copy takes inside its pause.
         func guestWrittenPaths(in source: VMBundleLayout) -> [String] {
-            VMBundleMachineFiles.capturedRelativePaths(for: configuration, layout: source)
+            VMBundleItems.capturedRelativePaths(for: configuration, layout: source)
         }
 
         /// The bundle-relative files nothing writes while the clone holds its
@@ -460,7 +457,7 @@ extension VMCommandCore {
         // suspended one's is the slot, which admission found on disk and the
         // hold keeps there.
         if copy.carriesSavedState, copy.mode == .suspended {
-            try VMBundleMachineFiles.copyItems(
+            try VMBundleItems.copyItems(
                 [VMBundleLayout.saveFileRelativePath], from: source, to: staged.url,
                 ifMissing: .unchecked)
         }

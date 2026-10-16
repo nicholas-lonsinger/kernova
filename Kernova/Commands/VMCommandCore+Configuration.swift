@@ -81,7 +81,8 @@ extension VMCommandCore {
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
         let context = VMConfigurationWriteContext(
-            instance, entitlements: library.entitlements, networks: library.networks.state)
+            instance, entitlements: library.entitlements, networks: library.networks.state,
+            resourceLimits: library.virtualizationHost.resourceLimits)
         let guestOS = instance.configuration.guestOS
 
         var answered: [VMConfigurationKey] = []

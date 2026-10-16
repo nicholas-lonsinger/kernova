@@ -37,7 +37,7 @@ struct GuestAccountPasswordAlertTests {
         fields.passwordField.stringValue = password
         fields.verifyField.stringValue = verification
         let configuration = GuestAccountPasswordAlert.configuration(
-            prompt: prompt ?? makePrompt(), fields: fields,
+            prompt: prompt ?? makePrompt(), fields: fields, host: VirtualizationHost(),
             answer: { answers.answered.append($0) },
             retry: { answers.retries.append($0) })
         return (configuration, fields)

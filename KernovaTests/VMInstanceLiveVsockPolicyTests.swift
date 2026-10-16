@@ -30,15 +30,15 @@ struct VMInstanceLiveVsockPolicyTests {
     /// session's coordinator — the channel port's host, ahead of any data one.
     private func framedHost(
         for descriptor: VsockFeatureDescriptor, on instance: VMInstance, sessionID: UUID
-    ) throws -> VsockListenerHost {
+    ) throws -> VsockListener {
         let vsock = try #require(instance.sessionContext?.vsock)
-        return try #require(vsock.makeHosts(for: descriptor, sessionID: sessionID).first)
+        return try #require(vsock.makeListeners(for: descriptor, sessionID: sessionID).first)
     }
 
     /// Runs `host`'s accept path against a live peer, the way a guest dial
     /// installs the service behind a framed port.
     private func connectGuest(
-        to host: VsockListenerHost, keptOpenBy retained: inout [VsockChannel]
+        to host: VsockListener, keptOpenBy retained: inout [VsockChannel]
     ) async throws {
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)

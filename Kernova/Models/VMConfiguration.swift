@@ -403,8 +403,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.name = name
         self.guestOS = guestOS
         self.bootMode = bootMode
-        self.cpuCount = cpuCount ?? guestOS.defaultCPUCount
-        self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemorySize
+        self.cpuCount = cpuCount ?? guestOS.preferredCPUCount
+        self.memorySizeInGB = memorySizeInGB ?? guestOS.preferredMemorySize
         self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
@@ -900,7 +900,7 @@ extension VMConfiguration {
 
     /// Whether the guest can write to a disk outside the bundle: an external
     /// storage disk or removable media not marked read-only — files no
-    /// snapshot or clone copies (``VMBundleMachineFiles/capturedRelativePaths(for:layout:)``).
+    /// snapshot or clone copies (``VMBundleItems/capturedRelativePaths(for:layout:)``).
     var writesOutsideBundle: Bool {
         (storageDisks ?? []).contains { !$0.isInternal && !$0.readOnly }
             || (removableMedia ?? []).contains { !$0.readOnly }

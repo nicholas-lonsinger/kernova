@@ -2,26 +2,6 @@ import Foundation
 import KernovaLogging
 import Virtualization
 
-// MARK: - Session Events
-
-/// A lifecycle event VZ delivered on a session's queue.
-enum VMSessionEvent: Sendable {
-    case guestDidStop
-    case didStopWithError(any Error)
-    case networkAttachmentDisconnected(any Error)
-    /// A passthrough accessory's host device went away. VZ has already detached
-    /// it, so the receiver only drops its own record of the attachment.
-    case usbPassthroughDeviceDidDisconnect(UUID)
-}
-
-/// The sink a session delivers its events into.
-///
-/// Called on the session's queue with the session's `id`, so the receiver can
-/// hop to the main actor and drop events from a session it no longer holds.
-struct VMSessionEvents: Sendable {
-    let handle: @Sendable (UUID, VMSessionEvent) -> Void
-}
-
 // MARK: - Display Handle
 
 /// Carries a `VZVirtualMachine` from its session to the one main-actor site
@@ -54,15 +34,6 @@ struct VMDisplayHandle: @unchecked Sendable {
     }
 }
 
-// MARK: - Session Errors
-
-/// Failures `VMSession`'s device operations report; the calling service maps
-/// them onto its user-facing error type.
-enum VMSessionError: Error {
-    case usbControllerUnavailable
-    case usbDeviceNotFound
-}
-
 // MARK: - VMSession
 
 /// One VM's isolation domain: the only type that calls into a
@@ -73,7 +44,7 @@ enum VMSessionError: Error {
 /// enforces: "Other properties or function calls on VZVirtualMachine must
 /// happen on this queue. The framework also invokes any completion handlers
 /// from asynchronous functions on this queue."
-actor VMSession {
+actor VMSession: VMSessionOperating {
     /// The queue this VM was created with, and this actor's executor.
     nonisolated let queue: DispatchSerialQueue
 
@@ -307,11 +278,11 @@ actor VMSession {
     /// retains each host for exactly as long as its listener is bound.
     private var socketListenerHosts: [UInt32: VsockListenerHost] = [:]
 
-    /// Installs every listener in `hosts` in one hop, replacing whatever was
-    /// bound to the ports they serve.
-    func attach(_ hosts: [VsockListenerHost]) {
+    /// Installs every listener in `listeners` in one hop, replacing whatever
+    /// was bound to the ports they serve.
+    func attach(_ listeners: [VsockListener]) {
         guard let device = virtioSocketDevice() else { return }
-        for host in hosts {
+        for host in listeners.map(VsockListenerHost.init) {
             // Store after the bind: `setSocketListener` has already replaced
             // the prior listener, so a displaced host is never released while
             // it is still the one bound.
@@ -496,6 +467,19 @@ actor VMSession {
             }
         }
     }
+}
+
+// MARK: - Engine Crossing
+
+extension VMSessionOperating {
+    /// This session as the actor that owns its `VZVirtualMachine` — the one
+    /// crossing from the session the core holds back to the engine's own type,
+    /// for the operations whose arguments are Virtualization objects (a USB
+    /// device, the display view's machine).
+    ///
+    /// `nil` for a session the engine did not make; only the engine makes the
+    /// sessions a VM holds.
+    var virtualMachineSession: VMSession? { self as? VMSession }
 }
 
 // MARK: - Delegate Adapter
