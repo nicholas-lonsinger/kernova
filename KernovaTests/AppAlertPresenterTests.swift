@@ -1327,14 +1327,20 @@ struct AppAlertPresenterTests {
     @Test("A display window closing sends its alert and those waiting for it to the library window")
     func closingADisplayWindowReroutesItsAlerts() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
         let vm = makeRunningInstance(name: "Work", in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
+        let isListed: (UUID) -> Bool = { id in h.viewModel.instances.contains { $0.id == id } }
         h.presenter.presentError("Shown.", title: "Shown Notice", about: .vm(vm))
         h.presenter.presentError("Waiting.", title: "Waiting Notice", about: .vm(vm))
         #expect(sheetText(on: display).contains("Shown Notice"))
+        #expect(h.presenter.waitingCountForTesting == 1)
 
         display.close()
+
+        #expect(h.presenter.waitingCountForTesting == 2)
+        #expect(h.presenter.held.otherAlertCount(listing: isListed) == 2)
+
+        let library = h.showLibrary()
 
         // The acknowledgement nobody dismissed comes back first, in the order
         // it was raised, and the one waiting behind it follows it there.
@@ -1347,7 +1353,6 @@ struct AppAlertPresenterTests {
     @Test("A display window closing answers a suspended verb's question unasked and cancels any other")
     func closingADisplayWindowEndsItsQuestions() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
         let vm = makeRunningInstance(name: "Work", in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
         let answers = Box<[PresenterAnswer<Bool>]>([])
@@ -1363,7 +1368,8 @@ struct AppAlertPresenterTests {
         display.close()
 
         #expect(answers.value == [.unasked])
-        #expect(library.attachedSheet == nil)
+        #expect(h.presenter.waitingCountForTesting == 0)
+        #expect(h.presenter.held.alerts.isEmpty)
 
         let other = makeRunningInstance(name: "Other", in: h.viewModel)
         let otherDisplay = try showDisplayWindow(for: other, in: h)
@@ -1372,11 +1378,11 @@ struct AppAlertPresenterTests {
 
         otherDisplay.close()
 
-        // Nothing runs without a yes, and the question does not follow the
-        // user to the library window.
+        // Nothing runs without a yes, and the question is neither queued
+        // nor held for another window.
         #expect(other.status == .running)
-        #expect(library.attachedSheet == nil)
         #expect(h.presenter.waitingCountForTesting == 0)
+        #expect(h.presenter.held.alerts.isEmpty)
     }
 
     @Test("With the library window closed and the VM headless, an alert is held, counted, and shown with the library")
