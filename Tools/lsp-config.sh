@@ -33,5 +33,5 @@ if ! command -v xcode-build-server >/dev/null 2>&1; then
     exit 0
 fi
 
-xcode-build-server config -project "$project" -scheme "$scheme" || exit 1
+Tools/checkout-lock.sh xcode-build-server config -project "$project" -scheme "$scheme" || exit 1
 pass "buildServer.json written for the $scheme scheme"

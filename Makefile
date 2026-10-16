@@ -46,6 +46,17 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
                    -configuration $(CONFIGURATION) \
                    $(CI_FLAGS)
 
+# Every command that runs xcodebuild against this checkout — Periphery's
+# included, which resolves packages into the checkout's shared files — runs
+# under the checkout's build lock (Tools/checkout-lock.sh), so a second run
+# waits for the first rather than sharing its build arena; a Tools script that
+# runs xcodebuild takes the lock itself. `test-package` runs without it:
+# SwiftPM serializes runs on .build itself. A recipe with several such commands
+# holds the lock across all of them by running its `locked-` twin under it, so
+# no other run starts in between.
+LOCKED       := Tools/checkout-lock.sh
+LOCKED_TWIN   = +@$(LOCKED) $(MAKE) --no-print-directory locked-$@
+
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT := xcrun swift-format
@@ -57,6 +68,7 @@ SWIFT_FORMAT := xcrun swift-format
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh \
+                 Tools/tests/checkout-lock.sh \
                  Tools/tests/arena-label.sh \
                  Tools/tests/check-config-decoding.sh
 
@@ -72,7 +84,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-without-building test-suite test-package clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -129,10 +141,16 @@ install-lsp: ## Install xcode-build-server and write this checkout's buildServer
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 
 build: check-hooks ## Build the app for macOS
+	$(LOCKED_TWIN)
+
+locked-build:
 	xcodebuild $(XCODEBUILD_FLAGS) build
 	$(PRINT_BUILD_BINARY)
 
 build-for-testing: check-hooks ## Compile the app and test bundles without running them
+	$(LOCKED_TWIN)
+
+locked-build-for-testing:
 	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
 	$(PRINT_BUILD_BINARY)
 
@@ -163,6 +181,9 @@ endef
 # routine the post-checkout sweep and `clean-ghosts` use. A missing path is a
 # no-op, so both candidates are passed unconditionally.
 clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
+	$(LOCKED_TWIN)
+
+locked-clean:
 	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
 	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
 	case "$$arena" in \
@@ -171,14 +192,14 @@ clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the 
 	esac
 
 test: check-hooks ## Run the full test suite (all three test targets via Kernova.xctestplan)
-	xcodebuild $(XCODEBUILD_FLAGS) test
+	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) test
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild
 # refuses a -resultBundlePath that already exists, and outside CI this target
 # passes no such flag and must not touch artifacts/.
 test-without-building: check-hooks ## Run the test plan against an existing build-for-testing product
 	@test -z '$(RESULT_BUNDLE_FLAG)' || rm -rf '$(RESULT_BUNDLE)'
-	xcodebuild $(XCODEBUILD_FLAGS) $(RESULT_BUNDLE_FLAG) test-without-building
+	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) $(RESULT_BUNDLE_FLAG) test-without-building
 
 # `xcrun` so the toolchain matches the one selected via `xcode-select`
 # (same rationale as the `xcrun swift-format` invocation above).
@@ -191,7 +212,7 @@ test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see be
 		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \
 		exit 2; \
 	fi
-	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
+	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
 
 format: ## Rewrite Swift sources in place via swift-format
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
@@ -238,7 +259,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 # so a scan takes minutes. Stdout carries Periphery's report and nothing else —
 # .github/workflows/dead-code.yml redirects it to a file and greps it.
 dead-code: ## Scan for unused code with Periphery (drives its own build; minutes)
-	@periphery=$$(Tools/install-periphery.sh) && "$$periphery" scan --disable-update-check -- -skipPackagePluginValidation
+	@periphery=$$(Tools/install-periphery.sh) && $(LOCKED) "$$periphery" scan --disable-update-check -- -skipPackagePluginValidation
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format), signing, optional tooling, and repo setup (git hooks,
