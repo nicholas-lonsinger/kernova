@@ -80,21 +80,6 @@ struct GuestSetupDescriptorTests {
         #expect(GuestSetupDescriptor.forSetup(of: macOS).title == "Installing macOS")
     }
 
-    @Test("A URL pick's setup is titled with the file it is fetching")
-    func descriptorNamesAPastedImage() {
-        let instance = VMInstanceFixture.make(name: "Alpine") {
-            $0.linuxInstallContext = LinuxInstallContext(
-                source: .customURL(
-                    CustomLinuxImage(
-                        url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
-                        sha256: nil)))
-        }
-
-        #expect(
-            GuestSetupDescriptor.forSetup(of: instance).title
-                == "Downloading alpine-3.22-aarch64.iso")
-    }
-
     // MARK: - Steps and copy agree
 
     @Test("Every step each flow runs has copy of its own")

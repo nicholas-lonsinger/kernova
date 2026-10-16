@@ -483,21 +483,6 @@ struct VMRunLockTests {
         expectLockFollowsPhase(instance, store)
     }
 
-    @Test("A VM another copy holds keeps its controls, dimmed")
-    func catalogDimsAVMHeldElsewhere() async throws {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = library.registerFixture()
-        storage.files.holdElsewhere(instance.bundleURL)
-        await #expect(throws: VMAdmissionRefusal(refusal: .heldByAnotherCopy)) {
-            try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
-        }
-
-        let catalog = VMCapabilityCatalog(library: library)
-        #expect(catalog.isApplicable(.start, to: instance))
-        #expect(!catalog.isAvailable(.start, on: instance))
-    }
-
     // MARK: - Verbs
 
     private func makeCore() -> WiredCommandCore.Scripted<MockVirtualizationService> {

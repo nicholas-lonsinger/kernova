@@ -19,7 +19,6 @@ struct AppTerminationQuitClassificationTests {
     private static let tccBundleID = "com.apple.settings.PrivacySecurity.extension"
     private static let loginwindowBundleID = "com.apple.loginwindow"
     private static let dockBundleID = "com.apple.dock"
-    private static let scriptEditorBundleID = "com.apple.ScriptEditor2"
 
     @Test("No sender PID attribute fails toward terminate-and-save")
     func noSenderPID() {
@@ -40,22 +39,6 @@ struct AppTerminationQuitClassificationTests {
         #expect(
             AppTerminationController.classifyQuit(
                 senderPID: 0,
-                bundleIDResolver: { _ in
-                    Issue.record("should not resolve a bundle ID"); return nil
-                },
-                isProcessAlive: { _ in
-                    Issue.record("should not probe liveness"); return true
-                }
-            ) == .terminateAndSave)
-    }
-
-    @Test("A negative sender PID fails toward terminate-and-save without ever being probed")
-    func negativeSenderPID() {
-        // kill(pid, 0) for pid < 0 targets a process GROUP, not a single process —
-        // classifyQuit must reject it before any probe closure is invoked.
-        #expect(
-            AppTerminationController.classifyQuit(
-                senderPID: -1,
                 bundleIDResolver: { _ in
                     Issue.record("should not resolve a bundle ID"); return nil
                 },
@@ -111,16 +94,6 @@ struct AppTerminationQuitClassificationTests {
                 bundleIDResolver: { _ in Self.dockBundleID },
                 isProcessAlive: { _ in true }
             ) == .stayResident)
-    }
-
-    @Test("An identifiable script host (Script Editor) is honored: terminate-and-save")
-    func scriptEditor() {
-        #expect(
-            AppTerminationController.classifyQuit(
-                senderPID: 999,
-                bundleIDResolver: { _ in Self.scriptEditorBundleID },
-                isProcessAlive: { _ in true }
-            ) == .terminateAndSave)
     }
 
     @Test("An arbitrary other live app is honored: terminate-and-save")

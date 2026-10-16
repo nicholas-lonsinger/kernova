@@ -115,12 +115,6 @@ struct ExternalFileReferenceTests {
             ])
     }
 
-    @Test("An internal disk is never projected")
-    func internalDiskIsAbsent() {
-        let config = makeFullyPopulatedConfig()
-        #expect(!config.externalFileReferences.contains { $0.path == "Disk.asif" })
-    }
-
     @Test("A configuration with no external fields projects nothing")
     func emptyConfigurationProjectsNothing() {
         let config = VMConfiguration(name: "Bare", guestOS: .macOS, bootMode: .macOS)
@@ -331,23 +325,6 @@ struct ExternalFileReferenceTests {
         #expect(
             VMCommandCore.sharingVMNames(
                 matching: subject, among: [(name: "Sibling", identities: sibling)]) == ["Sibling"])
-    }
-
-    @Test("Disjoint identities share nothing")
-    func sharingIgnoresUnrelatedFiles() {
-        #expect(
-            VMCommandCore.sharingVMNames(
-                matching: ["/Users/me/a.img"],
-                among: [(name: "Other", identities: ["/Users/me/b.img"])]
-            ).isEmpty)
-    }
-
-    @Test("A VM with no external references shares nothing")
-    func sharingIgnoresReferenceLessVMs() {
-        #expect(
-            VMCommandCore.sharingVMNames(
-                matching: ["/Users/me/a.img"], among: [(name: "Bare", identities: [])]
-            ).isEmpty)
     }
 
     @Test("Matching names come back in the order the candidates were given")

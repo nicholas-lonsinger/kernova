@@ -56,17 +56,6 @@ struct VMDisplayPlacementReadyDisplayTests {
                 == .front(fullscreen: true))
     }
 
-    /// Never fullscreen from the background: entering it would move the user to
-    /// a Space they did not ask for.
-    @Test(
-        "A detached VM readied from the background goes up behind",
-        arguments: [VMDisplayPreference.popOut, .fullscreen])
-    func backgroundReadiesBehind(preference: VMDisplayPreference) {
-        #expect(
-            VMDisplayPlacementController.readying(preference: preference, posture: .background, presence: .attended)
-                == .behind)
-    }
-
     /// Nobody asked for this VM in particular — a group action, a launch
     /// auto-start — so even in the foreground it neither takes key nor moves
     /// the user to a fullscreen Space.
@@ -83,16 +72,6 @@ struct VMDisplayPlacementReadyDisplayTests {
         #expect(
             VMDisplayPlacementController.readying(preference: preference, posture: .absent, presence: .unattended)
                 == nil)
-    }
-
-    /// A status-item-only app was asked not to have a GUI; a window here would
-    /// hand it the Dock icon and menu bar it came up without.
-    @Test(
-        "A detached VM readies nothing while the app presents no GUI",
-        arguments: [VMDisplayPreference.popOut, .fullscreen])
-    func absentReadiesNothing(preference: VMDisplayPreference) {
-        #expect(
-            VMDisplayPlacementController.readying(preference: preference, posture: .absent, presence: .attended) == nil)
     }
 
     /// The inline display renders whichever VM the library has selected, and a

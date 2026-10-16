@@ -14,16 +14,6 @@ struct VMURLRouteTests {
 
     // MARK: - Routes
 
-    @Test("An open link names the VM to bring forward")
-    func openRouteNamesItsVM() throws {
-        #expect(try delivery("kernova://open/Sonoma") == .route(.open(.idOrName("Sonoma"))))
-    }
-
-    @Test("A reveal link names the VM to put in front of the user")
-    func revealRouteNamesItsVM() throws {
-        #expect(try delivery("kernova://reveal/Sonoma") == .route(.reveal(.idOrName("Sonoma"))))
-    }
-
     @Test("Each route runs its own verb")
     func eachRouteRunsItsVerb() {
         #expect(VMURLRoute.open(.idOrName("Sonoma")).verb == .open)

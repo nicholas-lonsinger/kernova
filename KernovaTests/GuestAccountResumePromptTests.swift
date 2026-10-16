@@ -202,6 +202,8 @@ struct GuestAccountResumePromptTests {
         #expect(virtualization.startCallCount == 0)
         #expect(presenter.errorTitles == ["Couldn\u{2019}t Start \u{201C}\(instance.name)\u{201D}"])
         #expect(instance.configuration.pendingGuestAccount == makeIntent())
+        #expect(instance.setupOperationTask == nil)
+        #expect(presenter.errors.contains { $0.contains("ada") })
     }
 
     /// The shown sheet turns a refused password down on the click and puts
@@ -325,21 +327,5 @@ struct GuestAccountResumePromptTests {
         #expect(virtualization.startCallCount == 0)
         #expect(presenter.guestAccountPasswordRequests.isEmpty)
         #expect(presenter.errors.isEmpty)
-    }
-
-    @available(macOS 27.0, *)
-    @Test("With nowhere to ask, the refusal takes the ordinary error surface")
-    func unaskedPromptSurfacesTheRefusal() async {
-        let (viewModel, virtualization) = makeViewModel()
-        let instance = makeVM(in: viewModel, intent: makeIntent())
-        presenter.guestAccountPasswordAnswer = .unasked
-
-        await viewModel.start(instance)
-
-        #expect(virtualization.startCallCount == 0)
-        #expect(instance.setupOperationTask == nil)
-        // The account is still there to ask about next time.
-        #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(presenter.errors.contains { $0.contains("ada") })
     }
 }

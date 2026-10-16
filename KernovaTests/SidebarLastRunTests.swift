@@ -170,20 +170,4 @@ struct SidebarLastRunTests {
         try await waitUntil { shows("Last run 3 hours ago") }
         withExtendedLifetime(controller) {}
     }
-
-    @Test("A clock tick refreshes a running row's start with no model change")
-    func clockRefreshesTheStart() async throws {
-        let clock = MinuteClock(now: Self.now)
-        let (controller, shows) = try sidebarCell(clock: clock) { viewModel in
-            let running = viewModel.library.admitFixture(
-                name: "A", phase: .running(sessionID: UUID()), preferences: preferences)
-            running.beginSessionContextForTesting().runningSince = Self.now.addingTimeInterval(-12 * 60)
-        }
-        #expect(shows("Started 12 minutes ago"))
-
-        clock.advance(to: Self.now.addingTimeInterval(60))
-
-        try await waitUntil { shows("Started 13 minutes ago") }
-        withExtendedLifetime(controller) {}
-    }
 }

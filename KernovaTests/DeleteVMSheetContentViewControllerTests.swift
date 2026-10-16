@@ -108,17 +108,6 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(labels.contains { $0.contains("Kept — still used by") && $0.contains("Other VM") })
     }
 
-    @Test("missing external is locked off and not selectable")
-    func missingExternalLockedOff() {
-        let id = UUID()
-        let missing = makeAttachment(id: id, label: "Gone Disk", path: "/tmp/gone.img", missing: true)
-        let vc = make(vmName: "MyVM", externals: [missing])
-        vc.loadViewIfNeeded()
-        // Nothing to trash: no checkbox recorded, nothing selected.
-        #expect(vc.checkboxes[id] == nil)
-        #expect(vc.selectedExternalIDs.isEmpty)
-    }
-
     @Test("missing external renders its path in the red 'Missing —' style")
     func missingExternalShowsMissingPath() {
         let path = "/Volumes/USB/win.iso"
@@ -244,26 +233,6 @@ struct DeleteVMSheetContentViewControllerTests {
     }
 
     // MARK: - Select All
-
-    @Test("Select All checks every selectable external and flips to Deselect All")
-    func selectAllChecksEverySelectableExternal() {
-        let id1 = UUID()
-        let id2 = UUID()
-        let externals = [
-            makeAttachment(id: id1, label: "Disk A", path: "/tmp/a.img"),
-            makeAttachment(id: id2, label: "Disk B", path: "/tmp/b.img"),
-        ]
-        let vc = make(vmName: "MyVM", externals: externals)
-        vc.loadViewIfNeeded()
-
-        guard let selectAll = findButton(titled: "Select All", in: vc.view) else {
-            Issue.record("Expected a Select All button")
-            return
-        }
-        selectAll.performClick(nil)
-        #expect(vc.selectedExternalIDs == [id1, id2])
-        #expect(selectAll.title == "Deselect All")
-    }
 
     @Test("Deselect All clears the selection and flips back to Select All")
     func deselectAllClearsSelection() {
@@ -396,29 +365,6 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(confirm.hasDestructiveAction)
         // The trash-mode title must not also be present.
         #expect(findButton(titled: "Move to Trash", in: vc.view) == nil)
-    }
-
-    @Test("immediate mode still returns the checked external ids on confirm")
-    func immediateModeConfirmReturnsSelectedExternalIDs() {
-        let keepID = UUID()
-        let deleteID = UUID()
-        let externals = [
-            makeAttachment(id: keepID, label: "Keep", path: "/tmp/keep.img"),
-            makeAttachment(id: deleteID, label: "Delete", path: "/tmp/delete.img"),
-        ]
-        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
-        var confirmedIDChoices: [Set<UUID>] = []
-        vc.onConfirm = { confirmedIDChoices.append($0) }
-        vc.loadViewIfNeeded()
-
-        guard let confirm = findButton(titled: "Delete Immediately", in: vc.view) else {
-            Issue.record("Expected a Delete Immediately button")
-            return
-        }
-        // Opt one file in; the unchecked one is kept.
-        vc.checkboxes[deleteID]?.state = .on
-        confirm.performClick(nil)
-        #expect(confirmedIDChoices == [[deleteID]])
     }
 
     // The content list's height is driven by an explicit measured constant

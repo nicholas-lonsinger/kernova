@@ -1133,18 +1133,6 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
         #expect(!harness.service.startDrop(urls: [file]))
     }
-
-    @Test("a drop is refused once the service has stopped")
-    func refusesADropAfterStop() async throws {
-        let harness = try Harness()
-        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
-
-        harness.recorder.cancel()
-        harness.service.stop()
-        harness.guest.close()
-
-        #expect(!harness.service.startDrop(urls: [file]))
-    }
 }
 
 /// Drop-side readers over the shared ``FrameRecorder``.

@@ -113,22 +113,6 @@ struct AppWindowRegistryPresenceTests {
         #expect(activations.count == 1)
     }
 
-    @Test("Closing a clipboard window deregisters it")
-    func clipboardWindowCloseDeregisters() throws {
-        let registry = makeRegistry()
-        let instance = makeClipboardEligibleInstance()
-        registry.showClipboard(for: instance)
-        let window = try #require(registry.clipboardWindow(for: instance.instanceID))
-        adoptAppWindow(window)
-        #expect(registry.hasTrackedUserWindow)
-
-        // `close()` dispatches `windowWillClose` synchronously, which is what
-        // drives `ClipboardWindowController.onWillClose`.
-        window.close()
-
-        #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
-    }
-
     @Test("Showing a clipboard window asks residency to prepare, and its close deregisters it")
     func clipboardWindowDrivesResidency() throws {
         let registry = makeRegistry()
@@ -141,6 +125,7 @@ struct AppWindowRegistryPresenceTests {
         adoptAppWindow(window)
 
         #expect(host.prepareCount == 1)
+        #expect(registry.hasTrackedUserWindow)
 
         // The close is answered by the registry's own deregistration; the
         // resident app's global `willClose` observer runs the reconcile, since

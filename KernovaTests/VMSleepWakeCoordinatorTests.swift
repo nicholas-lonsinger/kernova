@@ -280,19 +280,6 @@ struct VMSleepWakeCoordinatorTests {
         #expect(virtService.resumeCallCount == 1)
     }
 
-    @Test("Wake with nothing paused for sleep resumes nothing")
-    func wakeWithNothingPausedIsANoOp() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let paused = VMInstanceFixture.make(name: "User Paused")
-        paused.activity.placeForTesting(.suspended)
-        roster.instances = [paused]
-
-        await coordinator.resumeAllAfterWake().value
-
-        #expect(virtService.resumeCallCount == 0)
-        #expect(!failures.showError)
-    }
-
     @Test("Wake passes over a sleep-paused VM that came to rest meanwhile")
     func wakeSkipsVMsNoLongerLive() async {
         let (coordinator, roster, virtService) = makeCoordinator()

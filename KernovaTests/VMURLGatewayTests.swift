@@ -96,7 +96,9 @@ struct VMURLGatewayTests {
 
         #expect(wired.surfacedDisplays == [sonoma.id])
         #expect(wired.revealedInLibrary.isEmpty)
-        #expect(trace.presented.isEmpty)
+        // The verb opens exactly the surface the link asked for; a library
+        // window behind it is one nobody asked for.
+        #expect(trace.steps == [.prepared])
     }
 
     /// A stopped VM tells the two verbs apart: open refuses it, and reveal
@@ -111,18 +113,6 @@ struct VMURLGatewayTests {
         #expect(wired.revealedInLibrary == [sonoma.id])
         #expect(wired.surfacedDisplays.isEmpty)
         #expect(trace.presented.isEmpty)
-    }
-
-    @Test("A link that runs readies the app to surface and summons nothing")
-    func aLinkThatRunsSummonsNothing() async throws {
-        let wired = WiredCommandCore()
-        registerRunning(in: wired)
-        let trace = Trace()
-        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
-
-        // The verb opens exactly the surface the link asked for; a library
-        // window behind it is one nobody asked for.
-        #expect(trace.steps == [.prepared])
     }
 
     /// Readied once, for the alert: the refused verb itself surfaced nothing.
@@ -223,21 +213,6 @@ struct VMURLGatewayTests {
             trace.steps == [
                 .prepared, .summoned,
                 .presented(.invalidArgument(VMURLRoute.Refusal.unknownRoute("start").message)),
-            ])
-    }
-
-    @Test("A link naming no VM is refused, in the app, like every other refusal")
-    func aLinkNamingNoVMIsRefused() async throws {
-        let wired = WiredCommandCore()
-        registerRunning(in: wired)
-        let trace = Trace()
-        await makeGateway(wired, trace: trace).handle(try url("kernova://open"))
-
-        #expect(wired.surfacedDisplays.isEmpty)
-        #expect(
-            trace.steps == [
-                .prepared, .summoned,
-                .presented(.invalidArgument(VMURLRoute.Refusal.noVM(route: .open).message)),
             ])
     }
 

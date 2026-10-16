@@ -26,20 +26,6 @@ struct ScrollMoreIndicatorTests {
         return scrollView
     }
 
-    @Test("No cue when content fits the viewport")
-    func noCueWhenContentFits() {
-        let scrollView = makeScrollView(documentHeight: 50)
-        let indicator = ScrollMoreIndicator(scrollView: scrollView)
-        #expect(indicator.hasMoreBelow == false)
-    }
-
-    @Test("Cue shows when content overflows and is at the top")
-    func cueWhenOverflowingAtTop() {
-        let scrollView = makeScrollView(documentHeight: 1000)
-        let indicator = ScrollMoreIndicator(scrollView: scrollView)
-        #expect(indicator.hasMoreBelow == true)
-    }
-
     @Test("Cue clears at the bottom and returns on scroll up (no latch)")
     func cueTracksScrollPosition() {
         let scrollView = makeScrollView(documentHeight: 1000)

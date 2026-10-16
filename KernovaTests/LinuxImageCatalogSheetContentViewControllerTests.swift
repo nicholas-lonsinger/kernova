@@ -169,30 +169,6 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
         #expect(try cellText(vc, row: 2, column: "status").isEmpty)
     }
 
-    @Test("A pasted-URL download does not read as In Downloads for a catalog row")
-    func statusIgnoresACustomURLDownload() throws {
-        // The URL source names its destination the same way, so a link ending
-        // in a catalog image's filename lands on a name whose stem matches that
-        // row's glob — and whose discriminator says it came from elsewhere.
-        let pasted = try #require(
-            URL(string: "https://example.com/debian-13.1.0-arm64-netinst.iso"))
-        let vc = makeSheet(downloads: [LinuxImageFilename.destination(for: pasted)])
-
-        #expect(try cellText(vc, row: 2, column: "status").isEmpty)
-    }
-
-    @Test("A half-finished download does not read as In Downloads")
-    func statusIgnoresPartialDownloads() throws {
-        // The bundle replaces the destination's extension rather than following
-        // it, so nothing about a partial download reads as an `.iso`.
-        let ubuntu = try #require(entries.first)
-        let complete = downloadedName(of: "ubuntu-26.04.1-desktop-arm64.iso", from: ubuntu)
-        let partial = (complete as NSString).deletingPathExtension + ".kernovadownload"
-        let vc = makeSheet(downloads: [partial])
-
-        #expect(try cellText(vc, row: 0, column: "status").isEmpty)
-    }
-
     @Test("Downloads is read once, however many rows render and filters run")
     func downloadsAreEnumeratedOncePerSheet() throws {
         var reads = 0

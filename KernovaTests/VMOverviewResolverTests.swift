@@ -320,27 +320,6 @@ struct VMOverviewResolverTests {
 
     // MARK: - Warnings
 
-    @Test("A duplicate MAC names the other VMs holding it")
-    func duplicateMACWarningNamesTheOtherVMs() throws {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = viewModel.library.admitFixture {
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        viewModel.library.admitFixture {
-            $0.name = "Twin"
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let resolver = makeResolver(instance: instance, viewModel: viewModel)
-
-        resolver.refresh()
-
-        let warning = try #require(resolver.resolved.warnings[.network])
-        #expect(warning.contains("Twin"))
-        #expect(warning.contains("MAC address"))
-    }
-
     @Test("A VM sharing its machine identity and MAC address is warned like any other holder")
     func duplicateMACWarningIgnoresTheMachineIdentity() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)

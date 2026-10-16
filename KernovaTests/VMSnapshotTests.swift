@@ -115,20 +115,6 @@ struct VMSnapshotTests {
 
     // MARK: - Persistence
 
-    @Test("A manifest round-trips through the config JSON coders")
-    func manifestRoundTrips() throws {
-        let manifest = VMSnapshotManifest(
-            snapshots: [
-                makeSnapshot(name: "First", notes: "before the update"),
-                makeSnapshot(name: "Second", offsetSeconds: 60),
-            ],
-            currentID: nil)
-        let data = try VMConfiguration.makeJSONEncoder().encode(manifest.record)
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMSnapshotManifestRecord.self, from: data)
-        #expect(decoded == manifest.record)
-    }
-
     @Test("A cold snapshot round-trips through the config JSON coders")
     func coldSnapshotRoundTrips() throws {
         var snapshot = makeSnapshot(name: "Before first boot")

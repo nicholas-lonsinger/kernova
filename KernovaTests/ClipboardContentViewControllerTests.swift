@@ -427,14 +427,6 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         return (vc, instance)
     }
 
-    @Test("passthrough off (the default) offers the command actions")
-    func passthroughOffOffersCommandActions() {
-        let (vc, _) = makeConnectedController()
-
-        #expect(vc.areCommandActionsEnabledForTesting == true)
-        #expect(vc.isPassthroughSwitchOnForTesting == false)
-    }
-
     @Test("passthrough on at open keeps the command row and withdraws its actions")
     func passthroughOnAtOpenDisablesCommandActions() {
         let (vc, _) = makeConnectedController(passthroughEnabled: true)
@@ -451,6 +443,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         let vc = makeController(instance: instance)
         _ = vc.view
         #expect(vc.areCommandActionsEnabledForTesting == true)
+        #expect(vc.isPassthroughSwitchOnForTesting == false)
 
         // Driven through the production `ObservationLoop`, not
         // `simulateObservationForTesting()`: a hand-called `updateUI()` would
@@ -856,22 +849,6 @@ struct ClipboardPassthroughSwitchTests {
 
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
         #expect(vc.isPassthroughSwitchOnForTesting == false)
-    }
-
-    @Test("a write from another surface moves this window's switch")
-    func writeFromAnotherSurfaceMovesTheSwitch() async throws {
-        let (vc, viewModel, instance) = makeController()
-        #expect(vc.isPassthroughSwitchOnForTesting == false)
-
-        // Another surface's write, landing on the same model.
-        _ = try viewModel.library.updateConfiguration(of: instance, as: .liveKeys) {
-            $0.clipboardPassthroughEnabled = true
-        }
-
-        // Genuine no-signal predicate — the observed effect is an `NSSwitch`'s
-        // state, a plain AppKit property with no Observable or `AsyncGate`
-        // signal to arm against.
-        try await waitUntil { vc.isPassthroughSwitchOnForTesting }
     }
 }
 

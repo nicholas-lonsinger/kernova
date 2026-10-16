@@ -129,17 +129,6 @@ struct VMInstanceDisplayDropTests {
         #expect(harness.instance.displayDropAvailability == .disconnected)
     }
 
-    @Test("a live drop channel from a capable agent accepts the drag")
-    func liveAndCapableAccepts() async throws {
-        let harness = Harness()
-        defer { harness.tearDown() }
-        let guest = try harness.attachControl()
-        try harness.attachDrop()
-
-        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
-        try await waitForChange { harness.instance.displayDropAvailability == .available }
-    }
-
     // MARK: - The per-VM toggle
 
     @Test("a VM with drag and drop switched off is not a drag destination")

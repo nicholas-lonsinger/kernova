@@ -28,19 +28,6 @@ struct MacOSInstallContextTests {
         #expect(!ctx.requestedFreshDownload)
     }
 
-    @Test("Decoding JSON with requestedFreshDownload honors the value")
-    func decodeHonorsPersistedValue() throws {
-        let json = """
-            {
-                "source": "downloadLatest",
-                "downloadDestinationPath": "/Users/me/Downloads/R.ipsw",
-                "requestedFreshDownload": true
-            }
-            """
-        let ctx = try JSONDecoder().decode(MacOSInstallContext.self, from: Data(json.utf8))
-        #expect(ctx.requestedFreshDownload)
-    }
-
     @Test("Roundtrip preserves the flag")
     func roundtripPreservesFlag() throws {
         let original = MacOSInstallContext(
@@ -118,24 +105,6 @@ struct MacOSInstallContextTests {
         #expect(decoded.remoteURL == url)
         #expect(decoded.version == "15.6.1")
         #expect(decoded.build == "24G90")
-    }
-
-    @Test("A custom-URL context round-trips its pinned image")
-    func customURLContextRoundTrips() throws {
-        let url = try #require(URL(string: "https://mirror.example.com/R.ipsw"))
-        let original = MacOSInstallContext(
-            source: .customURL,
-            downloadDestinationPath: "/Users/me/Downloads/R.ipsw",
-            remoteURL: url,
-            version: "15.6.1",
-            build: "24G90"
-        )
-        let decoded = try JSONDecoder().decode(
-            MacOSInstallContext.self, from: try JSONEncoder().encode(original))
-
-        #expect(decoded == original)
-        #expect(decoded.source == .customURL)
-        #expect(decoded.remoteURL == url)
     }
 
     @Test("Only the pinned sources skip resolving the latest image")

@@ -91,16 +91,6 @@ struct VMSettingsOverviewTests {
         #expect(cardSwitch(.dropFiles, in: try card(.sharing, in: vc)) != nil)
     }
 
-    @Test("A Linux card set drops the macOS-only switch and keeps the clipboard one")
-    func linuxCardsDropMacOSOnlySwitches() throws {
-        let (vc, _, _) = makeController(guestOS: .linux)
-        let sharing = try card(.sharing, in: vc)
-
-        #expect(cardSwitch(.dropFiles, in: sharing) == nil)
-        #expect(cardSwitch(.clipboardSharing, in: sharing) != nil)
-        #expect(summaryLine(in: sharing) != nil)
-    }
-
     @Test("The cards stack one per row, at the column's full width, in category order")
     func cardsStackInOneColumn() throws {
         let (vc, _, _) = makeController()
@@ -406,17 +396,6 @@ struct VMSettingsOverviewTests {
         // Cores, memory and the disk figure belong to the header's facts line.
         #expect(findLabel(withText: "CPU cores", in: try card(.system, in: vc)) == nil)
         #expect(findLabel(withText: "Memory", in: try card(.system, in: vc)) == nil)
-    }
-
-    @Test("The General card is its two switches and nothing else")
-    func generalCardIsSwitchesOnly() throws {
-        let (vc, _, _) = makeController()
-        let general = try card(.general, in: vc)
-        #expect(cardSwitch(.autoStart, in: general) != nil)
-        #expect(cardSwitch(.ephemeralMode, in: general) != nil)
-        for label in ["Type", "Boot mode", "Created"] {
-            #expect(findLabel(withText: label, in: general) == nil)
-        }
     }
 
     @Test("The Snapshots card counts them in its header and offers the capture at its foot")

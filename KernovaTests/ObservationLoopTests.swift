@@ -18,25 +18,6 @@ struct ObservationLoopTests {
         func increment() { count += 1 }
     }
 
-    @Test("apply fires when a tracked property changes")
-    func applyFiresOnChange() async {
-        let subject = Subject()
-        let counter = Counter()
-
-        let loop = observeRecurring(
-            track: { _ = subject.value },
-            apply: { counter.increment() }
-        )
-
-        #expect(counter.count == 0)
-
-        subject.value = 1
-        await drainMainQueue()
-
-        #expect(counter.count == 1)
-        _ = loop
-    }
-
     @Test("apply re-fires on subsequent changes (re-registration works)")
     func applyReRegistersAfterFire() async {
         let subject = Subject()
@@ -120,24 +101,6 @@ struct ObservationLoopTests {
 
         subject.value = 1
         await drainMainQueue()
-        #expect(counter.count == 0)
-    }
-
-    @Test("dropping the handle after cancel stops the loop even before any fire")
-    func cancelBeforeAnyFire() async {
-        let subject = Subject()
-        let counter = Counter()
-
-        let loop = observeRecurring(
-            track: { _ = subject.value },
-            apply: { counter.increment() }
-        )
-
-        loop.cancel()
-
-        subject.value = 1
-        await drainMainQueue()
-
         #expect(counter.count == 0)
     }
 

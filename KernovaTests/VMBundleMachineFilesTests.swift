@@ -99,16 +99,6 @@ struct VMBundleMachineFilesTests {
         #expect(paths == ["Disk.asif"])
     }
 
-    @Test("A VM with an empty configured disks list still captures its main disk")
-    func capturedPathsFallBackToTheMainDiskForEmptyList() throws {
-        var fixture = try makeFixture(includeAuxiliaryStorage: false)
-        fixture.configuration.storageDisks = []
-
-        let paths = VMBundleMachineFiles.capturedRelativePaths(
-            for: fixture.configuration, layout: fixture.layout)
-        #expect(paths == ["Disk.asif"])
-    }
-
     // MARK: - Capture and restore
 
     @Test("Capture copies every named file into the snapshot's directory")

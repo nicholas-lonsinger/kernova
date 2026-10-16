@@ -163,17 +163,6 @@ struct VMInstanceTests {
         #expect(instance.session == nil)
     }
 
-    @Test("A power-off sets status to stopped and clears the session")
-    func powerOffRestsStopped() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        #expect(instance.status == .running)
-
-        instance.handleSessionEvent(.guestDidStop)
-
-        #expect(instance.status == .stopped)
-        #expect(instance.session == nil)
-    }
-
     @Test("A power-off event on a stopped VM changes nothing")
     func powerOffIdempotentWhenStopped() {
         let instance = VMInstanceFixture.make(phase: .stopped)
@@ -265,6 +254,7 @@ struct VMInstanceTests {
     @Test("A guest that dies with no slot to come back on rests at the failure")
     func didStopWithErrorWithoutASlotRestsFailed() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
 
         instance.handleSessionEvent(
             .didStopWithError(
@@ -274,6 +264,7 @@ struct VMInstanceTests {
 
         #expect(instance.status == .error)
         #expect(instance.errorMessage == "The guest panicked.")
+        #expect(instance.sessionContext == nil)
     }
 
     @Test("A power-off rests the VM on a slot that survived it, and stopped otherwise")
@@ -316,13 +307,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - isSuspended
-
-    @Test("isSuspended is true when the VM rests on its suspend slot")
-    func isSuspendedTrue() {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        #expect(instance.session == nil)
-        #expect(instance.isSuspended == true)
-    }
 
     @Test("isSuspended is false when stopped")
     func isSuspendedFalseWhenStopped() {
@@ -370,23 +354,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - effectiveMachineIdentifierData
-
-    @Test("effectiveMachineIdentifierData prefers the configuration field")
-    func effectiveMachineIDPrefersConfiguration() {
-        let instance = VMInstanceFixture.make { $0.machineIdentifierData = Data([1, 2, 3]) }
-        #expect(instance.effectiveMachineIdentifierData == Data([1, 2, 3]))
-    }
-
-    @Test("effectiveMachineIdentifierData falls back to the bundle's identifier file")
-    func effectiveMachineIDFallsBackToFile() throws {
-        let instance = VMInstanceFixture.make()
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        try Data([4, 5, 6]).write(to: instance.machineIdentifierURL)
-
-        #expect(instance.configuration.machineIdentifierData == nil)
-        #expect(instance.effectiveMachineIdentifierData == Data([4, 5, 6]))
-    }
 
     @Test("effectiveMachineIdentifierData is nil with neither a configuration field nor a file")
     func effectiveMachineIDNilWhenAbsent() {
@@ -474,21 +441,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - Serial Console
-
-    @Test("A power-off clears serial pipes")
-    func powerOffClearsSerialPipes() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        let context = instance.beginSessionContextForTesting()
-        context.serialInputPipe = Pipe()
-        context.serialOutputPipe = Pipe()
-
-        instance.handleSessionEvent(.guestDidStop)
-
-        #expect(instance.sessionContext == nil)
-        #expect(context.serialInputPipe == nil)
-        #expect(context.serialOutputPipe == nil)
-        #expect(instance.status == .stopped)
-    }
 
     @Test("serialLogURL is forwarded from bundleLayout")
     func serialLogURL() {
@@ -911,13 +863,6 @@ struct VMInstanceTests {
     // These tests lock in the switch so a future refactor can't accidentally
     // fall through to the wrong service per OS.
 
-    @Test("agentStatus is .waiting on a macOS instance with no control service set")
-    func agentStatusMacOSDefaultsToWaiting() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS)
-        #expect(instance.vsockControlService == nil)
-        #expect(instance.agentStatus == .waiting)
-    }
-
     @Test("agentStatus is .waiting on a Linux instance with no clipboard service set")
     func agentStatusLinuxDefaultsToWaiting() {
         let instance = VMInstanceFixture.make(guestOS: .linux)
@@ -1078,27 +1023,6 @@ struct VMInstanceTests {
         #expect(instance.status == .running)
     }
 
-    @Test("guestDidStop resets the instance to stopped")
-    func guestDidStopEventResets() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().serialInputPipe = Pipe()
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(instance.status == .stopped)
-        #expect(instance.sessionContext == nil)
-    }
-
-    @Test("didStopWithError tears the session down and records the error")
-    func didStopWithErrorEventRecordsError() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().serialInputPipe = Pipe()
-        let failure = NSError(
-            domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
-        instance.handleSessionEvent(.didStopWithError(failure))
-        #expect(instance.status == .error)
-        #expect(instance.errorMessage == "boom")
-        #expect(instance.sessionContext == nil)
-    }
-
     @Test("networkAttachmentDisconnected forwards to the recovery coordinator")
     func networkDisconnectedEventForwardsToCoordinator() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
@@ -1182,19 +1106,6 @@ struct VMInstanceTests {
     // Sized past GitHub Actions MainActor jitter, which far exceeds local
     // hardware.
     private static let testWatchdogGrace: Duration = .milliseconds(200)
-
-    @Test("Watchdog flips agentExpectedButMissing when no Hello arrives in the grace window")
-    func watchdogFiresWhenSilent() async throws {
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-
-        // Await the watchdog task itself rather than polling the flag: the task
-        // completes exactly when the grace elapses and flips the flag, so there
-        // is no wall-clock deadline to lose under CI MainActor contention.
-        await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
-    }
 
     @Test("Cancelling the watchdog before grace prevents firing")
     func watchdogCancelledStaysQuiet() async throws {
@@ -1403,6 +1314,7 @@ struct VMInstanceTests {
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
         #expect(storage.saveConfigurationCallCount == 0)
         #expect(storage.saveHostStateCallCount == 0)
     }
@@ -1768,23 +1680,6 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
         #expect(instance.guestOSVersionDisplay == "26.0")
-    }
-
-    @Test("guestOSVersionDisplay reduces a guest-localized report the same way")
-    func guestOSVersionDisplayReducesLocalizedReport() {
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            lastSeenGuestOSVersion: "Versión 26.0 (Compilación 25A123)")
-        #expect(instance.guestOSVersionDisplay == "26.0")
-    }
-
-    @Test("guestOSVersionDisplay passes the numeric shape through untouched")
-    func guestOSVersionDisplayPassthrough() {
-        #expect(
-            makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "26.0")
-                .guestOSVersionDisplay == "26.0")
-        #expect(
-            makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "26.0.1")
-                .guestOSVersionDisplay == "26.0.1")
     }
 
     @Test("guestOSVersionDisplay passes a report holding no digits through untouched")

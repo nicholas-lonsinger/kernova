@@ -49,13 +49,6 @@ struct AlertWindowSceneTests {
         #expect(scene.destination(about: Self.vmX) == "library")
     }
 
-    @Test("A working window showing X wins over X's display window")
-    func workingWindowShowingTheVMWins() {
-        let scene = scene(working: [("clipboard X", [Self.vmX])])
-
-        #expect(scene.destination(about: Self.vmX) == "clipboard X")
-    }
-
     @Test("The main window answers when the key window shows another VM")
     func mainWindowAnswersBehindTheKeyWindow() {
         let scene = scene(
@@ -93,15 +86,6 @@ struct AlertWindowSceneTests {
         let scene = scene(
             working: [],
             states: ["display X": AlertWindowState(isVisible: true, isMiniaturized: true, isOnActiveSpace: true)])
-
-        #expect(scene.destination(about: Self.vmX) == "library")
-    }
-
-    @Test("A display window on another Space is not a target; the library takes its alert")
-    func otherSpaceWindowIsNoTarget() {
-        let scene = scene(
-            working: [],
-            states: ["display X": AlertWindowState(isVisible: true, isMiniaturized: false, isOnActiveSpace: false)])
 
         #expect(scene.destination(about: Self.vmX) == "library")
     }

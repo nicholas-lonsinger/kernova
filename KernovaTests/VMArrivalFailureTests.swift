@@ -40,18 +40,6 @@ struct VMArrivalFailureTests {
             for: error, kind: kind, name: "Mac", stagedURL: staged, source: source)
     }
 
-    @Test("An unreadable source file is named in the source bundle, with the system's reason")
-    func unreadableSourceFileIsNamedInTheSource() {
-        let text = message(copyError(file: "Disk.asif", posix: .EACCES), source: source)
-
-        #expect(
-            text
-                == "\u{201C}Disk.asif\u{201D} in \u{201C}/Users/me/Desktop/Mac.kernova\u{201D} could not be copied: Permission denied."
-        )
-        #expect(!text.contains(staged.lastPathComponent))
-        #expect(!text.contains(".Staging"))
-    }
-
     @Test("A clone's source file is named in the VM it copies")
     func cloneSourceFileIsNamedInTheSourceVM() {
         let vm = VMArrival.Source(

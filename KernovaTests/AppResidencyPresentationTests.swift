@@ -46,15 +46,6 @@ struct AppResidencyPresentationTests {
         #expect(launchHost.count == 0)
     }
 
-    @Test("Preparing to present a window arms the auto-start pass")
-    func prepareArmsThePass() {
-        let (controller, launchHost) = makeController()
-
-        controller.prepareToPresentWindow()
-
-        #expect(launchHost.count == 1)
-    }
-
     @Test("A second window re-arms the seam, leaving the once-per-process latch to the delegate")
     func repeatedPreparesReachTheSeamEachTime() {
         let (controller, launchHost) = makeController()

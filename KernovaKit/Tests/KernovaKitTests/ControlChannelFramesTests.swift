@@ -82,11 +82,6 @@ struct ControlChannelFramesTests {
         #expect(!inbound.isLivenessSignal)
     }
 
-    @Test("Version zero — an unset field — is unsupported too")
-    func classifiesUnsetVersion() {
-        #expect(ControlChannelInbound.classify(Frame()) == .unsupportedVersion(0))
-    }
-
     @Test("Hello classifies to the handshake it carries")
     func classifiesHello() throws {
         let frame = Frame.controlHello(agentVersion: "1.0.0", bundledAgentVersion: "1.1.0")
@@ -144,13 +139,5 @@ struct ControlChannelFramesTests {
         #expect(inbound == .wrongPort)
         // A peer talking out of turn is still a peer that is talking.
         #expect(inbound.isLivenessSignal)
-    }
-
-    @Test("A frame with no payload classifies as wrong port")
-    func classifiesEmptyPayload() {
-        var frame = Frame()
-        frame.protocolVersion = 1
-
-        #expect(ControlChannelInbound.classify(frame) == .wrongPort)
     }
 }

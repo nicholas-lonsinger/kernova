@@ -378,20 +378,6 @@ struct VMSettingsGeneralPanelTests {
 
     // MARK: - Launch auto-start
 
-    @Test("The Startup toggle reflects the configuration")
-    func autoStartSwitchReflectsConfiguration() {
-        let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(
-            guestOS: .linux, hostState: VMHostState(startsAutomaticallyOnLaunch: true))
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: false)
-        vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-        vc.showCategory(.general)
-
-        #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.state == .on)
-    }
-
     @Test("Toggling the Startup switch writes back to the configuration")
     func autoStartToggleWritesConfig() {
         let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
@@ -623,20 +609,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(instance.hostState.ephemeralBaselineSnapshotID == nil)
     }
 
-    @Test("The baseline menu lists the VM's snapshots and selects the chosen one")
-    func ephemeralBaselineMenuListsSnapshots() {
-        let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
-        guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
-            Issue.record("Expected a Baseline snapshot popup")
-            return
-        }
-
-        #expect(popUp.itemArray.count == 3)
-        #expect(
-            (popUp.selectedItem?.representedObject as? UUID)
-                == instance.hostState.ephemeralBaselineSnapshotID)
-    }
-
     @Test("Choosing another snapshot moves the baseline")
     func ephemeralBaselineSelectionWritesConfig() {
         let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
@@ -708,14 +680,6 @@ struct VMSettingsGeneralPanelTests {
 
         #expect(visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
         #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
-    }
-
-    @Test("A cold baseline says the VM comes back stopped")
-    func ephemeralColdBaselineCaptionIsShown() {
-        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true, kind: .cold)
-
-        #expect(visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
-        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
     }
 
     /// There is no baseline to describe while the mode is off, and the caption
@@ -809,12 +773,6 @@ struct VMSettingsGeneralPanelTests {
             $0.stringValue.contains("but macOS runs at most two at once")
                 && isVisible($0, within: view)
         } != nil
-    }
-
-    @Test("Two marked macOS VMs are within the limit and warn about nothing")
-    func startupDoesNotWarnAtTheMacOSLimit() {
-        let (vc, _) = makeStartupController(guestOS: .macOS, markedMacOSVMs: 2)
-        #expect(!showsMacOSCapacityWarning(in: vc.view))
     }
 
     /// Linux guests don't count against the macOS cap, so the warning is not

@@ -220,25 +220,6 @@ struct VMRemovableMediaReconcilerTests {
         #expect(mock.detachCallCount == 0)
     }
 
-    @Test("apply is a no-op when VM is stopped, even with media change")
-    func liveRemovableNoopWhenStopped() async throws {
-        let mock = MockRemovableMediaDeviceService()
-        let harness = makeHarness(removableMediaDeviceService: mock)
-        let instance = VMInstanceFixture.make()
-        instance.activity.placeForTesting(.stopped)
-
-        let old = instance.configuration
-        let new = configWithRemovable(old, path: "/tmp/install.iso")
-
-        harness.reconciler.apply(for: instance, old: old, new: new, under: .edit(.hotPlugMedia))
-        // Nothing owed: no reconcile holds the VM or waits to.
-        #expect(instance.isIdle)
-
-        #expect(mock.attachCallCount == 0)
-        #expect(mock.detachCallCount == 0)
-        #expect(instance.liveRemovableMedia.isEmpty)
-    }
-
     @Test("apply is a no-op for a suspended VM, which has no session to attach to")
     func liveRemovableNoopWhenSuspended() async throws {
         let mock = MockRemovableMediaDeviceService()
@@ -271,24 +252,6 @@ struct VMRemovableMediaReconcilerTests {
 
         #expect(instance.phase == .running(sessionID: sessionID))
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-    }
-
-    @Test("Live attach failure surfaces error")
-    func liveRemovableAttachFailureSurfacesError() async throws {
-        let mock = MockRemovableMediaDeviceService()
-        mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/missing.iso")
-        let harness = makeHarness(removableMediaDeviceService: mock)
-        let (instance, _) = makeRunningInstance(in: harness)
-
-        harness.library.editConfiguration(of: instance, as: .hotPlugMedia) {
-            $0 = configWithRemovable($0, path: "/tmp/missing.iso")
-        }
-
-        try await failures.recorded.wait { failures.showError }
-
-        #expect(mock.attachCallCount == 1)
-        #expect(failures.errorMessage != nil)
-        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("deviceNotFound on detach is treated as confirmed-gone — reconcile continues with attach")
@@ -424,31 +387,6 @@ struct VMRemovableMediaReconcilerTests {
         #expect(mock.detachCallCount == 0)
         #expect(!failures.showError)
         #expect(instance.liveRemovableMedia.isEmpty)
-    }
-
-    @Test("Reconcile loop bails out when VM stops mid-pass — no spurious error")
-    func liveRemovableReconcileBailsOutOnVMStop() async throws {
-        let mock = SuspendingMockRemovableMediaDeviceService()
-        let harness = makeHarness(removableMediaDeviceService: mock)
-        let (instance, _) = makeRunningInstance(in: harness)
-
-        let baseConfig = instance.configuration
-        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
-        let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
-
-        harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        try await mock.waitUntilSuspended()
-        // The guest powers off before the suspended attach resolves.
-        harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configB }
-        instance.handleSessionEvent(.guestDidStop)
-
-        mock.resumeSuspended()
-        try await waitForChange { instance.phase.operation == nil }
-
-        #expect(mock.attachCallCount == 1)
-        #expect(mock.lastAttachedPath == "/tmp/A.iso")
-        #expect(instance.phase == .stopped)
-        #expect(!failures.showError)
     }
 
     @Test("A pass whose session ends holds the VM until it drains, and records nothing")

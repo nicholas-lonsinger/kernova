@@ -441,21 +441,6 @@ struct ClipboardTransferOperationTests {
 
     // MARK: - Queued
 
-    @Test("an operation announced as queued shows no bar of its own")
-    func queuedShowsNoBar() async {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
-
-        operation.markQueued()
-        await settle()
-
-        // Nothing has begun, so there is nothing to draw — the reporter counts it
-        // behind whatever readout is on screen instead.
-        #expect(recorder.latest == .idle)
-        withExtendedLifetime(operation) {}
-    }
-
     @Test("a queued operation that ends without ever revealing leaves nothing behind")
     func queuedOperationRetiresOnItsTerminal() async {
         let recorder = Recorder()
@@ -464,6 +449,7 @@ struct ClipboardTransferOperationTests {
 
         operation.markQueued()
         await settle()
+        #expect(recorder.latest == .idle)
         operation.finish(.completed)
         await settle()
 

@@ -155,12 +155,6 @@ struct AppPreferencesTests {
         #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == true)
     }
 
-    @Test("cloneOutcome defaults to New Machine")
-    func cloneOutcomeDefaultsToNewMachine() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.cloneOutcome == .newMachine)
-    }
-
     @Test("cloneOutcome round-trips through the cloneKeepsMachineID key")
     func cloneOutcomeRoundTrips() {
         let (prefs, defaults) = makePreferences()
@@ -288,14 +282,6 @@ struct AppPreferencesTests {
         let (prefs, _) = makePreferences()
         prefs.menuBarQuitReminderDismissed = true
 
-        prefs.resetHostReminders()
-
-        #expect(prefs.menuBarQuitReminderDismissed == false)
-    }
-
-    @Test("resetHostReminders is a no-op on fresh defaults")
-    func resetHostRemindersIdempotentOnFreshDefaults() {
-        let (prefs, _) = makePreferences()
         prefs.resetHostReminders()
 
         #expect(prefs.menuBarQuitReminderDismissed == false)

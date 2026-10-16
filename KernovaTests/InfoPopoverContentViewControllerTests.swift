@@ -28,7 +28,7 @@ struct InfoPopoverContentViewControllerTests {
         #expect(rendered == texts)
     }
 
-    @Test("code paragraph renders monospaced and selectable")
+    @Test("code paragraph renders monospaced and selectable, while the body paragraph stays non-selectable")
     func codeParagraphRenders() {
         let snippet = "mount -t virtiofs share0 /mnt/myshare"
         let vc = InfoPopoverContentViewController(paragraphs: [
@@ -41,6 +41,9 @@ struct InfoPopoverContentViewControllerTests {
             Issue.record("Expected NSStackView as the first container subview")
             return
         }
+        let bodyLabel = stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+            .first { $0.stringValue == "Mount with:" }
+        #expect(bodyLabel?.isSelectable == false)
         let codeLabel = stack.arrangedSubviews.compactMap { $0 as? NSTextField }
             .first { $0.stringValue == snippet }
         guard let label = codeLabel else {
@@ -85,24 +88,5 @@ struct InfoPopoverContentViewControllerTests {
         vc.loadViewIfNeeded()
         vc.view.layoutSubtreeIfNeeded()
         #expect(vc.view.fittingSize.width == CalloutStyle.width)
-    }
-
-    @Test("body paragraphs are non-selectable, code paragraphs are selectable")
-    func paragraphSelectability() {
-        let vc = InfoPopoverContentViewController(paragraphs: [
-            .body("Plain prose."),
-            .code("mount -t virtiofs share0 /mnt/myshare"),
-        ])
-        vc.loadViewIfNeeded()
-
-        guard let stack = vc.view.subviews.first as? NSStackView else {
-            Issue.record("Expected NSStackView as the first container subview")
-            return
-        }
-        let labels = stack.arrangedSubviews.compactMap { $0 as? NSTextField }
-        let body = labels.first { $0.stringValue == "Plain prose." }
-        let code = labels.first { $0.stringValue == "mount -t virtiofs share0 /mnt/myshare" }
-        #expect(body?.isSelectable == false)
-        #expect(code?.isSelectable == true)
     }
 }

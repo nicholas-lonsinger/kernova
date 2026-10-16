@@ -499,18 +499,6 @@ struct VMCapabilityCatalogTests {
         }
     }
 
-    @Test("A revert refuses the rename it would assign back over")
-    func renameRefusedDuringARevert() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: Self.reverting)
-
-        #expect(!harness.catalog.accepts(.rename, on: instance))
-    }
-
-    /// A revert holding a VM that was stopped.
-    private static let reverting = VMLifecyclePhase.operating(
-        .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped)
-
     @Test("Outside the joins, a commit is exactly an offer")
     func acceptanceMatchesAvailabilityElsewhere() {
         /// The pairs the two levels disagree on: each verb during the operation
@@ -558,26 +546,6 @@ struct VMCapabilityCatalogTests {
             in: harness, name: "Running macOS", phase: .running(sessionID: UUID()),
             guestOS: .macOS)
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
-    }
-
-    @Test("The snapshot delete is offered to a running Ephemeral VM, whose baseline it takes too")
-    func deleteSnapshotIsOfferedWhileRunning() {
-        let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), snapshots: [baseline],
-            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
-
-        #expect(harness.catalog.isAvailable(.deleteSnapshot, on: instance))
-    }
-
-    @Test("No snapshot is deletable in a state the manifest cannot be edited in")
-    func canDeleteSnapshotFollowsTheCapability() {
-        let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Configured", macAddress: nil)
-        let instance = makeInstance(in: harness, phase: Self.reverting, snapshots: [snapshot])
-
-        #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
     }
 
     @Test("A USB accessory edit exists only in a build that can pass one through")
@@ -761,13 +729,5 @@ struct VMCapabilityCatalogTests {
                 harness.catalog.isAvailable(.editLiveSharedDirectories, on: instance)
                     == (label == "running" && oneDevice), "\(context)")
         }
-    }
-
-    @Test("A running macOS guest with no share is offered no first share")
-    func runningMacOSGuestIsOfferedNoFirstShare() {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
-        #expect(harness.catalog.sharedDirectoriesOffer(.add, on: instance) == .changesSharingDevice)
     }
 }

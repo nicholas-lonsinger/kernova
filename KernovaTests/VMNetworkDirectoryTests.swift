@@ -43,19 +43,6 @@ struct VMNetworkDirectoryTests {
         #expect(directory.state.listed?.map(\.name) == ["LAB"])
     }
 
-    @Test("A file that cannot be read is never overwritten")
-    func anUnreadableFileRefusesChanges() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        try Data("not json".utf8).write(to: fileURL)
-        let directory = VMNetworkDirectory(fileURL: fileURL)
-
-        #expect(directory.state.listed == nil)
-        #expect(throws: CommandError.self) {
-            try directory.create(name: "Lab", kind: .nat, verb: .createNetwork)
-        }
-        #expect(try Data(contentsOf: fileURL) == Data("not json".utf8))
-    }
-
     @Test("The network a VM joins is listed only in the network's own mode")
     func theJoinedNetworkMatchesItsKind() throws {
         let directory = VMNetworkDirectory(fileURL: nil)

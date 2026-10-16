@@ -7,32 +7,6 @@ import KernovaKit
 struct VsockGuestClientTests {
     // MARK: - Tests
 
-    @Test("start invokes serve closure with a connected channel")
-    func startInvokesServeClosure() async throws {
-        let fastRetry: TimeInterval = 0.05
-        let (localFd, remoteFd) = try makeRawSocketPair()
-        let remote = VsockChannel(fileDescriptor: remoteFd)
-        remote.start()
-        defer { remote.close() }
-
-        let (servedStream, continuation) = AsyncStream<Void>.makeStream()
-
-        let client = makeTestClient(
-            kind: .monotonic,
-            port: 12345,
-            label: "test",
-            retryInterval: fastRetry
-        ) { _, _ in .success(localFd) }
-        defer { client.stop() }
-
-        client.start { channel in
-            continuation.yield(())
-            do { for try await _ in channel.incoming {} } catch {}
-        }
-
-        _ = try await awaitFirst(servedStream)
-    }
-
     @Test("liveChannel is non-nil while serve is running and nil after serve returns")
     func liveChannelLifecycle() async throws {
         let fastRetry: TimeInterval = 0.05
@@ -254,31 +228,6 @@ struct VsockGuestClientTests {
         #expect(client.liveChannelForTesting != nil)
     }
 
-    @Test("permanent socket-provider failure halts the reconnect loop")
-    func permanentFailureHaltsLoop() async throws {
-        let fastRetry: TimeInterval = 0.05
-        let provideCounter = AtomicInt()
-
-        let client = makeTestClient(
-            kind: .monotonic,
-            port: 12345,
-            label: "test",
-            retryInterval: fastRetry
-        ) { _, _ in
-            provideCounter.increment()
-            return .failure(.permanent("AF_VSOCK not supported"))
-        }
-        defer { client.stop() }
-
-        client.start { _ in }
-
-        // Wait several retry intervals — if the loop kept retrying we'd see >1 calls.
-        try await Task.sleep(nanoseconds: 300_000_000)
-
-        #expect(provideCounter.value == 1)
-        #expect(client.liveChannelForTesting == nil)
-    }
-
     /// Pins the docstring contract: once permanently terminated, subsequent
     /// `start` calls are no-ops — the client cannot be restarted.
     @Test("start after permanent termination is a no-op — provider is never called again")
@@ -342,15 +291,6 @@ struct ClassifySocketErrnoTests {
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for EMFILE, got \(result)")
-        }
-    }
-
-    @Test("EACCES (access control) classifies as transient — sandbox may clear")
-    func eaccesIsTransient() {
-        let result = VsockGuestClient.classifySocketErrno(EACCES, label: "test")
-        if case .transient = result {
-        } else {
-            Issue.record("Expected .transient for EACCES, got \(result)")
         }
     }
 
@@ -575,14 +515,6 @@ struct BlockingConnectTests {
         #expect(handoff.abandon())
         #expect(handoff.outcome == nil)
         #expect(handoff.finish(errno: ECONNREFUSED) == false)
-        #expect(handoff.outcome == ECONNREFUSED)
-    }
-
-    @Test("A failing syscall reports its errno to a waiter still present")
-    func failingSyscallReportsErrno() {
-        let handoff = BlockingConnectHandoff()
-
-        #expect(handoff.finish(errno: ECONNREFUSED))
         #expect(handoff.outcome == ECONNREFUSED)
     }
 

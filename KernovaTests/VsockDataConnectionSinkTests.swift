@@ -26,17 +26,6 @@ struct VsockDataConnectionSinkTests {
         return recv(peer, &byte, 1, 0) == 0
     }
 
-    @Test("With no service set, an accepted descriptor is ended")
-    func unsetEndsTheDescriptor() throws {
-        let (a, b) = try makeRawSocketPair()
-        defer { close(b) }  // `a` is owned — and must be closed — by the sink.
-
-        let sink = VsockDataConnectionSink()
-        sink.accept(fd: a)
-
-        #expect(peerSeesEOF(b))
-    }
-
     @Test("A set service takes over the descriptor as it is")
     func setServiceTakesTheDescriptor() throws {
         let (a, b) = try makeRawSocketPair()

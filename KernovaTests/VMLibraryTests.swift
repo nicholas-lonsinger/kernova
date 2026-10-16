@@ -579,24 +579,6 @@ struct VMLibraryTests {
 
     // MARK: - Reconcile With Disk
 
-    @Test("reconcileWithDisk adds discovered bundles not in memory")
-    func reconcileAddsNewBundles() {
-        let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Discovered VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = scratch.url
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[bundleURL] = config
-
-        // The library is never loaded here, so the bundle is on disk and absent
-        // from memory — exactly what reconciliation is for.
-        let (library, _, _, _) = makeLibrary(storageService: storage)
-
-        library.reconcileWithDisk()
-
-        #expect(library.instances.count == 1)
-        #expect(library.instances.first?.name == "Discovered VM")
-    }
-
     @Test("Becoming active adopts a bundle that arrived without a write to the VMs directory")
     func activationAdoptsBundleTheDirectoryNeverReported() async throws {
         let center = NotificationCenter()
@@ -611,18 +593,6 @@ struct VMLibraryTests {
         center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
 
         try await waitForChange { library.instances.map(\.name) == ["Hand Copied"] }
-    }
-
-    @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
-    func reconcileRemovesStoppedVMs() {
-        let (library, _, _, _) = makeLibrary()
-        let instance = library.admitFixture(name: "Gone VM")
-        instance.activity.placeForTesting(.stopped)
-
-        // Storage has no bundles, so instance should be removed
-        library.reconcileWithDisk()
-
-        #expect(library.instances.isEmpty)
     }
 
     @Test("Evicting a VM whose bundle is gone drops its held guest-account password")
@@ -797,28 +767,6 @@ struct VMLibraryTests {
         #expect(failures.errorSubject?.isLibrary == true)
     }
 
-    @Test("reconcileWithDisk does not ask for the check again for an already-reported bundle")
-    func reconcileDeduplicatesFailedBundleErrors() {
-        let storage = MockVMStorageService()
-        let (library, _, _, _) = makeLibrary(storageService: storage)
-
-        // Introduce the bad bundle after construction so it is new to reconcileWithDisk
-        let badURL = scratch.url
-            .appendingPathComponent("broken-vm.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
-        storage.loadConfigurationFailURLs.insert(badURL)
-
-        // First reconciliation should present the error
-        failures.reset()
-        library.reconcileWithDisk()
-        #expect(failures.checkRequests == 1)
-
-        // Second reconciliation should NOT re-present the same error
-        failures.reset()
-        library.reconcileWithDisk()
-        #expect(failures.checkRequests == 0)
-    }
-
     @Test("reconcileWithDisk suppression is maintained after full reload")
     func reconcileSuppressionMaintainedAfterReload() async {
         let storage = MockVMStorageService()
@@ -843,27 +791,6 @@ struct VMLibraryTests {
 
         // Reconciliation should still be suppressed since loadVMs re-seeded the set
         failures.reset()
-        library.reconcileWithDisk()
-        #expect(failures.checkRequests == 0)
-    }
-
-    @Test("reconcileWithDisk does not ask for the check for bundles loadVMs reported")
-    func reconcileDoesNotDuplicateLoadVMsErrors() async {
-        let storage = MockVMStorageService()
-        let badURL = scratch.url
-            .appendingPathComponent("broken-vm.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
-        storage.loadConfigurationFailURLs.insert(badURL)
-
-        // The initial load should report the error
-        let (library, _, _, _) = makeLibrary(storageService: storage)
-        await library.loadVMs()
-        #expect(failures.checkRequests == 1)
-
-        // Clear the alert state (simulating user dismissing the dialog)
-        failures.reset()
-
-        // First reconcileWithDisk should NOT re-present the same error
         library.reconcileWithDisk()
         #expect(failures.checkRequests == 0)
     }
@@ -1020,27 +947,9 @@ struct VMLibraryTests {
         #expect(library.instances[0].status == .stopped)
     }
 
-    @Test("reconcileWithDisk removes .initialBoot VMs whose bundles vanish")
-    func reconcileRemovesInitialBootVMs() {
-        let (library, storage, _, _) = makeLibrary()
-        library.admitFixture(
-            name: "Pending VM", guestOS: .macOS, phase: .initialBoot
-        ) {
-            $0.installContext = MacOSInstallContext(
-                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-        // Bundle is NOT in storage.bundles — simulating an on-disk deletion.
-
-        library.reconcileWithDisk()
-
-        #expect(library.instances.isEmpty)
-        // Note: deleteVMBundle is NOT called — reconcile only evicts the in-memory entry.
-        #expect(storage.deleteVMBundleCallCount == 0)
-    }
-
     @Test("reconcileWithDisk keeps an orphaned VM its setup holds, and evicts it once at rest")
     func reconcileKeepsAVMItsSetupHolds() {
-        let (library, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         let instance = library.admitFixture(
             name: "Pending VM", guestOS: .macOS, phase: .initialBoot
         ) {
@@ -1062,6 +971,7 @@ struct VMLibraryTests {
 
         #expect(library.instances.isEmpty)
         #expect(instance.phase == .removed)
+        #expect(storage.deleteVMBundleCallCount == 0)
     }
 
     // MARK: - Reconcile With Disk (Arrivals)

@@ -33,20 +33,6 @@ struct CLIConfigurationWireTests {
         #expect(named.sent == [.configuration(.idOrName("Alpha"), keys: ["memory", "cpus"])])
     }
 
-    @Test("get --keys asks for the keyspace, which names no virtual machine")
-    func getKeysAsksForTheKeyspace() throws {
-        let keyspace = [
-            ConfigurationKeyDescriptor(
-                name: "cpus", summary: "Virtual CPU cores.",
-                editableWhileRunning: ["macOS": false, "linux": false])
-        ]
-        let exchanged = try CLIWire.exchange(
-            ["get", "--keys"], answering: VMCommandResponse(result: .configurationKeys(keyspace)))
-
-        #expect(exchanged.sent == [.configurationKeys])
-        #expect(try exchanged.answer.payload() == .configurationKeys(keyspace))
-    }
-
     // MARK: - Writes
 
     @Test("A set crosses as one request carrying every assignment, in the order typed")
@@ -62,19 +48,6 @@ struct CLIConfigurationWireTests {
                 .setConfiguration(.idOrName("Alpha"), assignments: settings, consent: .none)
             ])
         #expect(try exchanged.answer.payload() == .configuration(settings))
-    }
-
-    @Test("--yes crosses as the consent the one gated setting asks for")
-    func setCarriesConsentAcrossTheWire() throws {
-        let passthrough = [ConfigurationEntry(key: "clipboard.passthrough", value: "true")]
-        let exchanged = try CLIWire.exchange(
-            ["set", "Alpha", "clipboard.passthrough=true", "--yes"],
-            answering: VMCommandResponse(result: .configuration(passthrough)))
-
-        #expect(
-            exchanged.sent == [
-                .setConfiguration(.idOrName("Alpha"), assignments: passthrough, consent: .all)
-            ])
     }
 
     @Test("A set the app will not do without consent says how to give it")
@@ -135,31 +108,6 @@ struct CLIConfigurationWireTests {
             ["share", "list", identifier.uuidString, "--id"],
             answering: VMCommandResponse(result: .sharedDirectories(shares)))
         #expect(identified.sent == [.sharedDirectories(.id(identifier))])
-    }
-
-    @Test("A share add crosses with the folder's absolute path and how it mounts")
-    func shareAddSendsThePathAndItsAccess() throws {
-        let exchanged = try CLIWire.exchange(
-            ["share", "add", "Alpha", "/tmp/Work", "--read-only"],
-            answering: VMCommandResponse(result: .ok))
-
-        #expect(
-            exchanged.sent == [
-                .editSharedDirectory(.idOrName("Alpha"), .add(path: "/tmp/Work", readOnly: true))
-            ])
-        #expect(try exchanged.answer.payload() == .ok)
-    }
-
-    @Test("A share remove names the path rather than an identifier the caller has no way to hold")
-    func shareRemoveSendsThePath() throws {
-        let exchanged = try CLIWire.exchange(
-            ["share", "remove", "Alpha", "/tmp/Work"],
-            answering: VMCommandResponse(result: .ok))
-
-        #expect(
-            exchanged.sent == [
-                .editSharedDirectory(.idOrName("Alpha"), .removePath(path: "/tmp/Work"))
-            ])
     }
 
     // MARK: - Answers

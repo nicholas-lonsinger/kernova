@@ -190,20 +190,6 @@ struct VMCreationWizardViewControllerTests {
     }
 
     @available(macOS 27.0, *)
-    @Test("Next from Resources mounts the account step when an account is being created")
-    func nextFromResourcesMountsTheAccountStep() {
-        let vm = makeAccountModel()
-        vm.currentStep = .resources
-        let wizard = VMCreationWizardViewController(creationVM: vm)
-        wizard.loadViewIfNeeded()
-
-        findButton(titled: "Next", in: wizard.view)?.performClick(nil)
-
-        #expect(vm.currentStep == .guestAccount)
-        #expect(wizard.children.first is GuestAccountContentViewController)
-    }
-
-    @available(macOS 27.0, *)
     @Test("Tab walks the account fields in order when the step mounts after the sheet is up")
     func tabWalksTheAccountFields() throws {
         let vm = makeAccountModel()

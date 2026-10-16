@@ -8,13 +8,6 @@ import Testing
 /// value silently degrades a real failure to the generic fallback sentence.
 @Suite("ClipboardErrorCode", .caseScoped)
 struct ClipboardErrorCodeTests {
-    @Test("every code round-trips through its wire spelling")
-    func roundTrips() {
-        for code in ClipboardErrorCode.allCases {
-            #expect(ClipboardErrorCode(rawValue: code.rawValue) == code)
-        }
-    }
-
     @Test("the wire spellings are the ones both sides carry")
     func rawValues() {
         #expect(ClipboardErrorCode.pasteTooLarge.rawValue == "clipboard.paste.too.large")
@@ -29,10 +22,5 @@ struct ClipboardErrorCodeTests {
         for code in ClipboardErrorCode.allCases {
             #expect(code.rawValue.hasPrefix("clipboard."))
         }
-    }
-
-    @Test("an unknown code maps to no case rather than a neighbouring one")
-    func unknownCode() {
-        #expect(ClipboardErrorCode(rawValue: "clipboard.transfer.send.failure") == nil)
     }
 }

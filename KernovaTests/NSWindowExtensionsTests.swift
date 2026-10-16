@@ -21,21 +21,6 @@ struct NSWindowExtensionsTests {
         return controller
     }
 
-    @Test("Content size survives the contentViewController assignment")
-    func contentSizeSurvivesAssignment() {
-        let size = NSSize(width: 1200, height: 900)
-        let window = NSWindow.withStableContentSize(
-            size,
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            contentViewController: makeFlexibleContentViewController()
-        )
-        adoptAppWindow(window)
-
-        let contentSize = window.contentRect(forFrameRect: window.frame).size
-        #expect(contentSize.width == size.width)
-        #expect(contentSize.height == size.height)
-    }
-
     /// The regression guard: a later `minSize` must clamp against the requested
     /// size, never against the content view's (much smaller) fitting size.
     @Test("A later minSize does not shrink the window to the fitting size")
@@ -47,6 +32,9 @@ struct NSWindowExtensionsTests {
             contentViewController: makeFlexibleContentViewController()
         )
         adoptAppWindow(window)
+        let initialSize = window.contentRect(forFrameRect: window.frame).size
+        #expect(initialSize.width == size.width)
+        #expect(initialSize.height == size.height)
         window.minSize = NSSize(width: 800, height: 500)
 
         let contentSize = window.contentRect(forFrameRect: window.frame).size

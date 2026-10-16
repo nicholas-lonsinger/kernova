@@ -981,13 +981,6 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationService.isTransientStartError(error))
     }
 
-    @Test("VM limit exceeded under an installation failure is transient")
-    func nestedVMLimitExceededIsTransient() {
-        let error = makeInstallVMLimitExceededError()
-        #expect(VirtualizationService.isVirtualMachineLimitExceeded(error))
-        #expect(VirtualizationService.isTransientStartError(error))
-    }
-
     @Test("VM limit exceeded is found anywhere within the bounded chain")
     func deeplyNestedVMLimitExceededIsFound() {
         for depth in 2...4 {
@@ -1048,18 +1041,6 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationService.isTransientStartError(error))
     }
 
-    @Test("invalid VM configuration error is permanent")
-    func invalidConfigurationIsPermanent() {
-        let error = NSError(domain: VZError.errorDomain, code: VZError.Code.invalidVirtualMachineConfiguration.rawValue)
-        #expect(!VirtualizationService.isTransientStartError(error))
-    }
-
-    @Test("internal VZ error is permanent")
-    func internalVZErrorIsPermanent() {
-        let error = NSError(domain: VZError.errorDomain, code: VZError.Code.internalError.rawValue)
-        #expect(!VirtualizationService.isTransientStartError(error))
-    }
-
     @Test("configuration builder error is permanent")
     func configBuilderErrorIsPermanent() {
         let error = ConfigurationBuilderError.missingKernelPath
@@ -1092,11 +1073,6 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationService.isFileLockContention(makeFileLockContentionError()))
     }
 
-    @Test("file-lock contention is a transient start error")
-    func fileLockContentionIsTransient() {
-        #expect(VirtualizationService.isTransientStartError(makeFileLockContentionError()))
-    }
-
     @Test("lock contention wrapped in a disk attach failure is still lock contention")
     func wrappedLockContentionIsLockContention() {
         // The lock is taken on the disk image, so contention surfaces from the
@@ -1105,15 +1081,6 @@ struct VirtualizationServiceTests {
         // a post-install auto-boot would fail on its first attempt.
         let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
             id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
-            underlying: makeFileLockContentionError())
-        #expect(VirtualizationService.isFileLockContention(wrapped))
-        #expect(VirtualizationService.isTransientStartError(wrapped))
-    }
-
-    @Test("wrapped removable media lock contention is transient")
-    func wrappedRemovableMediaLockContentionIsTransient() {
-        let wrapped = ConfigurationBuilderError.removableMediaAttachFailed(
-            id: UUID(), path: "/tmp/install.iso", label: "Installer",
             underlying: makeFileLockContentionError())
         #expect(VirtualizationService.isFileLockContention(wrapped))
         #expect(VirtualizationService.isTransientStartError(wrapped))

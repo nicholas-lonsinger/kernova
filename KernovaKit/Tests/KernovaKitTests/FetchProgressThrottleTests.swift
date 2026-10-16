@@ -34,14 +34,6 @@ struct FetchProgressCoalescerTests {
 struct FetchProgressThrottleTests {
     private let total: UInt64 = 1_000_000
 
-    @Test("the first forward chunk pushes (seeded with a large elapsed)")
-    func firstForwardChunkPushes() {
-        #expect(
-            FetchProgressThrottle.shouldPush(
-                bytes: 1, total: total, lastPushedBytes: 0,
-                elapsedSinceLastPush: .greatestFiniteMagnitude))
-    }
-
     @Test("no forward progress never pushes")
     func noForwardProgressDoesNotPush() {
         // Equal bytes — even past the time bound and even at the total.

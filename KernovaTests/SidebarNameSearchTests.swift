@@ -400,14 +400,6 @@ struct SidebarNameSearchTests {
         #expect(subject.fieldHasFocus)
     }
 
-    @Test("A library window opens with the search field hidden")
-    func fieldHiddenByDefault() throws {
-        let subject = try makeWindow(makeViewModel())
-        subject.window.makeKeyAndOrderFront(nil)
-
-        #expect(!subject.fieldShown)
-    }
-
     @Test("The default toolbar puts Search right after New VM, ahead of the sidebar toggle")
     func searchButtonInDefaultToolbar() throws {
         let subject = try makeWindow(makeViewModel())

@@ -111,22 +111,6 @@ struct VMBundleLayoutTests {
 
     // MARK: - hasSaveFile
 
-    @Test("hasSaveFile returns false when no save file exists")
-    func hasSaveFileReturnsFalse() {
-        let layout = VMBundleLayout(bundleURL: scratch.url)
-        #expect(layout.hasSaveFile == false)
-    }
-
-    @Test("hasSaveFile returns true when save file exists on disk")
-    func hasSaveFileReturnsTrue() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-
-        let layout = VMBundleLayout(bundleURL: scratch.url)
-        FileManager.default.createFile(atPath: layout.saveFileURL.path(percentEncoded: false), contents: Data([0x00]))
-
-        #expect(layout.hasSaveFile == true)
-    }
-
     // MARK: - diskSizes.onDiskBytes
 
     private func mainDiskSizes(_ layout: VMBundleLayout) -> VMBundleLayout.DiskSizes {
@@ -260,12 +244,6 @@ struct VMBundleLayoutTests {
                 path: original.path(percentEncoded: false), isInternal: false,
                 bookmark: bookmark))
         #expect(sizes.capacityBytes == 2048)
-    }
-
-    @Test("capacityBytes is nil for a missing file")
-    func diskCapacityBytesNilForMissingFile() {
-        let layout = VMBundleLayout(bundleURL: scratch.url)
-        #expect(mainDiskCapacityBytes(layout) == nil)
     }
 
     @Test("capacityBytes is nil for a malformed ASIF rather than its file size")

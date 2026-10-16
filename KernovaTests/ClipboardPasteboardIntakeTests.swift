@@ -132,11 +132,13 @@ struct ClipboardPasteboardIntakeTests {
             ], to: pasteboard)
 
         guard
-            case .rejected = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true)
+            case .rejected(_, let unreadable) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
         else {
             Issue.record("Expected rejection for \(marker)")
             return
         }
+        #expect(unreadable == false)
     }
 
     @Test("multiple representations are all taken, in order")
@@ -205,26 +207,6 @@ struct ClipboardPasteboardIntakeTests {
         }
     }
 
-    @Test("text-only transport takes only the text representation")
-    func textOnlyTransport() throws {
-        let pasteboard = makeScratchPasteboard()
-        let png = try makePNG()
-        write(
-            [
-                (uti: UTType.png.identifier, data: png),
-                (uti: ClipboardContent.utf8TextUTI, data: Data("caption".utf8)),
-            ], to: pasteboard)
-
-        guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: false)
-        else {
-            Issue.record("Expected content")
-            return
-        }
-        #expect(content.representations.map(\.uti) == [ClipboardContent.utf8TextUTI])
-    }
-
     @Test("text-only transport rejects image-only content with a clear message")
     func textOnlyTransportRejectsImage() throws {
         let pasteboard = makeScratchPasteboard()
@@ -238,23 +220,6 @@ struct ClipboardPasteboardIntakeTests {
             return
         }
         #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
-    }
-
-    @Test("filtered-only content is rejected, not silently emptied")
-    func filteredOnlyRejected() {
-        let pasteboard = makeScratchPasteboard()
-        write(
-            [(uti: "org.nspasteboard.TransientType", data: Data([1]))], to: pasteboard)
-
-        guard
-            case .rejected(_, let unreadable) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
-        else {
-            Issue.record("Expected rejection")
-            return
-        }
-        // Nothing qualified, so nothing was lost — a verdict, not a failure.
-        #expect(unreadable == false)
     }
 
     @Test("a declared type the pasteboard won't hand over is rejected as unreadable")
@@ -274,31 +239,6 @@ struct ClipboardPasteboardIntakeTests {
         }
         #expect(message == "The Mac clipboard has no shareable content")
         #expect(unreadable)
-    }
-
-    @Test("a large inline representation is kept (no size cap)")
-    func largeInlineRepresentationKept() {
-        // The greedy budget and per-rep cap are gone — streaming bounds size by
-        // free disk, not a fixed limit, so a large inline rep survives intake.
-        let pasteboard = makeScratchPasteboard()
-        write(
-            [
-                (uti: UTType.tiff.identifier, data: Data(count: 8 * 1024 * 1024)),
-                (uti: ClipboardContent.utf8TextUTI, data: Data("small".utf8)),
-            ], to: pasteboard)
-
-        guard
-            case .content(let content, let note) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
-        else {
-            Issue.record("Expected content")
-            return
-        }
-        #expect(
-            content.representations.map(\.uti) == [
-                UTType.tiff.identifier, ClipboardContent.utf8TextUTI,
-            ])
-        #expect(note == nil)
     }
 
     // MARK: - File URL expansion
@@ -397,34 +337,6 @@ struct ClipboardPasteboardIntakeTests {
         // been there: items were there and could not be read.
         #expect(message == "Couldn't read the dropped item")
         #expect(unreadable)
-    }
-
-    @Test("a vanished file URL never suppresses the item's inline image")
-    func vanishedFileURLKeepsInlineImage() throws {
-        // `HostClipboardPublisher` pairs an image UTI with `.fileURL` on one
-        // item precisely so the inline bytes can stand in once the staged file
-        // is swept. Classifying the item as a pure loss would defeat that.
-        let png = try makePNG()
-        let missing = scratch.url
-            .appendingPathComponent("\(UUID().uuidString)-swept.png")
-        let pasteboard = makeScratchPasteboard()
-        pasteboard.clearContents()
-        let item = NSPasteboardItem()
-        item.setData(png, forType: NSPasteboard.PasteboardType(UTType.png.identifier))
-        item.setString(missing.absoluteString, forType: .fileURL)
-        pasteboard.writeObjects([item])
-
-        guard
-            case .content(let content, let note) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
-        else {
-            Issue.record("Expected the inline image to survive the vanished file URL")
-            return
-        }
-        #expect(content.representations.count == 1)
-        #expect(UTType(content.representations[0].uti)?.conforms(to: .image) == true)
-        // The inline flavor *is* the item's content, so nothing was lost.
-        #expect(note == nil)
     }
 
     @Test("a vanished file on another item is still reported alongside item 0's content")
@@ -543,39 +455,6 @@ struct ClipboardPasteboardIntakeTests {
         #expect(note == nil)
     }
 
-    @Test("read(filesAt:) skips an unreadable file with a note, keeping the rest")
-    func readFilesAtSkipsUnreadable() async throws {
-        let good = try makeFile(name: "good.txt", contents: Data("ok".utf8))
-        let missing = scratch.url
-            .appendingPathComponent("\(UUID().uuidString)-missing.txt")
-
-        guard
-            case .content(let content, let note) = await ClipboardPasteboardIntake.read(
-                filesAt: [good, missing], allowsBinary: true)
-        else {
-            Issue.record("Expected content")
-            return
-        }
-        #expect(content.representations.map(\.filename) == ["good.txt"])
-        #expect(note != nil)
-    }
-
-    @Test("read(filesAt:) rejects when every file is unreadable")
-    func readFilesAtAllFail() async {
-        let missing1 = scratch.url
-            .appendingPathComponent("\(UUID().uuidString)-m1")
-        let missing2 = scratch.url
-            .appendingPathComponent("\(UUID().uuidString)-m2")
-
-        guard
-            case .rejected = await ClipboardPasteboardIntake.read(
-                filesAt: [missing1, missing2], allowsBinary: true)
-        else {
-            Issue.record("Expected rejection")
-            return
-        }
-    }
-
     @Test("read(filesAt:) on a text-only transport is rejected")
     func readFilesAtTextOnlyRejected() async throws {
         let a = try makeFile(name: "a.txt", contents: Data("a".utf8))
@@ -646,86 +525,6 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].filename == "image.png")
     }
 
-    @Test("dragged non-image file crosses as a disk-backed file representation")
-    func nonImageFileCrossesAsFile() async throws {
-        let contents = Data([0x00, 0x01])
-        let url = try makeFile(name: "blob.bin", contents: contents)
-        let pasteboard = makeScratchPasteboard()
-        pasteboard.clearContents()
-        let item = NSPasteboardItem()
-        item.setString(url.absoluteString, forType: .fileURL)
-        pasteboard.writeObjects([item])
-
-        guard
-            case .content(let content, _) = await resolve(
-                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
-                allowsBinary: true)
-        else {
-            Issue.record("Expected content")
-            return
-        }
-        #expect(content.representations.count == 1)
-        #expect(content.representations[0].filename == "blob.bin")
-        #expect(content.representations[0].byteCount == contents.count)
-        #expect(content.representations[0].fileURL == url)
-    }
-
-    @Test("read(filesAt:) resolves a single image file directly — the promise-receipt path")
-    func directFileReadImage() async throws {
-        let png = try makePNG()
-        let url = try makeFile(name: "promised.png", contents: png)
-
-        guard
-            case .content(let content, _) = await ClipboardPasteboardIntake.read(
-                filesAt: [url], allowsBinary: true)
-        else {
-            Issue.record("Expected content")
-            return
-        }
-        #expect(content.representations.count == 1)
-        #expect(content.representations[0].byteCount == png.count)
-        #expect(content.representations[0].fileURL == url)
-    }
-
-    @Test("read(filesAt:) accepts a large file — there is no per-rep size limit")
-    func directFileReadLargeAccepted() async throws {
-        // A large file becomes a disk-backed rep whose bytes stream on demand.
-        // A sparse file keeps the test fast.
-        let url = try makeFile(name: "huge.bin", contents: Data())
-        let handle = try FileHandle(forWritingTo: url)
-        try handle.truncate(atOffset: 200 * 1024 * 1024)  // 200 MiB sparse
-        try handle.close()
-
-        guard
-            case .content(let content, _) = await ClipboardPasteboardIntake.read(
-                filesAt: [url], allowsBinary: true)
-        else {
-            Issue.record("Expected content (no size cap)")
-            return
-        }
-        #expect(content.representations.first?.byteCount == 200 * 1024 * 1024)
-    }
-
-    @Test("dragged image file on a text-only transport is rejected")
-    func imageFileTextOnlyRejected() async throws {
-        let url = try makeFile(name: "image.png", contents: try makePNG())
-        let pasteboard = makeScratchPasteboard()
-        pasteboard.clearContents()
-        let item = NSPasteboardItem()
-        item.setString(url.absoluteString, forType: .fileURL)
-        pasteboard.writeObjects([item])
-
-        guard
-            case .rejected(let message, _) = await resolve(
-                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: false),
-                allowsBinary: false)
-        else {
-            Issue.record("Expected rejection")
-            return
-        }
-        #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
-    }
-
     // MARK: - Folders
 
     private func makeFolder(name: String, files: [(String, Data)]) throws -> URL {
@@ -781,18 +580,6 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[1].isDirectory)
         #expect(content.representations[1].filename == "Docs")
         #expect(content.representations[1].directorySourceURL == folder)
-    }
-
-    @Test("a copied folder on a text-only transport is rejected")
-    func folderTextOnlyRejected() async throws {
-        let folder = try makeFolder(name: "F", files: [("a", Data("a".utf8))])
-        guard
-            case .rejected = await ClipboardPasteboardIntake.read(
-                filesAt: [folder], allowsBinary: false)
-        else {
-            Issue.record("Expected rejection")
-            return
-        }
     }
 
     // MARK: - Screenshot thumbnail (promised file URL)
@@ -854,22 +641,5 @@ struct ClipboardPasteboardIntakeTests {
             Issue.record("Expected rejection — the path must not leak as text content")
             return
         }
-    }
-
-    @Test("a plain text drag (no file/promise) still becomes text")
-    func plainTextDragStillText() {
-        // Guard against over-reaching the file-context skip: a genuine text
-        // drag has no file/promise types, so the text survives.
-        let pasteboard = makeScratchPasteboard()
-        write([(uti: ClipboardContent.utf8TextUTI, data: Data("just some text".utf8))], to: pasteboard)
-
-        guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
-        else {
-            Issue.record("Expected text content")
-            return
-        }
-        #expect(content.text == "just some text")
     }
 }

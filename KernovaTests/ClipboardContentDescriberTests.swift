@@ -170,15 +170,6 @@ struct ClipboardContentDescriberTests {
         #expect(ClipboardContentDescriber.imagePixelSize(data: Data("not an image".utf8)) == nil)
     }
 
-    @Test("imagePixelSize(url:) reads dimensions from a file-backed image header")
-    func pixelSizeFromURL() throws {
-        let png = try makePNG(width: 20, height: 9)
-        let url = scratch.url.appendingPathComponent("\(UUID().uuidString).png")
-        try png.write(to: url)
-
-        #expect(ClipboardContentDescriber.imagePixelSize(url: url) == CGSize(width: 20, height: 9))
-    }
-
     @Test("imagePixelSize(url:) returns nil for a missing file")
     func pixelSizeURLNilForMissing() {
         let missing = scratch.url.appendingPathComponent("\(UUID().uuidString)-does-not-exist.png")

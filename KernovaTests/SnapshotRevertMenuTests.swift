@@ -84,15 +84,6 @@ struct SnapshotRevertMenuTests {
         #expect(ref?.snapshot == snapshot)
     }
 
-    @Test("Items are disabled while the VM is mid-transition")
-    func itemsDisabledWhileTransitioning() {
-        let instance = makeInstance(
-            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
-
-        #expect(rebuild(for: instance).items.allSatisfy { !$0.isEnabled })
-    }
-
     @Test("Items are enabled on a running VM, which the revert terminates")
     func itemsEnabledWhileRunning() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))

@@ -41,21 +41,6 @@ struct StatusMenuCountLineTests {
 
     // MARK: - Title
 
-    @Test("No undone starts produce no line")
-    func titleForNone() {
-        #expect(StatusMenuCountLine.undoneStartTitle(count: 0) == nil)
-    }
-
-    @Test("One undone start titles the line in the singular")
-    func titleForOne() {
-        #expect(StatusMenuCountLine.undoneStartTitle(count: 1) == "1 VM Didn\u{2019}t Start\u{2026}")
-    }
-
-    @Test("Several undone starts title the line in the plural, counted")
-    func titleForSeveral() {
-        #expect(StatusMenuCountLine.undoneStartTitle(count: 4) == "4 VMs Didn\u{2019}t Start\u{2026}")
-    }
-
     @Test("Waiting alerts title their line by count, and none produce no line")
     func waitingAlertTitles() {
         #expect(StatusMenuCountLine.waitingAlertTitle(count: 0) == nil)

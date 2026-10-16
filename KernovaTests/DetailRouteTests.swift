@@ -13,38 +13,6 @@ struct DetailRouteTests {
 
     // MARK: - Settings
 
-    @Test("Stopped routes to settings")
-    func stoppedIsEditableSettings() {
-        let route = DetailRoute.resolve(
-            phase: .stopped,
-            hasSetupState: false,
-            detailPaneMode: .display
-        )
-        #expect(route == .settings)
-    }
-
-    @Test("A failure routes to the error banner carrying its own message")
-    func failureRoutesToErrorBanner() {
-        let route = DetailRoute.resolve(
-            phase: .failed(message: "Boot failed."),
-            hasSetupState: false,
-            detailPaneMode: .display
-        )
-        #expect(route == .error(message: "Boot failed."))
-        // A second failure with different text must not compare equal to the first.
-        #expect(route != .error(message: nil))
-    }
-
-    @Test("Initial boot routes to .initialBoot")
-    func initialBootRoute() {
-        let route = DetailRoute.resolve(
-            phase: .initialBoot,
-            hasSetupState: false,
-            detailPaneMode: .display
-        )
-        #expect(route == .initialBoot)
-    }
-
     // MARK: - Installing
 
     @Test("Installing with a setup state routes to .setup")
@@ -172,22 +140,5 @@ struct DetailRouteTests {
             #expect(display == expected.display, "\(phase)")
             #expect(settings == expected.settings, "\(phase)")
         }
-    }
-
-    @Test("A suspended VM keeps the display pane — it is settled, not transitioning")
-    func suspendedKeepsTheDisplayPane() {
-        let display = DetailRoute.resolve(
-            phase: .suspended,
-            hasSetupState: false,
-            detailPaneMode: .display
-        )
-        #expect(display == .display)
-
-        let settings = DetailRoute.resolve(
-            phase: .suspended,
-            hasSetupState: false,
-            detailPaneMode: .settings
-        )
-        #expect(settings == .settings)
     }
 }

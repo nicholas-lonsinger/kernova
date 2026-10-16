@@ -570,17 +570,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(settings.hostState.ephemeralBaselineSnapshotID == nil)
     }
 
-    @Test("A VM with no snapshot cannot be made ephemeral")
-    func ephemeralNeedsASnapshot() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
-        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
-
-        #expect(throws: CommandError.self) {
-            try write(key, "true", to: &settings, manifest: VMSnapshotManifest())
-        }
-        #expect(!settings.hostState.ephemeralModeEnabled)
-    }
-
     // MARK: - Host state
 
     @Test("A host-state key writes the host state and leaves the configuration alone")

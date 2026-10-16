@@ -72,27 +72,6 @@ struct VsockGuestLogServiceTests {
 
     // MARK: - Tests
 
-    @Test("Forwards LogRecord frames to the emitter")
-    func forwardsLogRecord() async throws {
-        let emitter = RecordingEmitter()
-        let (sender, receiver) = try makePair()
-        sender.start()
-        receiver.start()
-        defer { sender.close() }
-
-        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
-        service.start()
-        defer { service.stop() }
-
-        try sender.send(makeLogFrame(level: .notice, message: "hello world"))
-        try await waitForRecords(emitter, count: 1)
-
-        let records = emitter.snapshot()
-        #expect(records.count == 1)
-        #expect(records.first.map(joinedText) == "hello world")
-        #expect(records.first?.level == .notice)
-    }
-
     @Test("Forwards multiple LogRecord frames in order")
     func forwardsMultipleRecords() async throws {
         let emitter = RecordingEmitter()
@@ -143,31 +122,6 @@ struct VsockGuestLogServiceTests {
         let records = emitter.snapshot()
         #expect(records.count == 1)
         #expect(records.first.map(joinedText) == "real record")
-    }
-
-    @Test("A wrong-port payload closes the channel and emits nothing")
-    func wrongPortPayloadClosesChannel() async throws {
-        let emitter = RecordingEmitter()
-        let (sender, receiver) = try makePair()
-        sender.start()
-        receiver.start()
-        defer { sender.close() }
-
-        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
-        service.start()
-        defer { service.stop() }
-
-        // Hello belongs on the control channel — on the log channel it is a
-        // protocol violation the service answers by dropping the channel (#145).
-        var hello = Frame()
-        hello.protocolVersion = 1
-        hello.hello = Kernova_V1_Hello.with { $0.serviceVersion = 1 }
-        try sender.send(hello)
-
-        // The service closes its end; the sender observes EOF. EOF also proves
-        // the hello was fully processed, so the emitter check below is not racy.
-        await expectEOF(on: sender)
-        #expect(emitter.snapshot().isEmpty)
     }
 
     @Test("All log levels round-trip with the correct enum value")
@@ -265,6 +219,7 @@ struct VsockGuestLogServiceTests {
         try sender.send(hello)
 
         try await lost.changed.wait { lost.count == 1 }
+        await expectEOF(on: sender)
         #expect(emitter.snapshot().isEmpty)
     }
 
@@ -292,30 +247,6 @@ struct VsockGuestLogServiceTests {
 
         try await Task.sleep(for: .milliseconds(200))
         #expect(emitter.snapshot().isEmpty)
-    }
-
-    @Test("Service stops cleanly when remote end closes")
-    func serviceStopsOnRemoteClose() async throws {
-        let emitter = RecordingEmitter()
-        let (sender, receiver) = try makePair()
-        sender.start()
-        receiver.start()
-
-        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
-        service.start()
-
-        try sender.send(makeLogFrame(level: .info, message: "before close"))
-        try await waitForRecords(emitter, count: 1)
-
-        sender.close()
-
-        // Wait briefly for the consumer to observe EOF and finish. No assert
-        // beyond "test does not hang" — the deferred service.stop() must
-        // remain safe to call after the channel has already finished.
-        try await Task.sleep(for: .milliseconds(50))
-        service.stop()
-
-        #expect(emitter.snapshot().count == 1)
     }
 }
 

@@ -267,6 +267,8 @@ struct VMToolbarManagerTests {
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
         #expect(item("testPopOut", in: toolbar)?.isEnabled == false)
         #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
+        #expect(item("testSettingsToggle", in: toolbar)?.isEnabled == false)
+        #expect(clipboardButton(in: toolbar)?.isEnabled == false)
     }
 
     @Test("Every item is disabled while an arrival is the selected row")
@@ -359,16 +361,6 @@ struct VMToolbarManagerTests {
         manager.updateToolbarItems(in: toolbar)
 
         // canShowClipboard is false (a test instance has no VZVirtualMachine).
-        #expect(clipboardButton(in: toolbar)?.isEnabled == false)
-    }
-
-    @Test("updateClipboardItem disables the clipboard item for a nil instance")
-    func clipboardItemDisabledForNilInstance() {
-        let manager = makeManager(instance: nil)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
         #expect(clipboardButton(in: toolbar)?.isEnabled == false)
     }
 
@@ -532,17 +524,6 @@ struct VMToolbarManagerTests {
         #expect(item("testSaveState", in: toolbar)?.isEnabled == true)
     }
 
-    @Test("Save state disabled when stopped")
-    func saveDisabledWhenStopped() {
-        let instance = makeInstance(phase: .stopped)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
-    }
-
     // MARK: - Display Item Gating
 
     @Test("Display items disabled when gatesDisplayOnCapability=true and canUseExternalDisplay is false")
@@ -692,17 +673,6 @@ struct VMToolbarManagerTests {
         let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
         #expect(item?.label == "Hide Settings")
         #expect(item?.image?.accessibilityDescription == "Hide Settings")
-    }
-
-    @Test("Settings toggle is disabled when instance is nil")
-    func settingsToggleDisabledWhenNilInstance() {
-        let manager = makeManager(instance: nil)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
-        #expect(item?.isEnabled == false)
     }
 
     @Test("Settings toggle has a stable palette label")

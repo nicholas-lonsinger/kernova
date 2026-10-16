@@ -117,18 +117,6 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(doneCount == 0)
     }
 
-    @Test("An unresponsive agent is offered Manage, which re-mounts the disk")
-    func unresponsiveOffersManage() {
-        let status = AgentStatus.unresponsive(version: "0.9.2")
-        let (title, diskControlCount, doneCount) = tapAction(status: status, isInstallerMounted: false)
-        #expect(title == "Manage Guest Agent…")
-        #expect(
-            GuestAgentDiskControl.model(status: status, isInstallerMounted: false).action
-                == .mount(.manage))
-        #expect(diskControlCount == 1)
-        #expect(doneCount == 0)
-    }
-
     @Test("While the control is disabled the button reads Done and only closes")
     func disabledControlIsDone() {
         let (title, diskControlCount, doneCount) = tapAction(

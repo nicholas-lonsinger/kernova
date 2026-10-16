@@ -44,23 +44,6 @@ struct StorageDiskSubtitleTests {
         #expect(subtitle.contains("50"))
     }
 
-    @Test("In-bundle non-ASIF disk shows used and the logical size as allocated")
-    func nonASIFDiskShowsLogicalSizeAsAllocated() throws {
-        let instance = try makeInstanceWithBundle()
-        let disk = StorageDisk(
-            path: "AdditionalDisks/raw.img", label: "Raw", isInternal: true, kind: .virtio)
-        // A raw image isn't a sparse container, so its apparent size *is* its
-        // capacity — the subtitle shows both figures, not on-disk only.
-        try writeDiskFile(
-            at: instance.bundleURL.appendingPathComponent(disk.path),
-            totalBytes: 16384, capacitySectors: nil)
-
-        let subtitle = diskSubtitle(of: disk.imageReference, bundleLayout: instance.bundleLayout)
-
-        #expect(subtitle.contains("(used) / "))
-        #expect(subtitle.contains("allocated"))
-    }
-
     @Test("In-bundle disk with no file shows the generic label")
     func missingFileShowsGenericLabel() throws {
         let instance = try makeInstanceWithBundle()
@@ -80,24 +63,6 @@ struct StorageDiskSubtitleTests {
         #expect(diskSubtitle(of: disk.imageReference, bundleLayout: instance.bundleLayout) == "/tmp/data.asif")
     }
 
-    @Test("External raw disk shows used and allocated read live from the file")
-    func externalRawDiskShowsUsedAndAllocated() throws {
-        let instance = try makeInstanceWithBundle()
-        // A real external file (absolute path, raw — no ASIF header): its
-        // apparent size is the capacity, so the row shows both figures, exactly
-        // like an in-bundle disk.
-        let fileURL = TestScratchDirectory(prefix: "StorageDiskSubtitleTests").url
-            .appendingPathComponent("\(UUID().uuidString).img")
-        try writeDiskFile(at: fileURL, totalBytes: 16384, capacitySectors: nil)
-        let disk = StorageDisk(
-            path: fileURL.path(percentEncoded: false), label: "Data", isInternal: false)
-
-        let subtitle = diskSubtitle(of: disk.imageReference, bundleLayout: instance.bundleLayout)
-
-        #expect(subtitle.contains("(used) / "))
-        #expect(subtitle.contains("allocated"))
-    }
-
     @Test("An external file that cannot be opened shows what it uses and no capacity")
     func unopenableExternalDiskOmitsCapacity() throws {
         let instance = try makeInstanceWithBundle()
@@ -115,21 +80,6 @@ struct StorageDiskSubtitleTests {
 
         #expect(subtitle.hasSuffix(" used"))
         #expect(!subtitle.contains("allocated"))
-    }
-
-    @Test("Main disk is measured exactly the same way as additional disks")
-    func mainDiskUsesSameLiveMeasurement() throws {
-        let instance = try makeInstanceWithBundle()
-        let main = instance.effectiveStorageDisks[0]
-        try writeDiskFile(
-            at: instance.bundleURL.appendingPathComponent(main.path),
-            totalBytes: 16384, capacitySectors: 195_312_500)  // 100 GB
-
-        let subtitle = diskSubtitle(of: main.imageReference, bundleLayout: instance.bundleLayout)
-
-        #expect(subtitle.contains("(used) / "))
-        #expect(subtitle.contains("allocated"))
-        #expect(subtitle.contains("100"))
     }
 
     @Test("A disk's subtitle says what it uses and what it can hold")

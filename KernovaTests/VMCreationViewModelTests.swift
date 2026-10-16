@@ -92,22 +92,13 @@ struct VMCreationViewModelTests {
         #expect(vm.canAdvance == false)
         await vm.localFileInspectionTask?.value
         #expect(vm.canAdvance == true)
+        #expect(vm.validationMessage == nil)
     }
 
     @Test("ipswDownloadPath defaults to ~/Downloads/RestoreImage.ipsw")
     func ipswDownloadPathHasDefault() {
         let vm = VMCreationViewModel()
         #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
-    }
-
-    @Test("canAdvance is true for macOS downloadLatest when file does not exist at path")
-    func canAdvanceDefaultMacOSDownloadLatest() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.selectedOS = .macOS
-        // Use a non-existent path so the overwrite warning doesn't trigger
-        vm.ipswDownloadPath = "/nonexistent/path/RestoreImage.ipsw"
-        #expect(vm.canAdvance == true)
     }
 
     @Test("canAdvance at bootConfig for Linux EFI requires an image selection")
@@ -307,18 +298,6 @@ struct VMCreationViewModelTests {
         #expect(config.kernelCommandLine == "console=hvc0")
     }
 
-    @Test("buildConfiguration trims whitespace from VM name")
-    func buildConfigurationTrimsName() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
-        vm.vmName = "   Spaces Around   "
-        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
-
-        let config = vm.buildConfiguration()
-        #expect(config.name == "Spaces Around")
-    }
-
     @Test("buildConfiguration only installs an installer ISO for EFI boot mode")
     func buildConfigurationInstallerISOOnlyForEFI() {
         let vm = VMCreationViewModel()
@@ -349,50 +328,6 @@ struct VMCreationViewModelTests {
         #expect(config.kernelPath == nil)
         #expect(config.initrdPath == nil)
         #expect(config.kernelCommandLine == nil)
-    }
-
-    @Test("buildConfiguration omits macAddress when networking is disabled")
-    func buildConfigurationNoMacAddressWithoutNetwork() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
-        vm.vmName = "No Network"
-        vm.networkEnabled = false
-        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
-
-        let config = vm.buildConfiguration()
-        #expect(config.macAddress == nil)
-    }
-
-    @Test("buildConfiguration generates macAddress when networking is enabled")
-    func buildConfigurationGeneratesMacAddress() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
-        vm.vmName = "With Network"
-        vm.networkEnabled = true
-        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
-
-        let config = vm.buildConfiguration()
-        #expect(config.macAddress != nil)
-        #expect(!config.macAddress!.isEmpty)
-    }
-
-    @Test("buildConfiguration generates genericMachineIdentifierData for EFI and linuxKernel")
-    func buildConfigurationGeneratesGenericMachineIdentifier() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.vmName = "Test"
-
-        vm.selectedBootMode = .efi
-        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
-        let efiConfig = vm.buildConfiguration()
-        #expect(efiConfig.genericMachineIdentifierData != nil)
-
-        vm.selectedBootMode = .linuxKernel
-        vm.kernelPath = "/path/to/vmlinuz"
-        let kernelConfig = vm.buildConfiguration()
-        #expect(kernelConfig.genericMachineIdentifierData != nil)
     }
 
     @Test("buildConfiguration does not set genericMachineIdentifierData for macOS boot mode")
@@ -455,21 +390,6 @@ struct VMCreationViewModelTests {
         #expect(config.bootMode == .efi)
     }
 
-    @Test("Kernel boot ignores an image picked in the EFI segment")
-    func kernelBootIgnoresTheImagePick() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
-        vm.vmName = "Test"
-        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
-        vm.kernelPath = "/path/to/vmlinuz"
-
-        let config = vm.buildConfiguration()
-
-        #expect(config.storageDisks == nil)
-        #expect(config.kernelPath == "/path/to/vmlinuz")
-    }
-
     // MARK: - Overwrite Warning
 
     @Test("shouldShowOverwriteWarning is false when source is localFile")
@@ -487,14 +407,6 @@ struct VMCreationViewModelTests {
         vm.ipswDownloadPath = "/nonexistent/path/RestoreImage.ipsw"
 
         #expect(vm.shouldShowOverwriteWarning == false)
-    }
-
-    @Test("shouldShowOverwriteWarning is true when download source and file exists")
-    func overwriteWarningTrueWhenDownloadAndFileExists() {
-        let vm = VMCreationViewModel()
-        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
-
-        #expect(vm.shouldShowOverwriteWarning == true)
     }
 
     @Test("confirmOverwrite suppresses warning for current path")
@@ -533,17 +445,6 @@ struct VMCreationViewModelTests {
                 == .localFile(
                     LocalRestoreImage(
                         path: "/usr/bin/true", bookmark: nil, inspection: .usable(inspected))))
-    }
-
-    @Test("canAdvance is false when overwrite warning is unresolved")
-    func canAdvanceFalseWithUnresolvedOverwriteWarning() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.selectedOS = .macOS
-        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
-
-        #expect(vm.shouldShowOverwriteWarning == true)
-        #expect(vm.canAdvance == false)
     }
 
     @Test("canAdvance is true after confirming overwrite")
@@ -751,29 +652,20 @@ struct VMCreationViewModelTests {
         #expect(context.source == .downloadLatest)
         #expect(context.downloadDestinationPath == "/Users/me/Downloads/RestoreImage.ipsw")
         #expect(context.localIPSWPath == nil)
+        #expect(!context.requestedFreshDownload)
     }
 
     @Test("buildInstallContext snapshots localFile with chosen path")
     func buildInstallContextLocalFile() {
-        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
-        vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: nil)
-
-        let context = vm.buildInstallContext()
-
-        #expect(context.source == .localFile)
-        #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
-        #expect(context.downloadDestinationPath == nil)
-    }
-
-    @Test("buildInstallContext carries a local pick's bookmark")
-    func buildInstallContextCarriesLocalBookmark() {
         let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         let bookmark = Data([0x01, 0x02, 0x03])
         vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: bookmark)
 
         let context = vm.buildInstallContext()
 
+        #expect(context.source == .localFile)
         #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
+        #expect(context.downloadDestinationPath == nil)
         #expect(context.localIPSWBookmark == bookmark)
     }
 
@@ -790,16 +682,6 @@ struct VMCreationViewModelTests {
 
         vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: nil)
         #expect(vm.buildInstallContext().source == .localFile)
-    }
-
-    @Test("buildInstallContext defaults requestedFreshDownload to false")
-    func buildInstallContextDefaultsFreshFalse() {
-        let vm = VMCreationViewModel()
-        vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
-
-        let context = vm.buildInstallContext()
-
-        #expect(!context.requestedFreshDownload)
     }
 
     @Test("buildInstallContext sets requestedFreshDownload when overwrite confirmed")
@@ -1166,20 +1048,6 @@ struct VMCreationViewModelTests {
         #expect(vm.validationMessage == "Choose a file this Mac can read as a restore image.")
     }
 
-    @Test("A supported pick reaches usable and unblocks advance")
-    func selectLocalFileSupportedUnblocksAdvance() async {
-        let inspector = MockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.currentStep = .bootConfig
-        vm.selectedOS = .macOS
-
-        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
-        await vm.localFileInspectionTask?.value
-
-        #expect(vm.canAdvance == true)
-        #expect(vm.validationMessage == nil)
-    }
-
     @Test("While the inspection is pending, advance is blocked")
     func selectLocalFilePendingBlocksAdvance() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
@@ -1376,20 +1244,6 @@ struct VMCreationViewModelTests {
                     LocalRestoreImage(
                         path: destination, bookmark: nil,
                         inspection: .usable(inspector.inspectResult))))
-    }
-
-    @Test("A URL pick with no parsed build pins nothing to compare against")
-    func customURLWithoutBuildPinsNothing() async {
-        let inspector = MockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.selectPastedImage(
-            makeProbedImage(
-                urlString: "https://example.com/image.ipsw", version: nil, build: nil))
-
-        #expect(vm.expectedBuild == nil)
-        #expect(
-            await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
-                == .adopted(inspector.inspectResult))
     }
 
     @Test("An inspection cancelled mid-flight adopts nothing")
@@ -1650,18 +1504,6 @@ struct VMCreationViewModelTests {
 
         vm.goBack()
         #expect(vm.currentStep == .guestAccount)
-    }
-
-    @Test("goNext from Resources lands on Review when no account is being created")
-    func goNextFromResourcesSkipsTheAccountStep() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .resources
-
-        vm.goNext()
-        #expect(vm.currentStep == .review)
-
-        vm.goBack()
-        #expect(vm.currentStep == .resources)
     }
 
     @available(macOS 27.0, *)

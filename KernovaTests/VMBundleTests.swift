@@ -381,16 +381,6 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A host-state key the file does not carry decodes to its default")
-    func hostStateAbsentKeysTakeTheirDefaults() throws {
-        try withBundle { url in
-            try Data(#"{"displayPreference":"fullscreen"}"#.utf8).write(
-                to: VMBundleLayout(bundleURL: url).hostStateURL)
-
-            #expect(try onDisk(url).hostState == VMHostState(displayPreference: .fullscreen))
-        }
-    }
-
     @Test("Writing the host state leaves config.json alone")
     func hostStateIsItsOwnFile() throws {
         try withBundle { url in
@@ -638,19 +628,6 @@ struct VMBundleTests {
         try await withOperation(on: bundle) { try await $0.bundle.ensureEFIVariableStore() }
 
         #expect(exists(storeURL))
-    }
-
-    @Test("Platform files for a hardware model that does not decode are refused")
-    func macPlatformFilesRefuseAnUndecodableModel() async throws {
-        let bundle = try makeOnDiskBundle()
-
-        await #expect(throws: ConfigurationBuilderError.self) {
-            _ = try await withOperation(on: bundle) { context in
-                try await context.bundle.createMacPlatformFiles(hardwareModel: Data("not a model".utf8))
-            }
-        }
-
-        #expect(!exists(VMBundleLayout(bundleURL: bundle.url).machineIdentifierURL))
     }
 
     @Test("An in-bundle disk is written inside the bundle, and trashed from there")

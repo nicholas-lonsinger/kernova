@@ -76,30 +76,6 @@ struct SidebarViewControllerTests {
 
     // MARK: - Status icon color
 
-    @Test("statusDisplayNSColor maps each lifecycle state")
-    func statusColorMapping() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        // Concrete gray (not `.secondaryLabelColor`) so the OS icon keeps its
-        // stopped color on the selection highlight instead of inverting to white.
-        #expect(instance.statusDisplayNSColor == .systemGray)
-
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        #expect(instance.statusDisplayNSColor == .systemGreen)
-
-        instance.activity.placeForTesting(.failed(message: "Test failure"))
-        #expect(instance.statusDisplayNSColor == .systemRed)
-
-        instance.activity.placeForTesting(.operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
-        #expect(instance.statusDisplayNSColor == .systemOrange)
-    }
-
-    @Test("statusDisplayNSColor is orange for a suspended VM")
-    func statusColorSuspended() {
-        let suspended = VMInstanceFixture.make(phase: .suspended)
-        #expect(suspended.status == .suspended)
-        #expect(suspended.statusDisplayNSColor == .systemOrange)
-    }
-
     // MARK: - Agent indicator gating
 
     @Test("Agent indicator hidden for Linux guests")
@@ -148,13 +124,6 @@ struct SidebarViewControllerTests {
     )
     func agentSuppressedWhenNotInLiveSession(phase: PhaseFixture) {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
-        #expect(visibleAgentStatus(for: instance) == nil)
-    }
-
-    @Test("Agent indicator suppressed for a suspended VM")
-    func agentSuppressedWhenSuspended() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .suspended)  // no live VM
-        #expect(instance.isSuspended)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -665,25 +634,6 @@ struct SidebarViewControllerTests {
         #expect(outline.visibleRect.minY == scrolled.minY)
     }
 
-    @Test("An arrival's cell becomes a VM cell when it settles")
-    func arrivalCellBecomesVMCell() async throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Before")
-        let gate = GatedStep()
-        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
-        let controller = SidebarViewController(viewModel: viewModel)
-        let outline = try shownOutline(of: controller)
-        #expect(outline.view(atColumn: 0, row: 2, makeIfNecessary: true) is SidebarArrivalRowCellView)
-
-        gate.release()
-        let instance = try #require(await arrival.settle())
-
-        try await waitUntil {
-            (outline.view(atColumn: 0, row: 2, makeIfNecessary: false) as? SidebarVMRowCellView)?
-                .textField?.stringValue == instance.name
-        }
-    }
-
     /// Below the last row AppKit proposes the root with
     /// `NSOutlineViewDropOnItemIndex`.
     @Test("Dropping a row in the empty space below the list moves it to the end")
@@ -922,45 +872,6 @@ struct SidebarViewControllerTests {
         #expect(forceStop?.isAlternate == false)
     }
 
-    @Test(
-        "A VM coming up offers neither stop — Virtualization takes a termination from neither",
-        arguments: [
-            PhaseFixture.operating(
-                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
-            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
-        ])
-    func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: PhaseFixture) {
-        preferences.alwaysShowAdvancedOptions = false
-        let viewModel = makeViewModel()
-        let instance = viewModel.library.admitFixture(phase: phase.phase)
-        let controller = SidebarViewController(viewModel: viewModel)
-
-        let menuTitles = titles(of: controller.buildContextMenu(for: instance))
-
-        #expect(!menuTitles.contains("Stop"), "\(phase)")
-        #expect(!menuTitles.contains("Force Stop…"), "\(phase)")
-    }
-
-    @Test(
-        "A live VM held by a save or capture lists both stops, dimmed until it ends",
-        arguments: [
-            PhaseFixture.operating(.saving, from: .running(sessionID: UUID())),
-            .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
-        ])
-    func contextMenuDimsStopWhileAnOperationHoldsALiveVM(phase: PhaseFixture) {
-        preferences.alwaysShowAdvancedOptions = false
-        let viewModel = makeViewModel()
-        let instance = viewModel.library.admitFixture(phase: phase.phase)
-        let controller = SidebarViewController(viewModel: viewModel)
-
-        let menu = controller.buildContextMenu(for: instance)
-
-        // Busy, not inapplicable: each is taken once the operation ends.
-        #expect(menuItem("Stop", in: menu)?.isEnabled == false, "\(phase)")
-        #expect(menuItem("Force Stop…", in: menu)?.isEnabled == false, "\(phase)")
-        #expect(menuItem("Suspend", in: menu)?.isEnabled == false, "\(phase)")
-    }
-
     /// The lifecycle items, in the order each expectation lists them.
     private static let lifecycleItems = [
         "Start", "Start in Recovery Mode…", "Pause", "Resume", "Stop", "Force Stop…", "Suspend",
@@ -981,6 +892,10 @@ struct SidebarViewControllerTests {
                 .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
                 "DD-----"
             ),
+            (
+                .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
+                "---D---"
+            ),
             // A base-status operation from rest dims what the VM takes once it ends.
             (.operating(.deletingSnapshot, from: .stopped), "DD-----"),
             (.operating(.saving, from: .running(sessionID: UUID())), "--D-DDD"),
@@ -998,8 +913,11 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: phase.phase)
-        if case .settled(.suspended) = phase {
+        switch phase {
+        case .settled(.suspended), .operating(_, from: .suspended, _):
             try VMInstanceFixture.writeSaveFile(for: instance)
+        default:
+            break
         }
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -1340,20 +1258,23 @@ struct SidebarViewControllerTests {
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
-        controller.loadViewIfNeeded()
-        controller.viewDidAppear()
-        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        let outline = try shownOutline(of: controller)
         #expect((outline.item(atRow: 1) as? SidebarRow)?.entry.vm === before)
         let row = try #require(outline.item(atRow: 2) as? SidebarRow)
         #expect(row.entry.arrival === arrival)
         #expect(viewModel.selectedID == arrival.id)
         // The outline view offers no observable to await its selection by.
         try await waitUntil { outline.selectedRow == 2 }
+        #expect(outline.view(atColumn: 0, row: 2, makeIfNecessary: true) is SidebarArrivalRowCellView)
 
         gate.release()
         let instance = try #require(await arrival.settle())
 
         try await waitUntil { row.entry.vm === instance }
+        try await waitUntil {
+            (outline.view(atColumn: 0, row: 2, makeIfNecessary: false) as? SidebarVMRowCellView)?
+                .textField?.stringValue == instance.name
+        }
         #expect(outline.numberOfRows == 3)
         #expect(outline.item(atRow: 2) as? SidebarRow === row)
         #expect(outline.selectedRow == 2)

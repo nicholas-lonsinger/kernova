@@ -70,19 +70,6 @@ struct MainMenuRebuildTests {
         #expect(items.first?.keyEquivalentModifierMask == [.command])
     }
 
-    @Test("An update with the preference unchanged keeps the same items")
-    func unchangedModelKeepsItems() throws {
-        let fixture = makeFixture()
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let before = quitItems(in: appMenu, count: 1)
-
-        fixture.update(appMenu)
-
-        let after = quitItems(in: appMenu, count: 1)
-        #expect(before.count == 1)
-        #expect(zip(before, after).allSatisfy { $0 === $1 })
-    }
-
     @Test("Flipping the residency preference replaces exactly the quit section")
     func flippedPreferenceReplacesQuitSection() throws {
         let fixture = makeFixture()
@@ -179,26 +166,6 @@ struct MainMenuRebuildTests {
         #expect(zip(before, after).allSatisfy { $0 === $1 })
     }
 
-    @Test("Only the full-quit item claims ⌥⌘Q after a toggle")
-    func optionCommandQIsOwnedByTheFullQuit() throws {
-        let fixture = makeFixture()
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let intruder = NSMenuItem(
-            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q")
-        intruder.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(intruder)
-
-        fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.update(appMenu)
-
-        let claimants = appMenu.items.filter {
-            $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
-        }
-        #expect(claimants.count == 1)
-        #expect(claimants.first?.action == #selector(AppDelegate.quitCompletely(_:)))
-    }
-
     @Test("A toggled menu matches one freshly built in the same mode")
     func toggledMenuMatchesAFreshlyBuiltOne() throws {
         let fixture = makeFixture()
@@ -216,6 +183,12 @@ struct MainMenuRebuildTests {
         let freshAppMenu = try #require(fresh.mainMenu.items.first?.submenu)
         #expect(appMenu.items.count == freshAppMenu.items.count)
         #expect(appMenu.items.map(\.title) == freshAppMenu.items.map(\.title))
+
+        let claimants = appMenu.items.filter {
+            $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
+        }
+        #expect(claimants.count == 1)
+        #expect(claimants.first?.action == #selector(AppDelegate.quitCompletely(_:)))
     }
 
     // MARK: - Revert submenu

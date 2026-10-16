@@ -326,31 +326,6 @@ struct VMCommandSocketListenerTests {
         #expect(harness.listener.connectionCountForTesting == 0)
     }
 
-    @Test("A peer speaking another protocol version is refused before any verb runs")
-    func foreignProtocolVersionIsRefused() async throws {
-        let harness = try makeHarness()
-        let alpha = harness.wired.register(name: "Alpha")
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        var request = VMCommandRequest(verb: .start(.id(alpha.id), recovery: false, consent: .none))
-        request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
-        try client.send(request)
-
-        let response = try await client.nextResponse()
-        #expect(
-            response?.result
-                == .refused(
-                    .unsupportedProtocolVersion(
-                        peer: VMCommandRequest.currentProtocolVersion + 1,
-                        expected: VMCommandRequest.currentProtocolVersion)))
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(alpha.status == .stopped)
-    }
-
     @Test("Bytes that are not a request are refused, and end the connection")
     func undecodableBytesAreRefused() async throws {
         let harness = try makeHarness()

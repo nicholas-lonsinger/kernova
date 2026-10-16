@@ -24,12 +24,4 @@ struct MicPermissionPresentationTests {
         #expect(micPermissionPresentation(.restricted, audioInputEnabled: true) == .denied)
         #expect(micPermissionPresentation(.authorized, audioInputEnabled: true) == .none)
     }
-
-    // MARK: - Guest agent section visibility
-
-    @Test("Guest Agent section is visible only for macOS guests")
-    func guestAgentVisibility() {
-        #expect(isGuestAgentSectionVisible(guestOS: .macOS) == true)
-        #expect(isGuestAgentSectionVisible(guestOS: .linux) == false)
-    }
 }

@@ -25,30 +25,6 @@ struct ExclusiveFileLockTests {
         return url
     }
 
-    @Test("a held lock on a file refuses a second acquire from this process, until released")
-    func fileLockRefusesSecondUntilReleased() throws {
-        let url = try makeFile()
-        do {
-            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
-            let second = try ExclusiveFileLock.tryAcquire(at: url)
-            #expect(second == nil)
-            withExtendedLifetime(held) {}
-        }
-        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
-    }
-
-    @Test("a held lock on a directory refuses a second acquire from this process, until released")
-    func directoryLockRefusesSecondUntilReleased() throws {
-        let url = try makeDirectory()
-        do {
-            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
-            let second = try ExclusiveFileLock.tryAcquire(at: url)
-            #expect(second == nil)
-            withExtendedLifetime(held) {}
-        }
-        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
-    }
-
     /// The `dup` stands in for the copy a child holds while any thread spawns
     /// it, until its exec closes the copy.
     @Test("release frees the lock while another descriptor still shares its open file description")

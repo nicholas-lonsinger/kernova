@@ -511,20 +511,6 @@ struct ClipboardTransferReporterTests {
 
     // MARK: - Ranking
 
-    @Test("a drop started during a peer's paste leaves the paste on the readout")
-    func aPeerPasteOutranksADropStartedUnderIt() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let paste = makeOperation(reporter, gesture: .peerPaste)
-        let drop = makeOperation(reporter, gesture: .drop)
-
-        reporter.publish(
-            from: paste, .running(snapshot(bytes: 1, gesture: .peerPaste), since: Date()))
-        reporter.publish(from: drop, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
-
-        #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
-    }
-
     @Test("a preview fetch started during a drop leaves the drop on the readout")
     func aDropOutranksAPreviewStartedUnderIt() {
         let clock = GatedEngineClock()

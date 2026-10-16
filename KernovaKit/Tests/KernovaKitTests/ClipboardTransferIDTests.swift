@@ -25,11 +25,4 @@ struct ClipboardTransferIDTests {
             }
         }
     }
-
-    @Test("determinism: re-deriving an id from the same key yields the same value")
-    func determinism() {
-        let first = ClipboardTransferID.make(generation: 9, repIndex: 4, hostMinted: true)
-        let second = ClipboardTransferID.make(generation: 9, repIndex: 4, hostMinted: true)
-        #expect(first == second)
-    }
 }

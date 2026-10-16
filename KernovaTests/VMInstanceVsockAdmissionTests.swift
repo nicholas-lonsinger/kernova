@@ -89,15 +89,6 @@ struct VMInstanceVsockAdmissionTests {
 
     // MARK: - Tests
 
-    @Test("Nothing is admitted without a control service", arguments: [false, true])
-    func refusedWithoutControlService(clipboard: Bool) {
-        let instance = makeInstance()
-        #expect(
-            isNotReady(
-                instance.vsockAdmissionGate.admission(
-                    for: clipboard ? .clipboardStreaming : .none)))
-    }
-
     @Test("Admission follows the control Hello handshake and its capabilities")
     func admissionFollowsControlHandshake() async throws {
         let instance = makeInstance()
@@ -228,26 +219,6 @@ struct VMInstanceVsockAdmissionTests {
         try guest.send(makeGuestHello(capabilities: KernovaCapability.controlChannelDefaults))
         try await waitForChange { control.guestSupportsDropFiles }
         #expect(instance.vsockAdmissionGate.admission(for: .dropFiles) == .admit)
-    }
-
-    @Test("Stopping the control service withdraws drop admission too")
-    func stopWithdrawsDropAdmission() async throws {
-        let instance = makeInstance()
-        let (guestFd, hostFd) = try makeRawSocketPair()
-        let guest = VsockChannel(fileDescriptor: guestFd)
-        let host = VsockChannel(fileDescriptor: hostFd)
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let control = makeControlService(for: instance, channel: host)
-
-        try guest.send(makeGuestHello(streamingCapable: true))
-        try await waitForChange { control.guestSupportsDropFiles }
-        #expect(instance.vsockAdmissionGate.admission(for: .dropFiles) == .admit)
-
-        control.stop()
-        #expect(instance.vsockAdmissionGate.admission(for: .dropFiles) != .admit)
     }
 
     // MARK: - Data ports

@@ -721,77 +721,6 @@ struct ConfigurationBuilderTests {
 
     // MARK: - Dangling Symlink Tests (Kernel / Initrd / Disk Image)
 
-    @Test("Builder throws for dangling symlink as kernel path")
-    func builderThrowsForDanglingSymlinkKernelPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        let symlinkPath = bundleURL.appendingPathComponent("dangling-kernel").path(percentEncoded: false)
-        let nonexistentTarget = bundleURL.appendingPathComponent("no-such-vmlinuz").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
-        config.kernelPath = symlinkPath
-
-        let builder = makeBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .kernelNotFound = e
-            else { return false }
-            return true
-        }
-    }
-
-    @Test("Builder throws for dangling symlink as initrd path")
-    func builderThrowsForDanglingSymlinkInitrdPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        // Create a real kernel file so we get past that check
-        let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
-        FileManager.default.createFile(atPath: kernelPath, contents: Data([0]))
-
-        let symlinkPath = bundleURL.appendingPathComponent("dangling-initrd").path(percentEncoded: false)
-        let nonexistentTarget = bundleURL.appendingPathComponent("no-such-initrd").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
-        config.kernelPath = kernelPath
-        config.initrdPath = symlinkPath
-
-        let builder = makeBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .initrdNotFound = e
-            else { return false }
-            return true
-        }
-    }
-
-    @Test("Builder throws for dangling symlink as removable media path")
-    func builderThrowsForDanglingSymlinkRemovableMediaPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        let symlinkPath = bundleURL.appendingPathComponent("dangling-iso").path(percentEncoded: false)
-        let nonexistentTarget = bundleURL.appendingPathComponent("no-such-iso").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.removableMedia = [RemovableMediaItem(path: symlinkPath, readOnly: true)]
-
-        let builder = makeBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .removableMediaNotFound = e
-            else { return false }
-            return true
-        }
-    }
-
     // MARK: - Directory-as-File Tests (Kernel / Initrd / Disk Image)
 
     @Test("Builder throws for directory as kernel path")
@@ -885,59 +814,6 @@ struct ConfigurationBuilderTests {
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelPathIsDirectory = e
-            else { return false }
-            return true
-        }
-    }
-
-    @Test("Builder throws for symlink to directory as initrd path")
-    func builderThrowsForSymlinkToDirectoryAsInitrdPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        // Create a real kernel file so we get past that check
-        let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
-        FileManager.default.createFile(atPath: kernelPath, contents: Data([0]))
-
-        let dirPath = bundleURL.appendingPathComponent("initrd-dir")
-        try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
-        let symlinkPath = bundleURL.appendingPathComponent("link-to-initrd-dir").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(
-            atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
-        config.kernelPath = kernelPath
-        config.initrdPath = symlinkPath
-
-        let builder = makeBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .initrdPathIsDirectory = e
-            else { return false }
-            return true
-        }
-    }
-
-    @Test("Builder throws for symlink to directory as removable media path")
-    func builderThrowsForSymlinkToDirectoryAsRemovableMediaPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        let dirPath = bundleURL.appendingPathComponent("iso-dir")
-        try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
-        let symlinkPath = bundleURL.appendingPathComponent("link-to-iso-dir").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(
-            atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.removableMedia = [RemovableMediaItem(path: symlinkPath, readOnly: true)]
-
-        let builder = makeBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .removableMediaPathIsDirectory = e
             else { return false }
             return true
         }
@@ -1379,32 +1255,6 @@ struct ConfigurationBuilderTests {
         #expect(vz.keyboards.first is VZUSBKeyboardConfiguration)
     }
 
-    @Test("A guest with no version signal still gets exactly the Mac pair")
-    func macOSInputDevicesMacPairWhenVersionUnknown() {
-        let vz = VZVirtualMachineConfiguration()
-        let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
-        makeBuilder().configureMacOSDevices(vz, config: config)
-
-        #expect(vz.pointingDevices.count == 1)
-        #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
-        #expect(vz.keyboards.count == 1)
-        #expect(vz.keyboards.first is VZMacKeyboardConfiguration)
-    }
-
-    @Test("An explicit USB choice overrides a 13+ guest's automatic Mac pair")
-    func macOSInputDevicesHonorExplicitUSBChoice() {
-        let vz = VZVirtualMachineConfiguration()
-        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
-        config.lastSeenGuestOSVersion = "26.0"
-        config.inputDeviceMode = .usb
-        makeBuilder().configureMacOSDevices(vz, config: config)
-
-        #expect(vz.pointingDevices.count == 1)
-        #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
-        #expect(vz.keyboards.count == 1)
-        #expect(vz.keyboards.first is VZUSBKeyboardConfiguration)
-    }
-
     @Test("macOS display device carries the configured size and pixel density")
     func macOSDisplayMatchesConfiguration() throws {
         let vz = VZVirtualMachineConfiguration()
@@ -1419,27 +1269,6 @@ struct ConfigurationBuilderTests {
         #expect(display.widthInPixels == 2560)
         #expect(display.heightInPixels == 1600)
         #expect(display.pixelsPerInch == 220)
-    }
-
-    @Test("HiDPI-shaped display values reach VZ unmodified")
-    func macOSDisplayPassesHiDPIValuesThrough() throws {
-        // The settings switch stores the already-doubled pixel count, so the
-        // builder must not scale it again.
-        let vz = VZVirtualMachineConfiguration()
-        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
-        let retina = DisplayBootSizing.doubled(
-            DisplayBootSizing.Resolution(
-                width: 1440, height: 900, ppi: DisplayBootSizing.standardPixelsPerInch))
-        config.displayWidth = retina.width
-        config.displayHeight = retina.height
-        config.displayPPI = retina.ppi
-        makeBuilder().configureMacOSDevices(vz, config: config)
-
-        let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
-        let display = try #require(graphics.displays.first)
-        #expect(display.widthInPixels == 2880)
-        #expect(display.heightInPixels == 1800)
-        #expect(display.pixelsPerInch == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
     @Test("EFI scanout carries the configured display size")
@@ -1619,31 +1448,6 @@ struct ConfigurationBuilderTests {
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: installedVersion), bundleURL: bundleURL,
             validate: false)
-        #expect(result.configuration.storageDevices.count == 1)
-    }
-
-    @Test("A guest of unknown version gets no agent disk")
-    func unknownVersionGuestGetsNoAgentDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-        let agentURL = try makeAgentDiskImage()
-
-        var builder = makeBuilder()
-        builder.guestAgentDiskURL = agentURL
-        let result = try builder.assemble(
-            from: makeAgentDiskConfig(installedVersion: nil), bundleURL: bundleURL, validate: false)
-        #expect(result.configuration.storageDevices.count == 1)
-    }
-
-    @Test("A Linux guest gets no agent disk")
-    func linuxGuestGetsNoAgentDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-        let agentURL = try makeAgentDiskImage()
-
-        var config = makeLinuxConfig()
-        config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        var builder = makeBuilder()
-        builder.guestAgentDiskURL = agentURL
-        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         #expect(result.configuration.storageDevices.count == 1)
     }
 

@@ -65,20 +65,6 @@ struct SnapshotSectionViewTests {
         #expect((newerIndex ?? 0) < (olderIndex ?? 0))
     }
 
-    @Test("The header counts the snapshots before their sizes are known")
-    func headerCountsBeforeSizes() {
-        let view = SnapshotSectionView()
-
-        render(
-            view,
-            manifest: VMSnapshotManifest(snapshots: [
-                makeSnapshot("One"), makeSnapshot("Two", offsetSeconds: 60),
-            ]),
-            canTakeSnapshot: true, canRevert: true)
-
-        #expect(findLabel(withText: "2 snapshots", in: view) != nil)
-    }
-
     @Test("Rows read their sizes once they land, and the header stays a count")
     func sizesReachTheRowsNotTheHeader() {
         let view = SnapshotSectionView()
@@ -87,6 +73,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first, second]),
             canTakeSnapshot: true, canRevert: true)
+        #expect(findLabel(withText: "2 snapshots", in: view) != nil)
 
         view.applySizes([
             first.id: SnapshotSize(bytes: 1_000_000_000, privateBytes: nil),
@@ -141,20 +128,6 @@ struct SnapshotSectionViewTests {
                 + "(\(DataFormatters.formatBytes(8_400_000_000)) private)")
     }
 
-    @Test("Without private bytes — a volume that can't clone, or a failed read — a row shows its size alone")
-    func rowWithoutPrivateBytesShowsSizeAlone() {
-        let view = SnapshotSectionView()
-        let snapshot = makeSnapshot("Copied")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true)
-
-        view.applySizes([snapshot.id: SnapshotSize(bytes: 72_400_000_000, privateBytes: nil)])
-
-        #expect(view.subtitleText(for: snapshot).hasSuffix(DataFormatters.formatBytes(72_400_000_000)))
-        #expect(!view.subtitleText(for: snapshot).contains("private"))
-    }
-
     @Test("A single snapshot reads in the singular")
     func singleSnapshotReadsSingular() {
         let view = SnapshotSectionView()
@@ -186,22 +159,6 @@ struct SnapshotSectionViewTests {
         #expect(view.subtitleText(for: measured).hasSuffix("2 GB"))
     }
 
-    @Test("Only the current snapshot's row shows the marker")
-    func currentMarkerIsOnOneRow() {
-        let view = SnapshotSectionView()
-        let first = makeSnapshot("One")
-        let second = makeSnapshot("Two", offsetSeconds: 60)
-
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [first, second], currentID: second.id),
-            canTakeSnapshot: true, canRevert: true)
-
-        let visible = allSubviews(NSTextField.self, in: view) {
-            $0.stringValue == "Current" && isVisible($0, within: view)
-        }
-        #expect(visible.count == 1)
-    }
-
     @Test("An in-place update moves the current marker without a rebuild")
     func currentMarkerFollowsAnInPlaceUpdate() {
         let view = SnapshotSectionView()
@@ -210,6 +167,10 @@ struct SnapshotSectionViewTests {
         let manifest = VMSnapshotManifest(snapshots: [first, second], currentID: second.id)
         render(
             view, manifest: manifest, canTakeSnapshot: true, canRevert: true)
+        #expect(
+            allSubviews(NSTextField.self, in: view) {
+                $0.stringValue == "Current" && isVisible($0, within: view)
+            }.count == 1)
 
         var moved = manifest
         moved.currentID = first.id
@@ -277,20 +238,6 @@ struct SnapshotSectionViewTests {
 
         #expect(delete?.isEnabled == true)
         #expect(delete?.toolTip == nil)
-    }
-
-    @Test("A snapshot that isn't the baseline stays deletable")
-    func nonBaselineDeleteStaysEnabled() {
-        let view = SnapshotSectionView()
-        let baseline = makeSnapshot("Clean install")
-        let later = makeSnapshot("Mid-session", offsetSeconds: 60)
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [baseline, later]), canTakeSnapshot: true,
-            canRevert: true, baseline: baseline)
-
-        let menu = view.makeRowMenu(forRowWith: later.id)
-
-        #expect(menu?.items.first { $0.title == "Delete\u{2026}" }?.isEnabled == true)
     }
 
     // MARK: - Enablement

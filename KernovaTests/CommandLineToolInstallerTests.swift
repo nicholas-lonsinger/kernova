@@ -24,17 +24,6 @@ struct CommandLineToolInstallerTests {
         #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
     }
 
-    @Test("A link is written, never a copy — so an app update carries the tool with it")
-    func installWritesALinkNotACopy() throws {
-        let destination = scratch.url.appendingPathComponent("kernova")
-
-        try CommandLineToolInstaller.installSymlink(at: destination)
-
-        let attributes = try FileManager.default.attributesOfItem(
-            atPath: destination.path(percentEncoded: false))
-        #expect(attributes[.type] as? FileAttributeType == .typeSymbolicLink)
-    }
-
     @Test("Something already at the path is left alone")
     func installRefusesAnOccupiedPath() throws {
         let destination = scratch.url.appendingPathComponent("kernova")

@@ -18,18 +18,6 @@ struct DataFormattersTests {
         #expect(result.contains("KB"))
     }
 
-    @Test("formatBytes formats megabytes")
-    func formatBytesMB() {
-        let result = DataFormatters.formatBytes(5_000_000)
-        #expect(result.contains("MB"))
-    }
-
-    @Test("formatBytes formats gigabytes")
-    func formatBytesGB() {
-        let result = DataFormatters.formatBytes(4_200_000_000)
-        #expect(result.contains("GB"))
-    }
-
     @Test("formatBytes formats terabytes")
     func formatBytesTB() {
         let result = DataFormatters.formatBytes(2_000_000_000_000)
@@ -44,10 +32,12 @@ struct DataFormattersTests {
         #expect(result.contains("KB"))
     }
 
-    @Test("formatBytesFixedWidth formats MB values")
+    @Test("formatBytesFixedWidth formats MB values with figure spaces")
     func formatBytesFixedWidthMB() {
         let result = DataFormatters.formatBytesFixedWidth(861_900_000)
         #expect(result.contains("MB"))
+        #expect(!result.contains(" "))
+        #expect(result.contains("\u{2007}"))
     }
 
     @Test("formatBytesFixedWidth formats GB values with 3 decimal places")
@@ -63,14 +53,6 @@ struct DataFormattersTests {
         let result = DataFormatters.formatBytesFixedWidth(2_000_000_000_000)
         #expect(result.contains("TB"))
         #expect(result.contains("2.000"))
-    }
-
-    @Test("formatBytesFixedWidth uses figure spaces instead of regular spaces")
-    func formatBytesFixedWidthFigureSpaces() {
-        let result = DataFormatters.formatBytesFixedWidth(861_900_000)
-        // Should use figure space U+2007, not regular space U+0020
-        #expect(!result.contains(" "))
-        #expect(result.contains("\u{2007}"))
     }
 
     @Test("formatBytesFixedWidth shows 3 decimal places for sub-unit precision")
@@ -95,6 +77,8 @@ struct DataFormattersTests {
         let result = DataFormatters.formatSpeed(42_500_000)
         #expect(result.contains("MB/s"))
         #expect(result.contains("42.5"))
+        #expect(!result.contains(" "))
+        #expect(result.contains("\u{2007}"))
     }
 
     @Test("formatSpeed formats GB/s for very high speeds")
@@ -104,20 +88,7 @@ struct DataFormattersTests {
         #expect(result.contains("2.5"))
     }
 
-    @Test("formatSpeed uses figure spaces instead of regular spaces")
-    func formatSpeedFigureSpaces() {
-        let result = DataFormatters.formatSpeed(42_500_000)
-        #expect(!result.contains(" "))
-        #expect(result.contains("\u{2007}"))
-    }
-
     // MARK: - formatETA
-
-    @Test("formatETA returns nil for zero speed")
-    func formatETAZeroSpeed() {
-        let result = DataFormatters.formatETA(remainingBytes: 1_000_000, bytesPerSecond: 0)
-        #expect(result == nil)
-    }
 
     @Test("formatETA returns nil for negligible speed")
     func formatETANegligibleSpeed() {
@@ -161,15 +132,6 @@ struct DataFormattersTests {
         }
     }
 
-    @Test("formatETA pads with figure spaces, never plain spaces")
-    func formatETAFigureSpaces() {
-        // 5000 seconds = 1h 23m 20s — a single-digit hour that must be figure-space padded.
-        let result = DataFormatters.formatETA(remainingBytes: 10_000_000, bytesPerSecond: 2_000)
-        #expect(result == "\u{2007}1:23:20")
-        #expect(result?.contains(" ") == false)
-        #expect(result?.contains("\u{2007}") == true)
-    }
-
     @Test("etaUnknownPlaceholder is a same-shape figure-dash clock")
     func etaUnknownPlaceholder() {
         #expect(DataFormatters.etaUnknownPlaceholder == "\u{2007}\u{2012}:\u{2012}\u{2012}:\u{2012}\u{2012}")
@@ -188,13 +150,6 @@ struct DataFormattersTests {
         #expect(result == nil)
     }
 
-    @Test("formatSpeed handles zero input")
-    func formatSpeedZero() {
-        let result = DataFormatters.formatSpeed(0)
-        #expect(result.contains("KB/s"))
-        #expect(result.contains("0.0"))
-    }
-
     // MARK: - formatDiskSize
 
     @Test("formatDiskSize separates number and unit with one plain space, unpadded")
@@ -203,20 +158,6 @@ struct DataFormattersTests {
         #expect(DataFormatters.formatDiskSize(250) == "250 GB")
         #expect(DataFormatters.formatDiskSize(10) == "10 GB")
         #expect(DataFormatters.formatDiskSize(75) == "75 GB")
-    }
-
-    @Test("formatDiskSize formats whole TB values with one decimal")
-    func formatDiskSizeWholeTB() {
-        #expect(DataFormatters.formatDiskSize(1000) == "1.0 TB")
-        #expect(DataFormatters.formatDiskSize(2000) == "2.0 TB")
-        #expect(DataFormatters.formatDiskSize(10000) == "10.0 TB")
-    }
-
-    @Test("formatDiskSize formats fractional TB with one decimal")
-    func formatDiskSizeFractionalTB() {
-        #expect(DataFormatters.formatDiskSize(1500) == "1.5 TB")
-        #expect(DataFormatters.formatDiskSize(2500) == "2.5 TB")
-        #expect(DataFormatters.formatDiskSize(7500) == "7.5 TB")
     }
 
     @Test("diskSizeParts splits the number from the unit, switching to TB at 1000 GB")

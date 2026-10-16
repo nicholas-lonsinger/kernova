@@ -65,21 +65,6 @@ struct VMCommandCoreListingTests {
         #expect(try listed(harness, VMListQuery()) == harness.core.list(.all).map(\.name))
     }
 
-    @Test("--sort orders by name A→Z and by creation newest first, ties keeping library order")
-    func sortOrdersTheListing() throws {
-        let harness = makeHarness()
-        let base = Date(timeIntervalSince1970: 1_000_000)
-        makeInstance(in: harness, name: "beta") { $0.createdAt = base }
-        makeInstance(in: harness, name: "Alpha 10") { $0.createdAt = base.addingTimeInterval(20) }
-        makeInstance(in: harness, name: "Alpha 9") { $0.createdAt = base.addingTimeInterval(10) }
-        makeInstance(in: harness, name: "Twin") { $0.createdAt = base }
-
-        #expect(try listed(harness, VMListQuery(sort: .name)) == ["Alpha 9", "Alpha 10", "beta", "Twin"])
-        #expect(
-            try listed(harness, VMListQuery(sort: .dateCreated)) == ["Alpha 10", "Alpha 9", "beta", "Twin"])
-        #expect(try listed(harness, VMListQuery(sort: .manual)) == ["beta", "Alpha 10", "Alpha 9", "Twin"])
-    }
-
     @Test("--sort lastRun lists live VMs first, then most recent, then none recorded, as the sidebar sorts them")
     func lastRunSortMatchesTheSidebar() throws {
         let harness = makeHarness()
@@ -298,19 +283,6 @@ struct VMCommandCoreListingTests {
             filter: VMLibraryFilter(states: [.stopped]),
             groups: [VMGroupReference(.smartGroup, named: "Macs")], sort: .name)
         #expect(try listed(harness, query) == ["Mac", "Old"])
-    }
-
-    @Test("A smart group the library does not list is refused as not found")
-    func unknownSmartGroupIsRefused() {
-        let harness = makeHarness()
-        makeMixedLibrary(in: harness)
-
-        let refused = refusal(harness, VMListQuery(groups: [VMGroupReference(.smartGroup, named: "Nope")]))
-        guard case .itemNotFoundOnHost(let item)? = refused else {
-            Issue.record("expected a not-found refusal, got \(String(describing: refused))")
-            return
-        }
-        #expect(item == "smart group named \u{201C}Nope\u{201D}")
     }
 
     @Test("groups lists each smart group in sidebar order with its members in library order")

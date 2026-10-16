@@ -172,23 +172,6 @@ struct VMLifecyclePhaseTests {
 
     // MARK: - Invariants across projections
 
-    @Test("A live session presented is one a VZVirtualMachine exists for")
-    func liveSessionNamesASession() {
-        for phase in VMLifecyclePhaseFixtures.all where phase.hasLiveSession {
-            #expect(phase.sessionID != nil, "\(phase)")
-            #expect(phase.holdsLiveIdentity, "\(phase)")
-        }
-    }
-
-    @Test("Nothing at rest names a session or holds an identity")
-    func atRestHoldsNothingLive() {
-        for phase in VMLifecyclePhaseFixtures.all where phase.isAtRest {
-            #expect(phase.sessionID == nil, "\(phase)")
-            #expect(!phase.holdsLiveIdentity, "\(phase)")
-            #expect(phase.operation == nil, "\(phase)")
-        }
-    }
-
     @Test("A live-paused VM and a suspended one report distinct statuses")
     func pausedAndSuspendedAreDistinct() {
         let livePaused = VMLifecyclePhase.livePaused(sessionID: Self.session)

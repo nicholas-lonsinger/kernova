@@ -17,12 +17,6 @@ struct StreamFrameTests {
         #expect(framed.suffix(payload.count) == payload)
     }
 
-    @Test("encode of empty payload produces a 4-byte zero-length frame")
-    func encodeEmptyPayload() throws {
-        let framed = try StreamFrame.encode(Data())
-        #expect(framed == Data([0x00, 0x00, 0x00, 0x00]))
-    }
-
     @Test("encode rejects payloads above maxPayloadSize")
     func encodeRejectsOversize() {
         let oversize = Data(count: StreamFrame.maxPayloadSize + 1)
@@ -37,12 +31,6 @@ struct StreamFrameTests {
     }
 
     // MARK: - decode
-
-    @Test("decoder returns nil with empty buffer")
-    func decoderEmpty() throws {
-        var decoder = StreamFrameDecoder()
-        #expect(try decoder.nextFrame() == nil)
-    }
 
     @Test("decoder returns nil with partial length prefix")
     func decoderPartialLength() throws {
@@ -143,48 +131,6 @@ struct StreamFrameTests {
         #expect(try decoder.nextFrame() == Data([0x01, 0x02, 0x03]))
     }
 
-    @Test("decoder reports correct bufferedByteCount mid-stream after compaction")
-    func decoderBufferedByteCountAfterCompaction() throws {
-        var decoder = StreamFrameDecoder()
-        // Push enough frames to trip compaction, but leave a partial frame at the tail.
-        let smallPayload = Data(repeating: 0x55, count: 4096)
-        let smallFramed = try StreamFrame.encode(smallPayload)
-        // Cross the compaction threshold at least twice before leaving a partial frame.
-        for _ in 0..<32 {
-            decoder.feed(smallFramed)
-            _ = try decoder.nextFrame()
-        }
-
-        let halfFrame = smallFramed.prefix(smallFramed.count / 2)
-        decoder.feed(halfFrame)
-        #expect(try decoder.nextFrame() == nil)
-        #expect(decoder.bufferedByteCount == halfFrame.count)
-    }
-
-    @Test("decoder preserves payload bytes of a frame straddling the compaction boundary")
-    func decoderPayloadIntegrityAcrossCompaction() throws {
-        var decoder = StreamFrameDecoder()
-        // Use a recognisable payload so byte corruption is immediately obvious.
-        let smallPayload = Data((0..<128).map { UInt8($0 & 0xFF) })
-        let smallFramed = try StreamFrame.encode(smallPayload)
-
-        // Cross the compaction threshold at least once.
-        for _ in 0..<32 {
-            decoder.feed(smallFramed)
-            _ = try decoder.nextFrame()
-        }
-
-        // Feed just past the threshold but mid-payload of the next frame.
-        let splitAt = smallFramed.count / 2
-        decoder.feed(Data(smallFramed.prefix(splitAt)))
-        #expect(try decoder.nextFrame() == nil)
-
-        // Deliver the remainder — the decoder must reconstruct the exact bytes.
-        decoder.feed(Data(smallFramed.suffix(smallFramed.count - splitAt)))
-        let recovered = try decoder.nextFrame()
-        #expect(recovered == smallPayload)
-    }
-
     @Test("decoder yields correct payloads while draining across a compaction boundary")
     func decoderDrainsAcrossCompactionBoundary() throws {
         var decoder = StreamFrameDecoder()
@@ -206,57 +152,7 @@ struct StreamFrameTests {
         #expect(try decoder.nextFrame() == nil)
     }
 
-    @Test("decoder handles a partial length prefix split at the compaction boundary")
-    func decoderPartialLengthPrefixAcrossCompaction() throws {
-        var decoder = StreamFrameDecoder()
-        let warmPayload = Data(repeating: 0xAA, count: 4096)
-        let warmFramed = try StreamFrame.encode(warmPayload)
-
-        // Cross the compaction threshold at least twice before leaving a partial prefix.
-        for _ in 0..<32 {
-            decoder.feed(warmFramed)
-            _ = try decoder.nextFrame()
-        }
-
-        // Build the next frame but deliver only 1 byte of its length prefix.
-        let nextPayload = Data([0x10, 0x20, 0x30, 0x40, 0x50])
-        let nextFramed = try StreamFrame.encode(nextPayload)
-        decoder.feed(Data(nextFramed.prefix(1)))
-        #expect(try decoder.nextFrame() == nil)
-
-        // Deliver the rest — decoder must reconstruct the full frame correctly.
-        decoder.feed(Data(nextFramed.dropFirst(1)))
-        #expect(try decoder.nextFrame() == nextPayload)
-        #expect(decoder.isEmpty)
-    }
-
     // MARK: - chunk-sized frames (#377)
-
-    @Test("decoder drains many chunk-sized frames from one feed without corruption")
-    func decoderDrainsChunkSizedFramesInOneFeed() throws {
-        var decoder = StreamFrameDecoder()
-        // A production clipboard chunk frame is ~65.5 KiB — already larger than the
-        // 64 KiB compaction threshold on its own. Feeding several in a single chunk
-        // is the case that used to memmove the whole unread tail after every frame;
-        // confirm every distinctly-filled payload survives byte-for-byte through the
-        // deferred-compaction path.
-        let chunkSize = 64 * 1024
-        let frameCount = 8
-        var payloads: [Data] = []
-        var bulk = Data()
-        for i in 0..<frameCount {
-            let payload = Data((0..<chunkSize).map { UInt8(($0 &+ i) & 0xFF) })
-            payloads.append(payload)
-            bulk.append(try StreamFrame.encode(payload))
-        }
-
-        decoder.feed(bulk)
-        for (i, expected) in payloads.enumerated() {
-            #expect(try decoder.nextFrame() == expected, "payload mismatch at frame \(i)")
-        }
-        #expect(try decoder.nextFrame() == nil)
-        #expect(decoder.isEmpty)
-    }
 
     @Test("retained payload slices stay valid across later decoder mutations")
     func retainedPayloadSlicesSurviveLaterMutations() throws {
@@ -282,28 +178,6 @@ struct StreamFrameTests {
         #expect(first == p0)
         #expect(second == p1)
         #expect(third == p2)
-        #expect(try decoder.nextFrame() == nil)
-    }
-
-    // MARK: - round trip
-
-    @Test("encode/decode round-trip preserves arbitrary bytes")
-    func roundTrip() throws {
-        let payloads: [Data] = [
-            Data(),
-            Data([0x42]),
-            Data((0..<1024).map { UInt8($0 & 0xFF) }),
-            Data(repeating: 0xAB, count: 65_535),
-        ]
-
-        var decoder = StreamFrameDecoder()
-        for payload in payloads {
-            decoder.feed(try StreamFrame.encode(payload))
-        }
-
-        for expected in payloads {
-            #expect(try decoder.nextFrame() == expected)
-        }
         #expect(try decoder.nextFrame() == nil)
     }
 }

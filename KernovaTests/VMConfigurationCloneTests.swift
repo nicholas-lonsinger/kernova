@@ -58,29 +58,6 @@ struct VMConfigurationCloneTests {
         #expect(clone.name == "Ubuntu Copy 2")
     }
 
-    @Test("Clone appends ' Copy 3' when ' Copy' and ' Copy 2' already exist")
-    func cloneNameCopy3() {
-        let clone = makeConfig(name: "Ubuntu").clonedForNewInstance(
-            existingNames: ["Ubuntu", "Ubuntu Copy", "Ubuntu Copy 2"]
-        )
-        #expect(clone.name == "Ubuntu Copy 3")
-    }
-
-    @Test("generateCloneName returns ' Copy' when no conflicts")
-    func generateCloneNameNoConflict() {
-        let name = VMConfiguration.generateCloneName(baseName: "VM", existingNames: ["VM"])
-        #expect(name == "VM Copy")
-    }
-
-    @Test("generateCloneName skips to next available number")
-    func generateCloneNameSkips() {
-        let name = VMConfiguration.generateCloneName(
-            baseName: "VM",
-            existingNames: ["VM", "VM Copy", "VM Copy 2", "VM Copy 3"]
-        )
-        #expect(name == "VM Copy 4")
-    }
-
     // MARK: - Preserved Settings
 
     @Test("Clone preserves resource settings")
@@ -167,22 +144,10 @@ struct VMConfigurationCloneTests {
 
     // MARK: - Shared Directories
 
-    @Test("Clone keeps shared directory IDs")
-    func clonePreservesSharedDirectoryIDs() {
-        let dirs = [
-            SharedDirectory(path: "/Users/test/Documents", readOnly: false),
-            SharedDirectory(path: "/Users/test/Downloads", readOnly: true),
-        ]
-        let original = makeConfig(sharedDirectories: dirs)
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.sharedDirectories?.map(\.id) == original.sharedDirectories?.map(\.id))
-    }
-
     @Test("Clone preserves shared directory paths and readOnly flags")
     func clonePreservesSharedDirectoryPaths() {
         let dirs = [
-            SharedDirectory(path: "/Users/test/Documents", readOnly: false),
+            SharedDirectory(path: "/Users/test/Documents", readOnly: false, mountName: "1234abcd-Documents"),
             SharedDirectory(path: "/Users/test/ReadOnly", readOnly: true),
         ]
         let original = makeConfig(sharedDirectories: dirs)
@@ -192,42 +157,19 @@ struct VMConfigurationCloneTests {
         #expect(clone.sharedDirectories?[0].readOnly == false)
         #expect(clone.sharedDirectories?[1].path == "/Users/test/ReadOnly")
         #expect(clone.sharedDirectories?[1].readOnly == true)
-    }
-
-    @Test("Clone keeps each share's mount name")
-    func clonePreservesSharedDirectoryMountNames() {
-        let dirs = [SharedDirectory(path: "/Users/test/src", mountName: "1234abcd-src")]
-        let clone = makeConfig(sharedDirectories: dirs).clonedForNewInstance(existingNames: [])
-        #expect(clone.sharedDirectories?.map(\.mountName) == ["1234abcd-src"])
-    }
-
-    @Test("Clone with nil shared directories remains nil")
-    func cloneNilSharedDirectories() {
-        let clone = makeConfig(sharedDirectories: nil).clonedForNewInstance(existingNames: [])
-        #expect(clone.sharedDirectories == nil)
+        #expect(clone.sharedDirectories?.map(\.id) == original.sharedDirectories?.map(\.id))
+        #expect(clone.sharedDirectories?[0].mountName == "1234abcd-Documents")
     }
 
     // MARK: - Storage Disks
-
-    @Test("Clone keeps storage disk IDs")
-    func clonePreservesStorageDiskIDs() {
-        let disks = [
-            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
-            StorageDisk(path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false, kind: .virtio),
-        ]
-        var config = makeConfig()
-        config.storageDisks = disks
-        let clone = config.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.storageDisks?.map(\.id) == disks.map(\.id))
-    }
 
     @Test("Clone preserves storage disk paths, labels, readOnly, isInternal, and kind")
     func clonePreservesStorageDiskFields() {
         let disks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
             StorageDisk(
-                path: "/ext/installer.iso", readOnly: true, label: "Installer", isInternal: false, kind: .usbMassStorage
+                path: "/ext/installer.iso", readOnly: true, label: "Installer", isInternal: false,
+                kind: .usbMassStorage, notes: "weekly snapshot source"
             ),
         ]
         var config = makeConfig()
@@ -244,25 +186,8 @@ struct VMConfigurationCloneTests {
         #expect(clone.storageDisks?[1].label == "Installer")
         #expect(clone.storageDisks?[1].isInternal == false)
         #expect(clone.storageDisks?[1].kind == .usbMassStorage)
-    }
-
-    @Test("Clone with nil storage disks remains nil")
-    func cloneNilStorageDisks() {
-        let clone = makeConfig().clonedForNewInstance(existingNames: [])
-        #expect(clone.storageDisks == nil)
-    }
-
-    @Test("Clone preserves a storage disk's note")
-    func clonePreservesStorageDiskNotes() {
-        var disk = StorageDisk(
-            path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false, kind: .virtio)
-        disk.notes = "weekly snapshot source"
-        var config = makeConfig()
-        config.storageDisks = [disk]
-
-        let clone = config.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.storageDisks?[0].notes == "weekly snapshot source")
+        #expect(clone.storageDisks?.map(\.id) == disks.map(\.id))
+        #expect(clone.storageDisks?[1].notes == "weekly snapshot source")
     }
 
     // MARK: - lastSeenAgentVersion
@@ -279,19 +204,15 @@ struct VMConfigurationCloneTests {
         #expect(clone.lastSeenAgentVersion == "0.9.2")
     }
 
-    @Test("Clone with nil lastSeenAgentVersion remains nil")
-    func cloneNilLastSeenAgentVersion() {
-        let clone = makeConfig().clonedForNewInstance(existingNames: [])
-        #expect(clone.lastSeenAgentVersion == nil)
-    }
-
     // MARK: - Removable Media
 
     @Test("Clone keeps removable media item IDs")
     func clonePreservesRemovableMediaIDs() {
         let originalUUID = UUID()
         let items = [
-            RemovableMediaItem(id: originalUUID, path: "/tmp/install.iso", readOnly: true, label: "Installer")
+            RemovableMediaItem(
+                id: originalUUID, path: "/tmp/install.iso", readOnly: true, label: "Installer",
+                notes: "from the Ubuntu mirror")
         ]
         var config = makeConfig()
         config.removableMedia = items
@@ -301,23 +222,6 @@ struct VMConfigurationCloneTests {
         #expect(clone.removableMedia?.count == 1)
         #expect(clone.removableMedia?[0].path == "/tmp/install.iso")
         #expect(clone.removableMedia?[0].id == originalUUID)
-    }
-
-    @Test("Clone with nil removable media remains nil")
-    func cloneLeavesRemovableMediaNil() {
-        let clone = makeConfig().clonedForNewInstance(existingNames: [])
-        #expect(clone.removableMedia == nil)
-    }
-
-    @Test("Clone preserves a removable medium's note")
-    func clonePreservesRemovableMediaNotes() {
-        var item = RemovableMediaItem(path: "/tmp/install.iso", readOnly: true, label: "Installer")
-        item.notes = "from the Ubuntu mirror"
-        var config = makeConfig()
-        config.removableMedia = [item]
-
-        let clone = config.clonedForNewInstance(existingNames: [])
-
         #expect(clone.removableMedia?[0].notes == "from the Ubuntu mirror")
     }
 

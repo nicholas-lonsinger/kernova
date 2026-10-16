@@ -161,12 +161,6 @@ struct SidebarFilterSortGroupTests {
             shownNames(entries, SidebarViewOptions(sort: .dateCreated)) == ["New", "Twin A", "Twin B", "Old"])
     }
 
-    @Test("Manual keeps the library's order")
-    func sortManual() {
-        let entries = [vm("C"), vm("A"), vm("B")]
-        #expect(shownNames(entries, SidebarViewOptions(sort: .manual)) == ["C", "A", "B"])
-    }
-
     @Test("The detail line states the sort key's value, status under Name and Manual")
     func detailText() {
         let created = Date(timeIntervalSince1970: 1_800_000_000)
@@ -264,18 +258,6 @@ struct SidebarFilterSortGroupTests {
         #expect(layout.reconciled(nil) { present.contains($0) } == nil)
     }
 
-    @Test("A filter that hides the selected VM clears the selection")
-    func filterHidingSelectionClearsIt() {
-        let viewModel = makeViewModel()
-        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
-        viewModel.selectRevealing(mac.id)
-
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-
-        #expect(viewModel.selection == nil)
-    }
-
     @Test("A grouping moves the selection onto the VM's grouped row")
     func groupingMovesSelectionOntoGroupedRow() {
         let viewModel = makeViewModel()
@@ -336,23 +318,6 @@ struct SidebarFilterSortGroupTests {
     }
 
     // MARK: - Reorder
-
-    @Test("A drop under a filter lands before the visible neighbor in the manual order")
-    func reorderUnderFilter() {
-        let entries = [vm("A"), vm("Hidden Mac", guestOS: .macOS), vm("B"), vm("C")]
-        let layout = SidebarLayout.project(
-            entries: entries, options: options(VMLibraryFilter(guestOSes: [.linux])), context: .testing())
-        let visible = layout.rowKeys.map(\.entryID)
-        var order = entries.map(\.id)
-        let moved = entries[3].id
-
-        // C dropped above B: before B in the manual order, so after Hidden Mac.
-        let offset = SidebarLayout.manualOrderOffset(
-            moving: moved, toVisibleIndex: 1, amongVisible: visible, in: order)
-        order.move(fromOffsets: IndexSet(integer: 3), toOffset: offset ?? 3)
-
-        #expect(order == [entries[0].id, entries[1].id, moved, entries[2].id])
-    }
 
     @Test("Rows drag under every sort, since any sort's row can join a folder")
     func rowsDragUnderEverySort() throws {

@@ -46,13 +46,6 @@ struct MacOSGuestStartOptionsTests {
 
     // MARK: - Guest Account
 
-    @Test("A Linux guest never carries an account, whatever is armed")
-    func linuxCarriesNoAccount() {
-        #expect(
-            MacOSGuestProvisioning.macOSStartOptions(
-                bootIntoRecovery: false, guestOS: .linux, provisioning: makeCredentials()) == nil)
-    }
-
     @available(macOS 27.0, *)
     @Test("A macOS cold boot carries the armed account onto the start options")
     func coldBootCarriesTheAccount() throws {

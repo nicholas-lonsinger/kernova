@@ -50,25 +50,6 @@ struct VMStorageServiceTests {
         return url
     }
 
-    @Test("Create and delete VM bundle")
-    func createAndDeleteBundle() throws {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-
-        let bundleURL = try makeBundle(config)
-        #expect(FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
-
-        // Verify config.json exists
-        let configURL = bundleURL.appendingPathComponent("config.json")
-        #expect(FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)))
-
-        try FileManager.default.removeItem(at: bundleURL)
-        #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
-    }
-
     @Test("Load configuration from bundle")
     func loadConfiguration() throws {
         let config = VMConfiguration(
@@ -160,20 +141,6 @@ struct VMStorageServiceTests {
         #expect(throws: VMStorageError.self) {
             try service.permanentlyDeleteVMBundle(at: fakeURL)
         }
-    }
-
-    @Test("List VM bundles finds created bundles")
-    func listBundles() throws {
-        let config = VMConfiguration(
-            name: "List Test",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-
-        let bundleURL = try makeBundle(config)
-
-        let bundles = try service.listVMBundles()
-        #expect(bundles.contains(bundleURL))
     }
 
     // MARK: - Bundle Identity

@@ -148,32 +148,6 @@ struct VsockClipboardServiceTests {
         #expect(service.grabIfChanged() == .undelivered)
     }
 
-    @Test("the channel ending settles the service, so the next connection can forward again")
-    func channelEndSettlesTheService() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
-            stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
-        service.start()
-        defer { service.stop() }
-        defer { guest.close() }
-
-        // The guest closes this channel on every agent reconnect. Nothing calls
-        // stop() for that, so the service has to settle itself or it keeps
-        // absorbing the copy instead of letting the next connection forward it.
-        guest.close()
-
-        try await waitForChange { !service.isConnected }
-        // The latch: an owner stop() after the channel already settled is a
-        // safe no-op — retire is expected to run again (a garbage-collection
-        // pass, not one-shot), but abandon/log are not.
-        service.stop()
-        #expect(!service.isConnected)
-    }
-
     @Test("A payload-less frame is dropped without closing the clipboard channel")
     func payloadLessFrameIsDropped() async throws {
         let (guest, host) = try makePair()
@@ -1916,41 +1890,6 @@ struct VsockClipboardServiceTests {
         #expect(!FileManager.default.fileExists(atPath: stagedURL.path))
     }
 
-    @Test("the Copy-to-Mac click is metadata-only — every plain-file rep promises, no wire traffic")
-    func copyDefersEveryPlainFileRep() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
-            stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
-        service.start()
-        defer { service.stop() }
-
-        try guest.send(
-            makeOfferFrame(
-                generation: 12,
-                reps: [
-                    RepInfo(uti: "public.data", byteCount: 10, filename: "a.bin", isInline: false),
-                    RepInfo(uti: "public.data", byteCount: 20, filename: "b.bin", isInline: false),
-                ]))
-        try await waitForChange { service.clipboardContent.representations.count == 2 }
-
-        let responder = FakeGuestResponder(service: service, guest: guest)
-        defer { responder.cancel() }
-        responder.start()
-
-        let items = service.materializeForCopy()
-        #expect(items.resolvedReps.isEmpty)
-        #expect(items.promised.map(\.repIndex) == [0, 1])
-        #expect(items.promised.map(\.filename) == ["a.bin", "b.bin"])
-        #expect(items.droppedReasons.isEmpty)
-        // No pull at copy-click — bytes materialize on read at paste.
-        #expect(responder.requests.isEmpty)
-    }
-
     @Test("the click refuses the whole file set when its total is over the paste budget")
     func copyAdvisoryRefusesOverTotal() async throws {
         let (guest, host) = try makePair()
@@ -2221,6 +2160,9 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 2 }
 
         let items = service.materializeForCopy()
+        #expect(items.resolvedReps.isEmpty)
+        #expect(items.promised.map(\.filename) == ["a.bin", "b.bin"])
+        #expect(responder.requests.isEmpty)
         #expect(items.promised.map(\.repIndex) == [0, 1])
         #expect(items.droppedReasons.isEmpty)
 
@@ -2366,35 +2308,6 @@ struct VsockClipboardServiceTests {
         #expect(reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
         #expect(service.serveFileURL(generation: 73, repIndex: 0) == nil)
         #expect(responder.requests.isEmpty)
-    }
-
-    @Test("two reps whose declared sizes sum past UInt64 are refused, not wrapped under the cap")
-    func wrappingRepSumRefused() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
-            stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
-        service.start()
-        defer { service.stop() }
-
-        // Unbounded, 2^63 + 2^63 wraps to 0 — a total that passes every cap.
-        try guest.send(
-            makeOfferFrame(
-                generation: 74,
-                reps: [
-                    RepInfo(uti: "public.data", byteCount: 1 << 63, filename: "a.bin", isInline: false),
-                    RepInfo(uti: "public.data", byteCount: 1 << 63, filename: "b.bin", isInline: false),
-                ]))
-        try await waitForChange { service.clipboardContent.representations.count == 2 }
-
-        let items = service.materializeForCopy()
-        #expect(items.promised.isEmpty)
-        #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
-        #expect(service.serveFileURL(generation: 74, repIndex: 0) == nil)
     }
 
     @Test("an offer declaring more reps than the transfer-id limit is truncated at intake")

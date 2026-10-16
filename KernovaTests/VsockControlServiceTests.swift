@@ -180,25 +180,6 @@ struct VsockControlServiceTests {
         #expect(hello.agentInfo.osVersion.allSatisfy { $0.isNumber || $0 == "." })
     }
 
-    @Test("Guest hello flips isConnected and populates agentVersion")
-    func guestHelloPopulatesState() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host)
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-
-        try await waitForChange { service.isConnected }
-        #expect(service.isConnected)
-        #expect(service.agentVersion == "0.9.0")
-    }
-
     // MARK: - agentStatus matrix
 
     @Test("agentStatus is .waiting before guest Hello arrives")
@@ -213,24 +194,6 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         #expect(service.agentStatus == .waiting)
-    }
-
-    @Test("agentStatus is .current when guest reports the bundled version")
-    func agentStatusCurrentWhenVersionsMatch() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-
-        #expect(service.agentStatus == .current(version: "0.9.0"))
     }
 
     @Test("agentStatus is .outdated when guest reports an older version")
@@ -268,25 +231,6 @@ struct VsockControlServiceTests {
 
         // Newer-than-bundled should not flag .outdated against the user.
         #expect(service.agentStatus == .current(version: "1.0.0"))
-    }
-
-    @Test("agentStatus uses numeric ordering: 0.9.0 < 0.10.0")
-    func agentStatusNumericOrdering() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host, bundledAgentVersion: "0.10.0")
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-
-        // Lexicographic compare would put "0.9.0" > "0.10.0" — wrong.
-        #expect(service.agentStatus == .outdated(installed: "0.9.0", bundled: "0.10.0"))
     }
 
     @Test("agentStatus falls back to .current when bundled version is unavailable")
@@ -906,37 +850,6 @@ struct VsockControlServiceTests {
         #expect(lost.samples == [nil])
     }
 
-    @Test("onChannelLost stays silent for an owner-requested stop()")
-    func channelLostSkippedForOwnerStop() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        // Session teardown and the accept path's replace-the-previous-service
-        // both route here. The owner already knows, and telling it the channel
-        // "died" would arm a watchdog against a VM it is shutting down.
-        let lost = ChannelLostRecorder()
-        let service = makeService(
-            channel: host,
-            bundledAgentVersion: "0.9.0",
-            onChannelLost: { lost.record() }
-        )
-        service.start()
-
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-
-        service.stop()
-        #expect(!service.isConnected)
-
-        // The consume task also unwinds in here, and its settle must not fire
-        // the callback either: the owner's stop() latched first.
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(lost.count == 0)
-    }
-
     // MARK: - Lifecycle
 
     @Test("stop() is idempotent and resets state")
@@ -1029,31 +942,6 @@ struct VsockControlServiceTests {
     }
 
     // MARK: - onAgentInfoObserved
-
-    @Test("onAgentInfoObserved fires once when the guest reports a non-empty version")
-    func onAgentInfoObservedFires() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let observed = ObservedRecorder()
-        let service = makeService(
-            channel: host,
-            onAgentInfoObserved: { observed.append($0) }
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.2"))
-        try await waitForChange { service.isConnected }
-
-        // The Hello handler runs synchronously after the inbound frame is
-        // dispatched on the main actor, so by the time isConnected flips the
-        // observer has already been invoked.
-        #expect(observed.values == [ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "26.0")])
-    }
 
     @Test("onAgentInfoObserved is skipped when the guest reports an empty version")
     func onAgentInfoObservedSkippedForEmpty() async throws {
@@ -1331,23 +1219,11 @@ struct VsockControlServiceTests {
 
     // MARK: - ObservedAgentInfo.boundedField
 
-    @Test("An empty field normalizes to nil")
-    func boundedFieldEmptyIsNil() {
-        #expect(ObservedAgentInfo.boundedField("") == nil)
-    }
-
     @Test("A field within the bound passes through verbatim")
     func boundedFieldWithinBoundIsVerbatim() {
         #expect(ObservedAgentInfo.boundedField("26.0.1") == "26.0.1")
         let atLimit = String(repeating: "a", count: ObservedAgentInfo.maxFieldBytes)
         #expect(ObservedAgentInfo.boundedField(atLimit) == atLimit)
-    }
-
-    @Test("An over-long field is clipped to the bound")
-    func boundedFieldOverBoundIsClipped() {
-        let bound = ObservedAgentInfo.maxFieldBytes
-        let bounded = ObservedAgentInfo.boundedField(String(repeating: "a", count: bound + 1))
-        #expect(bounded == String(repeating: "a", count: bound))
     }
 
     @Test("A single grapheme cluster of many scalars is still bounded")

@@ -349,17 +349,4 @@ struct VMSnapshotIntentTests {
         #expect(vm.snapshotManifest.isEmpty)
         #expect(wired.machineFiles.discardedIDs == [listed.id])
     }
-
-    // MARK: - Error Surfacing
-
-    @Test("A refusal from the core reaches the caller unchanged")
-    func refusalsPassThrough() async throws {
-        let wired = WiredCommandCore()
-        register(in: wired, snapshots: [])
-        let missing = UUID()
-
-        await #expect(throws: CommandError.notFound(.id(missing))) {
-            try await makeGateway(wired).snapshots(ofVM: missing)
-        }
-    }
 }

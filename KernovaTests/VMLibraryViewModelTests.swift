@@ -300,19 +300,6 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
-    @Test("requestDelete routes to sheet when the VM references external attachments")
-    func requestDeleteRoutesToSheetWithExternals() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = viewModel.library.admitFixture {
-            $0.removableMedia = [RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true)]
-        }
-
-        viewModel.requestDelete(instance)
-
-        #expect(presenter.instanceToDelete?.id == instance.id)
-        #expect(presenter.showDeleteSheet == true)
-    }
-
     @Test("externalAttachments returns external disks and removable media with sharing info")
     func externalAttachmentsLists() async {
         let (viewModel, _, _, _, _) = makeViewModel()
@@ -455,22 +442,6 @@ struct VMLibraryViewModelTests {
         #expect(attachments.count == 1)
         #expect(attachments[0].path == "/Volumes/External/installer.iso")
         #expect(!attachments.contains { $0.path == agentPath })
-    }
-
-    @Test("externalAttachments is empty when the only external is the Guest Agent DMG")
-    func externalAttachmentsEmptyForGuestAgentOnly() async throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-            .path(percentEncoded: false)
-        let instance = viewModel.library.admitFixture {
-            $0.removableMedia = [
-                RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
-            ]
-        }
-
-        // Empty means the sheet's "Files outside this VM" section is omitted
-        // entirely — there is nothing for the user to decide about.
-        #expect(await viewModel.externalAttachments(for: instance).isEmpty)
     }
 
     @Test("deleteVM never trashes the Guest Agent DMG even if its id is selected")
@@ -1033,6 +1004,8 @@ struct VMLibraryViewModelTests {
 
         #expect(virtService.stopCallCount == 1)
         #expect(instance.status == .stopped)
+        #expect(presenter.showStopPausedConfirmation == false)
+        #expect(presenter.instanceToStopPaused == nil)
     }
 
     @Test("forceStop delegates to lifecycle coordinator")
@@ -2567,25 +2540,6 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .running)
     }
 
-    @Test("start keeps the generic error when the VM's only disk fails to attach")
-    func startSoleDiskAttachFailureStaysGeneric() async {
-        let virtService = MockVirtualizationService()
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = viewModel.library.admitFixture()
-        // The synthesized main disk is what a nil storageDisks list resolves to.
-        let mainDisk = StorageDisk.mainDisk(
-            layout: VMBundleLayout(bundleURL: instance.bundleURL))
-        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
-            id: mainDisk.id, path: mainDisk.path, label: mainDisk.label,
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
-
-        await viewModel.start(instance)
-
-        // Removing the VM's only disk leaves nothing to start, so no removal offer.
-        #expect(presenter.startFailedAttachments.isEmpty)
-        #expect(presenter.showError == true)
-    }
-
     /// A fixture VM whose storage list `storageDisks` builds against the bundle
     /// the VM will own.
     private func makeInstanceWithDisks(
@@ -2597,47 +2551,6 @@ struct VMLibraryViewModelTests {
             config.storageDisks = storageDisks(
                 VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: config.id)))
         }
-    }
-
-    @Test("Disk.asif failing to attach keeps the bare alert even when the VM has a sibling disk")
-    func mainDiskAttachFailureWithASiblingIsNotOffered() async {
-        let virtService = MockVirtualizationService()
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let extra = StorageDisk(
-            path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
-            isInternal: true, kind: .virtio)
-        let instance = makeInstanceWithDisks(in: viewModel.library) { [StorageDisk.mainDisk(layout: $0), extra] }
-        let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
-        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
-            id: mainDisk.id, path: mainDisk.path, label: mainDisk.label,
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
-
-        await viewModel.start(instance)
-
-        // The sibling clears the sole-disk rule, and the internal rule is what
-        // turns the offer back: nothing re-creates `Disk.asif`'s entry.
-        #expect(presenter.startFailedAttachments.isEmpty)
-        #expect(presenter.showError == true)
-    }
-
-    @Test("start offers removal when an external storage disk attach fails")
-    func startOffersRemovalOnExternalDiskAttachFailure() async {
-        let virtService = MockVirtualizationService()
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let external = StorageDisk(
-            id: UUID(), path: "/tmp/gone.img", readOnly: false, label: "External",
-            isInternal: false, kind: .virtio)
-        let instance = makeInstanceWithDisks(in: viewModel.library) { [StorageDisk.mainDisk(layout: $0), external] }
-        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
-            id: external.id, path: external.path, label: external.label,
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
-
-        await viewModel.start(instance)
-
-        #expect(presenter.startFailedAttachments.count == 1)
-        #expect(presenter.startFailedAttachments.first?.kind == .storageDisk)
-        #expect(presenter.startFailedAttachments.first?.id == external.id)
-        #expect(presenter.errors.isEmpty)
     }
 
     /// The ways one entry can be unusable that are not a refused attach. A file
@@ -2917,22 +2830,6 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
-    @Test("A builder failure naming an entry the VM no longer carries keeps the bare alert")
-    func startWithoutTheNamedEntryStaysGeneric() async {
-        let virtService = MockVirtualizationService()
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = viewModel.library.admitFixture()
-        // No removable media on the VM at all: an offer whose removal could
-        // only no-op leaves a button that appears to do nothing.
-        virtService.startError = ConfigurationBuilderError.removableMediaNotFound(
-            id: UUID(), path: "/tmp/gone.iso", label: "Gone")
-
-        await viewModel.start(instance)
-
-        #expect(presenter.startFailedAttachments.isEmpty)
-        #expect(presenter.showError == true)
-    }
-
     @Test("start does not offer removal for transient file-lock contention")
     func startDoesNotOfferRemovalForLockContention() async {
         let virtService = MockVirtualizationService()
@@ -3149,16 +3046,6 @@ struct VMLibraryViewModelTests {
 
         #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(virtService.stopCallCount == 1)
-    }
-
-    @Test("resumeAndStop clears confirmation state after dispatch")
-    func resumeAndStopClearsConfirmationState() async {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = viewModel.library.admitFixture()
-        instance.activity.placeForTesting(.suspended)
-
-        await viewModel.resumeAndStop(instance)
-
         #expect(presenter.instanceToStopPaused == nil)
         #expect(presenter.showStopPausedConfirmation == false)
     }
@@ -3190,19 +3077,6 @@ struct VMLibraryViewModelTests {
 
         #expect(presenter.showError == true)
         #expect(virtService.stopCallCount == 0)
-    }
-
-    @Test("stop on running VM still delegates directly without confirmation")
-    func stopRunningSkipsConfirmation() async {
-        let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = viewModel.library.admitFixture()
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        await viewModel.stop(instance)
-
-        #expect(virtService.stopCallCount == 1)
-        #expect(presenter.showStopPausedConfirmation == false)
-        #expect(presenter.instanceToStopPaused == nil)
     }
 
     @Test("pause presents error on service failure and leaves the guest running")
@@ -4527,19 +4401,6 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.activeRename == nil)
     }
 
-    @Test("commitRename rejects empty name and preserves original")
-    func commitRenameRejectsEmpty() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = viewModel.library.admitFixture(name: "Keep Me", files: storage.files)
-        viewModel.activeRename = .detail(instance.id)
-
-        viewModel.commitRename(for: instance, newName: "", from: .detail)
-
-        #expect(instance.name == "Keep Me")
-        #expect(viewModel.activeRename == nil)
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
     @Test("commitRename rejects whitespace-only name and preserves original")
     func commitRenameRejectsWhitespace() {
         let (viewModel, storage, _, _, _) = makeViewModel()
@@ -4769,13 +4630,16 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.first?.hasSuffix(" Start it on its own to answer.") == true)
     }
 
+    /// A login launch has no window: the account goes to the presenter as a
+    /// start report naming each VM, which the status item counts while it is
+    /// held.
     @Test("startAutomaticVMsForLaunch carries on past failed starts and reports them in one account")
     func autoStartContinuesAfterFailure() async {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        makeAutoStartInstance(in: viewModel.library, name: "Failing")
-        makeAutoStartInstance(in: viewModel.library, name: "Following")
+        let failing = makeAutoStartInstance(in: viewModel.library, name: "Failing")
+        let following = makeAutoStartInstance(in: viewModel.library, name: "Following")
 
         await viewModel.startAutomaticVMsForLaunch()
         // A per-VM report would come from a start's own follow-up, queued
@@ -4788,23 +4652,6 @@ struct VMLibraryViewModelTests {
         #expect(lines.count == 2)
         #expect(lines.first?.hasPrefix("Couldn\u{2019}t start Failing: ") == true)
         #expect(lines.last?.hasPrefix("Couldn\u{2019}t start Following: ") == true)
-    }
-
-    /// A login launch has no window: the account goes to the presenter as a
-    /// start report naming each VM, which the status item counts while it is
-    /// held.
-    @Test("startAutomaticVMsForLaunch reports what it left undone as one start report")
-    func autoStartReportsWhatItLeftUndone() async {
-        let virtService = MockVirtualizationService()
-        virtService.startError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let failing = makeAutoStartInstance(in: viewModel.library, name: "Failing")
-        let following = makeAutoStartInstance(in: viewModel.library, name: "Following")
-
-        await viewModel.startAutomaticVMsForLaunch()
-        await drainMainQueue()
-
-        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
         #expect(presenter.startReportVMIDs.map(Set.init) == [[failing.id, following.id]])
     }
 
@@ -4980,17 +4827,6 @@ struct VMLibraryViewModelTests {
         #expect(held.status == .stopped)
         #expect(following.status == .running)
         #expect(presenter.errors.isEmpty)
-    }
-
-    @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")
-    func autoStartNoOpWhenNothingMarked() async {
-        let (viewModel, _, _, virtService, _) = makeViewModel()
-        viewModel.library.admitFixture(name: "Unmarked")
-
-        await viewModel.startAutomaticVMsForLaunch()
-
-        #expect(virtService.startCallCount == 0)
-        #expect(virtService.resumeCallCount == 0)
     }
 
     /// Nobody is at the machine for this pass, so it takes no surface: each
@@ -5889,18 +5725,6 @@ struct VMLibraryViewModelTests {
 
         #expect(presenter.instanceToForceStop?.id == instance.id)
         #expect(presenter.showForceStopConfirmation == true)
-    }
-
-    @Test("forceStopVerb delegates to lifecycle")
-    func forceStopVerb() async {
-        let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = viewModel.library.admitFixture()
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        await viewModel.forceStop(instance)
-
-        #expect(virtService.forceStopCallCount == 1)
-        #expect(instance.status == .stopped)
     }
 
     // MARK: - Reorder

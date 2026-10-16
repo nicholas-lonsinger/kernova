@@ -114,7 +114,7 @@ struct VMLibraryViewModelEphemeralTests {
 
     // MARK: - Power-off
 
-    @Test("A graceful stop returns an ephemeral VM to its baseline")
+    @Test("A graceful stop returns an ephemeral VM to its baseline, resting suspended with the mode kept")
     func stopRevertsToTheBaseline() async throws {
         let harness = try await makeHarness()
 
@@ -123,6 +123,9 @@ struct VMLibraryViewModelEphemeralTests {
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
+        #expect(harness.instance.status == .suspended)
+        #expect(harness.instance.hostState.ephemeralModeEnabled)
+        #expect(harness.instance.hostState.ephemeralBaselineSnapshotID == harness.baseline.id)
     }
 
     @Test("A force stop returns an ephemeral VM to its baseline")
@@ -143,16 +146,6 @@ struct VMLibraryViewModelEphemeralTests {
         await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
-    }
-
-    @Test("A VM with a memory-and-disks baseline rests suspended after a power-off")
-    func warmBaselineRestsSuspended() async throws {
-        let harness = try await makeHarness()
-
-        await harness.viewModel.stop(harness.instance)
-        await settleEphemeralRevert(harness)
-
-        #expect(harness.instance.status == .suspended)
     }
 
     @Test("A VM with a baseline taken while stopped rests stopped after a power-off")
@@ -288,17 +281,6 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
-    @Test("The mode survives its own revert")
-    func modeSurvivesTheRevert() async throws {
-        let harness = try await makeHarness()
-
-        await harness.viewModel.stop(harness.instance)
-        await settleEphemeralRevert(harness)
-
-        #expect(harness.instance.hostState.ephemeralModeEnabled)
-        #expect(harness.instance.hostState.ephemeralBaselineSnapshotID == harness.baseline.id)
-    }
-
     @Test("A power-off takes back the settings edited since the baseline, and no host state")
     func revertKeepsTheHostState() async throws {
         let harness = try await makeHarness()
@@ -393,20 +375,6 @@ struct VMLibraryViewModelEphemeralTests {
     }
 
     // MARK: - Discard Saved State
-
-    @Test("A Stop aimed at a suspended ephemeral session asks before discarding it")
-    func discardSavedStateAsksBeforeReverting() async throws {
-        let harness = try await makeHarness(phase: .suspended)
-
-        // Nothing to shut down: the revert deletes the suspended session and
-        // rolls the disks back, so it takes the same consent the force path does.
-        await harness.viewModel.stop(harness.instance)
-
-        #expect(presenter.forceStopInstances.map(\.id) == [harness.instance.id])
-        #expect(harness.virtualization.revertedSnapshots.isEmpty)
-        #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
-        #expect(harness.virtualization.stopCallCount == 0)
-    }
 
     @Test("A confirmed discard of a suspended ephemeral session reverts to the baseline")
     func discardSavedStateReverts() async throws {

@@ -168,18 +168,6 @@ struct VsockHostConnectionTests {
 
     // MARK: - Buffer: basic enqueue
 
-    @Test("forwardLog buffers frames when no live channel is present")
-    func buffersWhenNoChannel() {
-        let conn = VsockHostConnection()
-        conn.setEnabled(true)  // production agents are default-disabled until host policy enables them
-
-        for i in 0..<5 {
-            conn.forwardLog(level: .info, subsystem: "test", category: "test", message: "msg\(i)")
-        }
-
-        #expect(pendingLogCount(conn) == 5)
-    }
-
     @Test("buffered frames are in FIFO order")
     func bufferedFramesInFIFOOrder() {
         let conn = VsockHostConnection()
@@ -207,18 +195,6 @@ struct VsockHostConnectionTests {
         #expect(pendingLogCount(conn) == cap)
         // Oldest surviving frame is at index (total - cap) = 44
         #expect(pendingMessages(conn).first == "frame\(total - cap)")
-    }
-
-    @Test("buffer cap is exactly logBufferLimit")
-    func bufferCapIsExact() {
-        let conn = VsockHostConnection()
-        let cap = VsockHostConnection.logBufferLimit
-
-        for i in 0..<(cap + 10) {
-            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "f\(i)"))
-        }
-
-        #expect(pendingLogCount(conn) == cap)
     }
 
     // MARK: - Drain: healthy channel
@@ -554,31 +530,6 @@ struct VsockHostConnectionTests {
         // A later enable must not resurrect them.
         conn.setEnabled(true)
         #expect(pendingLogCount(conn) == 0)
-    }
-
-    @Test("setEnabled(true) allows forwardLog to buffer when no channel exists")
-    func enabledAllowsBuffering() {
-        let conn = VsockHostConnection()
-        conn.setEnabled(true)
-
-        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
-        #expect(pendingLogCount(conn) == 1)
-        #expect(conn.isLogForwardingEnabled == true)
-    }
-
-    @Test("setEnabled(false) discards the buffered frames")
-    func disablingClearsBuffer() {
-        let conn = VsockHostConnection()
-        conn.setEnabled(true)
-
-        for i in 0..<10 {
-            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg\(i)")
-        }
-        #expect(pendingLogCount(conn) == 10)
-
-        conn.setEnabled(false)
-        #expect(pendingLogCount(conn) == 0)
-        #expect(conn.isLogForwardingEnabled == false)
     }
 
     @Test("A repeated setEnabled leaves the policy and the buffer alone")

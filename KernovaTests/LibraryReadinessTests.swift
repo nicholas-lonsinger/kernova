@@ -7,6 +7,13 @@ import Testing
 @Suite("Library readiness", .caseScoped)
 @MainActor
 struct LibraryReadinessTests {
+    /// Counts the awaits the readiness makes of the library read.
+    private actor Counter {
+        private(set) var value = 0
+
+        func increment() { value += 1 }
+    }
+
     /// A library read the test lands when it chooses.
     private final class LibraryRead: @unchecked Sendable {
         private let gate = AsyncGate()

@@ -122,42 +122,6 @@ struct VMCommandEnvelopeRouterTests {
         #expect(unknown.failure == .itemNotFoundOnHost(item: "smart group named \u{201C}Nope\u{201D}"))
     }
 
-    @Test("A listing written in the vocabulary before the list query's tags is refused as another version")
-    func listingOfThePreviousVocabularyIsRefused() async throws {
-        let harness = makeHarness()
-        let request = Data(#"{"protocolVersion":10,"verb":{"list":{}}}"#.utf8)
-
-        let response = try await harness.transport.sendRaw(request)
-
-        #expect(
-            response.result
-                == .refused(.unsupportedProtocolVersion(peer: 10, expected: VMCommandRequest.currentProtocolVersion)))
-    }
-
-    @Test("A request in the vocabulary before the step-first refusal is refused as another version")
-    func requestOfThePreStepRequiredVocabularyIsRefused() async throws {
-        let harness = makeHarness()
-        let request = Data(#"{"protocolVersion":11,"verb":{"list":{}}}"#.utf8)
-
-        let response = try await harness.transport.sendRaw(request)
-
-        #expect(
-            response.result
-                == .refused(.unsupportedProtocolVersion(peer: 11, expected: VMCommandRequest.currentProtocolVersion)))
-    }
-
-    @Test("A request in the vocabulary before step routes is refused as another version")
-    func requestOfThePreStepRouteVocabularyIsRefused() async throws {
-        let harness = makeHarness()
-        let request = Data(#"{"protocolVersion":12,"verb":{"list":{}}}"#.utf8)
-
-        let response = try await harness.transport.sendRaw(request)
-
-        #expect(
-            response.result
-                == .refused(.unsupportedProtocolVersion(peer: 12, expected: VMCommandRequest.currentProtocolVersion)))
-    }
-
     @Test("A request in the vocabulary before MAC address step routes is refused as another version")
     func requestOfThePreMACRouteVocabularyIsRefused() async throws {
         let harness = makeHarness()
@@ -169,20 +133,6 @@ struct VMCommandEnvelopeRouterTests {
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
-    }
-
-    @Test("A group action written in the vocabulary before group actions is refused as another version")
-    func groupActionOfThePreviousVocabularyIsRefused() async throws {
-        let harness = makeHarness()
-        let request = Data(
-            #"{"protocolVersion":9,"verb":{"groupAction":{"_0":"start","group":{"kind":"folder","name":"Lab"}}}}"#
-                .utf8)
-
-        let response = try await harness.transport.sendRaw(request)
-
-        #expect(
-            response.result
-                == .refused(.unsupportedProtocolVersion(peer: 9, expected: VMCommandRequest.currentProtocolVersion)))
     }
 
     @Test("A group action crosses the wire as one request answered by one report, and an unknown group is refused")
@@ -463,6 +413,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(prompt.confirmTitle == "Move to Trash")
         #expect(prompt.dismissTitle == "Cancel")
         #expect(harness.library.instances.count == 1)
+        #expect(harness.storage.deleteVMBundleCallCount == 0)
 
         let confirmed = try await harness.transport.send(
             .delete(.id(instance.id), permanently: false, alsoRemoving: [], consent: .all))

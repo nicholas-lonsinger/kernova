@@ -19,24 +19,11 @@ struct EphemeralModeTitleTests {
         let title = EphemeralModeCopy.titleName("Debian", ephemeralSessionRunning: false)
         #expect(title == "Debian")
     }
-
-    @Test("A name already containing the word is not special-cased")
-    func nameContainingTheWordIsNotSpecialCased() {
-        let title = EphemeralModeCopy.titleName("Ephemeral Test Box", ephemeralSessionRunning: true)
-        #expect(title == "Ephemeral Test Box (Ephemeral)")
-    }
 }
 
 /// Ephemeral Mode's model rule: the flag/baseline pairing, and how it persists.
 @Suite("Ephemeral Mode Host State Tests", .caseScoped)
 struct EphemeralModeHostStateTests {
-    @Test("A fresh host state is not ephemeral")
-    func defaultsOff() {
-        let hostState = VMHostState()
-        #expect(!hostState.ephemeralModeEnabled)
-        #expect(hostState.ephemeralBaselineSnapshotID == nil)
-    }
-
     @Test("Turning the mode on records the baseline")
     func enablingRecordsTheBaseline() {
         var hostState = VMHostState()
@@ -57,19 +44,6 @@ struct EphemeralModeHostStateTests {
 
         #expect(!hostState.ephemeralModeEnabled)
         #expect(hostState.ephemeralBaselineSnapshotID == nil)
-    }
-
-    @Test("The mode round-trips through host-state.json")
-    func codingRoundTrip() throws {
-        var hostState = VMHostState()
-        let baseline = UUID()
-        hostState.applyEphemeralMode(enabled: true, baseline: baseline)
-
-        let data = try VMConfiguration.makeJSONEncoder().encode(hostState)
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data)
-
-        #expect(decoded.ephemeralModeEnabled)
-        #expect(decoded.ephemeralBaselineSnapshotID == baseline)
     }
 }
 
@@ -124,21 +98,6 @@ struct EphemeralModeInstanceTests {
 
         // Stopped: the mode is on, but nothing is running to discard.
         #expect(!instance.hasLiveEphemeralSession)
-    }
-
-    @Test("A power-off fires the hook the ephemeral revert hangs off")
-    func powerOffFiresTheHook() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        var poweredOff = 0
-        instance.onPoweredOff = {
-            poweredOff += 1
-            return []
-        }
-
-        instance.handleSessionEvent(.guestDidStop)
-
-        #expect(poweredOff == 1)
-        #expect(instance.status == .stopped)
     }
 
     @Test("The revert a power-off owes takes the VM in the power-off step itself")

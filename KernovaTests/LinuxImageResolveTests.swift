@@ -483,20 +483,6 @@ struct LinuxImageResolveServiceTests {
                 == "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/SHA256SUMS")
     }
 
-    @Test("A clearsigned BSD manifest resolves the same way")
-    func resolvesFedoraManifest() async throws {
-        serve(manifest: fedoraManifest, isoSize: 2_689_781_760)
-        defer { ResolveStubURLProtocol.reset() }
-
-        let resolved = try await makeService().resolve(fedoraEntry)
-
-        #expect(resolved.image.filename == "Fedora-Workstation-Live-44-1.7.aarch64.iso")
-        #expect(
-            resolved.sha256
-                == "66c07e7355db5e92faef680599a1789184a31c4dbaa5e02a19d050cc4e9279d2")
-        #expect(resolved.image.sizeBytes == 2_689_781_760)
-    }
-
     @Test("The manifest is read from the entry's manifest host, the ISO from its download host")
     func readsManifestFromItsPinnedHost() async throws {
         serve(manifest: fedoraManifest, isoSize: 2_689_781_760)
@@ -504,6 +490,9 @@ struct LinuxImageResolveServiceTests {
 
         let resolved = try await makeService().resolve(fedoraEntry)
 
+        #expect(resolved.image.filename == "Fedora-Workstation-Live-44-1.7.aarch64.iso")
+        #expect(resolved.sha256 == "66c07e7355db5e92faef680599a1789184a31c4dbaa5e02a19d050cc4e9279d2")
+        #expect(resolved.image.sizeBytes == 2_689_781_760)
         #expect(
             ResolveStubURLProtocol.requestedURLs.first?.absoluteString
                 == "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-44-1.7-aarch64-CHECKSUM"

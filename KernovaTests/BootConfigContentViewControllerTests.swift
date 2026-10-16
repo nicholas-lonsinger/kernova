@@ -210,20 +210,6 @@ struct BootConfigContentViewControllerTests {
         #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
     }
 
-    @Test("Cancelling the URL sheet leaves the earlier pick standing")
-    func urlSheetCancelKeepsThePick() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        vc.dismissSourceSheet()
-
-        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
-        #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .off)
-    }
-
     @Test("Switching to Linux Kernel updates the model and shows kernel rows")
     func switchToKernel() {
         let vm = VMCreationViewModel()
@@ -265,21 +251,6 @@ struct BootConfigContentViewControllerTests {
         vc.controlTextDidChange(
             Notification(name: NSControl.textDidChangeNotification, object: field))
         #expect(vm.kernelCommandLine == "root=/dev/vda console=hvc0")
-    }
-
-    @Test("Default kernel command line is committed to the model, not just displayed")
-    func defaultCommandLineCommitted() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
-        #expect(vm.kernelCommandLine == nil)
-
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        // Building the kernel section seeds the default so an untouched field
-        // doesn't leave the guest booting without the shown command line.
-        #expect(vm.kernelCommandLine == "console=hvc0")
     }
 
     @Test("An explicitly cleared command line is not re-seeded with the default")

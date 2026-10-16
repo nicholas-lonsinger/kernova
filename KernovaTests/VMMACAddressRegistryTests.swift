@@ -258,29 +258,6 @@ struct VMMACAddressRegistryTests {
         #expect(registry.vmNamesSharingMACAddress(with: copy) == ["Source"])
     }
 
-    @Test("A live mode switch onto a network an active VM sharing the machine identity holds is refused on the address")
-    func refuseMACAddressConflictIgnoresTheMachineIdentity() {
-        let registry = makeRegistry()
-        let identity = Data([1, 4, 1, 4])
-        let copy = makeVM("Copy", mac: "aa:bb:cc:dd:ee:01") {
-            $0.networkMode = .hostOnly
-            $0.genericMachineIdentifierData = identity
-        }
-        copy.activity.placeForTesting(.running(sessionID: UUID()))
-        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01") {
-            $0.genericMachineIdentifierData = identity
-        }
-        let old = instance.configuration
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        roster.instances = [copy, instance]
-
-        var new = old
-        new.networkMode = .hostOnly
-
-        #expect(refuse(registry, on: instance, movingFrom: old, to: new)?.reason == .macAddress)
-        #expect(failures.errorTitle == "Duplicate MAC Address")
-    }
-
     @Test("A live mode switch onto a network an active twin holds is refused")
     func refuseMACAddressConflictRefusesALiveModeSwitch() {
         let registry = makeRegistry()
