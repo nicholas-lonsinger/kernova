@@ -144,11 +144,14 @@ struct VMDisplayPlacementReadyDisplayTests {
 
         #expect(popOut.status == .running && fullscreen.status == .running)
         #expect(presences == [.unattended, .unattended])
+        // That a window readied behind takes no key is read in
+        // backgroundOpensAnUnkeyWindow, with no await before it. Past the await
+        // above, AppKit's one key window is whatever the suites running
+        // alongside left it (CI run 38955117057).
         for instance in [popOut, fullscreen] {
             let window = try #require(placement.window(for: instance.instanceID))
             adoptAppWindow(window)
             #expect(window.isVisible)
-            #expect(!window.isKeyWindow)
         }
         // Put up behind, the fullscreen VM runs in a pop-out window with its
         // preference kept — a front readying would have entered fullscreen.
