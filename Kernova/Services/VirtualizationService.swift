@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import KernovaKit
 import KernovaLogging
@@ -15,8 +14,17 @@ final class VirtualizationService {
 
     private let configBuilder: ConfigurationBuilder
 
-    init(vmnetNetworks: VmnetNetworkService, entitlements: EntitlementService) {
+    /// Whether this Mac's protected data is readable right now — `false` while
+    /// the user is locked out — which a failed restore reports alongside its
+    /// error.
+    private let isProtectedDataAvailable: @MainActor () -> Bool
+
+    init(
+        vmnetNetworks: VmnetNetworkService, entitlements: EntitlementService,
+        isProtectedDataAvailable: @escaping @MainActor () -> Bool
+    ) {
         configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
+        self.isProtectedDataAvailable = isProtectedDataAvailable
     }
 
     // MARK: - Start
@@ -897,7 +905,9 @@ final class VirtualizationService {
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        try await Self.restoreSavedState(instance, context.operation, session: session)
+        try await Self.restoreSavedState(
+            instance, context.operation, session: session,
+            isProtectedDataAvailable: isProtectedDataAvailable)
     }
 
     /// Loads the bundle's suspend slot into `session`, resumes the guest, and
@@ -906,7 +916,8 @@ final class VirtualizationService {
     /// it drops are reachable without a real `VZVirtualMachine`.
     static func restoreSavedState(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
-        session: any VMSnapshotSessionOperating
+        session: any VMSnapshotSessionOperating,
+        isProtectedDataAvailable: @MainActor () -> Bool
     ) async throws {
         #log(logger, .debug, "restoreFromSaveFile: attempting restore from save file")
         do {
@@ -915,7 +926,7 @@ final class VirtualizationService {
             context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError
-            let hostLocked = !NSApplication.shared.isProtectedDataAvailable
+            let hostLocked = !isProtectedDataAvailable()
             #log(
                 logger, .error,
                 "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlyingChainDescription(nsError), privacy: .public); host locked: \(hostLocked, privacy: .public)]"

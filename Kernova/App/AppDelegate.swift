@@ -110,14 +110,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.presence = presence
         let entitlements = EntitlementService.readFromProcess()
         let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
+        let hostNotifications = HostNotifications.appKit()
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
             virtualizationService: VirtualizationService(
-                vmnetNetworks: vmnetNetworks, entitlements: entitlements),
+                vmnetNetworks: vmnetNetworks, entitlements: entitlements,
+                isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
                 vmnetNetworks: vmnetNetworks, entitlements: entitlements),
             usbAccessoryService: USBAccessorySupport.makeService(entitlements: entitlements),
-            systemSleep: SystemSleepWatcher(),
+            systemSleep: SystemSleepWatcher(
+                systemWillSleep: hostNotifications.systemWillSleep,
+                systemDidWake: hostNotifications.systemDidWake),
             fileSystem: FileManager.default,
             downloadsDirectory: FileManager.default.urls(
                 for: .downloadsDirectory, in: .userDomainMask
@@ -127,7 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             arpTable: HostARPTableReader(),
             entitlements: entitlements,
             networks: VMNetworkDirectory(fileURL: VMNetworkDirectory.productionFileURL),
-            organization: VMOrganizationDirectory(fileURL: VMOrganizationDirectory.productionFileURL))
+            organization: VMOrganizationDirectory(fileURL: VMOrganizationDirectory.productionFileURL),
+            hostNotifications: hostNotifications,
+            hostPasteboard: NSPasteboard.general)
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,

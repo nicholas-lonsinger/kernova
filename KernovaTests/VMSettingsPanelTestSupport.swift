@@ -19,7 +19,8 @@ func makeSettingsViewModel(
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitled: Bool = true,
     machineFiles: (any VMBundleMachineFileWorking)? = nil,
-    networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil)
+    networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
+    hostNotifications: HostNotifications = .isolated()
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: storage,
@@ -35,7 +36,8 @@ func makeSettingsViewModel(
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
         entitlements: entitled ? .entitled : .unentitled,
-        networks: networks
+        networks: networks,
+        hostNotifications: hostNotifications, hostPasteboard: FakePasteboard()
     )
 }
 
@@ -66,14 +68,12 @@ func makeSettingsPane(
     micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
         AVCaptureDevice.authorizationStatus(for: .audio)
     },
-    systemSettings: SystemSettingsLink = SystemSettingsLink(),
-    activationCenter: NotificationCenter = NotificationCenter()
+    systemSettings: SystemSettingsLink = SystemSettingsLink()
 ) -> VMSettingsViewController {
     VMSettingsViewController(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
         bridgedInterfaces: bridgedInterfaces,
-        micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
-        activationCenter: activationCenter)
+        micPermissionStatus: micPermissionStatus, systemSettings: systemSettings)
 }
 
 /// Builds the settings pane and runs its appearance lifecycle so `apply()` has

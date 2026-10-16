@@ -653,7 +653,8 @@ extension VMBundle {
     /// bundle, whose permit writes every field — for the tests that exercise
     /// the bundle's files rather than a verb or the field classes.
     fileprivate func permitted(_ commit: (borrowing VMEditPermit) throws -> Void) throws {
-        let instance = VMInstance(bundle: self, phase: .stopped, preferences: makeTestPreferences())
+        let instance = VMInstance(
+            bundle: self, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard())
         try instance.activity.performNow(.creatingStorageDisk) { context in
             try commit(context.permit)
             return .rest(.asStarted, ())

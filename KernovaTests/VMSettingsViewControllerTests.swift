@@ -164,21 +164,17 @@ struct VMSettingsViewControllerTests {
         init(_ value: AVAuthorizationStatus) { self.value = value }
     }
 
-    @Test("Activation refreshes the pane only through the center it was given")
-    func activationArrivesOnlyThroughTheInjectedCenter() {
-        let center = NotificationCenter()
-        // Stands in for every center that is not this pane's, `.default`
-        // included. Posting the app-wide name into `NotificationCenter.default`
-        // is what this seam exists to make unnecessary: it reaches every live
-        // monitor and settings shell in the process, so it would drive a
-        // concurrently-running suite's fixtures.
-        let otherCenter = NotificationCenter()
+    @Test("Activation refreshes the pane only through its view model's host notifications")
+    func activationArrivesOnlyThroughTheViewModelsNotifications() {
+        let notifications = HostNotifications.isolated()
+        // Stands in for every other library's notifications.
+        let other = HostNotifications.isolated()
         let mic = MicStatus(.authorized)
-        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let viewModel = makeSettingsViewModel(preferences: preferences, hostNotifications: notifications)
         let instance = makeSettingsInstance(guestOS: .linux) { $0.audioInputEnabled = true }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false,
-            micPermissionStatus: { mic.value }, activationCenter: center)
+            micPermissionStatus: { mic.value })
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         #expect(vc.resolvedForTesting.micWarning == .none)
@@ -187,10 +183,10 @@ struct VMSettingsViewControllerTests {
         // change only an activation re-reads.
         mic.value = .denied
 
-        otherCenter.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        other.appDidBecomeActive.post()
         #expect(vc.resolvedForTesting.micWarning == .none)
 
-        center.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        notifications.appDidBecomeActive.post()
         #expect(vc.resolvedForTesting.micWarning == .denied)
     }
 }

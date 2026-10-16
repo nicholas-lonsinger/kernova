@@ -34,3 +34,9 @@ extension NSPasteboard: ClipboardReadPasteboard {
     /// The pasteboard's items, or none when it is empty or cannot vend them.
     public var items: [any ClipboardPasteboardItemReading] { pasteboardItems ?? [] }
 }
+
+/// Both halves of a pasteboard: the one a clipboard end polls for the user's
+/// copies and writes its peer's offers to.
+public protocol ClipboardPasteboard: ClipboardReadPasteboard, ClipboardWritePasteboard {}
+
+extension NSPasteboard: ClipboardPasteboard {}

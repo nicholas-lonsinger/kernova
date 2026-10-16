@@ -96,8 +96,7 @@ final class VMInstance {
     ///
     /// One per VM so echo suppression sees both writers — the coordinator's poll
     /// skips whatever change count this publisher last produced.
-    @ObservationIgnored let hostClipboardPublisher = HostClipboardPublisher(
-        stagingRoot: ClipboardFileStaging.processRoot)
+    @ObservationIgnored let hostClipboardPublisher: HostClipboardPublisher
 
     /// Where this VM's clipboard and drop producers publish, and the owner of the
     /// value below.
@@ -290,12 +289,18 @@ final class VMInstance {
 
     // MARK: - Initializer
 
-    /// A VM whose bundle is on disk.
-    init(bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences) {
+    /// A VM whose bundle is on disk, whose clipboard publishes to and polls
+    /// `hostPasteboard`.
+    init(
+        bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
+        hostPasteboard: any ClipboardPasteboard
+    ) {
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
         self.activity = VMActivity(phase: phase)
         self.preferences = preferences
+        self.hostClipboardPublisher = HostClipboardPublisher(
+            pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)
         activity.owner = self
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report

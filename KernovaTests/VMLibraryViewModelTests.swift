@@ -46,7 +46,8 @@ struct VMLibraryViewModelTests {
             preferences: preferences,
             vmnetNetworks: .scripted(),
             arpTable: ScriptedARPTable(),
-            entitlements: .entitled
+            entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -69,7 +70,8 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -2940,7 +2942,8 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -3748,7 +3751,8 @@ struct VMLibraryViewModelTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5773,7 +5777,8 @@ struct VMLibraryViewModelTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5864,7 +5869,8 @@ struct VMLibraryViewModelTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -6256,7 +6262,8 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter

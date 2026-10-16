@@ -101,9 +101,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// coordinator, so echo suppression sees a manual "Copy to Mac" too.
     private let publisher: HostClipboardPublisher
 
-    /// The host pasteboard "Paste from Mac" reads from — `.general` in production.
-    private let readPasteboard: NSPasteboard
-
     /// `true` while a "Copy to Mac" is materializing/writing.
     ///
     /// The async pull republishes `clipboardContent`, which re-fires the
@@ -120,13 +117,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     init(
         instance: VMInstance, viewModel: VMLibraryViewModel,
-        readPasteboard: NSPasteboard = .general,
         publisher: HostClipboardPublisher,
         clock: any EngineClock = makePlatformEngineClock()
     ) {
         self.instance = instance
         self.viewModel = viewModel
-        self.readPasteboard = readPasteboard
         self.publisher = publisher
         self.clock = clock
 
@@ -669,7 +664,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - Actions
 
     @objc private func pasteFromMac(_: Any?) {
-        takeIn(pasteboard: readPasteboard)
+        takeIn(pasteboard: publisher.pasteboard)
     }
 
     /// Empties the window's clipboard buffer.
@@ -752,7 +747,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     ///
     /// Paste/drop are complete gestures — the content is sent to the guest
     /// immediately, unlike typed edits which send on window blur.
-    private func takeIn(pasteboard: NSPasteboard) {
+    private func takeIn(pasteboard: any ClipboardReadPasteboard) {
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
         let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
@@ -908,7 +903,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // `sendAction` reaches the action regardless.
     @objc func paste(_ sender: Any?) {
         guard !isPassthroughOn else { return }
-        takeIn(pasteboard: readPasteboard)
+        takeIn(pasteboard: publisher.pasteboard)
     }
 
     @objc func copy(_ sender: Any?) {

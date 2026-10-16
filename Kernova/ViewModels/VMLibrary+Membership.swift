@@ -269,7 +269,7 @@ extension VMLibrary {
             return
         }
 
-        let watcher = VMDirectoryWatcher(activationCenter: activationCenter) { [weak self] in
+        let watcher = VMDirectoryWatcher(appActivation: appActivation) { [weak self] in
             self?.reconcileWithDisk()
         }
         watcher.start(directory: vmsDir)

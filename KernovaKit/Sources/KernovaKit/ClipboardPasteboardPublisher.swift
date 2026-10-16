@@ -71,20 +71,22 @@ public protocol ClipboardPromiseServing: AnyObject, Sendable {
 /// connection — or the window, or the VM — that offered it is gone.
 @MainActor
 public final class ClipboardPasteboardPublisher {
-    /// One pasteboard item to write: the types it promises and a closure that
-    /// lazily serves the bytes for each requested type.
+    /// One pasteboard item to write: the types it promises, by uniform type
+    /// identifier, and a closure that lazily serves the bytes for each
+    /// requested type.
     public struct ItemSpec: Sendable {
-        /// The types this item promises.
-        public let types: [NSPasteboard.PasteboardType]
+        /// The type identifier an item promises a file URL under.
+        public static let fileURLType = NSPasteboard.PasteboardType.fileURL.rawValue
 
-        /// Produces the bytes for a requested type, or `nil` to leave it empty.
-        public let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
+        /// The type identifiers this item promises.
+        public let types: [String]
+
+        /// Produces the bytes for a requested type identifier, or `nil` to leave
+        /// it empty.
+        public let provide: @Sendable (String) -> Data?
 
         /// Creates one item's promise.
-        public init(
-            types: [NSPasteboard.PasteboardType],
-            provide: @escaping @Sendable (NSPasteboard.PasteboardType) -> Data?
-        ) {
+        public init(types: [String], provide: @escaping @Sendable (String) -> Data?) {
             self.types = types
             self.provide = provide
         }
@@ -144,11 +146,12 @@ public final class ClipboardPasteboardPublisher {
         var providers: [LazyClipboardDataProvider] = []
         let items = specs.map {
             spec -> (types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider) in
+            let provide = spec.provide
             let provider = LazyClipboardDataProvider(
-                provide: spec.provide,
+                provide: { provide($0.rawValue) },
                 onFinished: { provider in registry.release(provider) })
             providers.append(provider)
-            return (types: spec.types, provider: provider)
+            return (types: spec.types.map(NSPasteboard.PasteboardType.init(rawValue:)), provider: provider)
         }
 
         // `.currentHostOnly` keeps the write off the continuity advertiser,
@@ -223,12 +226,11 @@ public final class ClipboardPasteboardPublisher {
         source: (ClipboardPasteboardItemPlan.PromisedType) -> (generation: UInt64, repIndex: Int)?
     ) -> [ItemSpec] {
         plan.items.compactMap { item -> ItemSpec? in
-            var types: [NSPasteboard.PasteboardType] = []
-            var routes: [NSPasteboard.PasteboardType: Route] = [:]
+            var types: [String] = []
+            var routes: [String: Route] = [:]
             for promised in item.types {
                 guard let coordinate = source(promised) else { continue }
-                let type: NSPasteboard.PasteboardType =
-                    promised.isFileURL ? .fileURL : .init(promised.uti)
+                let type = promised.isFileURL ? ItemSpec.fileURLType : promised.uti
                 types.append(type)
                 routes[type] = Route(
                     generation: coordinate.generation, repIndex: coordinate.repIndex,

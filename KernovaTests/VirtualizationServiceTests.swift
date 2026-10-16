@@ -7,7 +7,8 @@ import Virtualization
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
-        vmnetNetworks: VmnetNetworkService.scripted(), entitlements: .unentitled)
+        vmnetNetworks: VmnetNetworkService.scripted(), entitlements: .unentitled,
+        isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 
     // MARK: - Snapshot capture
@@ -368,7 +369,8 @@ struct VirtualizationServiceTests {
 
         try await instance.activity.launchStartGuest(.restoringSavedState) { context in
             try await VirtualizationService.restoreSavedState(
-                instance, context.bringUp.operation, session: session)
+                instance, context.bringUp.operation, session: session,
+                isProtectedDataAvailable: { true })
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
         }.value()

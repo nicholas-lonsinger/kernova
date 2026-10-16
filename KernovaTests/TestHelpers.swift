@@ -75,7 +75,8 @@ func makeWiredLibrary(
     organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
     guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore(),
     bridgedInterfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
-    activationCenter: NotificationCenter = NotificationCenter()
+    appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive,
+    hostPasteboard: any ClipboardPasteboard = FakePasteboard()
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
@@ -89,8 +90,34 @@ func makeWiredLibrary(
         organization: organization,
         guestAccountPasswords: guestAccountPasswords,
         bridgedInterfaces: bridgedInterfaces,
-        activationCenter: activationCenter)
+        appActivation: appActivation,
+        hostPasteboard: hostPasteboard)
     return library
+}
+
+extension HostNotifications {
+    /// Host notifications posted into a center of the test's own, so a post
+    /// reaches only the fixture built with them — never every live observer in
+    /// the test host, as a post into the app's own centers would.
+    static func isolated() -> HostNotifications {
+        let center = NotificationCenter()
+        func named(_ name: String) -> HostNotification {
+            HostNotification(center: center, name: Notification.Name("KernovaTests.\(name)"))
+        }
+        return HostNotifications(
+            appDidBecomeActive: named("appDidBecomeActive"),
+            systemWillSleep: named("systemWillSleep"),
+            systemDidWake: named("systemDidWake"),
+            volumeDidMount: named("volumeDidMount"),
+            volumeDidUnmount: named("volumeDidUnmount"))
+    }
+}
+
+extension HostNotification {
+    /// Posts this notification into its own center, as the host would.
+    func post() {
+        center.post(name: name, object: nil)
+    }
 }
 
 extension VMLibrary {
@@ -445,7 +472,8 @@ extension VMActivity {
 func withOperation<T>(
     on bundle: VMBundle, _ body: (borrowing VMOperationContext) async throws -> T
 ) async throws -> T {
-    let instance = VMInstance(bundle: bundle, phase: .stopped, preferences: makeTestPreferences())
+    let instance = VMInstance(
+        bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard())
     return try await withOperation(on: instance, .deletingSnapshot, body)
 }
 

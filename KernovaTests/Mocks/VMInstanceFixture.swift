@@ -33,7 +33,8 @@ enum VMInstanceFixture {
         return VMInstance(
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
-            phase: phase, preferences: preferences)
+            phase: phase, preferences: preferences,
+            hostPasteboard: FakePasteboard())
     }
 
     /// Seeds a fixture bundle's files into `files` and reads it back as a load

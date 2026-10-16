@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import KernovaKit
 import KernovaLogging
 
@@ -39,7 +39,7 @@ enum ClipboardPasteboardIntake {
     nonisolated static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
 
     /// Reads `pasteboard` into clipboard content.
-    static func read(from pasteboard: NSPasteboard, allowsBinary: Bool) -> ClipboardIntakeResult {
+    static func read(from pasteboard: any ClipboardReadPasteboard, allowsBinary: Bool) -> ClipboardIntakeResult {
         switch ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: allowsBinary) {
         case .empty:
             return .rejected(message: "The Mac clipboard is empty", unreadable: false)

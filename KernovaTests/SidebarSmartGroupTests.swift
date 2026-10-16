@@ -30,7 +30,8 @@ struct SidebarSmartGroupTests {
             downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            networks: networks, organization: organization
+            networks: networks, organization: organization,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
     }
 

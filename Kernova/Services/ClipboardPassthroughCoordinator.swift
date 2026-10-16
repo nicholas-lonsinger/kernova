@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import KernovaKit
 import KernovaLogging
 
@@ -23,8 +23,9 @@ final class ClipboardPassthroughCoordinator {
     /// `lastWriteChangeCount`) and not re-forward it.
     private let publisher: HostClipboardPublisher
 
-    /// The pasteboard polled for outbound changes and written for inbound offers.
-    private let pasteboard: NSPasteboard
+    /// The pasteboard polled for outbound changes and written for inbound
+    /// offers: the publisher's own, so the poll sees every write it makes.
+    private var pasteboard: any ClipboardPasteboard { publisher.pasteboard }
 
     /// This VM's transfer report, where an intake outcome this poll cannot answer
     /// inline is recorded.
@@ -131,13 +132,11 @@ final class ClipboardPassthroughCoordinator {
 
     init(
         instance: VMInstance, publisher: HostClipboardPublisher,
-        reporter: ClipboardTransferReporter,
-        pasteboard: NSPasteboard = .general
+        reporter: ClipboardTransferReporter
     ) {
         self.instance = instance
         self.publisher = publisher
         self.reporter = reporter
-        self.pasteboard = pasteboard
     }
 
     // MARK: - Lifecycle

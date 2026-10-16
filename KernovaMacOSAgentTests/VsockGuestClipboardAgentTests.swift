@@ -5,141 +5,6 @@ import Darwin
 import KernovaKit
 import UniformTypeIdentifiers
 
-// MARK: - Fake Pasteboard
-
-/// In-memory `Pasteboard` over `KernovaTestSupport`'s ``FakeWritePasteboard``.
-///
-/// The write half — promise registration, the OS-fires-a-provider seam, the
-/// write-failure seam — is the shared double both ends of the wire use. Added
-/// here: the read half `Pasteboard` composes with it, and the test-only
-/// resident setup (`setItem`/`setItems`/`setString`) that models a *user*
-/// copying inside the guest, which the agent's outbound poll reads. A promise
-/// write leaves no resident bytes; a fired provider's bytes are what its item
-/// serves from afterwards, as a real `NSPasteboardItem` retains them.
-///
-/// Thread-safe: ``invokeProvider(forType:itemIndex:)`` blocks its calling thread
-/// until the lazy pull behind the promise resolves, so it runs off the test's
-/// main actor.
-final class FakePasteboard: Pasteboard, @unchecked Sendable {
-    private let writer = FakeWritePasteboard()
-    private let lock = NSLock()
-    /// Resident items — a user's own copy, one entry per pasteboard item.
-    private var residents: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
-    /// Bytes a fired provider resolved, which a promised item serves from.
-    private var resolved: [NSPasteboard.PasteboardType: Data] = [:]
-
-    /// Fires after every mutation; await it instead of polling.
-    var changed: AsyncGate { writer.changed }
-
-    var changeCount: Int { writer.changeCount }
-
-    /// The pasteboard's items: a standing promise's, which serve only what a
-    /// fired provider has already resolved, or the user's own copy.
-    var items: [any ClipboardPasteboardItemReading] {
-        let promised = writer.promisedTypesByItem
-        guard promised.isEmpty else {
-            let bytes = lock.withLock { resolved }
-            return promised.map { FakePasteboardItem(types: $0, bytes: bytes) }
-        }
-        return lock.withLock { residents }.map(FakePasteboardItem.init)
-    }
-
-    // MARK: - Promised writes
-
-    /// Every promised type across all items, concatenated in item order (a
-    /// multi-file offer promises one item per file).
-    var promisedTypesForTesting: [NSPasteboard.PasteboardType] { writer.promisedTypes }
-
-    /// Number of promised pasteboard items the agent's last write registered.
-    var promisedItemCountForTesting: Int { writer.promisedItemCount }
-
-    /// Options passed to the most recent `prepareForNewContents(with:)`; `nil`
-    /// until the agent's first promise write.
-    var lastPrepareOptionsForTesting: NSPasteboard.ContentsOptions? { writer.lastPrepareOptions }
-
-    /// How many promised providers have been fired, for a test proving the
-    /// agent's own poll fired none.
-    var providerInvocationCountForTesting: Int { writer.providerInvocations }
-
-    /// Makes the next `times` `writeItems(_:)` calls fail, modelling an
-    /// OS-level pasteboard write failure.
-    func failNextWrite(times: Int = 1) { writer.failNextWrite(times: times) }
-
-    /// Fires a promised item's provider the way the OS does, synchronously.
-    ///
-    /// `itemIndex` targets one item, needed when several promise the same type
-    /// (`.fileURL` across a multi-file offer); `nil` takes the first offering
-    /// it. **This blocks until the pull behind the promise resolves**, so call
-    /// it off the test's main actor.
-    func invokeProvider(
-        forType type: NSPasteboard.PasteboardType, itemIndex: Int? = nil
-    ) -> Data? {
-        guard let bytes = writer.invokeProvider(forType: type, itemIndex: itemIndex) else {
-            return nil
-        }
-        lock.withLock { resolved[type] = bytes }
-        return bytes
-    }
-
-    @discardableResult
-    func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
-        clearResidents()
-        return writer.prepareForNewContents(with: options)
-    }
-
-    /// Registers one lazy promise per item, recording no bytes.
-    @discardableResult
-    func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
-    ) -> Bool {
-        let written = writer.writeItems(items)
-        if written { clearResidents() }
-        return written
-    }
-
-    @discardableResult
-    func clearContents() -> Int {
-        clearResidents()
-        return writer.clearContents()
-    }
-
-    // MARK: - Test-only resident setup (a user copying inside the guest)
-
-    /// Places resident (type, data) pairs, modelling a user copying in the
-    /// guest. Clears any promise.
-    @discardableResult
-    func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) -> Bool {
-        setItems([representations])
-    }
-
-    /// Places several resident pasteboard items, modelling a multi-select copy
-    /// in the guest.
-    @discardableResult
-    func setItems(_ items: [[(type: NSPasteboard.PasteboardType, data: Data)]]) -> Bool {
-        lock.withLock {
-            residents = items
-            resolved.removeAll()
-        }
-        // Drops any promise and bumps the change count, as a real write does.
-        writer.clearContents()
-        return true
-    }
-
-    /// Replaces the resident item with a single text representation —
-    /// equivalent to a user copying text inside the guest.
-    @discardableResult
-    func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
-        setItem([(type: type, data: Data(string.utf8))])
-    }
-
-    private func clearResidents() {
-        lock.withLock {
-            residents.removeAll()
-            resolved.removeAll()
-        }
-    }
-}
-
 // MARK: - Test Suite
 
 @Suite("VsockGuestClipboardAgent state machine", .caseScoped)
@@ -537,7 +402,7 @@ struct VsockGuestClipboardAgentTests {
                         uti: txtUTI, byteCount: UInt64(contents.count), filename: "notes.txt",
                         isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
         let pull = lazyPull(pasteboard, forType: .fileURL)
         try await serveInboundTransfer(
             on: dialled, generation: 3, filename: "notes.txt", payload: contents, isInline: false)
@@ -654,7 +519,7 @@ struct VsockGuestClipboardAgentTests {
             agent.handleControlFrameForTesting(makeTextOfferFrame(generation: 31, text: "from host"))
         }
         try await walked.wait { walks.value == 1 }
-        #expect(pasteboard.promisedTypesForTesting.contains(.string))
+        #expect(pasteboard.promisedTypes.contains(.string))
 
         // The next poll finds nothing new: the promise this agent wrote is not
         // read back as a copy — nothing offered, no copy blamed for coming up
@@ -663,7 +528,7 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoOffer(from: hostChannel)
         let activity = await MainActor.run { agent.clipboardActivity }
         #expect(activity == .offeredFromHost)
-        #expect(pasteboard.promisedTypesForTesting.contains(.string))
+        #expect(pasteboard.promisedTypes.contains(.string))
     }
 
     @Test(
@@ -1074,7 +939,7 @@ struct VsockGuestClipboardAgentTests {
                         uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
                         filename: "Broken", isInline: false, isDirectory: true)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
         let connection = try await acceptPull(on: dialled, generation: 9)
@@ -1207,7 +1072,7 @@ struct VsockGuestClipboardAgentTests {
         // connection). The post-write changeCount is captured so the poll can't
         // self-trigger.
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "from host"))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
         try await expectNoPull(on: dialled)
 
         // A poll right after the promise is registered must not re-offer it.
@@ -1242,7 +1107,7 @@ struct VsockGuestClipboardAgentTests {
                         uti: txtUTI, byteCount: UInt64(contents.count), filename: "notes.txt",
                         isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
         try await serveInboundTransfer(
@@ -1279,14 +1144,14 @@ struct VsockGuestClipboardAgentTests {
         // Host announces one inline text rep. The agent registers a lazy promise
         // for the text UTI and pulls NOTHING — no data connection is opened.
         try hostChannel.send(makeTextOfferFrame(generation: 42, text: "clipboard payload"))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.string] }
         try await expectNoPull(on: dialled)
 
         // The promise write is scoped `.currentHostOnly` so the guest's
         // continuity-pasteboard advertiser can't fetch the promised flavors at
         // offer time (#542) — an unscoped write would let the OS pull the full
         // payload with zero user interaction on the sync path.
-        #expect(pasteboard.lastPrepareOptionsForTesting == .currentHostOnly)
+        #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
 
         // The promise generation is recorded; a poll afterward does not re-offer.
         let promiseGen = agent.inboundPromiseGenerationForTesting
@@ -1319,7 +1184,7 @@ struct VsockGuestClipboardAgentTests {
                         uti: txtUTI, byteCount: UInt64(contents.count), filename: "kept.txt",
                         isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
         try await serveInboundTransfer(
@@ -1373,9 +1238,9 @@ struct VsockGuestClipboardAgentTests {
                         uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf",
                         isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
-        #expect(pasteboard.lastPrepareOptionsForTesting == .currentHostOnly)
+        #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
         try await expectNoPull(on: dialled)
     }
 
@@ -1410,7 +1275,7 @@ struct VsockGuestClipboardAgentTests {
                         isInline: false),
                     RepInfo(uti: txtUTI, byteCount: 512, filename: "never.txt", isInline: false),
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 3 }
+        try await pasteboard.changed.wait { pasteboard.promisedItemCount == 3 }
 
         let textPull = lazyPull(pasteboard, forType: .string)
         try await serveInboundTransfer(
@@ -1469,8 +1334,8 @@ struct VsockGuestClipboardAgentTests {
                         isInline: false),
                 ]))
         // Two promised items, each promising exactly `.fileURL`.
-        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
-        #expect(pasteboard.promisedTypesForTesting == [.fileURL, .fileURL])
+        try await pasteboard.changed.wait { pasteboard.promisedItemCount == 2 }
+        #expect(pasteboard.promisedTypes == [.fileURL, .fileURL])
 
         // Pull item 0's `.fileURL` → a connection for rep 0 (transfer_id low
         // bits 0).
@@ -1522,7 +1387,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         try hostChannel.send(makeTextOfferFrame(generation: 16, text: "released"))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
 
         // The host answers the transfer's connection with the reply describing
         // the payload, then releases the offer instead of streaming it: the
@@ -1540,7 +1405,7 @@ struct VsockGuestClipboardAgentTests {
 
         let provided = await pull.value
         #expect(provided == nil)
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.isEmpty }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
         #expect(agent.inboundPromiseGenerationForTesting == nil)
     }
 
@@ -1582,7 +1447,7 @@ struct VsockGuestClipboardAgentTests {
         // adds nothing); `.fileURL`'s rawValue IS "public.file-url", which is the
         // legit file-url promise for the PNG — distinct from the smuggled content
         // rep that shares that UTI. The discriminating check is the request's UTI.
-        try await pasteboard.changed.wait { Set(pasteboard.promisedTypesForTesting) == [pngType, .fileURL] }
+        try await pasteboard.changed.wait { Set(pasteboard.promisedTypes) == [pngType, .fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
         try await serveInboundTransfer(
@@ -1631,8 +1496,8 @@ struct VsockGuestClipboardAgentTests {
 
         // Only the legit text rep is promised; neither skip rep contributes a
         // promised type (the raw file-url never yields a `.fileURL` promise).
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
-        let promised = pasteboard.promisedTypesForTesting
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.string] }
+        let promised = pasteboard.promisedTypes
         #expect(promised == [.string])
         #expect(!promised.contains(.fileURL))
         #expect(!promised.contains(NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
@@ -1669,7 +1534,7 @@ struct VsockGuestClipboardAgentTests {
                         uti: txtUTI, byteCount: 50 * 1024 * 1024, filename: "huge.bin",
                         isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
         #expect(await pull.value == nil)
@@ -1723,7 +1588,7 @@ struct VsockGuestClipboardAgentTests {
                 generation: 34,
                 reps: [RepInfo(uti: txtUTI, byteCount: 1024, filename: "notes.txt", isInline: false)]
             ))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         // A real pull the host then gives up on mid-payload, naming the code in
         // the trailer that ends the stream: the failure is the user's paste
@@ -1776,7 +1641,7 @@ struct VsockGuestClipboardAgentTests {
                     RepInfo(uti: txtUTI, byteCount: half, filename: "a.bin", isInline: false),
                     RepInfo(uti: txtUTI, byteCount: half, filename: "b.bin", isInline: false),
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
+        try await pasteboard.changed.wait { pasteboard.promisedItemCount == 2 }
 
         #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value == nil)
         #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
@@ -1792,7 +1657,7 @@ struct VsockGuestClipboardAgentTests {
             makeOfferFrame(
                 generation: 32,
                 reps: [RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 4, isInline: true)]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.string] }
         #expect(await MainActor.run { agent.clipboardActivity } == .offeredFromHost)
     }
 
@@ -1825,7 +1690,7 @@ struct VsockGuestClipboardAgentTests {
                 reps: [
                     RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 1 }
@@ -1881,7 +1746,7 @@ struct VsockGuestClipboardAgentTests {
                 reps: [
                     RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await seen.changed.wait { seen.value != nil }
@@ -1918,7 +1783,7 @@ struct VsockGuestClipboardAgentTests {
                         uti: txtUTI, byteCount: UInt64(lowered) + 1, filename: "big.bin",
                         isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await expectNoPull(on: dialled)
 
@@ -1964,7 +1829,7 @@ struct VsockGuestClipboardAgentTests {
                     RepInfo(
                         uti: txtUTI, byteCount: overDefault, filename: "huge.bin", isInline: false)
                 ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         // A real transfer opening is the proof it was admitted; abort it so the
         // pull resolves without streaming the payload in-test.
@@ -2088,12 +1953,12 @@ struct VsockGuestClipboardAgentTests {
         // what a poll that read the promise would find.
         let mac = "copied on the Mac"
         try host0.send(makeTextOfferFrame(generation: 1, text: mac))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
         let paste = lazyPull(pasteboard, forType: .string)
         try await serveInboundTransfer(
             on: dialled, generation: 1, payload: Data(mac.utf8), isInline: true)
         #expect(await paste.value == Data(mac.utf8))
-        #expect(pasteboard.providerInvocationCountForTesting == 1)
+        #expect(pasteboard.providerInvocations == 1)
 
         // The channel goes and the agent redials. The promise stays standing —
         // its providers hold the offer's cache alive — and the change-count gate
@@ -2105,7 +1970,7 @@ struct VsockGuestClipboardAgentTests {
         // alone: reading it would fire its providers and offer the Mac's own
         // content back as a guest copy.
         await MainActor.run { agent.checkClipboardChange() }
-        #expect(pasteboard.providerInvocationCountForTesting == 1)
+        #expect(pasteboard.providerInvocations == 1)
 
         // A copy the user actually makes still crosses — and because the wire is
         // ordered, an offer the poll above should never have made would arrive
@@ -2300,7 +2165,7 @@ struct VsockGuestClipboardAgentTests {
         // when the frame arrived. The lazy offer pulls nothing, so the read
         // loop's only observable effect is the promise landing on the pasteboard.
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "ping"))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == 1)
         try await expectNoPull(on: dialled)
@@ -2334,7 +2199,7 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoPull(on: dialled)
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == nil)
-        #expect(pasteboard.promisedTypesForTesting.isEmpty)
+        #expect(pasteboard.promisedTypes.isEmpty)
     }
 
     @Test("data-send failure to a dead peer is handled and liveChannel is cleared")
@@ -2464,7 +2329,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "payload"))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
 
         let payload = Data("payload".utf8)
         let pull = lazyPull(pasteboard, forType: .string)

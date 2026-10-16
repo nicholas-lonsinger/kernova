@@ -85,7 +85,8 @@ struct NetworksSettingsViewControllerTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled, networks: VMNetworkDirectory(fileURL: fileURL))
+            entitlements: .entitled, networks: VMNetworkDirectory(fileURL: fileURL),
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard())
         var checks = 0
         viewModel.onShowConfigCheck = { _ in checks += 1 }
 

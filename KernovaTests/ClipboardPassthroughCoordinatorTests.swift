@@ -137,7 +137,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
             stagingRoot: stagingRoot.root)
         let instance = VMInstanceFixture.make(
             name: "Passthrough VM", guestOS: .macOS,
@@ -149,8 +149,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // live in.
         instance.beginSessionContextForTesting().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
-            instance: instance, publisher: publisher, reporter: reports.reporter,
-            pasteboard: pasteboard)
+            instance: instance, publisher: publisher, reporter: reports.reporter)
         let resolves = ForwardResolveLog()
         coordinator.onForwardResolvedForTesting = { resolves.record($0) }
         return Harness(
@@ -778,14 +777,13 @@ struct ClipboardPassthroughCoordinatorTests {
         pasteboard.clearContents()
         defer { pasteboard.releaseGlobally() }
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
             stagingRoot: stagingRoot.root)
         let instance = VMInstanceFixture.make(name: "Promised VM", guestOS: .macOS)
         let service = PromisedPassthroughService()
         instance.beginSessionContextForTesting().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
-            instance: instance, publisher: publisher, reporter: instance.clipboardTransfers,
-            pasteboard: pasteboard)
+            instance: instance, publisher: publisher, reporter: instance.clipboardTransfers)
 
         let published = AsyncGate()
         coordinator.onInboundPublishedForTesting = { published.notify() }

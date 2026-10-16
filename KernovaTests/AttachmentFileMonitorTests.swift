@@ -28,7 +28,7 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: present, contents: Data([0]))
         let missing = path("missing.iso")
 
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         await monitor.setPaths([present: nil, missing: nil])
 
         #expect(monitor.exists(present) == true)
@@ -37,7 +37,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("exists returns true for paths that have never been set")
     func existsDefaultsToTrueForUnwatched() {
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         #expect(monitor.exists("/not/being/watched") == true)
     }
 
@@ -46,7 +46,7 @@ struct AttachmentFileMonitorTests {
         let present = path("present.iso")
         FileManager.default.createFile(atPath: present, contents: Data([0]))
 
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         await monitor.setPaths([present: nil, "": nil])
 
         #expect(monitor.existsByPath.keys.contains("") == false)
@@ -60,7 +60,7 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: a, contents: Data([0]))
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         await monitor.setPaths([a: nil, b: nil])
         #expect(Set(monitor.existsByPath.keys) == [a, b])
 
@@ -75,7 +75,7 @@ struct AttachmentFileMonitorTests {
     func reactsToFileCreation() async throws {
         let target = path("appears.iso")
 
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == false)
 
@@ -91,7 +91,7 @@ struct AttachmentFileMonitorTests {
         let target = path("vanishes.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
 
@@ -123,7 +123,7 @@ struct AttachmentFileMonitorTests {
     func revalidateReprobesAMissingPath() async throws {
         let target = path("reappears.iso")
 
-        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: false))
+        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: false), hostNotifications: .isolated())
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == false)
 
@@ -140,19 +140,15 @@ struct AttachmentFileMonitorTests {
         let target = path("vanishes.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
-        // Its own center: the app-wide activation name reaches every live
-        // monitor and every settings shell in the process, so posting into
-        // `NotificationCenter.default` would drive a concurrently-running
-        // suite's monitor and could satisfy its wait for it.
-        let center = NotificationCenter()
+        let notifications = HostNotifications.isolated()
         let monitor = AttachmentFileMonitor(
-            probe: stubProbe(existence: true), activationCenter: center)
+            probe: stubProbe(existence: true), hostNotifications: notifications)
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
         #expect(monitor.watchedParentsForTesting.isEmpty)
 
         try FileManager.default.removeItem(atPath: target)
-        center.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        notifications.appDidBecomeActive.post()
 
         try await waitForChange {
             monitor.exists(target) == false
@@ -215,7 +211,7 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
         let stub = RaceStubProbe()
-        let monitor = AttachmentFileMonitor(probe: stub.probe)
+        let monitor = AttachmentFileMonitor(probe: stub.probe, hostNotifications: .isolated())
 
         // Kick off the first call in the background; it suspends inside
         // the probe waiting on `release`.
@@ -251,7 +247,7 @@ struct AttachmentFileMonitorTests {
         // is exact regardless of URL trailing-slash quirks.
         let expectedParent = (target as NSString).deletingLastPathComponent
 
-        let monitor = AttachmentFileMonitor()
+        let monitor = AttachmentFileMonitor(hostNotifications: .isolated())
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
         #expect(
