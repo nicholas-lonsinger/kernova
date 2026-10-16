@@ -281,9 +281,8 @@ struct SidebarNameSearchTests {
     }
 
     private func makeWindow(_ viewModel: VMLibraryViewModel) throws -> Window {
-        let controller = MainWindowController(viewModel: viewModel, autosaveScope: .unsaved())
+        let controller = MainWindowController(viewModel: viewModel, stage: .offDesktop())
         let window = try #require(controller.window)
-        adoptAppWindow(window)
         let split = try #require(window.contentViewController as? NSSplitViewController)
         return Window(
             controller: controller, window: window,
@@ -381,7 +380,6 @@ struct SidebarNameSearchTests {
         registry.showLibrary(bringToFront: true)
 
         let window = try #require(registry.libraryWindow)
-        adoptAppWindow(window)
         let sidebar = try #require(registry.librarySidebar)
         #expect(window.firstResponder === sidebar.outlineView)
         #expect((window.firstResponder as? NSText)?.delegate !== sidebar.searchField)
@@ -532,7 +530,6 @@ struct SidebarNameSearchTests {
         registry.focusLibrarySearch()
 
         let window = try #require(registry.libraryWindow)
-        adoptAppWindow(window)
         let sidebar = try #require(registry.librarySidebar)
         #expect(sidebar.isSearchShown)
         #expect((window.firstResponder as? NSText)?.delegate === sidebar.searchField)

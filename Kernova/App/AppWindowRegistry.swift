@@ -21,9 +21,9 @@ final class AppWindowRegistry {
         didSet { displayPlacement.residency = residency }
     }
 
-    private let autosaveScope: WindowAutosaveScope
-    /// Brings Kernova forward, for a window the user asked for.
-    private let activateApp: @MainActor () -> Void
+    private let stage: WindowStage
+    /// The app's activation, which a window the user asked for brings forward.
+    let presence: any AppPresence
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
@@ -47,13 +47,13 @@ final class AppWindowRegistry {
     init(
         viewModel: VMLibraryViewModel,
         displayPlacement: VMDisplayPlacementController,
-        autosaveScope: WindowAutosaveScope,
-        activateApp: @escaping @MainActor () -> Void = { NSApp.activate() }
+        stage: WindowStage,
+        presence: any AppPresence
     ) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
-        self.autosaveScope = autosaveScope
-        self.activateApp = activateApp
+        self.stage = stage
+        self.presence = presence
         displayPlacement.host = self
         // Synchronous on the posting thread (`queue: nil`), so the window is
         // out of the scene before anything else hears of the close.
@@ -103,7 +103,7 @@ final class AppWindowRegistry {
         } else {
             #log(Self.logger, .notice, "showLibrary: recreating main window controller")
             let windowController = MainWindowController(
-                viewModel: viewModel, autosaveScope: autosaveScope)
+                viewModel: viewModel, stage: stage)
             if bringToFront {
                 windowController.showWindow(nil)
             } else {
@@ -141,10 +141,10 @@ final class AppWindowRegistry {
         residency?.prepareToPresentWindow()
         let controller =
             settingsWindowController
-            ?? SettingsWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
+            ?? SettingsWindowController(viewModel: viewModel, stage: stage)
         settingsWindowController = controller
         if let destination { controller.tabs.show(destination) }
-        activateApp()
+        presence.activate()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
     }
@@ -163,11 +163,11 @@ final class AppWindowRegistry {
         residency?.prepareToPresentWindow()
         let controller =
             configCheckWindowController
-            ?? ConfigCheckWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
+            ?? ConfigCheckWindowController(viewModel: viewModel, stage: stage)
         configCheckWindowController = controller
         switch request {
         case .user:
-            activateApp()
+            presence.activate()
             controller.showAndCheck(makingKey: true)
         case .automatic:
             controller.showAndCheck(makingKey: false)
@@ -190,7 +190,7 @@ final class AppWindowRegistry {
         }
 
         let controller = ClipboardWindowController(
-            instance: instance, viewModel: viewModel, autosaveScope: autosaveScope)
+            instance: instance, viewModel: viewModel, stage: stage)
         controller.onWillClose = { [weak self] in
             self?.clipboardWindows.removeValue(forKey: vmID)
         }

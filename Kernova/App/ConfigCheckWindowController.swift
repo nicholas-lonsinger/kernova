@@ -10,11 +10,11 @@ import AppKit
 final class ConfigCheckWindowController: NSWindowController {
     private let checkViewController: ConfigCheckViewController
 
-    init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+    init(viewModel: VMLibraryViewModel, stage: WindowStage) {
         let checkViewController = ConfigCheckViewController(source: viewModel)
         self.checkViewController = checkViewController
-        let window = NSWindow.withStableContentSize(
-            NSSize(width: 620, height: 420),
+        let window = stage.makeWindow(
+            stableContentSize: NSSize(width: 620, height: 420),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: checkViewController)
         window.title = "Check Config Files"
@@ -23,7 +23,7 @@ final class ConfigCheckWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         // Centered first, so a saved frame the autosave name restores wins.
         window.center()
-        window.setFrameAutosaveName(autosaveScope.configCheckFrame)
+        window.setFrameAutosaveName(stage.configCheckFrame)
         super.init(window: window)
     }
 

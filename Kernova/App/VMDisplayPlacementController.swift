@@ -10,6 +10,8 @@ protocol VMDisplayPlacementHosting: AnyObject {
     func showLibrary(bringToFront: Bool)
     /// `window`, a display window, was put on screen.
     func displayWindowShown(_ window: NSWindow)
+    /// The app's activation policy and activation.
+    var presence: any AppPresence { get }
 }
 
 /// The one owner of where each VM's display lives.
@@ -91,7 +93,7 @@ final class VMDisplayPlacementController {
     }
 
     private let viewModel: VMLibraryViewModel
-    private let autosaveScope: WindowAutosaveScope
+    private let stage: WindowStage
     weak var host: (any VMDisplayPlacementHosting)?
     /// The residency decisions a display window's placement needs but cannot
     /// make.
@@ -103,9 +105,9 @@ final class VMDisplayPlacementController {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
 
-    init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+    init(viewModel: VMLibraryViewModel, stage: WindowStage) {
         self.viewModel = viewModel
-        self.autosaveScope = autosaveScope
+        self.stage = stage
     }
 
     // MARK: - Deciders
@@ -304,7 +306,7 @@ final class VMDisplayPlacementController {
             instance: instance,
             capabilities: viewModel.capabilities,
             enterFullscreen: enterFullscreen,
-            autosaveScope: autosaveScope,
+            stage: stage,
             onResume: { [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.resume(instance) }
@@ -409,6 +411,7 @@ final class VMDisplayPlacementController {
         let reason = pendingCloseReasons[vmID] ?? .userClose
         let placement = Self.placement(for: .closed(reason))
         instance.displayMode = placement.mode
+        let appWasActive = host?.presence.isActive ?? false
 
         Task { @MainActor in
             self.pendingCloseReasons.removeValue(forKey: vmID)
@@ -420,9 +423,10 @@ final class VMDisplayPlacementController {
             if let preference = placement.persistPreference {
                 self.persist(preference, for: instance)
             }
+            let policy = self.host.map { String($0.presence.activationPolicy.rawValue) } ?? "-"
             #log(
                 Self.logger, .notice,
-                "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: reason), privacy: .public), policy=\(NSApp.activationPolicy().rawValue, privacy: .public))"
+                "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: reason), privacy: .public), policy=\(policy, privacy: .public))"
             )
 
             switch placement.followUp {
@@ -431,7 +435,7 @@ final class VMDisplayPlacementController {
             case .restoreLibrary:
                 self.viewModel.selectRevealing(vmID)
                 switch Self.libraryRestore(
-                    wasKeyWindow: context.wasKeyWindow, appWasActive: context.appWasActive)
+                    wasKeyWindow: context.wasKeyWindow, appWasActive: appWasActive)
                 {
                 case .focusLibrary:
                     self.host?.showLibrary(bringToFront: true)

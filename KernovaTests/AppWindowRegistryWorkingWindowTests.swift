@@ -25,7 +25,6 @@ struct AppWindowRegistryWorkingWindowTests {
     private func showLibrary(_ registry: AppWindowRegistry) throws -> NSWindow {
         registry.showLibrary(bringToFront: false)
         let window = try #require(registry.libraryWindow)
-        adoptAppWindow(window)
         return window
     }
 
@@ -38,7 +37,6 @@ struct AppWindowRegistryWorkingWindowTests {
         }
         fixture.registry.showClipboard(for: instance)
         let clipboard = try #require(fixture.registry.clipboardWindow(for: instance.instanceID))
-        adoptAppWindow(clipboard)
         let sheet = makeTestWindow(styleMask: [.titled])
         clipboard.beginSheet(sheet)
         #expect(sheet.sheetParent === clipboard)

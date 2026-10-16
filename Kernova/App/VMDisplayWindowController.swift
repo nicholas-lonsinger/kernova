@@ -15,7 +15,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         /// left by the time its close is handled.
         let lastDisplayID: CGDirectDisplayID?
         let wasKeyWindow: Bool
-        let appWasActive: Bool
     }
 
     let instance: VMInstance
@@ -41,7 +40,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
-        autosaveScope: WindowAutosaveScope, onResume: @escaping () -> Void
+        stage: WindowStage, onResume: @escaping () -> Void
     ) {
         self.instance = instance
         self.toolbarManager = VMToolbarManager(
@@ -83,27 +82,23 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         )
         self.backingView = backing
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
+        let window = stage.makeWindow(
+            NSRect(x: 0, y: 0, width: 1280, height: 800), [.titled, .closable, .miniaturizable, .resizable])
         window.contentView = backing
         window.minSize = NSSize(width: 640, height: 400)
         window.collectionBehavior = [.fullScreenPrimary]
 
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName(autosaveScope.displayFrame(for: instance.instanceID))
+        window.setFrameAutosaveName(stage.displayFrame(for: instance.instanceID))
 
-        let toolbar = NSToolbar(identifier: autosaveScope.displayToolbar)
+        let toolbar = NSToolbar(identifier: stage.displayToolbar)
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
         // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = autosaveScope.savesState
+        toolbar.autosavesConfiguration = stage.savesState
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
@@ -175,8 +170,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         onWillClose?(
             CloseContext(
                 lastDisplayID: lastDisplayID,
-                wasKeyWindow: window?.isKeyWindow ?? false,
-                appWasActive: NSApp.isActive))
+                wasKeyWindow: window?.isKeyWindow ?? false))
     }
 
     func window(

@@ -33,7 +33,6 @@ struct MainMenuViewMenuTests {
         /// sidebar is the one the View menu reads and acts on.
         func openLibraryWindow() throws {
             windows.showLibrary(bringToFront: false)
-            adoptAppWindow(try #require(windows.libraryWindow))
         }
 
         /// The on-screen library window's sidebar.

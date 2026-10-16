@@ -1,10 +1,12 @@
 import AppKit
 import Testing
 
+@testable import Kernova
+
 // MARK: - Scope
 
 /// Opens a ``TestWindowScope`` around each test case and closes it when the
-/// case ends, however it ends, so no window the case made or adopted outlives
+/// case ends, however it ends, so no window the case or the app under it made outlives
 /// it.
 struct ScopedWindowsTrait: TestTrait, SuiteTrait, TestScoping {
     typealias TestScopeProvider = Self
@@ -37,7 +39,7 @@ struct ScopedWindowsTrait: TestTrait, SuiteTrait, TestScoping {
 }
 
 extension Trait where Self == ScopedWindowsTrait {
-    /// Closes every window a test case in this suite makes or adopts when the
+    /// Closes every window a test case in this suite, or the app under it, makes when the
     /// case ends; a suite that makes a window carries it.
     static var scopedWindows: Self { Self() }
 }
@@ -97,7 +99,8 @@ private func enroll(_ window: NSWindow) {
 /// initializer clamps a titled window's content rect onto one, ordering in runs
 /// `constrainFrameRect(_:to:)`, and a sheet slides its parent into view through
 /// `setFrameOrigin(_:)`. It animates nothing, since AppKit draws a close
-/// animation as a window of its own.
+/// animation as a window of its own, and it is transparent, since a minimize
+/// draws the window itself along its path into the Dock.
 private final class ParkedTestWindow: NSWindow {
     /// Right of the bounding box of every display, where no screen reaches.
     private static var parkedOrigin: NSPoint {
@@ -113,6 +116,7 @@ private final class ParkedTestWindow: NSWindow {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         setFrameOrigin(Self.parkedOrigin)
         animationBehavior = .none
+        alphaValue = 0
     }
 
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
@@ -126,11 +130,48 @@ private final class ParkedTestWindow: NSWindow {
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         super.setFrame(NSRect(origin: Self.parkedOrigin, size: frameRect.size), display: flag)
     }
+
+    /// A sheet goes up beside its parent — beyond every display, like the
+    /// parent — only while the parent is ordered in; begun on one that is not,
+    /// AppKit puts the sheet up on a display by itself, so that begin fails the
+    /// test instead.
+    override func beginSheet(
+        _ sheetWindow: NSWindow, completionHandler handler: ((NSApplication.ModalResponse) -> Void)? = nil
+    ) {
+        guard isVisible else {
+            Issue.record("A sheet begun on a test window that is not ordered in would be drawn on a display")
+            return
+        }
+        super.beginSheet(sheetWindow, completionHandler: handler)
+    }
+}
+
+extension WindowStage {
+    /// The stage a test builds the app's windows on: AppKit saves nothing for
+    /// them, their toolbars answer to identifiers minted here, and every window
+    /// is made beyond every display, where its sheets go up too, in the running
+    /// test case's scope.
+    static func offDesktop() -> WindowStage {
+        WindowStage(
+            savesState: false, mainToolbar: UUID().uuidString, displayToolbar: UUID().uuidString,
+            makeWindow: { contentRect, styleMask in
+                let window = ParkedTestWindow(
+                    contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
+                enroll(window)
+                return window
+            },
+            makeContentWindow: { contentViewController in
+                let window = ParkedTestWindow(contentViewController: contentViewController)
+                enroll(window)
+                return window
+            })
+    }
 }
 
 /// Builds a window beyond every display — `isVisible` once ordered in, able to
 /// take key and carry a sheet, and never in front of the person at the Mac —
-/// that the test case's scope closes; the one way a test makes a window.
+/// that the test case's scope closes; the one way a test makes a window of its
+/// own, as ``WindowStage/offDesktop()`` is for the app's.
 @MainActor
 func makeTestWindow(
     styleMask: NSWindow.StyleMask, contentSize: NSSize = NSSize(width: 200, height: 100)
@@ -146,8 +187,6 @@ func makeTestWindow(
 }
 
 /// ``makeTestWindow(styleMask:contentSize:)``, ordered in.
-///
-/// A sheet begun on a window that isn't goes up on the display by itself.
 @MainActor
 @discardableResult
 func showTestWindow(
@@ -179,18 +218,4 @@ func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
     window.contentView = view
     window.orderFront(nil)
     return window
-}
-
-/// Takes a window the app itself made into the test case's scope, which closes
-/// it: invisible and click-through, still `isVisible` to AppKit.
-///
-/// Moving it beyond the displays instead leaves part of it on one: AppKit
-/// keeps a visible titled window's edge on screen. The window server first
-/// draws a window when the main-actor turn that ordered it in ends, so call
-/// this in that turn, with no suspension after the show.
-@MainActor
-func adoptAppWindow(_ window: NSWindow) {
-    window.alphaValue = 0
-    window.ignoresMouseEvents = true
-    enroll(window)
 }

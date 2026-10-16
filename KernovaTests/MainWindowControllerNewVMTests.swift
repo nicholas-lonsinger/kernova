@@ -9,7 +9,7 @@ import Testing
 @Suite("MainWindowController New VM toolbar item", .caseScoped, .scopedWindows)
 @MainActor
 struct MainWindowControllerNewVMTests {
-    private let autosave = WindowAutosaveScope.unsaved()
+    private let stage = WindowStage.offDesktop()
     private let preferences = makeTestPreferences()
     private let newVM = "newVM"
 
@@ -27,9 +27,8 @@ struct MainWindowControllerNewVMTests {
     private func makeSubject() throws -> Subject {
         let controller = MainWindowController(
             viewModel: makeLibraryViewModel(preferences: preferences),
-            autosaveScope: autosave)
+            stage: stage)
         let window = try #require(controller.window)
-        adoptAppWindow(window)
         let split = try #require(window.contentViewController as? NSSplitViewController)
         return Subject(
             controller: controller,
@@ -118,7 +117,6 @@ struct MainWindowControllerNewVMTests {
         subject.window.orderFront(nil)
         subject.toolbar.runCustomizationPalette(nil)
         let palette = try #require(subject.window.attachedSheet)
-        adoptAppWindow(palette)
         try #require(subject.toolbar.customizationPaletteIsRunning)
 
         #expect(subject.layout == canonical)
