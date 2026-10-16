@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCore
 import KernovaKit
 
 /// The sidebar's rows as values: sections, each listing library entries

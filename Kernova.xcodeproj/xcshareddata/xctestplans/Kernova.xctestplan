@@ -43,6 +43,14 @@
         "identifier" : "KernovaKitTests",
         "name" : "KernovaKitTests"
       }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaCore",
+        "identifier" : "KernovaCoreTests",
+        "name" : "KernovaCoreTests"
+      }
     }
   ],
   "version" : 1

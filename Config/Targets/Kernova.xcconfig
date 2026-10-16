@@ -19,6 +19,10 @@ INFOPLIST_PREFIX_HEADER = $(DERIVED_FILE_DIR)/KernovaBuildNumber.h
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 COMBINE_HIDPI_IMAGES = YES
 SWIFT_EMIT_LOC_STRINGS = YES
+
+// KernovaCore's package identity, which opens its `package` declarations to
+// this module. A module belongs to exactly one package.
+SWIFT_PACKAGE_NAME = kernovacore
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
 
 CODE_SIGN_STYLE = Automatic

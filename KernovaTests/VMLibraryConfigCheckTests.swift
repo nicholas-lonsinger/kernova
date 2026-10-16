@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+import KernovaCore
 import KernovaKit
 import Testing
 

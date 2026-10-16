@@ -20,6 +20,7 @@
 		A2000016 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000017 /* KernovaLogging */; };
 		A2000018 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000019 /* KernovaLogging */; };
 		A200001A /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A200001B /* KernovaLogging */; };
+		A200001C /* KernovaCore in Frameworks */ = {isa = PBXBuildFile; productRef = A200001D /* KernovaCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -100,6 +101,7 @@
 		A1000504 /* KernovaMacOSAgent.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = KernovaMacOSAgent.xcconfig; sourceTree = "<group>"; };
 		A1000505 /* KernovaMacOSAgentTests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = KernovaMacOSAgentTests.xcconfig; sourceTree = "<group>"; };
 		A1000506 /* KernovaCLI.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = KernovaCLI.xcconfig; sourceTree = "<group>"; };
+		A1000600 /* KernovaCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaCore; sourceTree = "<group>"; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -185,6 +187,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A200001C /* KernovaCore in Frameworks */,
 				A2000001 /* KernovaKit in Frameworks */,
 				A2000012 /* KernovaAppRegistry in Frameworks */,
 				A2000018 /* KernovaLogging in Frameworks */,
@@ -256,6 +259,7 @@
 				A1000401 /* KernovaCLI */,
 				A1000201 /* KernovaMacOSAgent */,
 				A1000302 /* KernovaMacOSAgentTests */,
+				A1000600 /* KernovaCore */,
 				B62FC33F2FAFDBB1003775B7 /* KernovaKit */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
@@ -315,6 +319,7 @@
 			);
 			name = Kernova;
 			packageProductDependencies = (
+				A200001D /* KernovaCore */,
 				A2000002 /* KernovaKit */,
 				A2000013 /* KernovaAppRegistry */,
 				A2000019 /* KernovaLogging */,
@@ -845,6 +850,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A200001D /* KernovaCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaCore;
+		};
 		A2000002 /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaKit;

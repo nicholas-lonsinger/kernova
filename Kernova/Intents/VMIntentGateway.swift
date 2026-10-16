@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import KernovaCore
 import KernovaKit
 import KernovaLogging
 
