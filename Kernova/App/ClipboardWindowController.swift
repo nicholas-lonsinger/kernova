@@ -20,7 +20,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     /// is typed `NSViewController?`.
     private let clipboardContentVC: ClipboardContentViewController
 
-    init(instance: VMInstance, viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+    init(instance: VMInstance, viewModel: VMLibraryViewModel, stage: WindowStage) {
         self.instance = instance
 
         // Share the VM's host publisher so a manual "Copy to Mac" and the
@@ -34,8 +34,8 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         // passthrough switch and the agent status line all visible at once.
         let initialSize = NSSize(width: 480, height: 340)
 
-        let window = NSWindow.withStableContentSize(
-            initialSize,
+        let window = stage.makeWindow(
+            stableContentSize: initialSize,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: viewController
         )
@@ -43,7 +43,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName(autosaveScope.clipboardFrame(for: instance.instanceID))
+        window.setFrameAutosaveName(stage.clipboardFrame(for: instance.instanceID))
         updateWindowTitle()
     }
 

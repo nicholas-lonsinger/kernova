@@ -40,7 +40,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Init
 
-    init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+    init(viewModel: VMLibraryViewModel, stage: WindowStage) {
         self.viewModel = viewModel
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
@@ -74,10 +74,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         detailItem.minimumThickness = 400
         splitViewController.addSplitViewItem(detailItem)
 
-        splitViewController.splitView.autosaveName = autosaveScope.mainSplit
+        splitViewController.splitView.autosaveName = stage.mainSplit
 
-        let window = NSWindow.withStableContentSize(
-            NSSize(width: 1200, height: 900),
+        let window = stage.makeWindow(
+            stableContentSize: NSSize(width: 1200, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             contentViewController: splitViewController
         )
@@ -99,17 +99,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.delegate = self
         self.shouldCascadeWindows = false
 
-        let toolbar = NSToolbar(identifier: autosaveScope.mainToolbar)
+        let toolbar = NSToolbar(identifier: stage.mainToolbar)
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
         // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = autosaveScope.savesState
+        toolbar.autosavesConfiguration = stage.savesState
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        window.setFrameAutosaveName(autosaveScope.mainWindowFrame)
+        window.setFrameAutosaveName(stage.mainWindowFrame)
 
         // Finder-style snap: while dragging the divider, magnetize it to the
         // width that fully shows the longest VM name.

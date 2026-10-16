@@ -8,14 +8,17 @@ import Testing
 /// every suite that needs a mocked ``VMLibraryViewModel`` to build an app
 /// component over.
 
-/// The app's window registry over `viewModel`, saving no window frames.
+/// The app's window registry over `viewModel`, its windows off the desktop
+/// and its activation requests going to `presence`.
 @MainActor
-func makeWindowRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
-    let autosave = WindowAutosaveScope.unsaved()
+func makeWindowRegistry(
+    _ viewModel: VMLibraryViewModel, presence: TestAppPresence = TestAppPresence()
+) -> AppWindowRegistry {
+    let stage = WindowStage.offDesktop()
     return AppWindowRegistry(
         viewModel: viewModel,
-        displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-        autosaveScope: autosave)
+        displayPlacement: VMDisplayPlacementController(viewModel: viewModel, stage: stage),
+        stage: stage, presence: presence)
 }
 
 @MainActor

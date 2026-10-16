@@ -10,9 +10,7 @@ import Testing
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``:
 /// that creates the menu-bar status item and installs a process-wide `willClose`
 /// observer, neither of which belongs in a test host shared with every other
-/// suite. What is left is safe here because the test host is already `.regular`,
-/// so the `setActivationPolicy(.regular)` inside `prepareToPresentWindow()` is a
-/// no-op.
+/// suite.
 @Suite("AppResidencyController presentation", .serialized, .caseScoped)
 @MainActor
 struct AppResidencyPresentationTests {
@@ -28,12 +26,14 @@ struct AppResidencyPresentationTests {
         func requestFullQuit() {}
     }
 
-    private func makeController() -> (AppResidencyController, StubLaunchHost) {
+    private func makeController(presence: TestAppPresence = TestAppPresence())
+        -> (AppResidencyController, StubLaunchHost)
+    {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         let host = StubLaunchHost()
         let controller = AppResidencyController(
             viewModel: viewModel,
-            windows: makeWindowRegistry(viewModel), heldAlerts: HeldAlerts())
+            windows: makeWindowRegistry(viewModel), heldAlerts: HeldAlerts(), presence: presence)
         controller.host = host
         return (controller, host)
     }
@@ -54,5 +54,17 @@ struct AppResidencyPresentationTests {
         controller.prepareToPresentWindow()
 
         #expect(launchHost.count == 2)
+    }
+
+    @Test("A window put up while headless brings the Dock icon back first, and only once")
+    func prepareRestoresTheDockIcon() {
+        let presence = TestAppPresence(activationPolicy: .accessory)
+        let (controller, _) = makeController(presence: presence)
+
+        controller.prepareToPresentWindow()
+        controller.prepareToPresentWindow()
+
+        #expect(presence.activationPolicy == .regular)
+        #expect(presence.requests == [.setActivationPolicy(.regular)])
     }
 }

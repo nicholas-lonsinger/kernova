@@ -140,7 +140,7 @@ struct VMSettingsSharingPanelTests {
     @Test("The passthrough prompt is the verb's")
     func passthroughConsentIsTheVerbsPrompt() throws {
         let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
-        let window = makeTestWindow(styleMask: [.titled])
+        let window = showTestWindow(styleMask: [.titled])
         window.contentView = vc.view
         let toggle = try #require(firstSwitch(action: "clipboardPassthroughToggled", in: vc.view))
 

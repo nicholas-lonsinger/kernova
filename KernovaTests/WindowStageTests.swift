@@ -3,11 +3,11 @@ import Testing
 
 @testable import Kernova
 
-@Suite("WindowAutosaveScope", .caseScoped)
-struct WindowAutosaveScopeTests {
+@Suite("WindowStage", .caseScoped)
+struct WindowStageTests {
     @Test("The app's windows keep the autosave names every install has saved state under")
     func appNamesAreStable() throws {
-        let app = WindowAutosaveScope.app
+        let app = WindowStage.app
         let vmID = try #require(UUID(uuidString: "5E00A1A0-0000-4000-8000-000000000001"))
 
         #expect(app.mainWindowFrame == "KernovaMainWindow")
@@ -19,9 +19,9 @@ struct WindowAutosaveScopeTests {
         #expect(app.clipboardFrame(for: vmID) == "Clipboard-5E00A1A0-0000-4000-8000-000000000001")
     }
 
-    @Test("A scope that saves nothing hands out no name AppKit saves under")
+    @Test("The off-desktop stage hands out no name AppKit saves under")
     func unsavedNamesSaveNothing() {
-        let unsaved = WindowAutosaveScope.unsaved()
+        let unsaved = WindowStage.offDesktop()
         let vmID = UUID()
 
         #expect(!unsaved.savesState)
@@ -32,14 +32,14 @@ struct WindowAutosaveScopeTests {
         #expect(unsaved.clipboardFrame(for: vmID).isEmpty)
     }
 
-    @Test("A scope that saves nothing shares its toolbar identifiers with no other scope")
+    @Test("Each off-desktop stage shares its toolbar identifiers with no other stage")
     func unsavedToolbarsAreDistinct() {
-        let first = WindowAutosaveScope.unsaved()
-        let second = WindowAutosaveScope.unsaved()
+        let first = WindowStage.offDesktop()
+        let second = WindowStage.offDesktop()
 
         #expect(first.mainToolbar != second.mainToolbar)
         #expect(first.displayToolbar != second.displayToolbar)
-        #expect(first.mainToolbar != WindowAutosaveScope.app.mainToolbar)
-        #expect(first.displayToolbar != WindowAutosaveScope.app.displayToolbar)
+        #expect(first.mainToolbar != WindowStage.app.mainToolbar)
+        #expect(first.displayToolbar != WindowStage.app.displayToolbar)
     }
 }

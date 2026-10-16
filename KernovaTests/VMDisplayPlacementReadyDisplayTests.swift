@@ -15,7 +15,7 @@ import Testing
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
     private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.unsaved()
+    private let stage = WindowStage.offDesktop()
 
     /// Answers the placement controller with a fixed posture, standing in for
     /// the residency controller that reads the live one.
@@ -38,7 +38,7 @@ struct VMDisplayPlacementReadyDisplayTests {
         -> (VMDisplayPlacementController, StubResidency)
     {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
         let residency = StubResidency(posture: posture)
         placement.residency = residency
         return (placement, residency)
@@ -111,7 +111,6 @@ struct VMDisplayPlacementReadyDisplayTests {
         placement.readyDisplay(for: instance, presence: .attended)
 
         let window = try #require(placement.window(for: instance.instanceID))
-        adoptAppWindow(window)
         #expect(window.isVisible)
         #expect(!window.isKeyWindow)
         #expect(!window.styleMask.contains(.fullScreen))
@@ -126,7 +125,7 @@ struct VMDisplayPlacementReadyDisplayTests {
     @Test("A group start from the foreground puts each detached display up without taking key")
     func groupStartReadiesBehind() async throws {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
         let residency = StubResidency(posture: .foreground)
         placement.residency = residency
         let popOut = viewModel.library.admitFixture(
@@ -150,7 +149,6 @@ struct VMDisplayPlacementReadyDisplayTests {
         // alongside left it (CI run 38955117057).
         for instance in [popOut, fullscreen] {
             let window = try #require(placement.window(for: instance.instanceID))
-            adoptAppWindow(window)
             #expect(window.isVisible)
         }
         // Put up behind, the fullscreen VM runs in a pop-out window with its

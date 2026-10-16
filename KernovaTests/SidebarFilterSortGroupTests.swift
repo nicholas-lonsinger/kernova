@@ -538,9 +538,7 @@ struct SidebarFilterSortGroupTests {
         let viewModel = makeViewModel()
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         let controller = SidebarViewController(viewModel: viewModel)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 200), styleMask: [.titled],
-            backing: .buffered, defer: false)
+        let window = makeTestWindow(styleMask: [.titled], contentSize: NSSize(width: 260, height: 200))
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
@@ -754,9 +752,7 @@ struct SidebarFilterSortGroupTests {
         viewModel.library.admitFixture(name: "A VM With a Long Name")
         viewModel.sidebarOptions.showsDetails = true
         let controller = SidebarViewController(viewModel: viewModel)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled],
-            backing: .buffered, defer: false)
+        let window = makeTestWindow(styleMask: [.titled], contentSize: NSSize(width: 300, height: 200))
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
         let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
@@ -784,9 +780,7 @@ struct SidebarFilterSortGroupTests {
         @MainActor
         init(_ viewModel: VMLibraryViewModel) throws {
             controller = SidebarViewController(viewModel: viewModel)
-            window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 200, height: 400), styleMask: [.titled],
-                backing: .buffered, defer: false)
+            window = makeTestWindow(styleMask: [.titled], contentSize: NSSize(width: 200, height: 400))
             window.contentViewController = controller
             controller.viewDidAppear()
             outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))

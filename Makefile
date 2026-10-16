@@ -70,7 +70,8 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/worktrees.sh \
                  Tools/tests/checkout-lock.sh \
                  Tools/tests/arena-label.sh \
-                 Tools/tests/check-config-decoding.sh
+                 Tools/tests/check-config-decoding.sh \
+                 Tools/tests/check-self-activation.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
@@ -226,7 +227,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation, and the KernovaKit package reference
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation and AppPresence routing, and the KernovaKit package reference
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \

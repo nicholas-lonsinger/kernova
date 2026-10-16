@@ -5,9 +5,8 @@ import Testing
 
 /// Covers the summon an in-app click runs —
 /// ``AppResidencyController/summonUserInterface()`` — and the reopen leg —
-/// ``AppResidencyController/handleReopen()`` — against a
-/// ``AppResidencyController/ForegroundControl`` that records its calls instead
-/// of hiding, unhiding or activating the test host.
+/// ``AppResidencyController/handleReopen()`` — against an ``AppPresence`` that
+/// records its calls instead of unhiding or activating the test host.
 ///
 /// No reopen here asserts a library show: the presence read scans
 /// `NSApp.windows`, which also holds the windows of every test running
@@ -21,10 +20,10 @@ import Testing
 struct AppResidencySummonTests {
     private let preferences = makeTestPreferences()
 
-    /// Stands in for `NSApp`'s hidden state and activation, recording each call
-    /// in order.
+    /// Stands in for `NSApp`'s hidden state and activation, recording each
+    /// unhide and activation in order.
     @MainActor
-    private final class RecordingForeground {
+    private final class RecordingForeground: AppPresence {
         enum Step: Equatable {
             case unhide
             case activate(libraryOnScreen: Bool)
@@ -32,6 +31,8 @@ struct AppResidencySummonTests {
             case laterJob
         }
 
+        var activationPolicy = NSApplication.ActivationPolicy.regular
+        let isActive = false
         /// Held across an unhide, so every presentation that would unhide
         /// records its own.
         let isHidden: Bool
@@ -53,20 +54,17 @@ struct AppResidencySummonTests {
             steps.filter { if case .activate = $0 { true } else { false } }.count
         }
 
-        var control: AppResidencyController.ForegroundControl {
-            AppResidencyController.ForegroundControl(
-                isHidden: { [self] in isHidden },
-                unhideWithoutActivation: { [self] in
-                    record(.unhide)
-                    onUnhide()
-                },
-                activate: { [self] in
-                    // The same main-actor job ordered the summoned window in, so
-                    // adopting it here keeps it from ever being drawn.
-                    let window = registry?.libraryWindow
-                    if let window { adoptAppWindow(window) }
-                    record(.activate(libraryOnScreen: window?.isVisible == true))
-                })
+        func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
+            activationPolicy = policy
+        }
+
+        func unhideWithoutActivation() {
+            record(.unhide)
+            onUnhide()
+        }
+
+        func activate() {
+            record(.activate(libraryOnScreen: registry?.libraryWindow?.isVisible == true))
         }
     }
 
@@ -88,7 +86,7 @@ struct AppResidencySummonTests {
         foreground.registry = registry
         let controller = AppResidencyController(
             viewModel: viewModel, windows: registry, heldAlerts: HeldAlerts(),
-            foreground: foreground.control)
+            presence: foreground)
         return (controller, registry, viewModel)
     }
 
@@ -124,7 +122,6 @@ struct AppResidencySummonTests {
         let foreground = RecordingForeground(isHidden: true)
         let (controller, registry, _) = makeController(foreground: foreground)
         registry.showLibrary(bringToFront: true)
-        adoptAppWindow(try #require(registry.libraryWindow))
 
         // The summon's job runs behind the delivered one, so once the summon has
         // asked, anything the delivered one did is recorded ahead of it — and
@@ -159,7 +156,6 @@ struct AppResidencySummonTests {
         let (controller, registry, _) = makeController(foreground: foreground)
         registry.showLibrary(bringToFront: true)
         let library = try #require(registry.libraryWindow)
-        adoptAppWindow(library)
         // A hidden app's windows read `isVisible == false` until the unhide
         // brings them back.
         library.orderOut(nil)
@@ -185,7 +181,6 @@ struct AppResidencySummonTests {
         let (controller, registry, _) = makeController(foreground: foreground)
         registry.showLibrary(bringToFront: true)
         let library = try #require(registry.libraryWindow)
-        adoptAppWindow(library)
         // AppKit reports the miniaturize a runloop turn later, through the
         // notification the wait is driven by.
         let miniaturized = AsyncGate()

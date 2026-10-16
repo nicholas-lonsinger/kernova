@@ -9,13 +9,13 @@ import AppKit
 final class SettingsWindowController: NSWindowController {
     let tabs: SettingsTabViewController
 
-    init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+    init(viewModel: VMLibraryViewModel, stage: WindowStage) {
         let tabs = SettingsTabViewController(viewModel: viewModel)
-        // `NSWindow.withStableContentSize` pins a fixed initial content size, and
-        // this window has none: its height is whatever the selected pane publishes
-        // as `preferredContentSize`, re-applied by `SettingsTabViewController` on
-        // every tab switch.
-        let window = NSWindow(contentViewController: tabs)
+        // `WindowStage.makeWindow(stableContentSize:…)` pins a fixed initial
+        // content size, and this window has none: its height is whatever the
+        // selected pane publishes as `preferredContentSize`, re-applied by
+        // `SettingsTabViewController` on every tab switch.
+        let window = stage.makeContentWindow(tabs)
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.autorecalculatesKeyViewLoop = true
@@ -27,7 +27,7 @@ final class SettingsWindowController: NSWindowController {
         // stretching the first pane's cards over the excess). AppKit has no
         // position-only autosave, so `SettingsTabViewController` re-asserts the
         // height on appear.
-        window.setFrameAutosaveName(autosaveScope.settingsFrame)
+        window.setFrameAutosaveName(stage.settingsFrame)
         self.tabs = tabs
         super.init(window: window)
     }

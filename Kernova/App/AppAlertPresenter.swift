@@ -858,7 +858,7 @@ final class AppAlertPresenter {
         // one that matters.
         if let asking = windowAsking(about: vmID) {
             asking.makeKeyAndOrderFront(nil)
-            NSApp.activate()
+            windows.presence.activate()
             #log(
                 Self.logger, .notice,
                 "Already asking for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; raising that question"

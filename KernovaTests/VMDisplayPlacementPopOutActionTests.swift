@@ -51,7 +51,7 @@ struct VMDisplayPlacementPersistenceTests {
             phase: .running(sessionID: UUID()), hostState: VMHostState(displayPreference: .popOut))
         instance.displayMode = .hidden
         let placement = VMDisplayPlacementController(
-            viewModel: viewModel, autosaveScope: .unsaved())
+            viewModel: viewModel, stage: .offDesktop())
 
         placement.togglePopOut(for: instance)
 

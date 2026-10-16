@@ -14,6 +14,10 @@ model before the library's first read), `AppResidencyController`,
 `MainMenuController` and `AppTerminationController`. `AppDelegate.main()` is the one branch on
 process mode, and the unit-test host takes the arm that builds none of it.
 
+The root also builds the one `AppPresence` those owners share. Every window
+controller builds its window through a `WindowStage`; the test stage parks each
+window beyond every display, and the sheets on it go up beside it.
+
 `VMLibraryViewModel.init` (`Kernova/ViewModels/`) builds everything beneath the
 UI: `VMLifecycleCoordinator` over the services, `VMLibrary`,
 `VMSleepWakeCoordinator`, `USBAccessoryCoordinator` and `VMCommandCore`. Each

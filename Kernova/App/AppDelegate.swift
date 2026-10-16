@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// process and handed to the command socket when the automation front
     /// doors open.
     private let copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>
+    /// The app's activation policy, hidden state and activation, shared with
+    /// every owner that reads or changes them.
+    private let presence: any AppPresence
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppDelegate")
 
@@ -72,8 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
-        let delegate: any NSApplicationDelegate =
-            if let copyClaim { AppDelegate(copyClaim: copyClaim) } else { TestHostDelegate() }
+        let delegate: any NSApplicationDelegate
+        if let copyClaim {
+            delegate = AppDelegate(copyClaim: copyClaim, presence: SystemAppPresence())
+        } else {
+            // Before `run()`, so the test host has no Dock or ⌘-Tab presence
+            // while the tests run.
+            SystemAppPresence().setActivationPolicy(.accessory)
+            delegate = TestHostDelegate()
+        }
         app.delegate = delegate
         app.run()
     }
@@ -95,8 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    init(copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>) {
+    init(copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>, presence: any AppPresence) {
         self.copyClaim = copyClaim
+        self.presence = presence
         let entitlements = EntitlementService.readFromProcess()
         let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
         let viewModel = VMLibraryViewModel(
@@ -120,14 +131,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: .app),
-            autosaveScope: .app)
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, stage: .app),
+            stage: .app,
+            presence: presence)
         self.windows = windows
         let alerts = AppAlertPresenter(viewModel: viewModel, windows: windows)
         self.alerts = alerts
         viewModel.presenter = alerts
         let lifecycle = AppResidencyController(
-            viewModel: viewModel, windows: windows, heldAlerts: alerts.held)
+            viewModel: viewModel, windows: windows, heldAlerts: alerts.held, presence: presence)
         self.lifecycle = lifecycle
         self.mainMenu = MainMenuController(viewModel: viewModel, windows: windows)
         self.termination = AppTerminationController(viewModel: viewModel, residency: lifecycle)
@@ -214,10 +226,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                     && descriptor.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
                         == keyAELaunchedAsLogInItem
             } ?? false
-        let isHiddenLaunch = NSApp.isHidden
+        let isHiddenLaunch = presence.isHidden
         #log(
             Self.logger, .notice,
-            "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
+            "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(self.presence.isActive, privacy: .public)"
         )
 
         return AppResidencyController.LaunchProvenance(

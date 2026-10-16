@@ -35,14 +35,14 @@ struct AppAlertPresenterTests {
         let viewModel: VMLibraryViewModel
         let registry: AppWindowRegistry
         let presenter: AppAlertPresenter
+        let presence = TestAppPresence()
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
-        private var adopted = false
 
         init(preferences: AppPreferences) {
             viewModel = makeLibraryViewModel(
                 preferences: preferences, storageService: storage, fileSystem: fileSystem)
-            registry = makeWindowRegistry(viewModel)
+            registry = makeWindowRegistry(viewModel, presence: presence)
             presenter = AppAlertPresenter(viewModel: viewModel, windows: registry)
         }
 
@@ -52,10 +52,6 @@ struct AppAlertPresenterTests {
         func showLibrary() -> NSWindow {
             registry.showLibrary(bringToFront: false)
             guard let window = registry.libraryWindow else { preconditionFailure("showLibrary made no window") }
-            if !adopted {
-                adoptAppWindow(window)
-                adopted = true
-            }
             return window
         }
 
@@ -1079,11 +1075,11 @@ struct AppAlertPresenterTests {
 
         // The newcomer is answered so its start does not hang, and the sheet
         // already asking about this VM is brought forward — the click lands on
-        // the question gating the start. Only the answer is assertable here;
-        // that the window comes to the front is not observable headlessly.
+        // the question gating the start.
         #expect(second.answered == [.answered(.cancelled)])
         #expect(first.answered.isEmpty)
         #expect(h.isShowingAlert)
+        #expect(h.presence.requests == [.activate])
     }
 
     @Test(
@@ -1196,9 +1192,7 @@ struct AppAlertPresenterTests {
     /// `instance`'s display window, popped out.
     private func showDisplayWindow(for instance: VMInstance, in h: Harness) throws -> NSWindow {
         h.registry.displayPlacement.showDisplayWindow(for: instance)
-        let window = try #require(h.registry.displayPlacement.window(for: instance.id))
-        adoptAppWindow(window)
-        return window
+        return try #require(h.registry.displayPlacement.window(for: instance.id))
     }
 
     /// Every label and button title on the sheet attached to `window` — an
@@ -1456,7 +1450,6 @@ struct AppAlertPresenterTests {
         h.registry.displayPlacement.readyDisplay(for: vm, presence: .unattended)
 
         let display = try #require(h.registry.displayPlacement.window(for: vm.id))
-        adoptAppWindow(display)
         #expect(sheetText(on: display).contains("VM Notice"))
         #expect(h.presenter.held.alerts.isEmpty)
         withExtendedLifetime(residency) {}

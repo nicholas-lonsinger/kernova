@@ -200,7 +200,6 @@ struct VMCreationWizardViewControllerTests {
         let presenter = SheetPresenter()
         presenter.show(content: wizard, in: parent)
         let sheet = try #require(parent.attachedSheet)
-        adoptAppWindow(sheet)
         // A key-view request builds the sheet's loop from the Resources step, as
         // the sheet does when it first shows.
         sheet.selectNextKeyView(nil)

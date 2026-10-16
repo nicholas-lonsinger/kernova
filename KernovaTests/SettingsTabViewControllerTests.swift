@@ -139,7 +139,6 @@ struct SettingsTabViewControllerTests {
 
     private func tabs(of registry: AppWindowRegistry) throws -> SettingsTabViewController {
         let window = try #require(registry.settingsWindow)
-        adoptAppWindow(window)
         return try #require(window.contentViewController as? SettingsTabViewController)
     }
 

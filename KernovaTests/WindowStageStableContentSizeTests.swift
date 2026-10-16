@@ -3,9 +3,9 @@ import Testing
 
 @testable import Kernova
 
-@Suite("NSWindow.withStableContentSize Tests", .caseScoped, .scopedWindows)
+@Suite("WindowStage.makeWindow(stableContentSize:) Tests", .caseScoped, .scopedWindows)
 @MainActor
-struct NSWindowExtensionsTests {
+struct WindowStageStableContentSizeTests {
     /// A content view controller whose Auto Layout fitting size is far smaller
     /// than any realistic window — the shape that makes a plain
     /// `contentViewController` assignment shrink the window (#582).
@@ -26,12 +26,11 @@ struct NSWindowExtensionsTests {
     @Test("A later minSize does not shrink the window to the fitting size")
     func minSizeDoesNotClampToFittingSize() {
         let size = NSSize(width: 1200, height: 900)
-        let window = NSWindow.withStableContentSize(
-            size,
+        let window = WindowStage.offDesktop().makeWindow(
+            stableContentSize: size,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: makeFlexibleContentViewController()
         )
-        adoptAppWindow(window)
         let initialSize = window.contentRect(forFrameRect: window.frame).size
         #expect(initialSize.width == size.width)
         #expect(initialSize.height == size.height)
@@ -45,12 +44,11 @@ struct NSWindowExtensionsTests {
     @Test("The content view controller is installed on the window")
     func installsContentViewController() {
         let controller = makeFlexibleContentViewController()
-        let window = NSWindow.withStableContentSize(
-            NSSize(width: 480, height: 320),
+        let window = WindowStage.offDesktop().makeWindow(
+            stableContentSize: NSSize(width: 480, height: 320),
             styleMask: [.titled, .closable],
             contentViewController: controller
         )
-        adoptAppWindow(window)
 
         #expect(window.contentViewController === controller)
         #expect(window.styleMask.contains(.titled))
