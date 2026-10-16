@@ -184,7 +184,7 @@ struct ClipboardContentViewControllerRetentionTests {
     func writeFailureRetainsNothing() async throws {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
-        // The concrete NSPasteboard can't be made to fail; the write-only seam can.
+        // The concrete NSPasteboard can't be made to fail; the fake can.
         let pasteboard = FakePasteboard()
         pasteboard.failNextWrite()
 
@@ -509,8 +509,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            readPasteboard: hostPasteboard,
-            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: hostPasteboard, stagingRoot: stagingRoot.root))
         _ = vc.view
 
         vc.paste(nil)
@@ -864,14 +863,13 @@ struct ClipboardContentChipTests {
     private let preferences = makeTestPreferences()
 
     private func makeController(
-        content: ClipboardContent, readPasteboard: NSPasteboard = .general
+        content: ClipboardContent, pasteboard: any ClipboardPasteboard = FakePasteboard()
     ) -> (ClipboardContentViewController, VMInstance) {
         let instance = makeClipboardInstance()
         instance.sessionContext?.clipboardService = FakeClipboardService(content: content)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            readPasteboard: readPasteboard,
-            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: pasteboard, stagingRoot: stagingRoot.root))
         _ = vc.view
         return (vc, instance)
     }
@@ -933,7 +931,7 @@ struct ClipboardContentChipTests {
         defer { pasteboard.releaseGlobally() }
         pasteboard.clearContents()
         let (vc, _) = makeController(
-            content: ClipboardContent(text: "buffer text"), readPasteboard: pasteboard)
+            content: ClipboardContent(text: "buffer text"), pasteboard: pasteboard)
         let chip = vc.contentChipTextForTesting
         #expect(!chip.isEmpty)
 

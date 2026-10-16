@@ -1726,7 +1726,7 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
             stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
-        // The write-only seam rather than a real `NSPasteboard`: the pasteboard
+        // The fake pasteboard rather than a real `NSPasteboard`: the pasteboard
         // server is a shared system service, so a real write can fail for
         // reasons this test does not control — and `.written` is a
         // precondition of everything below it, not the subject.
@@ -1795,7 +1795,7 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
             stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
-        // The write-only seam, as `retractionRespectsPasteboardOwnership` uses:
+        // The fake pasteboard, as `retractionRespectsPasteboardOwnership` uses:
         // a real pasteboard write can fail for reasons outside this test, and
         // `.written` is a precondition of everything below it.
         let pasteboard = FakePasteboard()
