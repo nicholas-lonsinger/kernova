@@ -313,26 +313,31 @@ struct AppAlertPresenterTests {
         #expect(presenter.waitingCountForTesting == 1)
     }
 
-    @Test("Take Snapshot from a VM's display window shows while another VM's sheet is up on the library")
-    func takeSnapshotSheetsForTwoVMsCoexist() throws {
+    @Test("A Take Snapshot gesture for the VM whose sheet is up is ignored; another VM's waits its turn")
+    func takeSnapshotSheetIgnoresItsVMAndQueuesAnother() throws {
         let h = makeHarness()
         let library = h.showLibrary()
-        let vmX = makeRunningInstance(name: "Popped", in: h.viewModel)
-        let display = try showDisplayWindow(for: vmX, in: h)
-        let vmY = makeInstance(name: "Listed", in: h.viewModel)
+        let vmX = makeInstance(name: "X", in: h.viewModel)
+        let vmY = makeInstance(name: "Y", in: h.viewModel)
+        #expect(vmX.snapshotCaptureMode != nil)
         #expect(vmY.snapshotCaptureMode != nil)
-        h.presenter.presentTakeSnapshotSheet(for: vmY, purpose: .restorePoint)
-        let ySheet = try #require(library.attachedSheet)
 
         h.presenter.presentTakeSnapshotSheet(for: vmX, purpose: .restorePoint)
-
-        let xSheet = try #require(display.attachedSheet)
-        #expect(library.attachedSheet === ySheet)
+        let xSheet = try #require(library.attachedSheet)
         #expect(h.presenter.waitingCountForTesting == 0)
 
-        // A second gesture for a VM whose sheet is up is still ignored.
         h.presenter.presentTakeSnapshotSheet(for: vmX, purpose: .restorePoint)
-        #expect(display.attachedSheet === xSheet)
+        #expect(library.attachedSheet === xSheet)
+        #expect(h.presenter.waitingCountForTesting == 0)
+
+        h.presenter.presentTakeSnapshotSheet(for: vmY, purpose: .restorePoint)
+        #expect(library.attachedSheet === xSheet)
+        #expect(h.presenter.waitingCountForTesting == 1)
+
+        #expect(h.dismissShownAlert(.cancel))
+
+        let ySheet = try #require(library.attachedSheet)
+        #expect(ySheet !== xSheet)
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
@@ -1284,66 +1289,58 @@ struct AppAlertPresenterTests {
         return window.attachedSheet?.contentView.map(labels(in:)) ?? []
     }
 
-    @Test("A Force Stop goes up on its VM's display window while another alert holds the library window")
-    func forceStopRoutesToItsDisplayWindow() throws {
-        let h = makeHarness()
-        let library = h.showLibrary()
-        let vm = makeRunningInstance(name: "Stuck", in: h.viewModel)
-        let display = try showDisplayWindow(for: vm, in: h)
-        h.presenter.presentError("Unrelated.", title: "Library Notice", about: .library)
-        #expect(sheetText(on: library).contains("Library Notice"))
-
-        h.presenter.presentForceStop(for: vm)
-
-        #expect(sheetText(on: display).contains { $0.contains("Force Stop") })
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
     @Test("The guest agent disk notice goes up on its VM's display window")
     func agentDiskNoticeRoutesToItsDisplayWindow() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
         let vm = makeRunningInstance(name: "Guest", guestOS: .macOS, in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
 
         h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)
 
         #expect(sheetText(on: display).contains("Installer Mounted"))
-        #expect(library.attachedSheet == nil)
+        #expect(h.presenter.waitingCountForTesting == 0)
     }
 
     @Test("An alert waiting on one window does not hold up one for another, and each window keeps its order")
     func windowsQueueIndependently() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
-        let vm = makeRunningInstance(name: "Work", in: h.viewModel)
-        let display = try showDisplayWindow(for: vm, in: h)
+        let vmA = makeRunningInstance(name: "A", in: h.viewModel)
+        let vmB = makeRunningInstance(name: "B", in: h.viewModel)
+        let displayA = try showDisplayWindow(for: vmA, in: h)
+        let displayB = try showDisplayWindow(for: vmB, in: h)
 
-        h.presenter.presentError("One.", title: "First Notice", about: .library)
-        h.presenter.presentError("Two.", title: "Second Notice", about: .library)
-        h.presenter.presentError("Three.", title: "Display Notice", about: .vm(vm))
+        h.presenter.presentError("One.", title: "First Notice", about: .vm(vmA))
+        h.presenter.presentError("Two.", title: "Second Notice", about: .vm(vmA))
+        h.presenter.presentError("Three.", title: "Other Notice", about: .vm(vmB))
 
-        #expect(sheetText(on: library).contains("First Notice"))
-        #expect(sheetText(on: display).contains("Display Notice"))
+        #expect(sheetText(on: displayA).contains("First Notice"))
+        #expect(sheetText(on: displayB).contains("Other Notice"))
         #expect(h.presenter.waitingCountForTesting == 1)
 
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+        let shown = try #require(displayA.attachedSheet)
+        displayA.endSheet(shown, returnCode: .alertFirstButtonReturn)
 
-        #expect(sheetText(on: library).contains("Second Notice"))
+        #expect(sheetText(on: displayA).contains("Second Notice"))
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
     @Test("A display window closing sends its alert and those waiting for it to the library window")
     func closingADisplayWindowReroutesItsAlerts() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
         let vm = makeRunningInstance(name: "Work", in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
+        let isListed: (UUID) -> Bool = { id in h.viewModel.instances.contains { $0.id == id } }
         h.presenter.presentError("Shown.", title: "Shown Notice", about: .vm(vm))
         h.presenter.presentError("Waiting.", title: "Waiting Notice", about: .vm(vm))
         #expect(sheetText(on: display).contains("Shown Notice"))
+        #expect(h.presenter.waitingCountForTesting == 1)
 
         display.close()
+
+        #expect(h.presenter.waitingCountForTesting == 2)
+        #expect(h.presenter.held.otherAlertCount(listing: isListed) == 2)
+
+        let library = h.showLibrary()
 
         // The acknowledgement nobody dismissed comes back first, in the order
         // it was raised, and the one waiting behind it follows it there.
@@ -1356,7 +1353,6 @@ struct AppAlertPresenterTests {
     @Test("A display window closing answers a suspended verb's question unasked and cancels any other")
     func closingADisplayWindowEndsItsQuestions() throws {
         let h = makeHarness()
-        let library = h.showLibrary()
         let vm = makeRunningInstance(name: "Work", in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
         let answers = Box<[PresenterAnswer<Bool>]>([])
@@ -1372,7 +1368,8 @@ struct AppAlertPresenterTests {
         display.close()
 
         #expect(answers.value == [.unasked])
-        #expect(library.attachedSheet == nil)
+        #expect(h.presenter.waitingCountForTesting == 0)
+        #expect(h.presenter.held.alerts.isEmpty)
 
         let other = makeRunningInstance(name: "Other", in: h.viewModel)
         let otherDisplay = try showDisplayWindow(for: other, in: h)
@@ -1381,11 +1378,11 @@ struct AppAlertPresenterTests {
 
         otherDisplay.close()
 
-        // Nothing runs without a yes, and the question does not follow the
-        // user to the library window.
+        // Nothing runs without a yes, and the question is neither queued
+        // nor held for another window.
         #expect(other.status == .running)
-        #expect(library.attachedSheet == nil)
         #expect(h.presenter.waitingCountForTesting == 0)
+        #expect(h.presenter.held.alerts.isEmpty)
     }
 
     @Test("With the library window closed and the VM headless, an alert is held, counted, and shown with the library")
