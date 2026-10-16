@@ -210,7 +210,11 @@ PACKAGE_DIRS := $(shell git ls-files '*/Package.swift' | awk -F/ 'NF == 2 { prin
 
 test-unhosted: ## Run only the unhosted lanes: each local package's tests under `swift test`
 	@test -n '$(strip $(PACKAGE_DIRS))' || { echo 'No tracked Package.swift found — not a git checkout?' >&2; exit 1; }
-	@for package in $(PACKAGE_DIRS); do xcrun swift test --package-path "$$package" || exit 1; done
+	@failed=''; \
+	for package in $(PACKAGE_DIRS); do \
+		xcrun swift test --package-path "$$package" || failed="$$failed $$package"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "test-unhosted: tests failed in:$$failed" >&2; exit 1; fi
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \

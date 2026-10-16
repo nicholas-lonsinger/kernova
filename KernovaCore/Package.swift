@@ -27,9 +27,6 @@ let package = Package(
         .package(path: "../KernovaKit")
     ],
     targets: [
-        // Whatever the app does that needs neither AppKit nor Virtualization,
-        // tested without the app as test host. Kernova.xcodeproj reaches its
-        // `package` declarations through SWIFT_PACKAGE_NAME.
         .target(
             name: "KernovaCore",
             dependencies: [

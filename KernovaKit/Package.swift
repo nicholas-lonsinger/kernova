@@ -107,10 +107,8 @@ let package = Package(
             swiftSettings: sharedSwiftSettings
         ),
         // Its product is for package test targets alone; the Kernova.xcodeproj test
-        // bundles compile this folder instead. Linked into the app-hosted KernovaTests,
-        // the product puts a second KernovaKit in the test process; Xcode then builds
-        // KernovaKit as a framework in test builds only, and `-I Products/<config>`
-        // resolves the stale static module ahead of it.
+        // bundles compile this folder instead, and Tools/check-package-reference.sh
+        // says why and holds it.
         .target(
             name: "KernovaTestSupport",
             dependencies: ["KernovaKit", "KernovaLogging"],

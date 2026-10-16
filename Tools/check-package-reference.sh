@@ -11,6 +11,12 @@
 #
 # A remote XCRemoteSwiftPackageReference is untouched.
 #
+# No project target takes KernovaKit's `KernovaTestSupport` product; the
+# project's test bundles compile its folder instead. Linked into the app-hosted
+# KernovaTests, the product puts a second KernovaKit in the test process: Xcode
+# then builds KernovaKit as a framework in test builds only, and
+# `-I Products/<config>` resolves the stale static module ahead of it.
+#
 # Reports every violation before failing, so one run fixes them all.
 
 set -uo pipefail
@@ -48,10 +54,14 @@ for package in $packages; do
     fi
 done
 
+if grep -qE '^[[:space:]]*productName = KernovaTestSupport;' "$pbxproj"; then
+    violation "a target takes the KernovaTestSupport product — add KernovaKit/Sources/KernovaTestSupport to the target's synchronized folders instead"
+fi
+
 if [ -n "$violations" ]; then
-    echo "check-package-reference: $pbxproj does not hold every local package as a peer folder:" >&2
+    echo "check-package-reference: $pbxproj breaks a package-linking rule:" >&2
     printf '%s' "$violations" >&2
     exit 1
 fi
 
-pass "package references: $(echo "$packages" | paste -sd ' ' -) are top-level peers, not package dependencies"
+pass "package references: $(echo "$packages" | paste -sd ' ' -) are top-level peers, not package dependencies, and no project target takes KernovaTestSupport"
