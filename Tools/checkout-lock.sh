@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# Runs a command while holding this checkout's build lock, so no two
-# xcodebuild runs ever share the checkout's build arena. A run that finds the
+# Runs a command while holding a checkout's build lock, so no two xcodebuild
+# runs ever share the checkout's build arena. Every process that runs
+# xcodebuild against a checkout runs it through here. A run that finds the
 # lock held prints one line to stderr and waits for it.
 #
-#     Tools/checkout-lock.sh <command> [<arg>...]
+#     Tools/checkout-lock.sh [-C <checkout>] <command> [<arg>...]
 #
-# Exits with the command's status, or dies by the signal that ended it.
+# <checkout> defaults to the one holding this script. Exits with the
+# command's status, or dies by the signal that ended it.
 #
-# The lock is `xcodebuild.lock` in this checkout's own git dir (a linked
+# The lock is `xcodebuild.lock` in the checkout's own git dir (a linked
 # worktree's lies under .git/worktrees/<name>/), outside the working tree, so
 # `git clean` cannot unlink it from under a holder, and separate checkouts
-# never wait on each other. It is not reentrant: a locked command that runs
-# another locked command waits on itself forever.
+# never wait on each other.
+#
+# A descendant of the holder runs its command at once rather than waiting on
+# its own ancestor: the holder names itself in KERNOVA_CHECKOUT_LOCKS, and an
+# entry counts only while its pid is an ancestor of the caller, so a copied or
+# inherited value cannot let an unrelated process past the lock.
 #
 # This script's process holds the lock and the command runs as its child:
 # - The lock descriptor is close-on-exec, so neither the command nor anything
@@ -26,13 +32,38 @@
 
 set -uo pipefail
 
-[ $# -gt 0 ] || { echo 'usage: Tools/checkout-lock.sh <command> [<arg>...]' >&2; exit 2; }
+usage() { echo 'usage: Tools/checkout-lock.sh [-C <checkout>] <command> [<arg>...]' >&2; exit 2; }
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-lock=$(git -C "$ROOT" rev-parse --path-format=absolute --git-path xcodebuild.lock) || {
-    echo "checkout-lock.sh: $ROOT is not a git checkout; cannot place its build lock" >&2
+checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "${1:-}" = -C ]; then
+    [ $# -ge 2 ] || usage
+    checkout=$2
+    shift 2
+fi
+[ $# -gt 0 ] || usage
+
+lock=$(git -C "$checkout" rev-parse --path-format=absolute --git-path xcodebuild.lock) || {
+    echo "checkout-lock.sh: $checkout is not a git checkout; cannot place its build lock" >&2
     exit 2
 }
+
+# held_by_ancestor — an entry in KERNOVA_CHECKOUT_LOCKS names this lock and a
+# pid on this process's parent chain.
+held_by_ancestor() {
+    local holder path pid
+    while IFS=$'\t' read -r holder path; do
+        [ "$path" = "$lock" ] || continue
+        pid=$$
+        while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+            [ "$pid" = "$holder" ] && return 0
+            pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+        done
+    done <<<"${KERNOVA_CHECKOUT_LOCKS:-}"
+    return 1
+}
+if held_by_ancestor; then
+    exec "$@"
+fi
 
 exec perl -e '
     use strict;
@@ -51,6 +82,8 @@ exec perl -e '
         flock($fh, LOCK_EX) or die "checkout-lock.sh: cannot lock $lock: $!\n";
     }
 
+    $ENV{KERNOVA_CHECKOUT_LOCKS} = ($ENV{KERNOVA_CHECKOUT_LOCKS} // "") . "$$\t$lock\n";
+
     # Blocked across the fork, so a signal cannot arrive before $pid names
     # the child it is to be passed to.
     my $forwarded = POSIX::SigSet->new(SIGTERM, SIGHUP);
@@ -66,7 +99,8 @@ exec perl -e '
         POSIX::_exit(127);
     }
 
-    # Caught rather than ignored, so the child execs with the default action.
+    # Set after the fork, so the command starts with the dispositions this
+    # script started with; the holder outlives the command whatever it gets.
     $SIG{$_} = sub { kill $_[0], $pid } for qw(TERM HUP);
     $SIG{$_} = sub { } for qw(INT QUIT);
     sigprocmask(SIG_SETMASK, $previous);

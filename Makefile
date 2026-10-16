@@ -48,13 +48,14 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
 
 # Every command that runs xcodebuild against this checkout — Periphery's
 # included, which resolves packages into the checkout's shared files — runs
-# under the checkout's build lock, so a second run waits for the first rather
-# than sharing its build arena. `test-package` runs without it: SwiftPM
-# serializes runs on .build itself. A recipe with several such commands holds
-# the lock across all of them by running its `locked-` twin under it, so no
-# other run starts in between.
+# under the checkout's build lock (Tools/checkout-lock.sh), so a second run
+# waits for the first rather than sharing its build arena; a Tools script that
+# runs xcodebuild takes the lock itself. `test-package` runs without it:
+# SwiftPM serializes runs on .build itself. A recipe with several such commands
+# holds the lock across all of them by running its `locked-` twin under it, so
+# no other run starts in between.
 LOCKED       := Tools/checkout-lock.sh
-LOCKED_TWIN   = @$(LOCKED) $(MAKE) --no-print-directory locked-$@
+LOCKED_TWIN   = +@$(LOCKED) $(MAKE) --no-print-directory locked-$@
 
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
@@ -101,7 +102,7 @@ help:
 # `doctor`, which reports the state the run produced.
 setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Periphery, then doctor
 	@Tools/brew-install.sh shellcheck gh protoc:protobuf xcode-build-server
-	@$(LOCKED) Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
+	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 	@Tools/install-periphery.sh >/dev/null
 	@Tools/doctor.sh
 
@@ -137,7 +138,7 @@ check-hooks:
 # tool is already installed.
 install-lsp: ## Install xcode-build-server and write this checkout's buildServer.json
 	@Tools/brew-install.sh xcode-build-server
-	@$(LOCKED) Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
+	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 
 build: check-hooks ## Build the app for macOS
 	$(LOCKED_TWIN)

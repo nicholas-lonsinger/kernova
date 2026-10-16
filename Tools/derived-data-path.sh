@@ -97,7 +97,7 @@ xcode_dd_hash() {
 settings="$project/project.xcworkspace/xcuserdata/$USER.xcuserdatad/WorkspaceSettings.xcsettings"
 if [ -f "$settings" ] \
     && plutil -extract DerivedDataCustomLocation raw "$settings" -o - >/dev/null 2>&1; then
-    build_dir="$(xcodebuild -project "$project" -showBuildSettings 2>/dev/null \
+    build_dir="$("$REPO_ROOT/Tools/checkout-lock.sh" -C "$project_dir" xcodebuild -project "$project" -showBuildSettings 2>/dev/null \
         | sed -n 's/^ *BUILD_DIR = //p' | head -1)"
     if [ -z "$build_dir" ]; then
         echo "derived-data-path.sh: workspace has a per-user derived-data override but xcodebuild could not resolve it" >&2
