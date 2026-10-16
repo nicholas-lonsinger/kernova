@@ -1,9 +1,8 @@
-import AppKit
+import Foundation
 import KernovaKit
 import KernovaLogging
-import UniformTypeIdentifiers
 
-/// Writes a clipboard service's current content to the host `NSPasteboard`,
+/// Writes a clipboard service's current content to the host pasteboard,
 /// lazily — the window-independent home of the "Copy to Mac" write-back path.
 ///
 /// The single inbound-publication mechanism: the clipboard window's button and
@@ -19,6 +18,10 @@ final class HostClipboardPublisher {
     /// file URL still on the pasteboard — so it goes with its process root, once
     /// the process has exited.
     static let stagingLabel = "host"
+
+    /// The pasteboard every publication lands on, which a passthrough
+    /// coordinator polls through this publisher so both name the same one.
+    let pasteboard: any ClipboardPasteboard
 
     /// The shared write choke point every publication goes through.
     private let publisher: ClipboardPasteboardPublisher
@@ -50,15 +53,17 @@ final class HostClipboardPublisher {
     var beforePasteboardWriteForTesting: (@MainActor () async -> Void)?
     #endif
 
-    /// Stages under `stagingRoot`, `ClipboardFileStaging.processRoot` in
-    /// production.
+    /// Publishes to `pasteboard`, the host's general pasteboard in
+    /// production, and stages under `stagingRoot`,
+    /// `ClipboardFileStaging.processRoot` in production.
     init(
-        writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
+        pasteboard: any ClipboardPasteboard,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
         stagingRoot: ProcessStagingRoot
     ) {
+        self.pasteboard = pasteboard
         self.publisher = ClipboardPasteboardPublisher(
-            pasteboard: writePasteboard, providerRegistry: providerRegistry)
+            pasteboard: pasteboard, providerRegistry: providerRegistry)
         self.staging = ClipboardFileStaging(
             label: HostClipboardPublisher.stagingLabel, root: stagingRoot)
     }
@@ -210,11 +215,10 @@ final class HostClipboardPublisher {
             if item.types.contains(where: \.isFileURL) {
                 // All of an item's types share one backing rep.
                 let representation = content.representations[item.types[0].representationIndex]
-                var types: [NSPasteboard.PasteboardType] = []
+                var types: [String] = []
                 // The planner emits the content (image) UTI before `.fileURL` iff
                 // the rep inlines.
-                let imageType = item.types.first { !$0.isFileURL }
-                    .map { NSPasteboard.PasteboardType($0.uti) }
+                let imageType = item.types.first { !$0.isFileURL }?.uti
                 if let imageType { types.append(imageType) }
 
                 // The image flavor must read the SAME staged file: reading
@@ -223,12 +227,13 @@ final class HostClipboardPublisher {
                 let stagedURL = stagedFileURL(
                     for: representation, generation: generation, staging: staging)
                 let fileURLData = stagedURL.map { Data($0.absoluteString.utf8) }
-                if fileURLData != nil { types.append(.fileURL) }
+                let fileURLType = ClipboardPasteboardPublisher.ItemSpec.fileURLType
+                if fileURLData != nil { types.append(fileURLType) }
 
                 guard !types.isEmpty else { continue }
                 specs.append(
                     ClipboardPasteboardPublisher.ItemSpec(types: types) { type in
-                        if type == .fileURL { return fileURLData }
+                        if type == fileURLType { return fileURLData }
                         if type == imageType {
                             if let stagedURL,
                                 let data = try? Data(contentsOf: stagedURL, options: .mappedIfSafe)
@@ -241,12 +246,11 @@ final class HostClipboardPublisher {
                         return nil
                     })
             } else {
-                var inlineByType: [NSPasteboard.PasteboardType: ClipboardContent.Representation] = [:]
-                var inlineTypes: [NSPasteboard.PasteboardType] = []
+                var inlineByType: [String: ClipboardContent.Representation] = [:]
+                var inlineTypes: [String] = []
                 for promised in item.types {
-                    let type = NSPasteboard.PasteboardType(promised.uti)
-                    inlineByType[type] = content.representations[promised.representationIndex]
-                    inlineTypes.append(type)
+                    inlineByType[promised.uti] = content.representations[promised.representationIndex]
+                    inlineTypes.append(promised.uti)
                 }
                 // Snapshot to a `let` so the @Sendable closure captures an
                 // immutable map.

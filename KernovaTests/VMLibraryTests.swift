@@ -25,7 +25,7 @@ struct VMLibraryTests {
         downloadsDirectory: URL? = nil,
         vmnetNetworks: VmnetNetworkService = .scripted(),
         arpTable: ScriptedARPTable = ScriptedARPTable(),
-        activationCenter: NotificationCenter = NotificationCenter()
+        appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
         let library = makeWiredLibrary(
             storage: storageService,
@@ -41,7 +41,7 @@ struct VMLibraryTests {
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
-            activationCenter: activationCenter)
+            appActivation: appActivation)
         library.onFailure = { [failures] title, message, subject in
             failures.record(title: title, message: message, subject: subject)
         }
@@ -581,8 +581,8 @@ struct VMLibraryTests {
 
     @Test("Becoming active adopts a bundle that arrived without a write to the VMs directory")
     func activationAdoptsBundleTheDirectoryNeverReported() async throws {
-        let center = NotificationCenter()
-        let (library, storage, _, _) = makeLibrary(activationCenter: center)
+        let activation = HostNotifications.isolated().appDidBecomeActive
+        let (library, storage, _, _) = makeLibrary(appActivation: activation)
         await library.startLibrary()
         #expect(library.instances.isEmpty)
 
@@ -590,7 +590,7 @@ struct VMLibraryTests {
         // inside the bundle, where the directory watch sees nothing.
         let config = VMConfiguration(name: "Hand Copied", guestOS: .linux, bootMode: .efi)
         storage.bundles[try storage.bundleURL(for: config)] = config
-        center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        activation.post()
 
         try await waitForChange { library.instances.map(\.name) == ["Hand Copied"] }
     }

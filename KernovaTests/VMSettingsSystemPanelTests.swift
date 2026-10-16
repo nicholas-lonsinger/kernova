@@ -488,7 +488,8 @@ struct VMSettingsSystemPanelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled)
+            entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard())
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(guestOS: .macOS) {
             $0.displayResolution = resolution

@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import IOKit
 import IOKit.pwr_mgt
 import KernovaLogging
@@ -12,7 +12,8 @@ import KernovaLogging
 /// notification, the sleep will continue anyway after a 30 second timeout"
 /// (`IORegisterForSystemPower` in `IOKit/pwr_mgt/IOPMLib.h`). That timeout is the only bound
 /// on the hold. Where the registration is refused, sleep and wake arrive
-/// through `NSWorkspace` instead and nothing holds sleep.
+/// through the host's sleep and wake notifications instead and nothing holds
+/// sleep.
 ///
 /// One per process, made by the composition root. Untested by construction
 /// rather than by omission: a test process cannot put the machine to sleep.
@@ -31,7 +32,7 @@ final class SystemSleepWatcher {
     private enum Source {
         case rootPowerDomain(RootPowerDomainRegistration)
         /// The fallback: notifications only, with no hold.
-        case workspace([any NSObjectProtocol])
+        case notifications([HostNotification.Observation])
     }
 
     private var source: Source?
@@ -46,18 +47,18 @@ final class SystemSleepWatcher {
         init(notificationID: Int) { self.notificationID = notificationID }
     }
 
-    init() {}
+    /// The notifications the fallback observes.
+    private let systemWillSleep: HostNotification
+    private let systemDidWake: HostNotification
+
+    init(systemWillSleep: HostNotification, systemDidWake: HostNotification) {
+        self.systemWillSleep = systemWillSleep
+        self.systemDidWake = systemDidWake
+    }
 
     isolated deinit {
-        switch source {
-        case .rootPowerDomain(let registration):
+        if case .rootPowerDomain(let registration) = source {
             registration.end()
-        case .workspace(let observers):
-            for observer in observers {
-                NSWorkspace.shared.notificationCenter.removeObserver(observer)
-            }
-        case nil:
-            break
         }
     }
 
@@ -69,10 +70,10 @@ final class SystemSleepWatcher {
             source = .rootPowerDomain(registration)
             #log(Self.logger, .notice, "Registered for system power; sleep waits for the sleep handler")
         } else {
-            source = .workspace(observeWorkspace())
+            source = .notifications(observeNotifications())
             #log(
                 Self.logger, .error,
-                "The system refused the power registration; sleep and wake arrive from NSWorkspace, and sleep does not wait for the sleep handler"
+                "The system refused the power registration; sleep and wake arrive as notifications, and sleep does not wait for the sleep handler"
             )
         }
     }
@@ -110,23 +111,14 @@ final class SystemSleepWatcher {
         #log(Self.logger, .notice, "Allowed system sleep")
     }
 
-    // MARK: - NSWorkspace
+    // MARK: - Notifications
 
-    private func observeWorkspace() -> [any NSObjectProtocol] {
-        let center = NSWorkspace.shared.notificationCenter
-        let sleep = center.addObserver(
-            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                #log(Self.logger, .notice, "System will sleep — nothing holds it")
-                self?.deliverSleep {}
-            }
+    private func observeNotifications() -> [HostNotification.Observation] {
+        let sleep = systemWillSleep.observe { [weak self] in
+            #log(Self.logger, .notice, "System will sleep — nothing holds it")
+            self?.deliverSleep {}
         }
-        let wake = center.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.deliverWake() }
-        }
+        let wake = systemDidWake.observe { [weak self] in self?.deliverWake() }
         return [sleep, wake]
     }
 

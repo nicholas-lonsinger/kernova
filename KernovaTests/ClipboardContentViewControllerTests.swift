@@ -42,7 +42,8 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
         fileSystem: MockFileSystem(),
         downloadsDirectory: nil,
         preferences: preferences,
-        vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+        vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+        hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
     )
 }
 
@@ -120,7 +121,7 @@ struct ClipboardContentViewControllerRetentionTests {
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             publisher: HostClipboardPublisher(
-                writePasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
+                pasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
 
         #expect(registry.countForTesting == 0)
 
@@ -156,7 +157,7 @@ struct ClipboardContentViewControllerRetentionTests {
             let vc = ClipboardContentViewController(
                 instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
                 publisher: HostClipboardPublisher(
-                    writePasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
+                    pasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
             weakVC = vc
             vc.copy(nil)
             // The copy Task holds the controller only weakly, so `vc` (alive to the
@@ -184,7 +185,7 @@ struct ClipboardContentViewControllerRetentionTests {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
         // The concrete NSPasteboard can't be made to fail; the write-only seam can.
-        let pasteboard = FakeWritePasteboard()
+        let pasteboard = FakePasteboard()
         pasteboard.failNextWrite()
 
         let service = FakeClipboardService(content: ClipboardContent(text: "doomed write"))
@@ -193,7 +194,7 @@ struct ClipboardContentViewControllerRetentionTests {
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             publisher: HostClipboardPublisher(
-                writePasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
+                pasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
 
         #expect(registry.countForTesting == 0)
         // → copyToMac → finishCopyToMac → prepareForNewContents(with:) then writeItems(→ false).
@@ -233,7 +234,8 @@ struct ClipboardContentViewControllerEditTests {
         instance.sessionContext?.clipboardService = service
         return ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root), clock: clock)
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root), clock: clock
+        )
     }
 
     @Test("a keystroke burst commits the buffer to the model off-actor after the debounce")
@@ -412,7 +414,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     private func makeController(instance: VMInstance) -> ClipboardContentViewController {
         ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
     }
 
     /// A controller over a connected VM, since the command actions need a
@@ -508,7 +510,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             readPasteboard: hostPasteboard,
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         _ = vc.view
 
         vc.paste(nil)
@@ -537,7 +539,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             publisher: HostClipboardPublisher(
-                writePasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
+                pasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
 
         vc.copy(nil)
 
@@ -588,7 +590,7 @@ struct ClipboardAgentDiskControlTests {
         instance.beginSessionContextForTesting()
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: viewModel,
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         _ = vc.view
         #expect(vc.agentDiskControlTitleForTesting == "Install Guest Agent…")
 
@@ -605,7 +607,7 @@ struct ClipboardAgentDiskControlTests {
         let instance = makeClipboardInstance()
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         _ = vc.view
         #expect(instance.configuration.guestOS == .linux)
         #expect(vc.agentDiskControlTitleForTesting == nil)
@@ -693,7 +695,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
 
         let expected: [(ClipboardTransferFailure, String)] = [
             (
@@ -722,7 +724,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
 
         report(
             .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes), gesture: .copy,
@@ -743,7 +745,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         instance.sessionContext?.clipboardService = superseded
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         // The clipboard channel reconnects: the window now shows a service that
         // knows nothing of the promise the old one left on the pasteboard.
         instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
@@ -763,7 +765,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         // A drop is the other producer on this VM's report; the window's bar
         // shows it too.
         let operation = ClipboardTransferOperation(
@@ -792,7 +794,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         report(.peerReported(.pasteFailed), gesture: .peerPaste, for: instance)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
 
         _ = vc.view
 
@@ -821,7 +823,8 @@ struct ClipboardPassthroughSwitchTests {
         let instance = registerClipboardInstance(
             in: viewModel.library, passthroughEnabled: passthroughEnabled)
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: viewModel, publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            instance: instance, viewModel: viewModel,
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         _ = vc.view  // forces loadView + viewDidLoad → updateUI
         return (vc, viewModel, instance)
     }
@@ -868,7 +871,7 @@ struct ClipboardContentChipTests {
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             readPasteboard: readPasteboard,
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         _ = vc.view
         return (vc, instance)
     }
@@ -902,7 +905,7 @@ struct ClipboardContentChipTests {
         let instance = makeClipboardInstance()
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+            publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))
         let window = makeTestWindow(
             styleMask: [.titled], contentSize: NSSize(width: 480, height: 360))
         window.contentViewController = vc

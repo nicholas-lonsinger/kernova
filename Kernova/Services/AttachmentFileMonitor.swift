@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import KernovaLogging
 
@@ -14,7 +13,7 @@ import KernovaLogging
 /// Watching is best-effort: a file-scoped bookmark never grants its parent
 /// directory, so `open(parent, O_EVTONLY)` fails for most external attachments and
 /// the `fd >= 0` guard leaves those parents unwatched. Freshness then rests on the
-/// coarse triggers that reach `revalidate()` — app activation and `NSWorkspace`
+/// coarse triggers that reach `revalidate()` — app activation and volume
 /// mount/unmount from here, plus the settings shell's calls when its pane comes
 /// back — which is why they are not redundant with the per-parent sources. The
 /// authoritative check runs at VM start; this only backs a warning affordance.
@@ -46,15 +45,9 @@ final class AttachmentFileMonitor {
     @ObservationIgnored
     private var debounceTasks: [String: Task<Void, Never>] = [:]
 
-    /// Notification tokens for the re-probe triggers, each paired with the center
-    /// that minted it — `NSWorkspace.shared.notificationCenter` and
-    /// `NotificationCenter.default` are different objects, and a token is only
-    /// removable from its own.
-    ///
-    /// `nonisolated(unsafe)` so `deinit` can hand the tokens back to
-    /// `NSNotificationCenter`; only mutated on the main actor.
+    /// The re-probe triggers' registrations, removed when the monitor goes.
     @ObservationIgnored
-    nonisolated(unsafe) private var triggerObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
+    private var triggerObservations: [HostNotification.Observation] = []
 
     /// Most recent path set requested via `setPaths(_:)`.
     ///
@@ -95,42 +88,24 @@ final class AttachmentFileMonitor {
     @ObservationIgnored
     private var refreshAllPending: Bool = false
 
-    /// `activationCenter` is where the app-activation trigger is observed. A
-    /// test posts into its own center so the notification reaches only the
-    /// monitor under test — the app-wide name is observed by every live monitor
-    /// and by the settings shell, so a post into `NotificationCenter.default`
-    /// would drive them all.
+    /// Re-probes on `hostNotifications`' volume mounts and unmounts and app
+    /// activation.
     init(
         probe: @escaping Probe = AttachmentFileMonitor.defaultProbe,
-        activationCenter: NotificationCenter = .default
+        hostNotifications: HostNotifications
     ) {
         self.probe = probe
-        let workspace = NSWorkspace.shared.notificationCenter
-        let triggers: [(center: NotificationCenter, name: Notification.Name)] = [
-            (workspace, NSWorkspace.didMountNotification),
-            (workspace, NSWorkspace.didUnmountNotification),
-            (activationCenter, NSApplication.didBecomeActiveNotification),
-        ]
-        for trigger in triggers {
-            let token = trigger.center.addObserver(
-                forName: trigger.name, object: nil, queue: .main
-            ) { [weak self] _ in
-                // `queue: .main` delivers on the main thread, where the @MainActor
-                // `revalidate` is callable synchronously.
-                MainActor.assumeIsolated {
-                    self?.revalidate()
-                }
-            }
-            triggerObservers.append((trigger.center, token))
+        triggerObservations = [
+            hostNotifications.volumeDidMount, hostNotifications.volumeDidUnmount,
+            hostNotifications.appDidBecomeActive,
+        ].map { trigger in
+            trigger.observe { [weak self] in self?.revalidate() }
         }
     }
 
     deinit {
         for source in parentSources.values {
             source.cancel()
-        }
-        for observer in triggerObservers {
-            observer.center.removeObserver(observer.token)
         }
     }
 

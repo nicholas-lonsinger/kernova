@@ -61,7 +61,7 @@ struct HostClipboardPublisherCancellationTests {
         let registry = LazyClipboardProviderRegistry()
         return Fixture(
             publisher: HostClipboardPublisher(
-                writePasteboard: pasteboard, providerRegistry: registry,
+                pasteboard: pasteboard, providerRegistry: registry,
                 stagingRoot: stagingRoot.root),
             pasteboard: pasteboard, registry: registry,
             service: CountingService(content: ClipboardContent(text: text)))
@@ -170,10 +170,10 @@ struct HostClipboardPublisherOutcomeTests {
     ) async throws -> HostPublishOutcome {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
-        let pasteboard = FakeWritePasteboard()
+        let pasteboard = FakePasteboard()
         if failWrite { pasteboard.failNextWrite() }
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: registry,
+            pasteboard: pasteboard, providerRegistry: registry,
             stagingRoot: stagingRoot.root)
         return try await publisher.publish(from: ScriptedService(copyItems: copyItems))
     }

@@ -56,7 +56,8 @@ struct VMOtherCopyHoldTests {
         return VMInstance(
             bundle: VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: access.store))
                 .make(VMInstanceFixture.read(url, from: access)),
-            phase: .stopped, preferences: makeTestPreferences())
+            phase: .stopped, preferences: makeTestPreferences(),
+            hostPasteboard: FakePasteboard())
     }
 
     // MARK: - Edits

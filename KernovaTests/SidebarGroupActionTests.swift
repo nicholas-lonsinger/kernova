@@ -27,7 +27,8 @@ struct SidebarGroupActionTests {
             downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            organization: VMOrganizationDirectory(fileURL: nil)
+            organization: VMOrganizationDirectory(fileURL: nil),
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
     }
 

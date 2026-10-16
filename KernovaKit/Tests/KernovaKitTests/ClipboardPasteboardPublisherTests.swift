@@ -14,7 +14,7 @@ struct ClipboardPasteboardPublisherTests {
     private let textUTI = ClipboardContent.utf8TextUTI
 
     private func makeSpec(_ uti: String, bytes: Data) -> ClipboardPasteboardPublisher.ItemSpec {
-        ClipboardPasteboardPublisher.ItemSpec(types: [.init(uti)]) { _ in bytes }
+        ClipboardPasteboardPublisher.ItemSpec(types: [uti]) { _ in bytes }
     }
 
     // MARK: - Writing
@@ -176,11 +176,13 @@ struct ClipboardPasteboardPublisherTests {
         let specs = ClipboardPasteboardPublisher.specs(for: plan, generation: 6, serve: serving)
 
         #expect(specs.count == 2)
-        #expect(specs[0].provide(.init(textUTI)) == Data("inline".utf8))
+        #expect(specs[0].provide(textUTI) == Data("inline".utf8))
         #expect(serving.dataCalls == [Call(generation: 6, repIndex: 0, uti: textUTI)])
 
         // The `.fileURL` flavor promises the URL's own string bytes.
-        #expect(specs[1].provide(.fileURL) == Data(serving.url!.absoluteString.utf8))
+        #expect(
+            specs[1].provide(ClipboardPasteboardPublisher.ItemSpec.fileURLType)
+                == Data(serving.url!.absoluteString.utf8))
         #expect(serving.fileURLCalls == [Call(generation: 6, repIndex: 1, uti: nil)])
     }
 
@@ -203,8 +205,8 @@ struct ClipboardPasteboardPublisherTests {
         // The file item promised nothing but its URL, so nothing is left of it —
         // a paste finds no flavor to fire rather than one that serves nothing.
         #expect(specs.count == 1)
-        #expect(specs[0].types == [.init(textUTI)])
-        #expect(specs[0].provide(.init(textUTI)) == Data("inline".utf8))
+        #expect(specs[0].types == [textUTI])
+        #expect(specs[0].provide(textUTI) == Data("inline".utf8))
         #expect(serving.fileURLCalls.isEmpty)
     }
 }

@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import KernovaLogging
 
 /// Triggers a reconciliation when something outside the app may have changed
@@ -17,36 +17,25 @@ final class VMDirectoryWatcher {
     /// be cancelled in `deinit` (which is nonisolated); safe because it is only
     /// written in `start()` and read in `deinit`.
     nonisolated(unsafe) private var directorySource: DispatchSourceFileSystemObject?
-    /// `nonisolated(unsafe)` for the same reason as ``directorySource``.
-    nonisolated(unsafe) private var activationObserver: NSObjectProtocol?
+    private var activationObservation: HostNotification.Observation?
     private var debounceTask: Task<Void, Never>?
-    private let activationCenter: NotificationCenter
+    private let appActivation: HostNotification
     private let onReconcile: @MainActor () -> Void
 
-    /// `activationCenter` is where the app-activation trigger is observed, so
-    /// a test can post into its own center.
-    init(activationCenter: NotificationCenter, onReconcile: @MainActor @escaping () -> Void) {
-        self.activationCenter = activationCenter
+    init(appActivation: HostNotification, onReconcile: @MainActor @escaping () -> Void) {
+        self.appActivation = appActivation
         self.onReconcile = onReconcile
     }
 
     deinit {
         directorySource?.cancel()
-        if let activationObserver {
-            activationCenter.removeObserver(activationObserver)
-        }
     }
 
     /// Starts both triggers. The activation trigger starts even when the
     /// directory cannot be opened for monitoring.
     func start(directory: URL) {
-        activationObserver = activationCenter.addObserver(
-            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            // `queue: .main` delivers on the main thread.
-            MainActor.assumeIsolated {
-                self?.reconcileNow()
-            }
+        activationObservation = appActivation.observe { [weak self] in
+            self?.reconcileNow()
         }
 
         let fd = open(directory.path(percentEncoded: false), O_EVTONLY)

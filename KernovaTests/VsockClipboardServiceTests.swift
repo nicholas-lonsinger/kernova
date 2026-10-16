@@ -1730,9 +1730,9 @@ struct VsockClipboardServiceTests {
         // server is a shared system service, so a real write can fail for
         // reasons this test does not control — and `.written` is a
         // precondition of everything below it, not the subject.
-        let pasteboard = FakeWritePasteboard()
+        let pasteboard = FakePasteboard()
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
             stagingRoot: stagingRoot.root)
         service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
         service.start()
@@ -1798,9 +1798,9 @@ struct VsockClipboardServiceTests {
         // The write-only seam, as `retractionRespectsPasteboardOwnership` uses:
         // a real pasteboard write can fail for reasons outside this test, and
         // `.written` is a precondition of everything below it.
-        let pasteboard = FakeWritePasteboard()
+        let pasteboard = FakePasteboard()
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
             stagingRoot: stagingRoot.root)
         service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
         service.start()
@@ -2212,8 +2212,7 @@ struct VsockClipboardServiceTests {
         #expect(items.promised.map(\.repIndex) == [0, 1])
         #expect(items.promised.map(\.withholdsFileURL) == [true, true])
         let specs = HostClipboardPublisher.promisedItemSpecs(for: items.promised, serve: service)
-        let pngType = NSPasteboard.PasteboardType(png)
-        #expect(specs.map(\.types) == [[pngType], [pngType]])
+        #expect(specs.map(\.types) == [[png], [png]])
 
         let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }

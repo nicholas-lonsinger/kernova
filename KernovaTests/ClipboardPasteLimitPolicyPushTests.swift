@@ -63,7 +63,8 @@ struct ClipboardPasteLimitPolicyPushTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled)
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard())
 
         let instance = makeInstance(in: viewModel.library, preferences: preferences)
         let guest = try attachControlService(to: instance)

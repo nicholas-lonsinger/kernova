@@ -21,9 +21,11 @@ struct ClipboardHostPasteboardItemsTests {
         ClipboardFileStaging(label: "hostwrite-test-\(UUID().uuidString)", root: stagingRoot.root)
     }
 
+    private let fileURLType = ClipboardPasteboardPublisher.ItemSpec.fileURLType
+
     /// The file URL a spec serves for `.fileURL`, or `nil` when it promises none.
     private func fileURL(in spec: ClipboardPasteboardPublisher.ItemSpec) -> URL? {
-        spec.provide(.fileURL)
+        spec.provide(fileURLType)
             .flatMap { String(data: $0, encoding: .utf8) }
             .flatMap(URL.init(string:))
     }
@@ -39,12 +41,12 @@ struct ClipboardHostPasteboardItemsTests {
 
         #expect(specs.count == 1)
         let spec = specs[0]
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let textType = ClipboardContent.utf8TextUTI
         #expect(spec.types == [textType])
         // The bytes are produced on demand by the provider closure.
         #expect(spec.provide(textType) == Data("hello world".utf8))
         // A type this item never promised serves nothing.
-        #expect(spec.provide(.fileURL) == nil)
+        #expect(spec.provide(fileURLType) == nil)
     }
 
     @Test("two file payloads produce two items, each promising exactly one file URL")
@@ -62,7 +64,7 @@ struct ClipboardHostPasteboardItemsTests {
         #expect(specs.count == 2)
         // A non-image file is file-only: exactly one `.fileURL`, no inline bytes.
         for spec in specs {
-            #expect(spec.types == [.fileURL])
+            #expect(spec.types == [fileURLType])
         }
         let urlA = try #require(fileURL(in: specs[0]))
         let urlB = try #require(fileURL(in: specs[1]))
@@ -92,8 +94,8 @@ struct ClipboardHostPasteboardItemsTests {
 
         #expect(specs.count == 1)
         let spec = specs[0]
-        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
-        #expect(Set(spec.types) == [pngType, .fileURL])
+        let pngType = UTType.png.identifier
+        #expect(Set(spec.types) == [pngType, fileURLType])
         // The inline image bytes are served lazily; the file URL stages the same.
         #expect(spec.provide(pngType) == png)
         let url = try #require(fileURL(in: spec))
@@ -115,12 +117,12 @@ struct ClipboardHostPasteboardItemsTests {
 
         #expect(specs.count == 2)
         // First item is the inline block (the text UTI, no file URL).
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let textType = ClipboardContent.utf8TextUTI
         #expect(specs[0].types == [textType])
         #expect(specs[0].provide(textType) == Data("inline text".utf8))
         #expect(fileURL(in: specs[0]) == nil)
         // Second item is the file (a file URL only).
-        #expect(specs[1].types == [.fileURL])
+        #expect(specs[1].types == [fileURLType])
         #expect(try #require(fileURL(in: specs[1])).lastPathComponent == "f.txt")
     }
 
@@ -172,7 +174,7 @@ struct ClipboardHostPasteboardItemsTests {
 
         #expect(specs.count == 1)
         // A directory is file-only: a single `.fileURL`, no inline bytes.
-        #expect(specs[0].types == [.fileURL])
+        #expect(specs[0].types == [fileURLType])
         let dirURL = try #require(fileURL(in: specs[0]))
         var isDir: ObjCBool = false
         #expect(fm.fileExists(atPath: dirURL.path, isDirectory: &isDir) && isDir.boolValue)
@@ -237,11 +239,11 @@ struct ClipboardHostPasteboardItemsTests {
         let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, serve: provider)
 
         #expect(specs.count == 3)
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        let textType = ClipboardContent.utf8TextUTI
+        let pngType = UTType.png.identifier
         #expect(specs[0].types == [textType])
-        #expect(Set(specs[1].types) == [pngType, .fileURL])
-        #expect(specs[2].types == [.fileURL])
+        #expect(Set(specs[1].types) == [pngType, fileURLType])
+        #expect(specs[2].types == [fileURLType])
         // Building the specs is pure planning — no paste-time fire happened.
         #expect(provider.totalCallCount == 0)
     }
@@ -259,14 +261,14 @@ struct ClipboardHostPasteboardItemsTests {
         let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, serve: provider)
         let spec = try #require(specs.first)
 
-        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        let pngType = UTType.png.identifier
         #expect(spec.provide(pngType) == Data("promised bytes".utf8))
         #expect(provider.dataCalls.count == 1)
         #expect(provider.dataCalls.first?.generation == 7)
         #expect(provider.dataCalls.first?.repIndex == 0)
         #expect(provider.dataCalls.first?.uti == UTType.png.identifier)
 
-        let urlData = try #require(spec.provide(.fileURL))
+        let urlData = try #require(spec.provide(fileURLType))
         #expect(
             URL(string: try #require(String(data: urlData, encoding: .utf8)))
                 == URL(fileURLWithPath: "/tmp/served/photo.png"))
@@ -274,7 +276,7 @@ struct ClipboardHostPasteboardItemsTests {
         #expect(provider.fileURLCalls.first?.generation == 7)
 
         // A type the item never promised serves nothing and fires nothing.
-        #expect(spec.provide(.init("public.rtf")) == nil)
+        #expect(spec.provide("public.rtf") == nil)
         #expect(provider.totalCallCount == 2)
     }
 }

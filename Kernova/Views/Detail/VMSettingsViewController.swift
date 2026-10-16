@@ -64,15 +64,13 @@ final class VMSettingsViewController: NSViewController {
     /// The open category, or `nil` for the overview.
     private(set) var selectedCategory: VMSettingsCategory?
 
-    private let activationCenter: NotificationCenter
+    /// App activation, observed while the pane is on screen.
+    private var activationObservation: HostNotification.Observation?
 
     // MARK: - Init
 
-    /// `activationCenter` is where app activation is observed, by this
-    /// controller and by the pane's file monitor alike. A test passes its own
-    /// center so the notification reaches only the pane under test — the
-    /// app-wide name is posted process-wide, so any activation of the test host
-    /// would otherwise re-enter every controller a suite is holding.
+    /// App activation is observed through `viewModel`'s host notifications, by
+    /// this controller and by the pane's file monitor alike.
     init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
@@ -81,18 +79,15 @@ final class VMSettingsViewController: NSViewController {
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },
-        systemSettings: SystemSettingsLink = SystemSettingsLink(),
-        activationCenter: NotificationCenter = .default
+        systemSettings: SystemSettingsLink = SystemSettingsLink()
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
-        self.activationCenter = activationCenter
         self.panelContext = VMSettingsPanelContext(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
             bridgedInterfaces: bridgedInterfaces,
-            micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
-            activationCenter: activationCenter)
+            micPermissionStatus: micPermissionStatus, systemSettings: systemSettings)
         super.init(nibName: nil, bundle: nil)
         panelContext.onSetToggle = { [weak self] toggle, isOn in self?.apply(toggle, to: isOn) }
         panelContext.overview.onCategoryResolved = { [weak self] category in
@@ -218,9 +213,9 @@ final class VMSettingsViewController: NSViewController {
         panelContext.fileMonitor.revalidate()
         if modelObservation == nil {
             restartModelObservation()
-            activationCenter.addObserver(
-                self, selector: #selector(appDidBecomeActive),
-                name: NSApplication.didBecomeActiveNotification, object: nil)
+            activationObservation = viewModel.hostNotifications.appDidBecomeActive.observe {
+                [weak self] in self?.appDidBecomeActive()
+            }
         }
         apply()
     }
@@ -280,8 +275,7 @@ final class VMSettingsViewController: NSViewController {
         panelContext.overview.prepareForDisappearance()
         modelObservation?.cancel()
         modelObservation = nil
-        activationCenter.removeObserver(
-            self, name: NSApplication.didBecomeActiveNotification, object: nil)
+        activationObservation = nil
     }
 }
 
@@ -544,7 +538,7 @@ extension VMSettingsViewController {
         passthroughSetting.set(.passthrough(isOn), confirmingIn: view.window)
     }
 
-    @objc private func appDidBecomeActive() {
+    private func appDidBecomeActive() {
         panelContext.overview.rereadMicPermission()
         apply()
     }

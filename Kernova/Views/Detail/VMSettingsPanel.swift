@@ -44,8 +44,7 @@ final class VMSettingsPanelContext {
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus,
-        systemSettings: SystemSettingsLink,
-        activationCenter: NotificationCenter
+        systemSettings: SystemSettingsLink
     ) {
         self.instance = instance
         self.viewModel = viewModel
@@ -53,7 +52,7 @@ final class VMSettingsPanelContext {
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
-        self.fileMonitor = AttachmentFileMonitor(activationCenter: activationCenter)
+        self.fileMonitor = AttachmentFileMonitor(hostNotifications: viewModel.hostNotifications)
         self.overview = VMOverviewResolver(
             instance: instance, viewModel: viewModel,
             bridgedInterfaces: bridgedInterfaces, micPermissionStatus: micPermissionStatus)

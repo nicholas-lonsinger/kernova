@@ -31,7 +31,8 @@ struct RemindersSettingsViewControllerTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
     }
 

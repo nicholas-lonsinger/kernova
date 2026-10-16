@@ -30,7 +30,8 @@ struct SidebarFolderTests {
             downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            organization: organization
+            organization: organization,
+            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
         )
     }
 

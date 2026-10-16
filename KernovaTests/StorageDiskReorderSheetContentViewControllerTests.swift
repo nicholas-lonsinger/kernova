@@ -178,7 +178,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         return StorageDiskReorderSheetContentViewController(
             disks: disks,
             instance: instance,
-            fileMonitor: AttachmentFileMonitor()
+            fileMonitor: AttachmentFileMonitor(hostNotifications: .isolated())
         )
     }
 

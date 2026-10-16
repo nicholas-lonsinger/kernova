@@ -620,12 +620,15 @@ final class VMLibraryViewModel {
     /// it knows which window or screen a VM's `displayPreference` resolves to.
     @ObservationIgnored var displayBootSurface: ((VMInstance) -> DisplayBootSurface?)?
 
+    /// The host notifications the library and its surfaces observe.
+    @ObservationIgnored let hostNotifications: HostNotifications
+
     // MARK: - Initialization
 
     /// A collaborator over the user's own state — the VMs directory, the
     /// defaults domain, the Trash, the Downloads folder, the host's vmnet
-    /// networks and their store, its ARP table, the signature's entitlements —
-    /// takes no default: the test host
+    /// networks and their store, its ARP table, the signature's entitlements,
+    /// the host's notifications and its pasteboard — takes no default: the test host
     /// runs as the app, in its container and with its signature, so a default
     /// would hand that state to every test that left it out. ``AppDelegate``
     /// supplies each.
@@ -657,9 +660,12 @@ final class VMLibraryViewModel {
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
         networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
-        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
+        hostNotifications: HostNotifications,
+        hostPasteboard: any ClipboardPasteboard
     ) {
         self.storageService = storageService
+        self.hostNotifications = hostNotifications
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
@@ -684,7 +690,9 @@ final class VMLibraryViewModel {
             arpTable: arpTable,
             entitlements: entitlements,
             networks: networks,
-            organization: organization
+            organization: organization,
+            appActivation: hostNotifications.appDidBecomeActive,
+            hostPasteboard: hostPasteboard
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(

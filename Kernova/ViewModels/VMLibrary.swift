@@ -135,7 +135,8 @@ final class VMLibrary: VMAdmissionPeers {
         _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences
     ) -> VMInstance {
         let instance = VMInstance(
-            bundle: bundleFactory.make(read), phase: phase, preferences: preferences)
+            bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
+            hostPasteboard: hostPasteboard)
         entries.append(.vm(instance))
         return instance
     }
@@ -497,8 +498,11 @@ final class VMLibrary: VMAdmissionPeers {
 
     var directoryWatcher: VMDirectoryWatcher?
 
-    /// Where the directory watcher observes app activation.
-    let activationCenter: NotificationCenter
+    /// The app activation the directory watcher reconciles on.
+    let appActivation: HostNotification
+
+    /// The host pasteboard every VM's clipboard publishes to and polls.
+    let hostPasteboard: any ClipboardPasteboard
 
     // MARK: - Initialization
 
@@ -515,11 +519,13 @@ final class VMLibrary: VMAdmissionPeers {
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore(),
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
-        activationCenter: NotificationCenter = .default
+        appActivation: HostNotification,
+        hostPasteboard: any ClipboardPasteboard
     ) {
         self.storageService = storageService
         self.bridgedInterfaces = bridgedInterfaces
-        self.activationCenter = activationCenter
+        self.appActivation = appActivation
+        self.hostPasteboard = hostPasteboard
         self.networks = networks
         self.organization = organization
         self.guestAccountPasswords = guestAccountPasswords
@@ -694,7 +700,8 @@ final class VMLibrary: VMAdmissionPeers {
     /// Builds the instance for a bundle read from disk, wired to this library.
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
-            bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences)
+            bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences,
+            hostPasteboard: hostPasteboard)
         wireHooks(for: instance)
         recordUnreadable(of: scanned.read)
         return instance

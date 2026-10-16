@@ -3,15 +3,6 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-// MARK: - Pasteboard protocol
-
-/// Both halves of the `NSPasteboard` `VsockGuestClipboardAgent` polls: the read
-/// half every snapshot comes through and the write half every publication goes
-/// through.
-protocol Pasteboard: ClipboardWritePasteboard, ClipboardReadPasteboard {}
-
-extension NSPasteboard: Pasteboard {}
-
 // MARK: - VsockGuestClipboardAgent
 
 /// Guest-side clipboard agent that talks to the host's `VsockClipboardService`
@@ -28,7 +19,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let pasteSourceName = "Mac"
 
     private let client: VsockGuestClient
-    private let pasteboard: Pasteboard
+    private let pasteboard: any ClipboardPasteboard
 
     /// Opens one transfer's data connection to the host; tests hand over a
     /// socketpair in place of a real dial.
@@ -202,7 +193,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// other agent that transfers files, so one status item never has two sources
     /// deciding what it shows.
     init(
-        pasteboard: Pasteboard, client: VsockGuestClient,
+        pasteboard: any ClipboardPasteboard, client: VsockGuestClient,
         clock: any EngineClock = makePlatformEngineClock(),
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingRoot: ProcessStagingRoot,
