@@ -50,7 +50,7 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
 # included, which resolves packages into the checkout's shared files — runs
 # under the checkout's build lock (Tools/checkout-lock.sh), so a second run
 # waits for the first rather than sharing its build arena; a Tools script that
-# runs xcodebuild takes the lock itself. `test-package` runs without it:
+# runs xcodebuild takes the lock itself. `test-unhosted` runs without it:
 # SwiftPM serializes runs on .build itself. A recipe with several such commands
 # holds the lock across all of them by running its `locked-` twin under it, so
 # no other run starts in between.
@@ -85,7 +85,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-without-building test-suite test-package clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-without-building test-suite test-unhosted clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -192,7 +192,7 @@ locked-clean:
 		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
 
-test: check-hooks ## Run the full test suite (all three test targets via Kernova.xctestplan)
+test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan)
 	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) test
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild
@@ -202,10 +202,15 @@ test-without-building: check-hooks ## Run the test plan against an existing buil
 	@test -z '$(RESULT_BUNDLE_FLAG)' || rm -rf '$(RESULT_BUNDLE)'
 	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) $(RESULT_BUNDLE_FLAG) test-without-building
 
-# `xcrun` so the toolchain matches the one selected via `xcode-select`
-# (same rationale as the `xcrun swift-format` invocation above).
-test-package: ## Run only the KernovaKit SwiftPM package tests
-	xcrun swift test --package-path KernovaKit
+# The local packages' own test targets, which run with no app as their host:
+# every top-level directory holding a Package.swift, derived like
+# SWIFT_SOURCE_DIRS. `xcrun` so the toolchain matches the one selected via
+# `xcode-select` (same rationale as the `xcrun swift-format` invocation above).
+PACKAGE_DIRS := $(shell git ls-files '*/Package.swift' | awk -F/ 'NF == 2 { print $$1 }')
+
+test-unhosted: ## Run only the unhosted lanes: each local package's tests under `swift test`
+	@test -n '$(strip $(PACKAGE_DIRS))' || { echo 'No tracked Package.swift found — not a git checkout?' >&2; exit 1; }
+	@for package in $(PACKAGE_DIRS); do xcrun swift test --package-path "$$package" || exit 1; done
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
@@ -227,7 +232,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation and AppPresence routing, and the KernovaKit package reference
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, and KernovaCore's import allowlist
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -251,6 +256,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
 	@bash Tools/check-package-reference.sh
+	@bash Tools/check-core-imports.sh
 
 # Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own
 # `-derivedDataPath`, `-quiet`, `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`,

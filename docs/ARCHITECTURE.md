@@ -120,6 +120,9 @@ view-backed item.
 ## Shared package and helper targets
 
 `KernovaKit/Package.swift` names every product and why each is shaped as it is.
+`KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
+Virtualization; the app links it and reaches its `package` declarations, and
+its tests run without the app as host.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
 (`Kernova Guest Agent.app`) and `KernovaMacOSAgentTests` each explain
 themselves in `Config/Targets/<Target>.xcconfig` and their entitlements file.
