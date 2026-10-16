@@ -50,8 +50,11 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
 # included, which resolves packages into the checkout's shared files — runs
 # under the checkout's build lock, so a second run waits for the first rather
 # than sharing its build arena. `test-package` runs without it: SwiftPM
-# serializes runs on .build itself.
-LOCKED := Tools/checkout-lock.sh
+# serializes runs on .build itself. A recipe with several such commands holds
+# the lock across all of them by running its `locked-` twin under it, so no
+# other run starts in between.
+LOCKED       := Tools/checkout-lock.sh
+LOCKED_TWIN   = @$(LOCKED) $(MAKE) --no-print-directory locked-$@
 
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
@@ -80,7 +83,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-without-building test-suite test-package clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -137,17 +140,23 @@ install-lsp: ## Install xcode-build-server and write this checkout's buildServer
 	@$(LOCKED) Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 
 build: check-hooks ## Build the app for macOS
-	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) build
+	$(LOCKED_TWIN)
+
+locked-build:
+	xcodebuild $(XCODEBUILD_FLAGS) build
 	$(PRINT_BUILD_BINARY)
 
 build-for-testing: check-hooks ## Compile the app and test bundles without running them
-	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
+	$(LOCKED_TWIN)
+
+locked-build-for-testing:
+	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
 	$(PRINT_BUILD_BINARY)
 
 # Query resolved settings after success: an up-to-date build need not log a
 # link or signing command from which a product path could be recovered.
 define PRINT_BUILD_BINARY
-@settings=$$($(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) -showBuildSettings) && \
+@settings=$$(xcodebuild $(XCODEBUILD_FLAGS) -showBuildSettings) && \
 printf '%s\n' "$$settings" | awk '\
     /^Build settings for action / { app = ($$0 ~ / and target Kernova:$$/) } \
     app && /^ *TARGET_BUILD_DIR = / { sub(/^ *TARGET_BUILD_DIR = /, ""); dir = $$0 } \
@@ -171,11 +180,14 @@ endef
 # routine the post-checkout sweep and `clean-ghosts` use. A missing path is a
 # no-op, so both candidates are passed unconditionally.
 clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
-	@$(LOCKED) Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
-	@arena=$$($(LOCKED) Tools/derived-data-path.sh 2>/dev/null); \
+	$(LOCKED_TWIN)
+
+locked-clean:
+	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
+	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
 	case "$$arena" in \
 		''|'$(CURDIR)'/*) ;; \
-		*) $(LOCKED) Tools/ghosts.sh --evict "$$arena" ;; \
+		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
 
 test: check-hooks ## Run the full test suite (all three test targets via Kernova.xctestplan)
