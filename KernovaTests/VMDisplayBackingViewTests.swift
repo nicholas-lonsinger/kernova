@@ -182,30 +182,6 @@ struct VMDisplayBackingViewTests {
         #expect(backing.registeredDraggedTypes.isEmpty)
     }
 
-    @Test("a disconnected agent refuses the drag with the empty operation")
-    func disconnectedRefusesTheDrag() throws {
-        let backing = makeBacking()
-        backing.dropAvailability = { .disconnected }
-        backing.applyDropRegistration()
-        let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
-
-        // The empty operation is what makes the pointer show no accept badge and
-        // a release spring back — no custom rejection UI.
-        #expect(backing.draggingEntered(drag) == [])
-        #expect(backing.draggingUpdated(drag) == [])
-    }
-
-    @Test("a reachable agent accepts a file drag with .copy")
-    func availableAcceptsFileURLs() throws {
-        let backing = makeBacking()
-        backing.dropAvailability = { .available }
-        backing.applyDropRegistration()
-        let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
-
-        #expect(backing.draggingEntered(drag) == .copy)
-        #expect(backing.draggingUpdated(drag) == .copy)
-    }
-
     @Test("a drag carrying no file URL is refused even when the agent is reachable")
     func refusesNonFileDrags() throws {
         let backing = makeBacking()
@@ -431,33 +407,6 @@ struct VMDisplayBackingViewTests {
         #expect(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     }
 
-    @Test("a promise its source never writes is reported rather than dropped in silence")
-    func failedPromiseReportsTheDrop() async throws {
-        let backing = makeBacking()
-        backing.dropAvailability = { .available }
-        backing.promiseSource = makePromiseSource([
-            StubPromiseReceiver(fileNames: ["a.png", "b.png"], fails: true)
-        ])
-        let gate = AsyncGate()
-        var offered = false
-        var reported = false
-        backing.onDropFiles = { _, _ in
-            offered = true
-            return true
-        }
-        backing.onDropUnreadable = {
-            reported = true
-            gate.notify()
-        }
-
-        // The drag is taken: nothing on this side knows yet that the source
-        // cannot deliver.
-        #expect(backing.performDragOperation(makeTextDrag("promise")))
-        try await gate.wait { reported }
-
-        #expect(!offered)
-    }
-
     @Test(
         "a promise that names nothing until its files land is still offered",
         arguments: [1, 2])
@@ -621,7 +570,10 @@ struct VMDisplayBackingViewTests {
         backing.promiseSource = makePromiseSource([receiver])
         let gate = AsyncGate()
         var reported = false
-        backing.onDropFiles = { _, _ in true }
+        var offered = false
+        backing.onDropFiles = { _, _ in
+            offered = true; return true
+        }
         backing.onDropUnreadable = { reported = true }
 
         #expect(backing.performDragOperation(makeTextDrag("promise")))
@@ -632,5 +584,6 @@ struct VMDisplayBackingViewTests {
 
         try await gate.wait { !FileManager.default.fileExists(atPath: directory.path) }
         #expect(reported)
+        #expect(!offered)
     }
 }

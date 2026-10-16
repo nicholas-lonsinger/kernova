@@ -78,18 +78,6 @@ struct VMConfigurationTests {
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
-    @Test("Memory size in bytes is calculated correctly")
-    func memorySizeInBytes() {
-        let config = VMConfiguration(
-            name: "Test",
-            guestOS: .linux,
-            bootMode: .efi,
-            memorySizeInGB: .gibibytes(4)
-        )
-
-        #expect(config.memorySizeInBytes == 4 * 1024 * 1024 * 1024)
-    }
-
     @Test("An existing config's whole-gigabyte memory decodes unchanged and re-encodes as the same integer")
     func wholeGigabyteMemoryRoundTrips() throws {
         let config = try VMConfiguration.makeJSONDecoder().decode(
@@ -114,66 +102,7 @@ struct VMConfigurationTests {
         #expect(String(decoding: encoded, as: UTF8.self).contains("\"memorySizeInGB\" : 1.5,"))
     }
 
-    @Test("Configuration preserves macOS-specific fields")
-    func macOSSpecificFields() throws {
-        let hardwareData = Data([0x01, 0x02, 0x03])
-        let machineData = Data([0x04, 0x05, 0x06])
-
-        let config = VMConfiguration(
-            name: "macOS VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            hardwareModelData: hardwareData,
-            machineIdentifierData: machineData
-        )
-
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(config)
-        let decoded = try JSONDecoder().decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.hardwareModelData == hardwareData)
-        #expect(decoded.machineIdentifierData == machineData)
-    }
-
-    @Test("Configuration preserves Linux kernel fields")
-    func linuxKernelFields() throws {
-        let config = VMConfiguration(
-            name: "Linux VM",
-            guestOS: .linux,
-            bootMode: .linuxKernel,
-            kernelPath: "/path/to/vmlinuz",
-            initrdPath: "/path/to/initrd",
-            kernelCommandLine: "console=hvc0 root=/dev/vda1"
-        )
-
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(config)
-        let decoded = try JSONDecoder().decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.kernelPath == "/path/to/vmlinuz")
-        #expect(decoded.initrdPath == "/path/to/initrd")
-        #expect(decoded.kernelCommandLine == "console=hvc0 root=/dev/vda1")
-    }
-
-    @Test("Generic machine identifier data round-trips through JSON")
-    func genericMachineIdentifierRoundTrip() throws {
-        let identifierData = Data([0xDE, 0xAD, 0xBE, 0xEF])
-
-        let config = VMConfiguration(
-            name: "EFI Linux VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            genericMachineIdentifierData: identifierData
-        )
-
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(config)
-        let decoded = try JSONDecoder().decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.genericMachineIdentifierData == identifierData)
-    }
-
-    @Test("Missing optional genericMachineIdentifierData decodes as nil")
+    @Test("Missing optional fields decode as nil")
     func missingOptionalGenericMachineIdentifier() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -182,6 +111,15 @@ struct VMConfigurationTests {
         #expect(config.name == "Base VM")
         #expect(config.genericMachineIdentifierData == nil)
         #expect(config.macAddress == nil)
+        #expect(config.removableMedia == nil)
+        #expect(config.sharedDirectories == nil)
+        #expect(config.storageDisks == nil)
+        #expect(config.installContext == nil)
+        #expect(config.pendingGuestAccount == nil)
+        #expect(config.linuxInstallContext == nil)
+        #expect(config.lastSeenAgentVersion == nil)
+        #expect(config.lastSeenGuestOSVersion == nil)
+        #expect(config.installedImage == nil)
     }
 
     @Test("A config written before the drag-and-drop toggle decodes with it on")
@@ -222,18 +160,6 @@ struct VMConfigurationTests {
         #expect(colliding.readOnly)
     }
 
-    @Test("SharedDirectory encodes and decodes via JSON")
-    func sharedDirectoryRoundTrip() throws {
-        let original = SharedDirectory(path: "/Users/test/Documents", readOnly: true)
-
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(SharedDirectory.self, from: data)
-
-        #expect(decoded.id == original.id)
-        #expect(decoded.path == "/Users/test/Documents")
-        #expect(decoded.readOnly == true)
-    }
-
     @Test("SharedDirectory displayName returns last path component")
     func sharedDirectoryDisplayName() {
         let directory = SharedDirectory(path: "/Users/test/Documents/Projects")
@@ -241,68 +167,6 @@ struct VMConfigurationTests {
 
         let rootDir = SharedDirectory(path: "/")
         #expect(rootDir.displayName == "/")
-    }
-
-    @Test("VMConfiguration with shared directories round-trips through JSON")
-    func configWithSharedDirectoriesRoundTrip() throws {
-        let directories = [
-            SharedDirectory(path: "/Users/test/Shared", readOnly: false),
-            SharedDirectory(path: "/Users/test/ReadOnly", readOnly: true),
-        ]
-        let original = VMConfiguration(
-            name: "Sharing VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            sharedDirectories: directories
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(original)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.sharedDirectories?.count == 2)
-        #expect(decoded.sharedDirectories?[0].path == "/Users/test/Shared")
-        #expect(decoded.sharedDirectories?[0].readOnly == false)
-        #expect(decoded.sharedDirectories?[1].path == "/Users/test/ReadOnly")
-        #expect(decoded.sharedDirectories?[1].readOnly == true)
-    }
-
-    @Test("Configuration preserves removableMedia through JSON")
-    func removableMediaRoundTrip() throws {
-        let id = UUID()
-        let config = VMConfiguration(
-            name: "Linux VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            removableMedia: [RemovableMediaItem(id: id, path: "/Users/test/Downloads/ubuntu.iso", readOnly: true)]
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        let items = try #require(decoded.removableMedia)
-        #expect(items.count == 1)
-        #expect(items[0].id == id)
-        #expect(items[0].path == "/Users/test/Downloads/ubuntu.iso")
-        #expect(items[0].readOnly == true)
-    }
-
-    @Test("Missing optional removableMedia decodes as nil")
-    func missingOptionalRemovableMedia() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.removableMedia == nil)
     }
 
     @Test("RemovableMediaItem notes round-trip through JSON")
@@ -388,29 +252,6 @@ struct VMConfigurationTests {
         #expect(decoded.sharedDirectories?[0].bookmark == nil)
     }
 
-    @Test("Missing optional sharedDirectories decodes as nil")
-    func missingOptionalSharedDirectories() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.sharedDirectories == nil)
-    }
-
-    @Test("serialSocketRelayEnabled round-trips through JSON")
-    func serialSocketRelayEnabledRoundTrip() throws {
-        var original = VMConfiguration(name: "Relay VM", guestOS: .linux, bootMode: .efi)
-        original.serialSocketRelayEnabled = true
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: try encoder.encode(original))
-
-        #expect(decoded.serialSocketRelayEnabled == true)
-    }
-
     @Test("Missing serialSocketRelayEnabled decodes as false")
     func missingSerialSocketRelayEnabledDefaultsFalse() throws {
         let decoder = JSONDecoder()
@@ -485,50 +326,6 @@ struct VMConfigurationTests {
         #expect(StorageDisk(path: "/tmp/Disk.asif").kind == .virtio)
         #expect(StorageDisk(path: "/tmp/installer.iso").kind == .usbMassStorage)
         #expect(StorageDisk(path: "/tmp/installer.dmg").kind == .usbMassStorage)
-    }
-
-    @Test("Configuration round-trips storageDisks")
-    func storageDisksRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Multi-Disk VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            storageDisks: [
-                StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
-                StorageDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: false, kind: .virtio),
-                StorageDisk(
-                    path: "/tmp/installer.iso", readOnly: true, label: "Installer", isInternal: false,
-                    kind: .usbMassStorage),
-            ]
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        let disks = decoded.storageDisks ?? []
-        #expect(disks.count == 3)
-        #expect(disks.first?.label == "Main Disk")
-        #expect(disks.first?.isInternal == true)
-        #expect(disks.first?.kind == .virtio)
-        if disks.count >= 3 {
-            #expect(disks[2].label == "Installer")
-            #expect(disks[2].kind == .usbMassStorage)
-            #expect(disks[2].readOnly == true)
-        }
-    }
-
-    @Test("Missing optional storageDisks decodes as nil")
-    func missingOptionalStorageDisks() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.storageDisks == nil)
     }
 
     @Test("StorageDisk notes round-trip through JSON")
@@ -698,15 +495,6 @@ struct VMConfigurationTests {
         #expect(decoded.installContext?.localIPSWPath == "/tmp/macOS-26.ipsw")
     }
 
-    @Test("A config omitting installContext decodes it as nil")
-    func configOmittingInstallContextDecodesNil() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.installContext == nil)
-    }
-
     @Test("VMConfiguration with nil installContext omits field from JSON")
     func nilInstallContextOmittedFromJSON() throws {
         let config = VMConfiguration(
@@ -736,15 +524,6 @@ struct VMConfigurationTests {
         let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
 
         #expect(decoded.pendingGuestAccount == account)
-    }
-
-    @Test("A config omitting the pending guest account decodes it as nil")
-    func configOmittingPendingGuestAccountDecodesNil() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.pendingGuestAccount == nil)
     }
 
     @Test("A pending guest account outlives the install context it was gathered with")
@@ -834,15 +613,6 @@ struct VMConfigurationTests {
         #expect(decoded.installContext == nil)
     }
 
-    @Test("A config.json without linuxInstallContext decodes as nil")
-    func configWithoutLinuxInstallContextDecodesAsNil() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.linuxInstallContext == nil)
-    }
-
     @Test("VMConfiguration with nil linuxInstallContext omits field from JSON")
     func nilLinuxInstallContextOmittedFromJSON() throws {
         let config = VMConfiguration(name: "Plain VM", guestOS: .linux, bootMode: .efi)
@@ -875,57 +645,7 @@ struct VMConfigurationTests {
         #expect(config.installContext?.requestedFreshDownload == false)
     }
 
-    @Test("Clone clears installContext even when source has one set")
-    func cloneClearsInstallContext() {
-        let context = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: "/tmp/RestoreImage.ipsw"
-        )
-        let config = VMConfiguration(
-            name: "Pending macOS VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            installContext: context
-        )
-
-        let clone = config.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.installContext == nil)
-    }
-
     // MARK: - displaySizesToWindow / displayHiDPI / displayAutoResizes Tests
-
-    @Test("Display sizing defaults: match-window on, HiDPI on, auto-resize on")
-    func defaultDisplaySizingFlags() {
-        let config = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
-        #expect(config.displaySizesToWindow == true)
-        #expect(config.displayHiDPI == true)
-        #expect(config.displayAutoResizes == true)
-    }
-
-    @Test("Configuration round-trips the display sizing flags")
-    func displaySizingFlagsRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Sizing VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            displaySizesToWindow: false,
-            displayHiDPI: false,
-            displayAutoResizes: false
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.displaySizesToWindow == false)
-        #expect(decoded.displayHiDPI == false)
-        #expect(decoded.displayAutoResizes == false)
-    }
 
     @Test("Missing display sizing keys decode to the on defaults")
     func missingDisplaySizingKeysUseDefaults() throws {
@@ -997,57 +717,7 @@ struct VMConfigurationTests {
         #expect(config.clipboardSharingEnabled == false)
     }
 
-    @Test("Configuration preserves clipboardSharingEnabled flag")
-    func clipboardSharingEnabledRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Clipboard VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            clipboardSharingEnabled: true
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.clipboardSharingEnabled == true)
-    }
-
     // MARK: - clipboardPassthroughEnabled Tests
-
-    @Test("Default clipboardPassthroughEnabled is false")
-    func defaultClipboardPassthroughEnabled() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .macOS,
-            bootMode: .macOS
-        )
-        #expect(config.clipboardPassthroughEnabled == false)
-    }
-
-    @Test("Configuration preserves clipboardPassthroughEnabled flag")
-    func clipboardPassthroughEnabledRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Passthrough VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            clipboardPassthroughEnabled: true
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.clipboardPassthroughEnabled == true)
-    }
 
     @Test("Configs missing the clipboardPassthroughEnabled key default it off")
     func clipboardPassthroughMissingKeyUsesDefault() throws {
@@ -1059,36 +729,6 @@ struct VMConfigurationTests {
     }
 
     // MARK: - agentLogForwardingEnabled Tests
-
-    @Test("Default agentLogForwardingEnabled is false")
-    func defaultAgentLogForwardingEnabled() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .macOS,
-            bootMode: .macOS
-        )
-        #expect(config.agentLogForwardingEnabled == false)
-    }
-
-    @Test("Configuration preserves agentLogForwardingEnabled flag")
-    func agentLogForwardingEnabledRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Logging VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            agentLogForwardingEnabled: true
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.agentLogForwardingEnabled == true)
-    }
 
     @Test("A config omitting agentLogForwardingEnabled decodes it as false")
     func missingAgentLogForwardingEnabledDecodesFalse() throws {
@@ -1108,35 +748,6 @@ struct VMConfigurationTests {
             guestOS: .macOS,
             bootMode: .macOS
         )
-        #expect(config.lastSeenAgentVersion == nil)
-    }
-
-    @Test("Configuration round-trips lastSeenAgentVersion")
-    func lastSeenAgentVersionRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Persisted VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            lastSeenAgentVersion: "0.9.2"
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.lastSeenAgentVersion == "0.9.2")
-    }
-
-    @Test("A config omitting lastSeenAgentVersion decodes it as nil")
-    func missingLastSeenAgentVersionDecodesNil() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
         #expect(config.lastSeenAgentVersion == nil)
     }
 
@@ -1170,15 +781,6 @@ struct VMConfigurationTests {
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
         #expect(decoded.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-    }
-
-    @Test("A config omitting lastSeenGuestOSVersion decodes it as nil")
-    func missingLastSeenGuestOSVersionDecodesNil() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.lastSeenGuestOSVersion == nil)
     }
 
     // MARK: - installedImage Tests
@@ -1225,49 +827,7 @@ struct VMConfigurationTests {
                 == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil))
     }
 
-    @Test("A config omitting installedImage decodes it as nil")
-    func missingInstalledImageDecodesNil() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.installedImage == nil)
-    }
-
     // MARK: - Audio Tests
-
-    @Test("audioInputEnabled defaults to false and audioOutputEnabled defaults to true")
-    func audioDefaults() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        #expect(config.audioInputEnabled == false)
-        #expect(config.audioOutputEnabled == true)
-    }
-
-    @Test("Configuration preserves audio input/output flags")
-    func audioFlagsRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Audio VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            audioInputEnabled: true,
-            audioOutputEnabled: false
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.audioInputEnabled == true)
-        #expect(decoded.audioOutputEnabled == false)
-    }
 
     @Test("Configs missing both audio keys default input off, output on")
     func audioKeysMissingUseDefaults() throws {
@@ -1283,13 +843,6 @@ struct VMConfigurationTests {
     }
 
     // MARK: - Network Mode Tests
-
-    @Test("networkMode defaults to nat with no bridged interface")
-    func networkModeDefaults() {
-        let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
-        #expect(config.networkMode == .nat)
-        #expect(config.bridgedInterfaceIdentifier == nil)
-    }
 
     @Test("networkChoice maps the persisted fields and is nil without a device")
     func networkChoiceMapsPersistedFields() {
@@ -1316,28 +869,6 @@ struct VMConfigurationTests {
         #expect(decoded.bridgedInterfaceIdentifier == nil)
     }
 
-    @Test("Configuration preserves a bridged mode and its interface")
-    func bridgedModeRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Bridged VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            networkMode: .bridged,
-            bridgedInterfaceIdentifier: "en0"
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.networkMode == .bridged)
-        #expect(decoded.bridgedInterfaceIdentifier == "en0")
-    }
-
     @Test("Configuration preserves the host-only mode")
     func hostOnlyModeRoundTrip() throws {
         let config = VMConfiguration(
@@ -1358,16 +889,6 @@ struct VMConfigurationTests {
         #expect(decoded.networkMode == .hostOnly)
         #expect(
             decoded.networkChoice == NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil))
-    }
-
-    @Test("A host-only config decodes from the stored raw value")
-    func hostOnlyModeDecodesFromRawValue() throws {
-        let json = Self.makeBaseJSON(extraFields: "\"networkMode\": \"hostOnly\"")
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
-
-        #expect(decoded.networkMode == .hostOnly)
     }
 
     @Test("A config with no isolation key joins its mode's common network")

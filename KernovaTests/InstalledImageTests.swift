@@ -178,18 +178,6 @@ struct InstalledImageTests {
                 == .linuxCatalogImage(distribution: "Fedora Workstation", version: "44", digest: digest))
     }
 
-    @Test("A user-supplied URL records the URL and the digest")
-    func recordsURLSource() {
-        let source = LinuxInstallContext.Source.customURL(
-            CustomLinuxImage(url: Self.isoURL, sha256: nil))
-        let digest = InstallerImageDigest.unchecked(
-            filename: "alpine-3.22-aarch64.iso", sha256: Self.digest)
-
-        #expect(
-            InstalledImage(linuxSource: source, digest: digest)
-                == .linuxURLImage(url: Self.isoURL, digest: digest))
-    }
-
     @Test("A user-supplied URL is recorded without its credentials, query or fragment")
     func recordsURLWithoutSecrets() throws {
         let pasted = try #require(

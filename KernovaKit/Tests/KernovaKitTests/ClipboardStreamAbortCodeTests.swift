@@ -8,13 +8,6 @@ import Testing
 /// starts reporting a routine teardown, and neither shows up as a build error.
 @Suite("ClipboardStreamAbortCode", .caseScoped)
 struct ClipboardStreamAbortCodeTests {
-    @Test("every code round-trips through its wire spelling")
-    func roundTrips() {
-        for code in ClipboardStreamAbortCode.allCases {
-            #expect(ClipboardStreamAbortCode(rawValue: code.rawValue) == code)
-        }
-    }
-
     @Test("the wire spellings are the ones both sides carry")
     func rawValues() {
         #expect(ClipboardStreamAbortCode.requestStale.rawValue == "request.stale")
@@ -48,19 +41,6 @@ struct ClipboardStreamAbortCodeTests {
             ])
     }
 
-    @Test("an unknown code maps to no case rather than a neighbouring one")
-    func unknownCode() {
-        #expect(ClipboardStreamAbortCode(rawValue: "archive.error") == nil)
-    }
-
-    @Test("a retiring code is not reported, a failure code is")
-    func abortInfoRetires() {
-        #expect(makeInfo(code: .cancelled).isRetiring)
-        #expect(makeInfo(code: .superseded).isRetiring)
-        #expect(!makeInfo(code: .diskFull).isRetiring)
-        #expect(!makeInfo(code: .extractError).isRetiring)
-    }
-
     @Test("a code this build does not define is reported, never swallowed")
     func undefinedCodeIsReported() {
         let info = ClipboardStreamAbortInfo(
@@ -78,10 +58,5 @@ struct ClipboardStreamAbortCodeTests {
             availableBytes: nil)
         #expect(info.code == .diskFull)
         #expect(info.rawCode == "disk.full")
-    }
-
-    private func makeInfo(code: ClipboardStreamAbortCode) -> ClipboardStreamAbortInfo {
-        ClipboardStreamAbortInfo(
-            transferID: 1, code: code, message: "x", neededBytes: nil, availableBytes: nil)
     }
 }

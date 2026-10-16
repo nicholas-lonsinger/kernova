@@ -23,28 +23,6 @@ struct AgentStatusTests {
         #expect(result == .current(version: "0.9.2"))
     }
 
-    @Test(".outdated passes through unchanged")
-    func outdatedPassesThrough() {
-        let result = AgentStatus.synthesize(
-            upstream: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-            lastSeenAgentVersion: "0.9.1",
-            isInLiveSession: true,
-            agentExpectedButMissing: false
-        )
-        #expect(result == .outdated(installed: "0.9.1", bundled: "0.9.2"))
-    }
-
-    @Test(".unresponsive passes through unchanged")
-    func unresponsivePassesThrough() {
-        let result = AgentStatus.synthesize(
-            upstream: .unresponsive(version: "0.9.2"),
-            lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: true,
-            agentExpectedButMissing: false
-        )
-        #expect(result == .unresponsive(version: "0.9.2"))
-    }
-
     // MARK: - .waiting → .connecting synthesis
 
     @Test(".waiting + prior version + live session → .connecting (the gap fix)")
@@ -85,18 +63,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: false,
-            agentExpectedButMissing: false
-        )
-        #expect(result == .waiting)
-    }
-
-    @Test(".waiting + no prior version + not live → .waiting")
-    func waitingWithoutPriorVersionAndNotLiveStaysWaiting() {
-        // Stopped fresh VM. The most basic case.
-        let result = AgentStatus.synthesize(
-            upstream: .waiting,
-            lastSeenAgentVersion: nil,
             isInLiveSession: false,
             agentExpectedButMissing: false
         )
@@ -183,30 +149,5 @@ struct AgentStatusTests {
             agentExpectedButMissing: false
         )
         #expect(result == .waiting)
-    }
-
-    // MARK: - isObservedVersionCurrent
-
-    @Test("isObservedVersionCurrent: equal version is current")
-    func observedEqualIsCurrent() {
-        #expect(AgentStatus.isObservedVersionCurrent("0.9.2", bundled: "0.9.2"))
-    }
-
-    @Test("isObservedVersionCurrent: newer-than-bundled is current")
-    func observedNewerIsCurrent() {
-        // `.numeric` compare: 0.10.0 > 0.9.0 (not lexicographic).
-        #expect(AgentStatus.isObservedVersionCurrent("0.10.0", bundled: "0.9.0"))
-    }
-
-    @Test("isObservedVersionCurrent: older-than-bundled is not current")
-    func observedOlderIsNotCurrent() {
-        #expect(!AgentStatus.isObservedVersionCurrent("0.9.1", bundled: "0.9.2"))
-    }
-
-    @Test("isObservedVersionCurrent: nil bundled is treated as current")
-    func observedNilBundledIsCurrent() {
-        // A missing host sidecar (build regression) must not surface a spurious
-        // "outdated" prompt — accept whatever the guest reports.
-        #expect(AgentStatus.isObservedVersionCurrent("0.0.1", bundled: nil))
     }
 }

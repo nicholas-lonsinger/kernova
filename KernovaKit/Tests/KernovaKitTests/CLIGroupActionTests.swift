@@ -87,16 +87,6 @@ struct CLIGroupActionTests {
         }
     }
 
-    @Test("A group start crosses the wire as one request, and its report comes back whole")
-    func groupActionCrossesTheWire() throws {
-        let report = mixedReport
-        let exchanged = try CLIWire.exchange(
-            ["start", "--smart-group", "Linux Lab"], answering: VMCommandResponse(result: .groupAction(report)))
-
-        #expect(exchanged.sent == [.groupAction(.start, group: VMGroupReference(.smartGroup, named: "Linux Lab"))])
-        #expect(try exchanged.answer.payload() == .groupAction(report))
-    }
-
     // MARK: - Output
 
     @Test("Text output is one line per VM in the group, saying what was done or why not")

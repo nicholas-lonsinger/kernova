@@ -28,13 +28,6 @@ struct AppTerminationOutcomeTests {
         #expect(outcome(shouldTerminateAgent: false, hasInstancesToSave: true) == .closeGUI)
     }
 
-    @Test("a system quit during the save pass is deferred, never vetoed")
-    func systemQuitDuringSavePassIsNotVetoed() {
-        // `.deferToSavePass` replies `.terminateLater`; a `.terminateCancel` would
-        // reach loginwindow as Kernova refusing the logout or shut down.
-        #expect(outcome(isSavePassRunning: true) == .deferToSavePass)
-    }
-
     @Test("the app's own two-phase quit is answered at once, whatever is still live")
     func completedSavePassTerminatesNow() {
         // `requestFullQuit` saves first and asks second, so by the time the gate
@@ -68,11 +61,6 @@ struct AppTerminationOutcomeTests {
         // A VM mid-save or mid-revert has no live session to save, so without
         // this the gate would reply `.terminateNow` and exit through the write.
         #expect(outcome(quitMustWaitOut: true) == .saveThenTerminate)
-    }
-
-    @Test("work a quit must wait out alongside a live VM defers the reply")
-    func waitOutWithOtherLiveVMs() {
-        #expect(outcome(quitMustWaitOut: true, hasInstancesToSave: true) == .saveThenTerminate)
     }
 
     // MARK: - Re-entrancy

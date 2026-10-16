@@ -440,16 +440,9 @@ struct VMSettingsSystemPanelTests {
         let vc = makeMicController(.notDetermined)
 
         #expect(findLabel(containing: "microphone permission", in: vc.view) == nil)
-        #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
-        #expect(infoButton(about: "Audio input", in: vc.view) != nil)
-    }
-
-    @Test("Granted permission shows neither the banner nor the link")
-    func authorizedMicShowsNothing() {
-        let vc = makeMicController(.authorized)
-
         #expect(findLabel(containing: "Microphone permission is denied", in: vc.view) == nil)
         #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
+        #expect(infoButton(about: "Audio input", in: vc.view) != nil)
     }
 
     // MARK: - Serial console

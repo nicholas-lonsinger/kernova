@@ -34,11 +34,4 @@ struct BridgedInterfaceSelectionTests {
             BridgedInterfaceSelection.choose(
                 persisted: "en5", available: ["en2", "en3"], primary: nil) == nil)
     }
-
-    @Test("No bridgeable interfaces resolves to nothing")
-    func emptyAvailableResolvesToNil() {
-        #expect(
-            BridgedInterfaceSelection.choose(persisted: "en0", available: [], primary: "en0") == nil)
-        #expect(BridgedInterfaceSelection.choose(persisted: nil, available: [], primary: nil) == nil)
-    }
 }

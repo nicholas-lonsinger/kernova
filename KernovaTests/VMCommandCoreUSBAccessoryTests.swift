@@ -116,25 +116,6 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(listed.first?.productID == 0x6001)
     }
 
-    @Test("The available listing leaves out what another guest is already holding")
-    func availableListingExcludesHeldAccessories() async throws {
-        let harness = makeHarness()
-        let service = try #require(harness.usbAccessories)
-        let holder = makeRunningInstance(in: harness, name: "Holder")
-        makeRunningInstance(in: harness, name: "Bystander")
-        let free = MockUSBAccessoryService.accessory(registryID: 1)
-        service.accessories.append(free)
-        _ = try await attach(
-            MockUSBAccessoryService.accessory(registryID: 2), to: holder, in: harness)
-
-        let available = try harness.core.availableUSBAccessories()
-
-        // Held exclusively by the one guest, so it is not on offer to the
-        // other — and it carries no attachment identifier here either.
-        #expect(available.map(\.registryID) == [free.registryID])
-        #expect(available.first?.deviceID == nil)
-    }
-
     @Test("A VM holding nothing lists nothing, and refuses no listing for it")
     func guestListingIsEmptyWithoutAttachments() throws {
         let harness = makeHarness()

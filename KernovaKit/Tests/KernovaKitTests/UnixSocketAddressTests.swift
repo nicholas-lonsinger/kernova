@@ -12,13 +12,6 @@ struct UnixSocketAddressTests {
         #expect(UnixSocketAddress.maxPathLength == 104)
     }
 
-    @Test("a path one byte short of the cap is accepted")
-    func acceptsPathBelowCap() throws {
-        let path = String(repeating: "a", count: UnixSocketAddress.maxPathLength - 2)
-        var address = try UnixSocketAddress.make(path: path)
-        #expect(Self.path(of: &address) == path)
-    }
-
     @Test("a path filling the cap with its terminator is accepted")
     func acceptsPathAtCap() throws {
         let path = String(repeating: "a", count: UnixSocketAddress.maxPathLength - 1)

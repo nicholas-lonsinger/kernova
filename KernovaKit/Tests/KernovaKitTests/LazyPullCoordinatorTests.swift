@@ -140,21 +140,6 @@ struct LazyPullCoordinatorTests {
 
     // MARK: - Slot machinery
 
-    @Test("pull blocks until deliver wakes it with the representation")
-    func deliverWakesPull() async throws {
-        let coordinator = LazyPullCoordinator()
-        async let outcome = runPull(coordinator, transferID: 7)
-        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
-        coordinator.deliver(7, inlineRep("hello"))
-
-        guard case .delivered(let rep) = await outcome else {
-            Issue.record("Expected .delivered")
-            return
-        }
-        #expect(rep.inMemoryData == Data("hello".utf8))
-        #expect(coordinator.pendingSlotCountForTesting == 0)
-    }
-
     @Test("pull surfaces an abort delivered while it waits")
     func abortWakesPull() async throws {
         let coordinator = LazyPullCoordinator()

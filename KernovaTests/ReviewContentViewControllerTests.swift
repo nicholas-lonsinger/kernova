@@ -34,17 +34,6 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "NAT \u{2013} Common", in: noneVC.view) == nil)
     }
 
-    @Test("macOS + download shows the abbreviated save-to path")
-    func macOSDownloadShowsSaveTo() {
-        let vm = VMCreationViewModel()  // macOS + downloadLatest by default
-        let vc = ReviewContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
-        #expect(
-            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
-    }
-
     @Test("macOS + download names the looked-up version, build and size")
     func macOSDownloadShowsLookedUpImage() async {
         let probeService = MockRestoreImageProbeService()

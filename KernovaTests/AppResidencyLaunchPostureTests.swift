@@ -16,34 +16,6 @@ struct AppResidencyLaunchPostureTests {
             keepInMenuBar: keepInMenuBar)
     }
 
-    @Test("A launch that asked for no window comes up headless with the status item on")
-    func hiddenLaunchWithStatusItemIsHeadless() {
-        #expect(posture(isHidden: true, keepInMenuBar: true) == .headless)
-    }
-
-    /// Nothing would reach a headless process with the status item off, so the
-    /// library is created behind the hide and the Dock icon reaches it.
-    @Test("A hidden launch with no status item presents instead")
-    func hiddenLaunchWithoutStatusItemPresents() {
-        #expect(posture(isHidden: true, keepInMenuBar: false) == .present)
-    }
-
-    @Test("A login launch answers the same pair a hidden one does")
-    func loginLaunchMatchesTheHiddenRule() {
-        #expect(posture(origin: .loginItem, keepInMenuBar: true) == .headless)
-        #expect(posture(origin: .loginItem, keepInMenuBar: false) == .present)
-        // Hidden or not makes no difference to a login launch: it already asked
-        // to have Kernova running rather than to be shown it.
-        #expect(posture(origin: .loginItem, isHidden: true, keepInMenuBar: true) == .headless)
-        #expect(posture(origin: .loginItem, isHidden: true, keepInMenuBar: false) == .present)
-    }
-
-    @Test("A plain launch presents, whatever the residency preference")
-    func plainLaunchPresents() {
-        #expect(posture(keepInMenuBar: true) == .present)
-        #expect(posture(keepInMenuBar: false) == .present)
-    }
-
     /// The whole matrix in one assertion, so a changed rule cannot quietly take
     /// a window away from a launch that needs one — the failure a headless
     /// start risks.

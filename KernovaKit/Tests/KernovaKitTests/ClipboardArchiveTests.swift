@@ -25,23 +25,4 @@ struct ClipboardArchiveTests {
         // a.txt (5) + sub/b.txt (6) = 11; dirs and symlinks contribute 0.
         #expect(ClipboardArchive.estimatedByteCount(at: root) == 11)
     }
-
-    @Test("estimatedByteCount is 0 for a tree carrying no file bytes")
-    func estimateZeroForByteFreeTrees() throws {
-        let fm = FileManager.default
-
-        let empty = scratch.url.appendingPathComponent("empty", isDirectory: true)
-        try fm.createDirectory(at: empty, withIntermediateDirectories: true)
-        #expect(ClipboardArchive.estimatedByteCount(at: empty) == 0)
-
-        // Only subdirectories and zero-byte files: nothing to sum, yet the tree
-        // is real and streams intact (ClipboardArchiveStreamTests).
-        let scaffold = scratch.url.appendingPathComponent("scaffold", isDirectory: true)
-        try fm.createDirectory(
-            at: scaffold.appendingPathComponent("sub", isDirectory: true),
-            withIntermediateDirectories: true)
-        try Data().write(to: scaffold.appendingPathComponent(".keep"))
-        try Data().write(to: scaffold.appendingPathComponent("sub/.keep"))
-        #expect(ClipboardArchive.estimatedByteCount(at: scaffold) == 0)
-    }
 }

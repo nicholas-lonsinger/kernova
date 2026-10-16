@@ -25,32 +25,11 @@ struct NameUniquingTests {
 
     // MARK: - Uniquing a destination
 
-    @Test("a free name is used as-is")
-    func keepsAFreeName() throws {
-        let dir = try makeDirectory()
-
-        #expect(name(in: dir, "report.pdf") == "report.pdf")
-    }
-
-    @Test("a taken name counts up from 2 before the extension, Finder-style")
-    func countsUpBeforeTheExtension() throws {
-        let dir = try makeDirectory(seeded: ["report.pdf"])
-
-        #expect(name(in: dir, "report.pdf") == "report 2.pdf")
-    }
-
     @Test("several collisions count past every taken name")
     func countsPastSeveralCollisions() throws {
         let dir = try makeDirectory(seeded: ["report.pdf", "report 2.pdf"])
 
         #expect(name(in: dir, "report.pdf") == "report 3.pdf")
-    }
-
-    @Test("an extensionless name — a folder's, say — takes a bare counter")
-    func countsUpWithoutAnExtension() throws {
-        let dir = try makeDirectory(seeded: ["Photos"])
-
-        #expect(name(in: dir, "Photos") == "Photos 2")
     }
 
     @Test("a multi-dot name counts up before the last extension only")

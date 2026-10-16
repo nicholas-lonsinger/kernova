@@ -34,7 +34,7 @@ struct CLIVerbWireTests {
         let exchanged = try CLIWire.exchange(
             ["list"], answering: VMCommandResponse(result: .summaries([alpha])))
 
-        #expect(exchanged.sent == [.list(VMListQuery())])
+        #expect(exchanged.sent == [.list(VMListQuery(sort: .manual))])
         #expect(try exchanged.answer.payload() == .summaries([alpha]))
     }
 

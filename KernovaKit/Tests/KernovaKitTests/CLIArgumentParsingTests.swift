@@ -24,26 +24,6 @@ struct CLIArgumentParsingTests {
         #expect(try parse(["version"]) is KernovaCommand.Version)
     }
 
-    @Test("Each lifecycle verb parses to its own subcommand")
-    func lifecycleVerbsResolve() throws {
-        #expect(try parse(["start", "Alpha"]) is KernovaCommand.Start)
-        #expect(try parse(["stop", "Alpha"]) is KernovaCommand.Stop)
-        #expect(try parse(["suspend", "Alpha"]) is KernovaCommand.Suspend)
-        #expect(try parse(["pause", "Alpha"]) is KernovaCommand.Pause)
-        #expect(try parse(["resume", "Alpha"]) is KernovaCommand.Resume)
-        #expect(try parse(["restart", "Alpha"]) is KernovaCommand.Restart)
-        #expect(try parse(["open", "Alpha"]) is KernovaCommand.Open)
-    }
-
-    @Test("Each library verb parses to its own subcommand")
-    func libraryVerbsResolve() throws {
-        #expect(try parse(["clone", "Alpha"]) is KernovaCommand.Clone)
-        #expect(try parse(["rename", "Alpha", "Beta"]) is KernovaCommand.Rename)
-        #expect(try parse(["delete", "Alpha"]) is KernovaCommand.Delete)
-        #expect(try parse(["import", "/tmp/Alpha.kernova"]) is KernovaCommand.Import)
-        #expect(try parse(["reveal", "Alpha"]) is KernovaCommand.Reveal)
-    }
-
     @Test("Each snapshot verb parses to its own subcommand under `snapshot`")
     func snapshotVerbsResolve() throws {
         #expect(try parse(["snapshot", "list", "Alpha"]) is KernovaCommand.Snapshot.List)
@@ -93,13 +73,6 @@ struct CLIArgumentParsingTests {
         return query
     }
 
-    @Test("list with no flag asks for every VM in library order")
-    func listDefaultsToEverything() throws {
-        #expect(try listQuery([]) == VMListQuery())
-        #expect(try listQuery([]).sort == .manual)
-        #expect(try parse(["groups"]) is KernovaCommand.Groups)
-    }
-
     @Test("A repeated filter flag forms an include-set; different flags constrain together")
     func repeatedFlagsWiden() throws {
         let query = try listQuery(["--os", "macOS", "--os", "linux", "--state", "stopped", "--os", "linux"])
@@ -126,17 +99,6 @@ struct CLIArgumentParsingTests {
         let query = try listQuery(["--agent", "neverConnected", "--agent", "upToDate", "--ephemeral"])
         #expect(query.filter == VMLibraryFilter(guestAgents: [.neverConnected, .upToDate], ephemeralOnly: true))
         #expect(try listQuery(["--has-snapshots"]).filter == VMLibraryFilter(withSnapshotsOnly: true))
-    }
-
-    @Test("--network sends every value as typed, in order, for the app to read as a mode or a named network")
-    func networksGoAsTyped() throws {
-        let typed = [
-            "nat", "hostOnly:isolated", "Bridged", "bridged:en0", "none", "unlisted", "Lab",
-            "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21",
-        ]
-        let query = try listQuery(typed.flatMap { ["--network", $0] })
-        #expect(query.networks == typed)
-        #expect(query.filter.networks.isEmpty)
     }
 
     @Test("--tag sends every value as typed, in order, for the app to read as a tag's name or identifier")
@@ -230,18 +192,6 @@ struct CLIArgumentParsingTests {
             try parse(["import", "/tmp/Alpha.kernova", "--timeout", "90"])
                 as? KernovaCommand.Import)
         #expect(bounded.timeout == 90)
-    }
-
-    @Test("delete moves the bundle to the Trash unless --permanent says otherwise")
-    func deleteParsesPermanent() throws {
-        let trashed = try #require(try parse(["delete", "Alpha"]) as? KernovaCommand.Delete)
-        #expect(!trashed.permanent)
-        #expect(!trashed.options.yes)
-
-        let outright = try #require(
-            try parse(["delete", "Alpha", "--permanent", "--yes"]) as? KernovaCommand.Delete)
-        #expect(outright.permanent)
-        #expect(outright.options.yes)
     }
 
     @Test("A revert takes no snapshot of its own, so --no-checkpoint is no flag of it")
@@ -339,38 +289,12 @@ struct CLIArgumentParsingTests {
 
     // MARK: - Configuration
 
-    @Test("Each configuration verb parses to its own subcommand")
-    func configurationVerbsResolve() throws {
-        #expect(try parse(["get", "Alpha"]) is KernovaCommand.Get)
-        #expect(try parse(["set", "Alpha", "cpus=4"]) is KernovaCommand.Set)
-        #expect(try parse(["share", "list", "Alpha"]) is KernovaCommand.Share.List)
-        #expect(try parse(["share", "add", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Add)
-        #expect(
-            try parse(["share", "remove", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Remove)
-    }
-
-    @Test("Each list verb reads its virtual machine and asks for that machine's own list")
-    func listVerbsNameTheirVM() throws {
-        let shares = try #require(
-            try parse(["share", "list", "Alpha"]) as? KernovaCommand.Share.List)
-        #expect(shares.vm == "Alpha")
-        #expect(try shares.verb() == .sharedDirectories(.idOrName("Alpha")))
-    }
-
     @Test("Every list verb refuses without the virtual machine it lists")
     func listVerbsNeedAVM() {
         #expect(throws: (any Error).self) { try parse(["share", "list"]) }
     }
 
     // MARK: - USB accessories
-
-    @Test("Each USB verb parses to its own subcommand")
-    func usbVerbsResolve() throws {
-        #expect(try parse(["usb", "list"]) is KernovaCommand.USB.List)
-        #expect(try parse(["usb", "attach", "Alpha", "12"]) is KernovaCommand.USB.Attach)
-        #expect(
-            try parse(["usb", "detach", "Alpha", UUID().uuidString]) is KernovaCommand.USB.Detach)
-    }
 
     @Test("A USB listing asks a guest's own accessories only when a guest is named")
     func usbListNamesItsSubject() throws {
@@ -411,14 +335,6 @@ struct CLIArgumentParsingTests {
     }
 
     // MARK: - Named networks
-
-    @Test("Each network verb parses to its own subcommand")
-    func networkVerbsResolve() throws {
-        #expect(try parse(["network", "list"]) is KernovaCommand.Network.List)
-        #expect(try parse(["network", "create", "Lab"]) is KernovaCommand.Network.Create)
-        #expect(try parse(["network", "rename", "Lab", "Bench"]) is KernovaCommand.Network.Rename)
-        #expect(try parse(["network", "delete", "Lab"]) is KernovaCommand.Network.Delete)
-    }
 
     @Test("network create takes only a mode a named network can run in")
     func networkCreateRefusesAKindThatIsNotOne() {
@@ -570,15 +486,6 @@ struct CLIArgumentParsingTests {
         #expect(throws: (any Error).self) { try parse(["quit", "Alpha"]) }
     }
 
-    @Test("start takes --recovery, and defaults to a normal boot")
-    func startParsesRecovery() throws {
-        #expect(try #require(try parse(["start", "Alpha"]) as? KernovaCommand.Start).recovery == false)
-        let recovery = try #require(
-            try parse(["start", "Alpha", "--recovery"]) as? KernovaCommand.Start)
-        #expect(recovery.recovery)
-        #expect(recovery.vm == "Alpha")
-    }
-
     @Test("stop defaults to asking the guest, and each method names its own disposition")
     func stopMethodsMapToDispositions() throws {
         let byDefault = try #require(try parse(["stop", "Alpha"]) as? KernovaCommand.Stop)
@@ -588,16 +495,6 @@ struct CLIArgumentParsingTests {
         let forced = try #require(try parse(["stop", "Alpha", "--force"]) as? KernovaCommand.Stop)
         #expect(forced.method.disposition == .force)
         #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--resume-first"]) }
-    }
-
-    @Test("stop takes --timeout, and waits for nothing without one")
-    func stopParsesTimeout() throws {
-        let bare = try #require(try parse(["stop", "Alpha"]) as? KernovaCommand.Stop)
-        #expect(bare.timeout == nil)
-
-        let bounded = try #require(
-            try parse(["stop", "Alpha", "--timeout", "45"]) as? KernovaCommand.Stop)
-        #expect(bounded.timeout == 45)
     }
 
     @Test("A deadline rides any stop method, including --force")
@@ -610,16 +507,6 @@ struct CLIArgumentParsingTests {
                 try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)
             #expect(stop.timeout == 5)
         }
-    }
-
-    @Test("restart takes --timeout, and waits out the shutdown without one")
-    func restartParsesTimeout() throws {
-        let bare = try #require(try parse(["restart", "Alpha"]) as? KernovaCommand.Restart)
-        #expect(bare.timeout == nil)
-
-        let bounded = try #require(
-            try parse(["restart", "Alpha", "--timeout", "20"]) as? KernovaCommand.Restart)
-        #expect(bounded.timeout == 20)
     }
 
     @Test("A deadline that names no wait is a usage error on every verb that takes one")

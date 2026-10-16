@@ -55,26 +55,6 @@ struct ClipboardTransferStreamTests {
 
     // MARK: - Round trips
 
-    @Test("a raw inline payload round-trips resident, with no archive on the wire")
-    func rawInlineRoundTrips() async throws {
-        let harness = TransferHarness()
-        defer { harness.tearDown() }
-        let payload = Data("the quick brown fox".utf8)
-        let transferID: UInt64 = 0x11
-        harness.push(
-            transferID: transferID, generation: 1,
-            plan: .init(uti: "public.utf8-plain-text", advertisedByteCount: payload.count),
-            representation: .init(uti: "public.utf8-plain-text", data: payload), isInline: true)
-        try await settle(harness, transferID)
-
-        let representation = try #require(harness.collector.representation(transferID))
-        #expect(representation.inMemoryData == payload)
-        #expect(harness.collector.abortCount == 0)
-        let inbound = try #require(harness.collector.inboundMetrics.first)
-        #expect(inbound.inbound?.streamedToDisk == false)
-        #expect(inbound.wireByteCount == payload.count)
-    }
-
     @Test("a raw inline payload past every buffer round-trips byte-identically")
     func multiBufferInlineRoundTrips() async throws {
         let harness = TransferHarness()

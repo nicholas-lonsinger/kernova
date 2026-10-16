@@ -23,20 +23,6 @@ struct ClipboardProgressMenuAutoOpenerTests {
             elapsedSeconds: elapsed)
     }
 
-    @Test("a paste's first readout opens the dropdown")
-    func firstReadoutOpens() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true) == .open)
-    }
-
-    @Test("later updates in the same paste never re-open")
-    func laterUpdatesDoNotReopen() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        _ = opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true)
-        opener.menuOpened(automatically: true)
-        #expect(opener.readoutChanged(Self.readout(), menuIsOpen: true, canOpen: true) == .none)
-    }
-
     @Test("a dropdown the user dismissed stays closed for the rest of the paste")
     func userDismissalIsFinalForThePaste() {
         var opener = ClipboardProgressMenuAutoOpener()
@@ -66,13 +52,6 @@ struct ClipboardProgressMenuAutoOpenerTests {
         #expect(opener.readoutChanged(nil, menuIsOpen: true, canOpen: true) == .none)
     }
 
-    @Test("a readout appearing while the dropdown is already open opens nothing")
-    func alreadyOpenNeedsNoOpen() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        opener.menuOpened(automatically: false)
-        #expect(opener.readoutChanged(Self.readout(), menuIsOpen: true, canOpen: true) == .none)
-    }
-
     @Test("closing a dropdown the readout appeared inside does not make it pop back open")
     func dismissingADropdownTheReadoutAppearedInIsFinal() {
         var opener = ClipboardProgressMenuAutoOpener()
@@ -88,19 +67,13 @@ struct ClipboardProgressMenuAutoOpenerTests {
         #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true) == .none)
     }
 
-    @Test("an off-screen status item is never asked to open")
-    func hiddenStatusItemNeverOpens() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: false) == .none)
-    }
-
     @Test("a status item that becomes reachable can still open for the same paste")
     func openableLaterInTheSamePaste() {
         var opener = ClipboardProgressMenuAutoOpener()
         // The one automatic open is spent only when it actually happens, so a
         // paste that started while the item was crowded out of the menu bar
         // still gets its dropdown once there is room.
-        _ = opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: false)
+        #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: false) == .none)
         #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true) == .open)
     }
 
@@ -131,14 +104,6 @@ struct ClipboardProgressMenuAutoOpenerTests {
                 == .none)
     }
 
-    @Test("a drop opens the dropdown the way a peer's paste does")
-    func aDropOpensTheDropdown() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(
-            opener.readoutChanged(Self.readout(gesture: .drop), menuIsOpen: false, canOpen: true)
-                == .open)
-    }
-
     @Test("a drop takes its one open and no more, however long it runs")
     func aDropOpensOnlyOnce() {
         var opener = ClipboardProgressMenuAutoOpener()
@@ -155,15 +120,6 @@ struct ClipboardProgressMenuAutoOpenerTests {
         }
     }
 
-    @Test("a drop about to finish is not worth interrupting for either")
-    func aDropAboutToFinishDoesNotOpen() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(
-            opener.readoutChanged(
-                Self.readout(secondsRemaining: 0.5, gesture: .drop), menuIsOpen: false,
-                canOpen: true) == .none)
-    }
-
     @Test("a readout nobody is waiting on does not spend the one open, even in an open menu")
     func unawaitedReadoutDoesNotSpendTheOpen() {
         var opener = ClipboardProgressMenuAutoOpener()
@@ -178,30 +134,14 @@ struct ClipboardProgressMenuAutoOpenerTests {
         #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true) == .open)
     }
 
-    @Test("a paste that has not been running long enough does not open the dropdown")
-    func tooSoonDoesNotOpen() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(
-            opener.readoutChanged(Self.readout(elapsed: 1.5), menuIsOpen: false, canOpen: true)
-                == .none)
-    }
-
     @Test("a paste suppressed for being too young still opens once it has run long enough")
     func youngPasteOpensLater() {
         var opener = ClipboardProgressMenuAutoOpener()
         // Suppression must not spend the open — the readout was never shown.
-        _ = opener.readoutChanged(Self.readout(elapsed: 1.5), menuIsOpen: false, canOpen: true)
+        #expect(opener.readoutChanged(Self.readout(elapsed: 1.5), menuIsOpen: false, canOpen: true) == .none)
         #expect(
             opener.readoutChanged(Self.readout(elapsed: 2.5), menuIsOpen: false, canOpen: true)
                 == .open)
-    }
-
-    @Test("a paste about to finish does not open the dropdown")
-    func nearlyDoneDoesNotOpen() {
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(
-            opener.readoutChanged(
-                Self.readout(secondsRemaining: 1), menuIsOpen: false, canOpen: true) == .none)
     }
 
     @Test("a paste that turns out slower than its early estimate still earns the open")

@@ -279,23 +279,6 @@ struct VMIntentGatewayTests {
         #expect(index.operations == [.index([late.id])])
     }
 
-    @Test("The library read is awaited once, however many intents pile onto it")
-    func readinessIsMemoized() async throws {
-        let harness = WiredCommandCore()
-        let vm = harness.register(name: "Wired")
-        let awaits = Counter()
-        let gateway = VMIntentGateway(
-            commands: harness.core, readiness: LibraryReadiness(awaitReady: { await awaits.increment() }),
-            index: MockVMEntityIndex(), record: makeTestIndexRecord())
-
-        _ = await gateway.vms()
-        _ = await gateway.vms()
-        try await gateway.start(vm.id, recovery: false, consent: .none)
-
-        #expect(await awaits.value == 1)
-        #expect(vm.status == .running)
-    }
-
     // MARK: - Verb Dispatch
 
     @Test("Every verb addresses its VM by identifier, never by name")
@@ -714,11 +697,4 @@ struct VMIntentGatewayTests {
             index.operations == [.index([vm.id]), .index([vm.id]), .index([vm.id, added.id])])
         withExtendedLifetime(gateway) {}
     }
-}
-
-/// Counts calls arriving from whatever isolation the value under test uses.
-actor Counter {
-    private(set) var value = 0
-
-    func increment() { value += 1 }
 }

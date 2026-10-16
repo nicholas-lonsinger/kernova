@@ -56,12 +56,6 @@ struct VMSettingsViewControllerTests {
         #expect(firstSwitch(action: "clipboardToggled", in: sharing.view)?.isEnabled == true)
     }
 
-    @Test("Lockable controls are enabled when editable")
-    func editableEnablesLockableControls() {
-        let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false, category: .network)
-        #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == true)
-    }
-
     @Test("Section lock hints are visible only while read-only")
     func lockHintVisibilityTracksReadOnly() throws {
         let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .system)

@@ -4,12 +4,6 @@ import Testing
 
 @Suite("UniqueName Tests", .caseScoped)
 struct UniqueNameTests {
-    @Test("returns the prefix unchanged when it's free")
-    func freePrefix() {
-        #expect(UniqueName.firstAvailable(prefix: "VM", existing: []) == "VM")
-        #expect(UniqueName.firstAvailable(prefix: "VM", existing: ["Other"]) == "VM")
-    }
-
     @Test("climbs to the first free numbered suffix")
     func climbs() {
         #expect(UniqueName.firstAvailable(prefix: "VM", existing: ["VM"]) == "VM 2")

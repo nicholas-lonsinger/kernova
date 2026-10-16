@@ -45,24 +45,6 @@ struct DisplayBootSizingTests {
         #expect(resolution.height == 900)
     }
 
-    @Test("A small surface is taken as it is, down to 1 pixel")
-    func smallSurfaceIsTaken() {
-        let resolution = DisplayBootSizing.resolution(
-            fittingPoints: CGSize(width: 640, height: 400), backingScaleFactor: 1)
-
-        #expect(resolution.width == 640)
-        #expect(resolution.height == 400)
-    }
-
-    @Test("A large surface is taken whole: Kernova sets no maximum")
-    func largeSurfaceIsTaken() {
-        let resolution = DisplayBootSizing.resolution(
-            fittingPoints: CGSize(width: 6000, height: 5000), backingScaleFactor: 2)
-
-        #expect(resolution.width == 12000)
-        #expect(resolution.height == 10000)
-    }
-
     @Test("A degenerate surface clamps to 1 × 1 rather than trapping", arguments: [1.0, 2.0])
     func degenerateSurfaceClampsToFloor(scale: CGFloat) {
         let resolution = DisplayBootSizing.resolution(

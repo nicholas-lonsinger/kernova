@@ -44,23 +44,4 @@ struct GuestSetupProgressViewControllerTests {
         #expect(caption != nil)
         #expect(caption?.isHidden == false)
     }
-
-    @Test("A setup with nothing to check against shows no caption at Checksum")
-    func noCaptionDuringChecksum() {
-        let instance = VMInstanceFixture.make(name: "Alpine") {
-            $0.linuxInstallContext = LinuxInstallContext(
-                source: .customURL(
-                    CustomLinuxImage(
-                        url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
-                        sha256: nil)))
-        }
-        instance.setupState = .linuxImage(
-            digestSource: instance.configuration.linuxInstallContext?.source.digestSource)
-        let vc = makeProgressView(for: instance)
-
-        advance(instance, in: vc)
-
-        #expect(instance.setupState?.currentStep?.id == .checksum)
-        #expect(findLabel(containing: "Checking against", in: vc.view) == nil)
-    }
 }

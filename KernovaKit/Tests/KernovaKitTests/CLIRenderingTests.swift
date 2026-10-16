@@ -728,17 +728,6 @@ struct CLIRenderingTests {
         #expect(decoded == info())
     }
 
-    @Test("A guest address survives the JSON round trip in every case")
-    func jsonCarriesEveryAddressCase() throws {
-        for address: GuestIPAddress in [
-            .observed("10.0.0.2"), .notObserved, .externallyAssigned, .unavailable,
-        ] {
-            let rendered = try JSONRenderer.render(address)
-            #expect(
-                try JSONDecoder().decode(GuestIPAddress.self, from: Data(rendered.utf8)) == address)
-        }
-    }
-
     @Test("A guest address's JSON names its state, and only an observed one carries an address")
     func addressJSONNamesItsState() throws {
         let expected: [(GuestIPAddress, [String: String])] = [
@@ -751,6 +740,7 @@ struct CLIRenderingTests {
             let rendered = try JSONRenderer.render(address)
             let object = try JSONSerialization.jsonObject(with: Data(rendered.utf8))
             #expect(object as? [String: String] == fields)
+            #expect(try JSONDecoder().decode(GuestIPAddress.self, from: Data(rendered.utf8)) == address)
         }
     }
 

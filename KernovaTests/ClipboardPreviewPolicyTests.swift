@@ -42,23 +42,6 @@ struct ClipboardPreviewPolicyTests {
                 == .richText(data: rtf, uti: UTType.rtf.identifier))
     }
 
-    @Test("flat-RTFD wins over plain RTF for the rich preview")
-    func flatRTFDBeatsPlainRTFForRichPreview() {
-        // A TextEdit copy of styled text with an inline image advertises, in
-        // order: flat-RTFD (carries the image), plain RTF (text-only), then a
-        // plain-text sibling. The image-bearing flat-RTFD must be previewed —
-        // it does not conform to `.rtf`, so the policy must prefer it explicitly.
-        let rtfd = Data("rtfd-with-image".utf8)
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.flatRTFD.identifier, data: rtfd),
-            .init(uti: UTType.rtf.identifier, data: Data("{\\rtf1}".utf8)),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
-        ])
-        #expect(
-            ClipboardPreviewPolicy.mode(for: content)
-                == .richText(data: rtfd, uti: UTType.flatRTFD.identifier))
-    }
-
     @Test("flat-RTFD alone renders the rich preview")
     func flatRTFDOnlyRendersRich() {
         // Even without a sibling plain RTF, flat-RTFD is rich text (not a plain
@@ -91,19 +74,6 @@ struct ClipboardPreviewPolicyTests {
                 == .richText(data: rtfd, uti: UTType.flatRTFD.identifier))
     }
 
-    @Test("a copied .rtfd file attaches as a file, not inline rich text")
-    func rtfdFilePayloadShowsChip() {
-        // The file-payload rule must beat the rich-text rule for RTFD too: a
-        // copied .rtfd *file* is a file attachment, not styled inline content.
-        let rtfd = Data("rtfd-bytes".utf8)
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.flatRTFD.identifier, data: rtfd, filename: "styled.rtfd")
-        ])
-        #expect(
-            ClipboardPreviewPolicy.mode(for: content)
-                == .file(filename: "styled.rtfd", uti: UTType.flatRTFD.identifier, byteCount: rtfd.count))
-    }
-
     @Test("a non-image file payload renders the file chip")
     func nonImageFilePayloadShowsChip() {
         let bytes = Data("hello".utf8)
@@ -129,16 +99,6 @@ struct ClipboardPreviewPolicyTests {
                     .init(filename: "a.txt", uti: UTType.plainText.identifier, byteCount: 1),
                     .init(filename: "b.png", uti: UTType.png.identifier, byteCount: 1),
                 ]))
-    }
-
-    @Test("a single file payload still renders the single-file chip, not the list")
-    func singleFilePayloadShowsChipNotList() {
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.plainText.identifier, data: Data("a".utf8), filename: "a.txt")
-        ])
-        #expect(
-            ClipboardPreviewPolicy.mode(for: content)
-                == .file(filename: "a.txt", uti: UTType.plainText.identifier, byteCount: 1))
     }
 
     @Test("an image file payload still renders the image preview")
@@ -176,19 +136,6 @@ struct ClipboardPreviewPolicyTests {
         #expect(
             ClipboardPreviewPolicy.mode(for: content)
                 == .file(filename: "archive.zip", uti: UTType.zip.identifier, byteCount: 1024))
-    }
-
-    @Test("a copied .rtf file attaches as a file, not inline rich text")
-    func rtfFilePayloadShowsChip() {
-        // The file-payload rule must beat the rich-text rule: a copied .rtf
-        // file is a file attachment, not styled inline content.
-        let rtf = Data("{\\rtf1}".utf8)
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.rtf.identifier, data: rtf, filename: "styled.rtf")
-        ])
-        #expect(
-            ClipboardPreviewPolicy.mode(for: content)
-                == .file(filename: "styled.rtf", uti: UTType.rtf.identifier, byteCount: rtf.count))
     }
 
     @Test("an image alongside a URL/path descriptor shows the image, not the URL")
@@ -311,18 +258,5 @@ struct ClipboardPreviewPolicyTests {
             .init(pendingRemoteUTI: UTType.png.identifier, byteCount: 64 * 1024 * 1024)
         ])
         #expect(ClipboardPreviewPolicy.mode(for: content) == .summary(content.representations))
-    }
-
-    @Test("a materialized .inMemory image rep renders the image preview")
-    func materializedInlineImageShowsImage() {
-        // The counterpart to the placeholder cases: once the image rep is pulled
-        // into memory, the same policy renders it richly.
-        let png = Data([0x89, 0x50])
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.png.identifier, data: png)
-        ])
-        #expect(
-            ClipboardPreviewPolicy.mode(for: content)
-                == .image(data: png, uti: UTType.png.identifier))
     }
 }

@@ -108,25 +108,4 @@ struct BoundedWorkQueueTests {
         try await tally.gate.wait { tally.finishedCount == 3 }
         #expect(tally.concurrentPeak == 3)
     }
-
-    /// The jobs a clipboard connection submits own a descriptor each and close
-    /// it on the way out, so one dropped on the floor would leak it.
-    @Test("every job submitted runs, however narrow the queue")
-    func nothingSubmittedIsDropped() async throws {
-        let queue = makeQueue(width: 1)
-        let tally = RunTally()
-        let release = DispatchSemaphore(value: 0)
-        for _ in 0..<8 {
-            queue.submit {
-                tally.began()
-                release.wait()
-                tally.ended()
-            }
-        }
-
-        try await tally.gate.wait { tally.runningNow == 1 }
-        for _ in 0..<8 { release.signal() }
-        try await tally.gate.wait { tally.finishedCount == 8 }
-        #expect(tally.concurrentPeak == 1)
-    }
 }

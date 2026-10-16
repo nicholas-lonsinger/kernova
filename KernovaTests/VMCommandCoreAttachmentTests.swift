@@ -1508,8 +1508,13 @@ struct VMCommandCoreAttachmentTests {
         let path = externalPath("missing.img")
         let disk = StorageDisk(path: path, label: "Scratch", isInternal: false)
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed.")) {
+        let instance = makeInstance(
+            in: harness, phase: .failed(message: "Boot failed."), guestOS: .macOS
+        ) {
             $0.storageDisks = [disk, keeper]
+            $0.pendingGuestAccount = GuestAccountIntent(
+                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+                enablesRemoteLogin: false)
         }
 
         // A VM at rest with no saved state can be edited, so neither capability
@@ -1529,34 +1534,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.fileSystem.trashedURLs.isEmpty)
         // The removal is the whole verb: the VM is where the failed start left
         // it, and the start the door runs next is an ordinary one.
-        #expect(harness.virtualization.startCallCount == 0)
-    }
-
-    @Test("The start-failed removal starts nothing, whatever the start would have asked for")
-    func removeStartFailedAttachmentStartsNothing() async throws {
-        let harness = makeHarness()
-        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(
-            in: harness, phase: .failed(message: "Boot failed."), guestOS: .macOS
-        ) {
-            $0.storageDisks = [disk, keeper]
-            $0.pendingGuestAccount = GuestAccountIntent(
-                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-                enablesRemoteLogin: false)
-        }
-
-        // No refusal, though a start of this VM would raise one: the removal
-        // asks for nothing a start asks for, so the account is the following
-        // start's question and is asked once.
-        try await harness.core.removeStartFailedAttachment(
-            .id(instance.id),
-            attachment: StartFailedAttachment(
-                verb: .start, kind: .storageDisk, reason: .attachRefused, id: disk.id,
-                label: "Scratch",
-                message: "could not open"))
-
-        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.virtualization.startCallCount == 0)
         // Untouched, so the start that follows raises the question itself.
         #expect(instance.configuration.pendingGuestAccount != nil)
@@ -1581,26 +1558,6 @@ struct VMCommandCoreAttachmentTests {
         // the list it would have edited is untouched.
         #expect(instance.configuration.removableMedia?.map(\.id) == [keeper.id])
         #expect(instance.status == .error)
-    }
-
-    @Test("A start-failed removal that finds its entry gone keeps the saved state")
-    func removeStartFailedAttachmentAlreadyGoneKeepsTheSavedState() async throws {
-        let harness = makeHarness()
-        let keeper = RemovableMediaItem(path: externalPath("keep.iso"), readOnly: true)
-        let instance = makeInstance(in: harness, phase: .suspended) { $0.removableMedia = [keeper] }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        try await harness.core.removeStartFailedAttachment(
-            .id(instance.id),
-            attachment: StartFailedAttachment(
-                verb: .resume, kind: .removableMedia, reason: .attachRefused, id: UUID(),
-                label: "Installer",
-                message: "could not open"))
-
-        // A confirmation can land long after the fact, and the slot on disk may
-        // be a newer one this recovery knows nothing about.
-        #expect(instance.hasSaveFile)
-        #expect(instance.isSuspended)
     }
 
     @Test("A resume-failed removal discards the saved state before it edits the device set")
@@ -1731,25 +1688,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase == .stopped)
         #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
         #expect(harness.virtualization.startCallCount == 0)
-    }
-
-    @Test("A start-failed removal of the last shared folder stores no list")
-    func removeStartFailedLastSharedFolder() async throws {
-        let harness = makeHarness()
-        let missing = SharedDirectory(path: externalPath("Gone"))
-        let instance = makeInstance(in: harness, phase: .suspended) {
-            $0.sharedDirectories = [missing]
-        }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        try await harness.core.removeStartFailedAttachment(
-            .id(instance.id),
-            attachment: StartFailedAttachment(
-                verb: .resume, kind: .sharedDirectory, reason: .notFound, id: missing.id,
-                label: missing.displayName, message: "not found"))
-
-        #expect(instance.configuration.sharedDirectories == nil)
-        #expect(!instance.hasSaveFile)
     }
 
     @Test("A start-failed removal naming a shared folder that is already gone keeps the saved state")

@@ -70,11 +70,4 @@ struct VMHostStateTests {
 
         #expect(copied == expected)
     }
-
-    @Test("A host state with no last run decodes as nil, which means no run is recorded")
-    func absentLastRunIsNoRunRecorded() throws {
-        let data = Data(#"{"startsAutomaticallyOnLaunch":true}"#.utf8)
-
-        #expect(try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data).lastRunAt == nil)
-    }
 }

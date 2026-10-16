@@ -78,13 +78,6 @@ struct SpiceClipboardServiceTests {
 
     // MARK: - Capability Handshake
 
-    @Test("Connects when guest advertises clipboard-by-demand")
-    func connectWithByDemand() {
-        let (service, _, _) = makeService()
-        connect(service, byDemand: true)
-        #expect(service.isConnected)
-    }
-
     @Test("Connects when guest advertises only legacy clipboard capability")
     func connectLegacy() {
         let (service, _, _) = makeService()

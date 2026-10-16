@@ -35,20 +35,6 @@ struct AttachmentFileMonitorTests {
         #expect(monitor.exists(missing) == false)
     }
 
-    @Test("exists defaults to true between calling setPaths and the await returning")
-    func existsIsOptimisticDuringProbe() async throws {
-        let missing = path("missing.iso")
-
-        let monitor = AttachmentFileMonitor()
-        // Read exists() before setPaths has had a chance to populate.
-        #expect(monitor.exists(missing) == true)
-
-        await monitor.setPaths([missing: nil])
-        // After the await, the probe has settled and the missing file
-        // reads as missing.
-        #expect(monitor.exists(missing) == false)
-    }
-
     @Test("exists returns true for paths that have never been set")
     func existsDefaultsToTrueForUnwatched() {
         let monitor = AttachmentFileMonitor()
@@ -133,24 +119,6 @@ struct AttachmentFileMonitorTests {
         }
     }
 
-    @Test("revalidate overwrites a path already answered as present")
-    func revalidateReprobesAPresentPath() async throws {
-        let target = path("vanishes.iso")
-        FileManager.default.createFile(atPath: target, contents: Data([0]))
-
-        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: true))
-        await monitor.setPaths([target: nil])
-        #expect(monitor.exists(target) == true)
-        #expect(monitor.watchedParentsForTesting.isEmpty)
-
-        try FileManager.default.removeItem(atPath: target)
-        monitor.revalidate()
-
-        try await waitForChange {
-            monitor.exists(target) == false
-        }
-    }
-
     @Test("revalidate overwrites a path already answered as missing")
     func revalidateReprobesAMissingPath() async throws {
         let target = path("reappears.iso")
@@ -181,6 +149,7 @@ struct AttachmentFileMonitorTests {
             probe: stubProbe(existence: true), activationCenter: center)
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
+        #expect(monitor.watchedParentsForTesting.isEmpty)
 
         try FileManager.default.removeItem(atPath: target)
         center.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)

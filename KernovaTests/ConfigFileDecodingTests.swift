@@ -327,6 +327,7 @@ struct ConfigFileDecodingTests {
                     issue: .unrecognized(found: Self.unrecognized),
                     repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
             ])
+        #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }
 
     // MARK: - The snapshot's captured network
@@ -430,24 +431,6 @@ struct ConfigFileDecodingTests {
         ).trashedOriginalName
         #expect(vmName.utf8.count <= 255)
         #expect(vmName.hasSuffix("\u{E9}\u{2026} \u{2014} config.json"))
-    }
-
-    @Test("The network list's kind takes the New Network sheet's default kind")
-    func aNamedNetworksKindHasADefault() throws {
-        let json = """
-            {"networks": [{"id": "\(UUID().uuidString)", "name": "Lab", "kind": "\(Self.unrecognized)"}]}
-            """
-        let diagnosis = ConfigFileDiagnosis(
-            decoding: [String: [VMNamedNetwork]].self, from: Data(json.utf8), decoder: JSONDecoder(),
-            encoder: JSONEncoder())
-        #expect(
-            diagnosis.problems == [
-                ConfigProblem(
-                    path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]),
-                    issue: .unrecognized(found: Self.unrecognized),
-                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
-            ])
-        #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }
 
     // MARK: - Organization fields

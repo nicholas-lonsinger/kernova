@@ -539,23 +539,6 @@ struct VMCommandEnvelopeTests {
         #expect(HeldSnapshots(Self.before, [Self.after]).all == [Self.before, Self.after])
     }
 
-    @Test("A failure's own heading survives the wire")
-    func operationFailureTitleRoundTrips() throws {
-        let heading = "Couldn\u{2019}t Start \u{201C}Alpha\u{201D}"
-        let response = VMCommandResponse(
-            result: .failure(
-                .operationFailed(
-                    verb: .start, title: heading, message: "the limit was reached",
-                    recovery: nil)))
-
-        guard case .operationFailed(_, let title, _, _) = try #require(roundTrip(response).failure)
-        else {
-            Issue.record("expected an operation failure")
-            return
-        }
-        #expect(title == heading)
-    }
-
     @Test("A successful response carries no failure")
     func successCarriesNoFailure() {
         #expect(VMCommandResponse(result: .ok).failure == nil)

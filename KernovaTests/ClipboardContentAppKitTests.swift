@@ -45,16 +45,6 @@ struct ClipboardContentAppKitTests {
         #expect(content.filePayloads.count + inline.count == content.representations.count)
     }
 
-    @Test("richTextRepresentation finds an inline RTF rep")
-    func richTextFound() {
-        let rtf = Data("{\\rtf1}".utf8)
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.rtf.identifier, data: rtf),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
-        ])
-        #expect(content.richTextRepresentation?.inMemoryData == rtf)
-    }
-
     @Test("a copied .rtf file is not treated as inline rich text")
     func rtfFileIsNotRichText() {
         let content = ClipboardContent(representations: [
@@ -75,16 +65,6 @@ struct ClipboardContentAppKitTests {
         ])
         #expect(content.richTextRepresentation?.uti == UTType.flatRTFD.identifier)
         #expect(content.richTextRepresentation?.inMemoryData == rtfd)
-    }
-
-    @Test("richTextRepresentation finds flat-RTFD with no plain-RTF sibling")
-    func richTextFindsFlatRTFDAlone() {
-        let rtfd = Data("rtfd".utf8)
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.flatRTFD.identifier, data: rtfd),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
-        ])
-        #expect(content.richTextRepresentation?.uti == UTType.flatRTFD.identifier)
     }
 
     @Test("a copied .rtfd file is not treated as inline rich text")

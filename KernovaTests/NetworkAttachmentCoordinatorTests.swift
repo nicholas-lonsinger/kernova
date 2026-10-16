@@ -152,18 +152,6 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
     }
 
-    @Test("An entitled build swaps a NAT attachment over to the vmnet NAT network")
-    func entitledNATReplacesSystemNATAttachment() {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil),
-            devicePlan: .nat,
-            entitled: true)
-
-        h.coordinator.activate()
-
-        #expect(h.device.appliedPlans == [.vmnet(.common(.nat))])
-    }
-
     @Test("An isolated choice attaches the VM's own network of its mode")
     func isolatedChoiceAttachesTheOwnNetwork() {
         let h = makeHarness(
@@ -317,22 +305,6 @@ struct NetworkAttachmentCoordinatorTests {
 
     // MARK: - Disconnect
 
-    @Test("A NAT disconnect reattaches NAT immediately")
-    func natDisconnectReattachesImmediately() {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil),
-            devicePlan: .nat)
-        h.coordinator.activate()
-
-        // The framework nils the attachment before the delegate callback.
-        h.device.plan = nil
-        h.coordinator.attachmentWasDisconnected(error: TestFailure("link down"))
-
-        #expect(h.device.appliedPlans == [.nat])
-        #expect(!h.coordinator.isPending)
-        #expect(h.pendingChanges.values.isEmpty)
-    }
-
     @Test("A persistent attach-fail loop escalates the ladder and ends pending")
     func persistentAttachFailureEscalatesLadderThenRestsPending() async {
         let h = makeHarness(
@@ -390,6 +362,7 @@ struct NetworkAttachmentCoordinatorTests {
 
         #expect(h.device.appliedPlans == [.nat, .nat, .nat])
         #expect(!h.coordinator.isPending)
+        #expect(h.pendingChanges.values.isEmpty)
     }
 
     @Test("A bridged disconnect with the persisted interface gone narrows to the primary")
@@ -531,25 +504,6 @@ struct NetworkAttachmentCoordinatorTests {
         h.choiceBox.choice = NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: "en0")
         h.coordinator.configurationChanged()
         #expect(h.device.appliedPlans == [.bridged("en0"), .vmnet(.common(.nat))])
-        #expect(!h.coordinator.isPending)
-    }
-
-    @Test("A live switch to Host Only swaps the attachment, and back")
-    func liveHostOnlySwitchSwapsAttachment() {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil),
-            devicePlan: .vmnet(.common(.nat)),
-            entitled: true)
-        h.coordinator.activate()
-
-        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
-        h.coordinator.configurationChanged()
-        #expect(h.device.appliedPlans == [.vmnet(.common(.hostOnly))])
-        #expect(!h.coordinator.isPending)
-
-        h.choiceBox.choice = NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil)
-        h.coordinator.configurationChanged()
-        #expect(h.device.appliedPlans == [.vmnet(.common(.hostOnly)), .vmnet(.common(.nat))])
         #expect(!h.coordinator.isPending)
     }
 

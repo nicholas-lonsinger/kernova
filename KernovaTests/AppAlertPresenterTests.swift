@@ -107,25 +107,6 @@ struct AppAlertPresenterTests {
 
     // MARK: - Mode (last gesture wins, both directions)
 
-    @Test("⌘⌫ then ⌥⌘⌫ on one VM yields a single sheet upgraded to Immediate")
-    func dedupSameVMUpgradesMode() async {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        let vmA = makeInstance(name: "A", in: viewModel)
-
-        // ⌘⌫ (Trash) starts the in-flight delete; ⌥⌘⌫ (Immediate) fires before
-        // the first resolves and folds in — one sheet, latest gesture wins.
-        presenter.presentDeleteSheet(for: vmA, permanently: false)
-        let task = presenter.deleteResolutionForTesting(of: vmA.id)
-        presenter.presentDeleteSheet(for: vmA, permanently: true)
-        await task?.value
-
-        #expect(presenter.waitingCountForTesting == 1)
-        // The show reads the disposition then, so this is what the sheet would
-        // carry — the immediate request is not downgraded to Trash.
-        #expect(presenter.deleteDispositionsForTesting == [vmA.id: true])
-    }
-
     @Test("⌥⌘⌫ then ⌘⌫ on one VM downgrades to Trash (last gesture wins both ways)")
     func dedupSameVMDowngradesMode() async {
         let h = makeHarness()
@@ -231,24 +212,6 @@ struct AppAlertPresenterTests {
         #expect(presenter.waitingCountForTesting == 0)
         #expect(presenter.deleteDispositionsForTesting.isEmpty)
         #expect(presenter.deleteResolutionForTesting(of: vmA.id) == nil)
-    }
-
-    @Test("A new delete is accepted after the window under the sheet closes")
-    func dedupResetsAfterTheWindowCloses() async {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        h.showLibrary()
-        let vmA = makeInstance(name: "A", in: viewModel)
-        presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
-        h.closeLibrary()
-
-        presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
-
-        // No window to show it on, so it waits.
-        #expect(presenter.waitingCountForTesting == 1)
-        #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
     }
 
     // MARK: - Real off-main resolve path (#366)
@@ -1123,38 +1086,25 @@ struct AppAlertPresenterTests {
         #expect(h.isShowingAlert)
     }
 
-    @Test("Tearing the window down answers the start suspended on the prompt")
+    @Test(
+        "Tearing the window down answers the start suspended on the prompt, takes the sheet with it, and frees the slot"
+    )
     func stoppingAnswersTheWaitingStart() {
         let h = makeHarness()
         let presenter = h.presenter
         h.showLibrary()
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+        #expect(h.isShowingAlert)
 
         h.closeLibrary()
 
         // A suspended `withCheckedContinuation` nothing resumes strands that
         // start for the rest of the session; the user answered nothing.
         #expect(answers.answered == [.unasked])
-    }
-
-    @Test("Tearing the window down takes the sheet with it, and frees the slot")
-    func stoppingDismissesTheShownAlert() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        h.showLibrary()
-        presenter.presentGuestAccountPassword(accountRequest(answers: AccountAnswers()))
-        #expect(h.isShowingAlert)
-
-        h.closeLibrary()
-
-        // Left up, the sheet stays on a window that is going away with buttons
-        // that answer nothing, and the flag under it wedges the queue for the
-        // next window this presenter serves.
         #expect(!h.isShowingAlert)
         #expect(!h.dismissShownAlert(.alertFirstButtonReturn))
 
-        // The freed slot really is free: the next window's first request shows.
         h.showLibrary()
         presenter.presentError("Something else", title: "Couldn't Start", about: .library)
         #expect(h.isShowingAlert)
@@ -1204,42 +1154,16 @@ struct AppAlertPresenterTests {
         h.showLibrary()
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+        #expect(h.isShowingAlert)
         #expect(h.dismissShownAlert(.alertSecondButtonReturn))
+        #expect(answers.answered == [.answered(.skip)])
+        #expect(!h.isShowingAlert)
 
         h.closeLibrary()
 
         // Resuming a checked continuation twice traps, so this is the other
         // half of "exactly once".
         #expect(answers.answered == [.answered(.skip)])
-    }
-
-    @Test("Skip Setup answers the waiting start and frees the slot")
-    func skipSetupAnswersAndFreesTheSlot() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        h.showLibrary()
-        let answers = AccountAnswers()
-        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
-        #expect(h.isShowingAlert)
-
-        #expect(h.dismissShownAlert(.alertSecondButtonReturn))
-
-        #expect(answers.answered == [.answered(.skip)])
-        #expect(!h.isShowingAlert)
-    }
-
-    @Test("Cancel answers with no start")
-    func cancelAnswersWithNoStart() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        h.showLibrary()
-        let answers = AccountAnswers()
-        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
-
-        #expect(h.dismissShownAlert(.alertThirdButtonReturn))
-
-        #expect(answers.answered == [.answered(.cancelled)])
-        #expect(!h.isShowingAlert)
     }
 
     @Test("A refused password puts the sheet back up instead of answering the start")

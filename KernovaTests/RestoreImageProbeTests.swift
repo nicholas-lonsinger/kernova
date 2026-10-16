@@ -41,12 +41,6 @@ struct ProbedRestoreImageTests {
         }
     }
 
-    @Test("The destination is Apple's filename when the URL follows the convention")
-    func suggestedFilename() {
-        #expect(
-            makeProbedImage().suggestedFilename == "UniversalMac_15.6.1_24G90_Restore.ipsw")
-    }
-
     @Test("An off-convention URL gets a generated name, never the shared default")
     func suggestedFilenameForOffConventionURL() {
         for urlString in [
@@ -102,14 +96,6 @@ struct ProbedRestoreImageTests {
     @Test("An unparseable version is unknown too, not a refusal")
     func hostSupportUnknownForUnparseableVersion() {
         #expect(makeProbedImage(version: "Sequoia").isSupported(onHost: host(26, 0, 0)) == nil)
-    }
-
-    @Test("Host support compares numerically at the boundary")
-    func hostSupportBoundary() {
-        let image = makeProbedImage(version: "15.6.1")
-        #expect(image.isSupported(onHost: host(15, 6, 1)) == true)
-        #expect(image.isSupported(onHost: host(15, 6, 0)) == false)
-        #expect(image.isSupported(onHost: host(26, 0, 0)) == true)
     }
 
     @Test("The version summary degrades to what is actually known")

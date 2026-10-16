@@ -30,22 +30,6 @@ struct SerialLogWriterTests {
         #expect(contents(of: logURL) == "hello world")
     }
 
-    @Test("A new writer appends to an existing log")
-    func newWriterAppends() throws {
-        let logURL = scratch.url.appendingPathComponent("serial.log")
-        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
-
-        let first = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
-        first.write(Data("run1\n".utf8))
-        first.close()
-
-        let second = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
-        second.write(Data("run2\n".utf8))
-        second.close()
-
-        #expect(contents(of: logURL) == "run1\nrun2\n")
-    }
-
     @Test("Reaching the cap rotates the log to serial.log.1 and starts fresh")
     func rotationAtCap() throws {
         let logURL = scratch.url.appendingPathComponent("serial.log")

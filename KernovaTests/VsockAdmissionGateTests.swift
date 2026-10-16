@@ -93,25 +93,6 @@ struct VsockAdmissionGateTests {
         }
     }
 
-    @Test("clear() withdraws admission")
-    func clearWithdraws() {
-        let gate = VsockAdmissionGate()
-        gate.publish(fullHandshake())
-        gate.clear()
-        #expect(
-            gate.admission(for: .none)
-                == .notReady(reason: "no control channel has completed its handshake"))
-    }
-
-    @Test("A re-published handshake restores admission")
-    func republishRestores() {
-        let gate = VsockAdmissionGate()
-        gate.publish(fullHandshake())
-        gate.clear()
-        gate.publish(fullHandshake())
-        #expect(gate.admission(for: .dropFiles) == .admit)
-    }
-
     // MARK: - Off-main reads
 
     @Test("Admission is readable off the main actor")

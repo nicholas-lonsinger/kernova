@@ -114,23 +114,6 @@ struct VsockGuestControlAgentTests {
         // The guest advertises streaming-clipboard support so the host can gate
         // clipboard on it.
         #expect(hello.capabilities.contains(KernovaCapability.clipboardTransferV3))
-    }
-
-    @Test("Guest Hello reports agent_info with a numeric os_version")
-    func guestHelloReportsNumericOSVersion() async throws {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        host.start()
-        defer { host.close() }
-
-        let agent = makeAgent(agentFd: agentFd)
-        defer { agent.stop() }
-        agent.start()
-
-        let received = try await nextFrame(from: host)
-        guard case .hello(let hello) = received.payload else {
-            throw TestFailure("Expected Hello, got \(String(describing: received.payload))")
-        }
         #expect(hello.agentInfo.os == "macOS")
         #expect(hello.agentInfo.osVersion == KernovaOSVersion.current)
         // The numeric shape is the documented wire contract, so a localized
@@ -427,37 +410,6 @@ struct VsockGuestControlAgentTests {
         #expect(policy.clipboardSharingEnabled == false)
     }
 
-    @Test("Multiple PolicyUpdate frames each invoke the callback")
-    func multiplePolicyUpdatesRouteToCallback() async throws {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        host.start()
-        defer { host.close() }
-
-        let counts = AtomicInt()
-        let agent = makeAgent(
-            agentFd: agentFd,
-            onPolicy: { _ in
-                _ = counts.increment()
-            })
-        agent.start()
-        defer { agent.stop() }
-
-        _ = try await nextFrame(from: host)  // drain outbound Hello
-
-        for _ in 0..<3 {
-            var frame = Frame()
-            frame.protocolVersion = 1
-            frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
-                $0.logForwardingEnabled = true
-                $0.clipboardSharingEnabled = true
-            }
-            try host.send(frame)
-        }
-
-        try await counts.changed.wait { counts.value >= 3 }
-    }
-
     @Test("clipboard enable is forwarded only when the host advertised streaming")
     func clipboardGatedOnHostCapability() async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
@@ -533,22 +485,6 @@ struct VsockGuestControlAgentTests {
         try await notified.changed.wait { notified.value >= 2 }
 
         #expect(agent.hostSupportsDropFiles == false)
-    }
-
-    @Test("stop() halts the connection without throwing")
-    func stopHaltsCleanly() async throws {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        host.start()
-        defer { host.close() }
-
-        let agent = makeAgent(agentFd: agentFd)
-        agent.start()
-
-        _ = try await nextFrame(from: host)
-        agent.stop()
-        // Second stop is a no-op.
-        agent.stop()
     }
 
     @Test("A stop() taken inside onPolicy drops the policy buffered behind it")

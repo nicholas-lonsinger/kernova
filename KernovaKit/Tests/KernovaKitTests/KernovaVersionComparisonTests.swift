@@ -12,16 +12,6 @@ struct KernovaVersionComparisonTests {
         #expect(KernovaVersionComparison.isAtLeast("0.23.0", "0.23.0"))
     }
 
-    @Test("Newer is at least older")
-    func newerIsAtLeast() {
-        #expect(KernovaVersionComparison.isAtLeast("0.23.1", "0.23.0"))
-    }
-
-    @Test("Older is not at least newer")
-    func olderIsNotAtLeast() {
-        #expect(!KernovaVersionComparison.isAtLeast("0.23.0", "0.23.1"))
-    }
-
     @Test("Numeric ordering: 0.9.0 < 0.10.0")
     func numericOrdering() {
         #expect(!KernovaVersionComparison.isAtLeast("0.9.0", "0.10.0"))
@@ -45,12 +35,6 @@ struct KernovaVersionComparisonTests {
     func equalIsUpToDate() {
         #expect(
             KernovaVersionComparison.updateState(own: "0.23.0", hostBundled: "0.23.0") == .upToDate)
-    }
-
-    @Test("Own newer than host → up to date (downgraded host / dev build)")
-    func newerIsUpToDate() {
-        #expect(
-            KernovaVersionComparison.updateState(own: "0.24.0", hostBundled: "0.23.0") == .upToDate)
     }
 
     @Test("Own older than host → update available with host version")

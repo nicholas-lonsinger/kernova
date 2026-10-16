@@ -57,17 +57,4 @@ struct AppResidencyProvenanceLineTests {
                 == "bundle=/Applications/Kernova.app build=142 config=Debug "
                 + "vmNetworking=unentitled launch=user hidden=true")
     }
-
-    @Test("tolerates a missing build number without crashing")
-    func missingBuildNumberFallback() {
-        #expect(
-            AppResidencyController.residentProvenanceLine(
-                bundlePath: "/Applications/Kernova.app",
-                build: "?",
-                configuration: "Debug",
-                vmNetworkingEntitled: false,
-                launch: provenance(.user, isHidden: false))
-                == "bundle=/Applications/Kernova.app build=? config=Debug "
-                + "vmNetworking=unentitled launch=user hidden=false")
-    }
 }

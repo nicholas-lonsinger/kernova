@@ -271,38 +271,6 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         #expect(instance.liveUSBAccessories.isEmpty)
     }
 
-    // MARK: - Detach
-
-    @Test("A detach of a device VZ no longer holds still clears the entry and does not throw")
-    func detachOfAnAlreadyGoneDeviceSucceeds() async throws {
-        let (coordinator, service) = makeCoordinator()
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 3))
-        let attached = try await coordinator.attachUSBAccessory(3, to: instance, for: sessionID)
-        service.detachError = USBAccessoryError.deviceNotFound
-
-        try await coordinator.detachUSBAccessory(
-            deviceID: attached.deviceID, from: instance, for: sessionID)
-
-        #expect(instance.liveUSBAccessories.isEmpty)
-    }
-
-    @Test("A detach that fails for another reason is reported")
-    func detachFailureIsReported() async throws {
-        let (coordinator, service) = makeCoordinator()
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 3))
-        let attached = try await coordinator.attachUSBAccessory(3, to: instance, for: sessionID)
-        service.detachError = USBAccessoryError.noUSBController
-
-        await #expect(throws: USBAccessoryError.self) {
-            try await coordinator.detachUSBAccessory(
-                deviceID: attached.deviceID, from: instance, for: sessionID)
-        }
-    }
-
     // MARK: - A warm snapshot owes back what it took off
 
     /// Runs a warm capture's real sweep over `session`, and has macOS

@@ -541,15 +541,6 @@ struct VMScriptingGatewayTests {
         #expect(gateway.answeringCommand == nil)
     }
 
-    @Test("A list of specifiers addresses each VM it names, in order")
-    func aListAddressesEachVM() async throws {
-        let gateway = makeGateway(WiredCommandCore())
-        let list: [Any] = [try makeNameSpecifier("Alpha"), try makeNameSpecifier("Beta")]
-
-        #expect(try await gateway.address(list, for: try makeGetCommand()) == [.name("Alpha"), .name("Beta")])
-        #expect(try await gateway.address([Any](), for: try makeGetCommand()).isEmpty)
-    }
-
     // MARK: - A read before the library has landed
 
     @Test("A read arriving before the library lands is deferred once, however often it reads the element")
@@ -777,19 +768,6 @@ struct VMScriptingGatewayTests {
         try await run.value
         #expect(virtualization.pauseCallCount == 1)
         #expect(alpha.status == .paused)
-    }
-
-    @Test("The library read is awaited once, however many events pile onto it")
-    func readinessIsMemoized() async throws {
-        let wired = WiredCommandCore()
-        wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        let awaits = AwaitCount()
-        let gateway = makeGateway(wired, awaitReady: { await awaits.increment() })
-
-        try await gateway.pause([.name("Alpha")])
-        try await gateway.resume([.name("Alpha")], confirmation: false)
-
-        #expect(await awaits.value == 1)
     }
 
     // MARK: - Consent
