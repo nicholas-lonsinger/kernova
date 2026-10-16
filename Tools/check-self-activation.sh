@@ -17,23 +17,24 @@
 #   - `withApplicationAt:` naming `Bundle.main.bundleURL`, the
 #     `open(_:withApplicationAt:configuration:)` route to the same request;
 #   - `.open(Bundle.main.bundleURL`, opening the bundle as a document;
-#   - outside Kernova/App/AppPresence.swift, `NSApp` or `NSApplication.shared`
-#     reaching `activate`, `activationPolicy`, `setActivationPolicy`,
-#     `isActive`, `hide`, `unhide`, `unhideWithoutActivation`, `isHidden` or
+#   - outside Kernova/App/AppPresence.swift, `NSApp` (optional-chained or not)
+#     or `NSApplication.shared` reaching `activate`, `activationPolicy`,
+#     `setActivationPolicy`, `isActive`, `hide`, `unhide`,
+#     `unhideWithoutActivation`, `unhideAllApplications`, `isHidden` or
 #     `deactivate`, and `NSRunningApplication.current` reaching `activate` or
 #     `hide`.
 # A URL bound to a local first and passed on a later line is not traced, nor is
 # an `NSApplication` bound to a local.
 #
-# Scope is every tracked Swift file under Kernova/, the app target. The CLI and
-# the relaunch helper launch the app from outside it and are not scanned.
+# Scope is every tracked Swift file under Kernova/, the app target, or the
+# files named as arguments, relative to the caller's directory — how
+# Tools/tests/check-self-activation.sh drives it. The CLI and the relaunch
+# helper launch the app from outside it and are not scanned.
 #
 # Line comments are stripped before matching, so prose may name what it
 # forbids.
 
 set -uo pipefail
-
-cd "$(git rev-parse --show-toplevel)" || exit 1
 
 lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
@@ -41,7 +42,14 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 presence_owner='Kernova/App/AppPresence.swift'
 
-findings=$(git ls-files 'Kernova/*.swift' \
+if [ "$#" -gt 0 ]; then
+    list_files() { printf '%s\n' "$@"; }
+else
+    cd "$(git rev-parse --show-toplevel)" || exit 1
+    list_files() { git ls-files 'Kernova/*.swift'; }
+fi
+
+findings=$(list_files "$@" \
     | tr '\n' '\0' \
     | xargs -0 awk -v owner="$presence_owner" '
         {
@@ -53,8 +61,8 @@ findings=$(git ls-files 'Kernova/*.swift' \
                 || code ~ /withApplicationAt:[[:space:]]*Bundle\.main\.bundleURL/ \
                 || code ~ /\.open[[:space:]]*\([[:space:]]*Bundle\.main\.bundleURL/) {
                 printf "%s:%d — %s\n", FILENAME, FNR, line
-            } else if (FILENAME != owner \
-                && (code ~ /(NSApp|NSApplication\.shared)[[:space:]]*\.[[:space:]]*(activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|isHidden|deactivate)([^A-Za-z0-9_]|$)/ \
+            } else if (FILENAME != owner && substr(FILENAME, length(FILENAME) - length(owner)) != "/" owner \
+                && (code ~ /(NSApp[[:space:]]*\??|NSApplication\.shared)[[:space:]]*\.[[:space:]]*(activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate)([^A-Za-z0-9_]|$)/ \
                     || code ~ /NSRunningApplication\.current[[:space:]]*\.[[:space:]]*(activate|hide)([^A-Za-z0-9_]|$)/)) {
                 printf "%s:%d — %s\n", FILENAME, FNR, line
             }
