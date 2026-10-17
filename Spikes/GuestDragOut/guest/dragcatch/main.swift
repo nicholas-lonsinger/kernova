@@ -24,7 +24,8 @@ func log(_ text: String) {
     print(line)
     fflush(stdout)
     logLines.append(line)
-    try? (logLines.joined(separator: "\n") + "\n").write(toFile: "/tmp/dragcatch.log", atomically: true, encoding: .utf8)
+    try? (logLines.joined(separator: "\n") + "\n").write(
+        toFile: "/tmp/dragcatch.log", atomically: true, encoding: .utf8)
 }
 
 func xy(_ p: NSPoint) -> String { "\(Int(p.x.rounded())),\(Int(p.y.rounded()))" }
@@ -51,7 +52,9 @@ final class CatcherView: NSView {
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         updateLogged = false
-        log("CATCHER draggingEntered  pointer \(xy(NSEvent.mouseLocation))  sourceMask=\(sender.draggingSourceOperationMask.rawValue)")
+        log(
+            "CATCHER draggingEntered  pointer \(xy(NSEvent.mouseLocation))  sourceMask=\(sender.draggingSourceOperationMask.rawValue)"
+        )
         return .copy
     }
 
@@ -74,7 +77,8 @@ final class CatcherView: NSView {
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         let pasteboard = sender.draggingPasteboard
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        let urls =
+            pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil)?.count ?? 0
         log("CATCHER performDragOperation  fileURLs=\(urls.map(\.path))  promises=\(promises)")
         for url in urls {
@@ -168,7 +172,9 @@ final class Helper: NSObject, NSApplicationDelegate {
 }
 
 let size = NSScreen.main?.frame.size ?? .zero
-log("dragcatch start  screen \(Int(size.width))x\(Int(size.height))  LEFT \(NSEvent.pressedMouseButtons & 1 != 0 ? "DOWN" : "UP")  at \(xy(NSEvent.mouseLocation))")
+log(
+    "dragcatch start  screen \(Int(size.width))x\(Int(size.height))  LEFT \(NSEvent.pressedMouseButtons & 1 != 0 ? "DOWN" : "UP")  at \(xy(NSEvent.mouseLocation))"
+)
 if CommandLine.arguments.dropFirst().first == "--selftest" { exit(0) }
 
 let app = NSApplication.shared
