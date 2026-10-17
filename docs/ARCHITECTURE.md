@@ -139,8 +139,7 @@ view-backed item.
 Virtualization; the app links it and reaches its `package` declarations, and
 its tests run without the app as host. Its `KernovaVirtualization` target is
 the engine, over the core, and its `KernovaUI` target is the AppKit layer; the
-app links both, and its own target holds only `KernovaApp` and what the bundle
-carries.
+app links both.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
 (`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
 `KernovaUITests` each explain
