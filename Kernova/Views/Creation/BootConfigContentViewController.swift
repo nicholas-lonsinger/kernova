@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import UniformTypeIdentifiers
 
 /// Step 2 of the creation wizard for Linux guests: choose the boot method —

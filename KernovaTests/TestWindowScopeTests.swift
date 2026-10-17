@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers the scope `.scopedWindows` opens around a test case: what closing it
 /// leaves on screen, and the failure a window made outside one records.

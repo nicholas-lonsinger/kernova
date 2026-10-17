@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaLogging
 
 /// One overview card: a header row naming the category and offering the

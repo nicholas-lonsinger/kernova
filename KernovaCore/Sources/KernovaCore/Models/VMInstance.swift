@@ -1,0 +1,1227 @@
+import Foundation
+import KernovaKit
+import KernovaLogging
+
+/// The VM display's current hosting location.
+package enum VMDisplayMode: Sendable {
+    /// Display is embedded in the main window's detail pane.
+    case inline
+    /// Display is in its own resizable window (not fullscreen).
+    case popOut
+    /// Display is in its own window in native macOS fullscreen.
+    case fullscreen
+    /// No display surface — the user closed the display window while the VM
+    /// keeps running headless. `displayPreference` is retained so the next
+    /// reopen uses the previous style.
+    case hidden
+}
+
+/// Which inline detail pane the user has chosen to view for a running VM.
+///
+/// Ignored when the VM is stopped (settings are always shown then).
+package enum DetailPaneMode: Sendable {
+    case display
+    case settings
+}
+
+/// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
+@MainActor
+@Observable
+package final class VMInstance {
+    // MARK: - Properties
+
+    package let instanceID: UUID
+
+    /// The bundle this VM's state and machine files are written through.
+    ///
+    /// Replaced only by ``rebind(to:)``, when the bundle has moved.
+    private(set) var bundle: VMBundle
+
+    /// The configuration committed to the bundle.
+    package var configuration: VMConfiguration { bundle.configuration }
+
+    /// Kernova's own state for this VM, as committed to `host-state.json`.
+    package var hostState: VMHostState { bundle.hostState }
+
+    /// ``configuration`` and ``hostState`` as one value.
+    var settings: VMSettings { VMSettings(configuration: configuration, hostState: hostState) }
+
+    /// Where this VM is in its lifecycle, and the live session it holds.
+    package let activity: VMActivity
+
+    package var bundleURL: URL { bundle.url }
+
+    /// Progress of the guest setup running for this VM — a macOS install,
+    /// or a Linux installer image being fetched and verified.
+    package var setupState: GuestSetupState?
+
+    /// The named restore points this VM's bundle holds, as committed to
+    /// `Snapshots/manifest.json`.
+    package var snapshotManifest: VMSnapshotManifest { bundle.snapshotManifest }
+
+    /// The host USB accessories this VM takes back on its own, as committed to
+    /// `usb-accessories.json`.
+    package var usbPairings: USBAccessoryPairingSet { bundle.usbPairings }
+
+    /// The files of this VM's bundle that its last read refused — a
+    /// snapshot's `config.json`, the pairings, or a state file a re-read met
+    /// unreadable after the VM loaded.
+    package var unreadableFiles: [UnreadableConfigFile] { bundle.unreadableFiles }
+
+    /// Where this VM's display currently lives.
+    ///
+    /// `VMDisplayPlacementController` owns every transition; the model writes
+    /// this only once the session ends (``sessionDidEnd(afterRunning:)``), to the sole mode a
+    /// sessionless VM can rest in.
+    package var displayMode: VMDisplayMode = .inline
+
+    package var detailPaneMode: DetailPaneMode = .display
+
+    // MARK: - Clipboard Sharing
+
+    /// Active clipboard service: `SpiceClipboardService` for Linux,
+    /// `VsockClipboardService` for macOS.
+    ///
+    /// Nil on macOS until the guest agent connects. The two transports are
+    /// owned separately — the vsock one by this session's feature coordinator,
+    /// the SPICE one by the session context — and projected into one existential
+    /// here, so no window controller branches on transport.
+    package var clipboardService: (any ClipboardServicing)? {
+        sessionContext?.vsock.clipboard ?? sessionContext?.clipboardService
+    }
+
+    /// Host-pasteboard writer shared by the clipboard window's "Copy to Mac" and
+    /// the passthrough coordinator.
+    ///
+    /// One per VM so echo suppression sees both writers — the coordinator's poll
+    /// skips whatever change count this publisher last produced.
+    @ObservationIgnored package let hostClipboardPublisher: HostClipboardPublisher
+
+    /// Where this VM's clipboard and drop producers publish, and the owner of the
+    /// value below.
+    ///
+    /// One per VM rather than per connection: a promise a clipboard service
+    /// published outlives that service, so a refusal belongs to the VM.
+    @ObservationIgnored let clipboardTransfers = ClipboardTransferReporter()
+
+    /// This VM's clipboard transfer state — running, finished, or idle — which
+    /// every surface renders.
+    ///
+    /// Mirrored from ``clipboardTransfers`` because KernovaKit deploys to
+    /// macOS 12 and cannot be `@Observable` itself.
+    package private(set) var clipboardTransferReport: ClipboardTransferReport = .idle
+
+    // MARK: - Vsock Channel (macOS guests)
+
+    var vsockLogService: VsockGuestLogService? { sessionContext?.vsock.log }
+
+    package var vsockControlService: VsockControlService? { sessionContext?.vsock.control }
+
+    /// Serves files dropped on this VM's display; populated once the guest
+    /// agent's drop client connects.
+    package var vsockDropService: VsockDropService? { sessionContext?.vsock.drop }
+
+    /// Where the feature listeners read admission verdicts, off the main actor.
+    ///
+    /// One per VM across every control-service generation: the accept path
+    /// reads it without touching this instance. The live control service
+    /// publishes into it; replaced or torn down, the gate is cleared.
+    @ObservationIgnored let vsockAdmissionGate = VsockAdmissionGate()
+
+    /// Where the clipboard data listener lands each accepted transfer
+    /// connection, pointed at the live `VsockClipboardService`.
+    @ObservationIgnored let clipboardDataSink = VsockDataConnectionSink()
+
+    /// Where the drop data listener lands each accepted item connection,
+    /// pointed at the live `VsockDropService`.
+    @ObservationIgnored let dropDataSink = VsockDataConnectionSink()
+
+    /// `true` when this VM has reached `.running`, the host previously saw a
+    /// guest agent connect (``lastSeenAgentVersion`` is not `nil`), and a
+    /// grace period has elapsed without a `Hello` arriving over the control
+    /// channel.
+    var agentExpectedButMissing: Bool { sessionContext?.agentExpectedButMissing ?? false }
+
+    /// `true` once a `Hello` has arrived on this VM session.
+    ///
+    /// Separates a mid-session agent disappearance from an agent that never
+    /// appeared: only the latter is evidence about what is installed in the
+    /// guest, so only the latter may rewrite persisted agent state.
+    var hasSeenAgentThisSession: Bool { sessionContext?.hasSeenAgentThisSession ?? false }
+
+    /// `true` when this session cold-booted into macOS Recovery, which never
+    /// runs the guest agent — so agent silence is evidence of nothing for the
+    /// whole session, not just at the moment of boot.
+    var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
+
+    /// Routes a configuration write made under a permit for this VM through
+    /// ``VMLibrary/updateConfiguration(_:mutate:)``, answering what that
+    /// answers — ``VMEditPermit/updateConfiguration(_:)``.
+    ///
+    /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
+    /// outside a library.
+    @ObservationIgnored
+    var onUpdateConfiguration:
+        (
+            @MainActor (borrowing VMEditPermit, (inout VMConfiguration) -> Void)
+                -> VMLibrary.SettingsWrite
+        )?
+
+    /// Routes a write of both halves of this VM's settings through
+    /// ``VMLibrary/updateSettings(_:configuration:hostState:)`` —
+    /// ``VMEditPermit/updateSettings(configuration:hostState:)``; wired
+    /// alongside ``onUpdateConfiguration``.
+    @ObservationIgnored
+    var onUpdateSettings:
+        (
+            @MainActor (
+                borrowing VMEditPermit, (inout VMConfiguration) -> Void,
+                (inout VMHostState) -> Void
+            ) -> VMLibrary.SettingsWrite
+        )?
+
+    /// Fired when the guest agent handshakes a new version that is current
+    /// (matches or exceeds what the host bundles) — i.e. an install/update just
+    /// completed.
+    ///
+    /// The host uses it to auto-eject the guest-agent installer disk.
+    @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
+
+    // MARK: - Session Projection
+
+    /// The guest agent version this VM last reported: this session's Hello when
+    /// one arrived, the committed record otherwise.
+    package var lastSeenAgentVersion: String? {
+        if let observed = sessionContext?.observedAgentInfo { return observed.agentVersion }
+        return configuration.lastSeenAgentVersion
+    }
+
+    /// The guest OS version this VM last reported, on the same terms as
+    /// ``lastSeenAgentVersion`` — and unknown once this session's watchdog has
+    /// found no agent, since nothing vouched for the recorded one.
+    var reportedGuestOSVersion: String? {
+        if let observed = sessionContext?.observedAgentInfo { return observed.osVersion }
+        if sessionContext?.agentExpectedButMissing == true { return nil }
+        return configuration.lastSeenGuestOSVersion
+    }
+
+    /// The committed configuration with what this session re-derived laid over
+    /// it: the file references its boot healed, and what the guest agent
+    /// reported (``lastSeenAgentVersion``, ``reportedGuestOSVersion``).
+    ///
+    /// What a configuration build and every guest-version floor read, so each
+    /// acts on what the session knows whether or not the write recording it
+    /// landed.
+    package var effectiveConfiguration: VMConfiguration {
+        var config = configuration
+        guard let context = sessionContext else { return config }
+        for heal in context.heals {
+            config.healExternalReference(heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
+        }
+        config.lastSeenAgentVersion = lastSeenAgentVersion
+        config.lastSeenGuestOSVersion = reportedGuestOSVersion
+        return config
+    }
+
+    /// The current install/version/liveness state of the guest agent for this VM.
+    ///
+    /// The single read site for the UI. macOS guests source it from the
+    /// always-on `VsockControlService`, so it is meaningful whether or not
+    /// clipboard sharing is enabled; `.expectedMissing` is synthesized here
+    /// because that service has no access to persisted host state. Linux guests
+    /// source it from `SpiceClipboardService`, which only ever reaches
+    /// `.waiting` / `.current`.
+    package var agentStatus: AgentStatus {
+        switch configuration.guestOS {
+        case .macOS:
+            return AgentStatus.synthesize(
+                upstream: vsockControlService?.agentStatus ?? .waiting,
+                lastSeenAgentVersion: lastSeenAgentVersion,
+                isInLiveSession: hasLiveVirtualMachine,
+                agentExpectedButMissing: agentExpectedButMissing
+            )
+        case .linux:
+            return (clipboardService as? SpiceClipboardService)?.agentStatus ?? .waiting
+        }
+    }
+
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
+
+    package nonisolated var id: UUID { instanceID }
+    package var name: String { configuration.name }
+
+    // MARK: - Network Attachment Recovery
+
+    /// Keeps the live network attachment realizing the configured mode;
+    /// created with the `VZVirtualMachine` for network-enabled VMs, activated
+    /// once the session reaches `.running`, torn down with the session.
+    var networkAttachmentCoordinator: NetworkAttachmentCoordinator? {
+        sessionContext?.networkAttachmentCoordinator
+    }
+
+    /// Reconciles the live attachment with the configured mode, once the
+    /// session has reached a state VZ will swap an attachment on.
+    ///
+    /// A no-op for a VM whose session has no network device — or none at all.
+    func activateNetworkAttachment() {
+        sessionContext?.networkAttachmentCoordinator?.activate()
+    }
+
+    /// `true` while a live session's network device is detached and recovery
+    /// is waiting for a usable host interface.
+    package var networkAttachmentPending: Bool { sessionContext?.networkAttachmentPending ?? false }
+
+    // MARK: - Bundle Layout
+
+    package var bundleLayout: VMBundleLayout { VMBundleLayout(bundleURL: bundleURL) }
+
+    // MARK: - Preferences
+
+    /// App-wide settings this session honors — today, the clipboard paste
+    /// ceiling, which is app-wide rather than per-VM because it trades against
+    /// *this Mac's* throughput and a `VMConfiguration` field would travel inside
+    /// the bundle.
+    ///
+    /// Injected rather than read from `.shared` at the use site so a test can
+    /// drive it without writing the real defaults domain.
+    let preferences: AppPreferences
+
+    /// The guest agent this host bundles: the version a Hello is current
+    /// against, and the installer image the VM can be handed.
+    package let guestAgent: BundledGuestAgent
+
+    // MARK: - Initializer
+
+    /// A VM whose bundle is on disk, whose clipboard publishes to and polls
+    /// `hostPasteboard`.
+    init(
+        bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
+        hostPasteboard: any ClipboardPasteboard, guestAgent: BundledGuestAgent
+    ) {
+        self.guestAgent = guestAgent
+        self.instanceID = bundle.configuration.id
+        self.bundle = bundle
+        self.activity = VMActivity(phase: phase)
+        self.preferences = preferences
+        self.hostClipboardPublisher = HostClipboardPublisher(
+            pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)
+        activity.owner = self
+        clipboardTransfers.onReportChanged = { [weak self] report in
+            self?.clipboardTransferReport = report
+        }
+    }
+
+    /// Points this VM at `bundle`, read from where its bundle now lives.
+    func rebind(to bundle: VMBundle) {
+        guard bundle.configuration.id == instanceID else {
+            assertionFailure("rebind of '\(name)' to a bundle of another VM")
+            return
+        }
+        self.bundle = bundle
+    }
+
+    // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
+
+    /// ``VMConfiguration/effectiveStorageDisks(layout:)`` for this instance's bundle.
+    package var effectiveStorageDisks: [StorageDisk] {
+        configuration.effectiveStorageDisks(layout: bundleLayout)
+    }
+
+    /// The in-bundle (internal) disks, shown read-only in the delete sheet's
+    /// "Removed with the VM" section.
+    package var bundledStorageDisks: [StorageDisk] {
+        effectiveStorageDisks.filter(\.isInternal)
+    }
+
+    /// `true` when `disk` is the only storage disk this VM has — the one a
+    /// removal refuses, whichever file backs it.
+    package func isSoleStorageDisk(_ disk: StorageDisk) -> Bool {
+        let disks = effectiveStorageDisks
+        return disks.count == 1 && disks[0].id == disk.id
+    }
+
+    /// `true` when the bundled Guest Agent installer DMG is in this VM's
+    /// `removableMedia` list (live-attached, pending attach, or cold).
+    package var hasGuestAgentInstallerMounted: Bool {
+        guard let path = guestAgent.installerPath else { return false }
+        return (configuration.removableMedia ?? []).contains { $0.path == path }
+    }
+
+    var diskImageURL: URL { bundleLayout.diskImageURL }
+    var machineIdentifierURL: URL { bundleLayout.machineIdentifierURL }
+    package var serialLogURL: URL { bundleLayout.serialLogURL }
+
+    /// Whether the bundle holds a suspend slot.
+    package var hasSaveFile: Bool { bundleLayout.hasSaveFile }
+
+    // MARK: - Machine Identity
+
+    /// The macOS machine identifier this VM boots with — the configuration field
+    /// when set, otherwise the bundle's identifier file.
+    ///
+    /// The fallback mirrors `ConfigurationBuilder`, which reads the file when
+    /// the configuration carries no identifier, so a bundle holding its identity
+    /// only on disk compares equal to one holding it in the configuration.
+    var effectiveMachineIdentifierData: Data? {
+        configuration.machineIdentifierData ?? bundle.machineIdentifierFile
+    }
+
+    /// The machine identifier this VM boots with, `nil` while it has none.
+    package var machineIdentity: MachineIdentity? {
+        switch configuration.guestOS {
+        case .macOS: effectiveMachineIdentifierData.map(MachineIdentity.mac)
+        case .linux: configuration.genericMachineIdentifierData.map(MachineIdentity.generic)
+        }
+    }
+
+    // MARK: - Runtime Removable Media
+
+    /// USB mass storage devices currently attached on the XHCI controller.
+    ///
+    /// One entry per item in `configuration.removableMedia` while the VM is
+    /// running; cleared on stop/teardown.
+    var liveRemovableMedia: [RemovableMediaDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
+
+    /// Records a device that was just attached, live, on the session
+    /// `sessionID` names.
+    ///
+    /// Dropped and logged, rather than asserting, once that session is no
+    /// longer the live one — see ``VMActivity/liveSessionID``:
+    /// `VMLibrary.runRemovableMediaReconciliation` awaits the framework
+    /// attach call, and a power-off (or a power-off and restart) landing on
+    /// main during that suspension resolves the continuation against a VM this
+    /// record no longer describes — the same race its own
+    /// `RemovableMediaDeviceError.noVirtualMachine` handling already treats as a normal
+    /// bail, not a programming error.
+    func recordAttachedMedia(_ info: RemovableMediaDeviceInfo, for sessionID: UUID) {
+        guard let context = sessionWriteTarget(for: sessionID, deviceID: info.id, "attached-media record")
+        else { return }
+        context.liveRemovableMedia.append(info)
+    }
+
+    /// Removes a device's tracking entry and releases the security-scoped
+    /// access grant backing it, in that order.
+    ///
+    /// A no-op, logged, when `sessionID` no longer names the live session — see
+    /// ``recordAttachedMedia(_:for:)``. Nothing is released in that case: the
+    /// grant this would have dropped belongs to whichever session is live now.
+    func forgetAttachedMedia(deviceID: UUID, for sessionID: UUID) {
+        guard let context = sessionWriteTarget(for: sessionID, deviceID: deviceID, "detached-media record")
+        else { return }
+        context.liveRemovableMedia.removeAll { $0.id == deviceID }
+        context.fileAccess.releaseAttachmentScope(id: deviceID)
+    }
+
+    /// Registers the security-scoped access grant backing a hot-attached
+    /// device with the session `sessionID` names, so it is released at detach
+    /// or teardown instead of the caller's local scope.
+    ///
+    /// When that session is no longer the live one, `scope` is released here
+    /// directly — see ``recordAttachedMedia(_:for:)`` — rather than left for
+    /// the caller's local `deinit`, since `ScopedAccess.release()` is
+    /// idempotent.
+    func retainMediaScope(_ scope: ScopedAccess, deviceID: UUID, for sessionID: UUID) {
+        guard let context = sessionWriteTarget(for: sessionID, deviceID: deviceID, "media scope") else {
+            scope.release()
+            return
+        }
+        context.fileAccess.holdAttachmentScope(id: deviceID, scope)
+    }
+
+    // MARK: - Runtime USB Accessories
+
+    /// Host USB accessories passed through to this VM's guest, in the order
+    /// they were attached — what the library's
+    /// ``VMAdmissionPeers/accessoryHolders`` records against this VM.
+    package var liveUSBAccessories: [AttachedUSBAccessory] {
+        peers?.accessoryHolders.attached(to: self) ?? []
+    }
+
+    /// The context a live-session write issued against `sessionID` belongs to,
+    /// or `nil` — logged — when that session has been released.
+    ///
+    /// `deviceID` names the device the write concerns, when it concerns one;
+    /// it only shapes the log line.
+    private func sessionWriteTarget(
+        for sessionID: UUID,
+        deviceID: UUID? = nil,
+        _ what: StaticString
+    ) -> VMSessionContext? {
+        guard let sessionContext, liveSessionID == sessionID else {
+            let device = deviceID.map { " device \($0)" } ?? ""
+            #log(
+                Self.logger, .notice,
+                "Dropping \(what, privacy: .public) for '\(self.name, privacy: .public)'\(device, privacy: .public): session \(sessionID, privacy: .public) is no longer live"
+            )
+            return nil
+        }
+        return sessionContext
+    }
+
+    // MARK: - Activity
+
+    // Forwarded to ``activity``, which documents each.
+
+    package var phase: VMLifecyclePhase { activity.phase }
+    package var status: VMStatus { activity.status }
+    var errorMessage: String? { activity.errorMessage }
+    var sessionContext: VMSessionContext? { activity.sessionContext }
+    package var session: (any VMSessionOperating)? { activity.session }
+    var liveSessionID: UUID? { activity.liveSessionID }
+    package var hasLiveVirtualMachine: Bool { activity.hasLiveVirtualMachine }
+    package var hasLiveSession: Bool { activity.hasLiveSession }
+    var attachableSessionID: UUID? { activity.attachableSessionID }
+    package var isSuspended: Bool { activity.isSuspended }
+    package var isLivePaused: Bool { activity.isLivePaused }
+    var holdsLiveIdentity: Bool { activity.holdsLiveIdentity }
+    package var heldByAnotherCopy: Bool { activity.heldByAnotherCopy }
+    var isAtRest: Bool { activity.isAtRest }
+
+    /// Whether this VM claims its machine identity and MAC address right now:
+    /// live in this copy (``holdsLiveIdentity``), or held by another copy of
+    /// Kernova, which may be running it.
+    var claimsIdentity: Bool { holdsLiveIdentity || heldByAnotherCopy }
+    package var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
+    package var hasActiveDisplay: Bool { activity.hasActiveDisplay }
+
+    var onPoweredOff: (@MainActor () -> [VMFollowUp])? {
+        get { activity.onPoweredOff }
+        set { activity.onPoweredOff = newValue }
+    }
+
+    var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])? {
+        get { activity.onSessionBecameAttachable }
+        set { activity.onSessionBecameAttachable = newValue }
+    }
+
+    func restingPhase(withoutSlot fallback: VMRestPhase) -> VMLifecyclePhase {
+        activity.restingPhase(withoutSlot: fallback)
+    }
+
+    func deliverSessionEvent(_ event: VMSessionEvent, from sessionID: UUID) {
+        activity.deliverSessionEvent(event, from: sessionID)
+    }
+
+    func handleSessionEvent(_ event: VMSessionEvent) {
+        activity.handleSessionEvent(event)
+    }
+
+    package func adoptBuildProducts(
+        _ bringUp: borrowing VMBringUpContext, _ products: VMSessionBuildProducts
+    ) {
+        activity.adoptBuildProducts(bringUp, products)
+    }
+
+    package func makeSessionEvents() -> VMSessionEvents {
+        activity.makeSessionEvents()
+    }
+
+    /// Binds `session` to the bring-up holding this VM
+    /// (``VMActivity/beginSession(_:_:)``), answering the context that now
+    /// holds it.
+    package func beginSession(
+        _ bringUp: borrowing VMBringUpContext, _ session: any VMSessionOperating
+    ) -> VMSessionContext? {
+        activity.beginSession(bringUp, session)
+    }
+
+    // MARK: - Admission Facts
+
+    /// What the library contributes to this VM's admission — wired by
+    /// `VMLibrary.wireHooks(for:)`. An instance outside a library has no
+    /// peers, no USB passthrough, and no termination.
+    @ObservationIgnored weak var peers: (any VMAdmissionPeers)?
+
+    var admissionFacts: VMAdmission.Facts {
+        VMAdmission.Facts(
+            hasSaveFile: hasSaveFile,
+            hasSnapshots: !snapshotManifest.isEmpty,
+            guestOS: configuration.guestOS,
+            networkEnabled: configuration.networkEnabled,
+            savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
+            clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
+            usbSupported: peers?.supportsUSBAccessories ?? false,
+            writesOutsideBundle: configuration.writesOutsideBundle,
+            identityConflict: nil,
+            accessoryHolder: nil,
+            terminating: peers?.isTerminating ?? false,
+            heldByAnotherCopy: heldByAnotherCopy)
+    }
+
+    /// The VM claiming the identity (``claimsIdentity``) that bringing this
+    /// one up by `kind` would duplicate, or `nil` when nothing collides or
+    /// `override` waives the collision.
+    func identityConflict(
+        for kind: VMBringUpKind, override: VMIdentityOverride
+    ) -> VMIdentityConflict? {
+        peers?.identityConflict(
+            for: self, bringingUp: configuration(broughtUpBy: kind), override: override)
+    }
+
+    /// Whether this VM and `other` claim the same ``machineIdentity``. A VM
+    /// with no identifier shares it with no one.
+    func sharesMachineIdentity(with other: VMInstance) -> Bool {
+        machineIdentity != nil && machineIdentity == other.machineIdentity
+    }
+
+    /// The configuration `kind` puts in front of VZ, as far as identity reads
+    /// it: this VM's own, except for a revert, which lands the snapshot's
+    /// network device and address
+    /// (``VMConfiguration/adoptingSnapshotState(_:)`` keeps only the machine
+    /// identity across).
+    func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
+        guard case .reverting(let snapshotID, _) = kind,
+            let snapshot = snapshotManifest.snapshot(id: snapshotID)
+        else { return configuration }
+        guard let network = snapshot.network else {
+            // Nothing readable to land on: no address a network could see.
+            var landing = configuration
+            landing.macAddress = nil
+            return landing
+        }
+        return network.installed(on: configuration)
+    }
+
+    /// `true` when the bundle holds a saved state and nothing is live — the VM
+    /// a Resume restores and a Discard Saved State empties, whatever phase it
+    /// rests at.
+    ///
+    /// The file rather than the phase, because the two can disagree: a
+    /// bring-up that gives up before the restore leaves the slot exactly as it
+    /// found it, however that failure was classified.
+    var holdsSuspendedSession: Bool { isAtRest && hasSaveFile }
+
+    /// How Take Snapshot would capture right now, or `nil` when the VM refuses
+    /// it — the capability's own request and decision.
+    package var snapshotCaptureMode: VMCaptureMode? {
+        guard let request = VMCapability.takeSnapshot.request(on: self),
+            case .operation(.capturingSnapshot(let mode)) = request,
+            activity.decide(request, posture: .offer) == .admit
+        else { return nil }
+        return mode
+    }
+
+    // MARK: - Wire Projection
+
+    /// This VM as any refusal or listing names it.
+    ///
+    /// The address is a parameter because only ``GuestAddressObserver``
+    /// resolves one, and both callers already hold it — so a summary is built
+    /// one way whichever of them is naming the VM.
+    func summary(ipAddress: GuestIPAddress) -> VMSummary {
+        VMSummary(
+            id: instanceID, name: name, status: status.rawValue, ipAddress: ipAddress,
+            heldByAnotherCopy: heldByAnotherCopy)
+    }
+
+    // MARK: - Ephemeral Mode
+
+    /// The snapshot a power-off returns this VM to, or `nil` when Ephemeral
+    /// Mode is off or names a snapshot the manifest no longer lists.
+    ///
+    /// The one read every ephemeral path gates on, so a mode left on with a
+    /// baseline that has gone reverts nothing rather than failing at power-off.
+    package var ephemeralBaselineSnapshot: VMSnapshot? {
+        guard hostState.ephemeralModeEnabled,
+            let id = hostState.ephemeralBaselineSnapshotID
+        else { return nil }
+        return snapshotManifest.snapshot(id: id)
+    }
+
+    /// Whether the last read of the bundle refused the `config.json` of the
+    /// snapshot a power-off returns this VM to — a revert to it fails before
+    /// it changes anything, so a power-off would leave the session's changes
+    /// on the disks.
+    var ephemeralBaselineIsUnreadable: Bool {
+        guard let baseline = ephemeralBaselineSnapshot else { return false }
+        return unreadableFiles.contains { $0.snapshotID == baseline.id }
+    }
+
+    /// `true` while a session this VM's baseline will discard is in memory —
+    /// what the running Ephemeral marker reports.
+    package var hasLiveEphemeralSession: Bool {
+        ephemeralBaselineSnapshot != nil && hasLiveVirtualMachine
+    }
+
+    /// `true` when this VM is resting on its Ephemeral baseline's own saved
+    /// state — the state a revert produces, so reverting again changes nothing.
+    ///
+    /// Read as a computed value rather than tracked: the bundle's suspend slot
+    /// only changes as the VM changes phase — a suspend writes it, a discard
+    /// removes it, a revert clones the baseline's in — so an observer tracking
+    /// `phase` through the guard below re-reads this at every moment it can
+    /// differ.
+    package var isRestingAtEphemeralBaseline: Bool {
+        guard holdsSuspendedSession, let baseline = ephemeralBaselineSnapshot else { return false }
+        return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
+    }
+
+    /// What the stop verb does to the saved state this VM holds, `nil` when
+    /// it holds none — the one answer the stop and every judgment of where it
+    /// leaves the VM read.
+    var savedStateDiscard: VMSavedStateDiscard? {
+        guard holdsSuspendedSession else { return nil }
+        return ephemeralBaselineSnapshot.map { .revertsToBaseline($0) } ?? .deletesSaveFile
+    }
+
+    /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline, which
+    /// the snapshot delete refuses until the mode is off.
+    package func isEphemeralBaseline(_ snapshot: VMSnapshot) -> Bool {
+        ephemeralBaselineSnapshot?.id == snapshot.id
+    }
+
+    package var isInFullscreen: Bool { displayMode == .fullscreen }
+
+    /// `true` when the display is not hosted inline — pop-out, fullscreen, or
+    /// closed-while-headless (`.hidden`), all of which offer "Pop In".
+    package var isDisplayDetached: Bool { displayMode != .inline }
+
+    // MARK: - Session Lifecycle
+
+    /// Opens the context one boot attempt's session state lives in, and takes
+    /// the security scopes its configuration build needs.
+    ///
+    /// Called at the top of every bring-up — including an install-time build,
+    /// where a pre-install VM can already carry bookmarked external attachments
+    /// from settings. The two are one call because a scope with no context to
+    /// hold it is a leak, and a context with no scopes cannot build.
+    @discardableResult
+    package func beginSessionContext(
+        _ bringUp: borrowing VMBringUpContext, bootedIntoRecovery: Bool = false
+    ) -> VMSessionContext {
+        let context = activity.beginSessionContext(bringUp) {
+            makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
+        }
+        writeHeals(of: context, bringUp.operation.permit)
+        return context
+    }
+
+    #if DEBUG
+    /// ``beginSessionContext(_:bootedIntoRecovery:)`` with no bring-up behind
+    /// it, replacing and releasing any prior context; tests only.
+    @discardableResult
+    func beginSessionContextForTesting(bootedIntoRecovery: Bool = false) -> VMSessionContext {
+        activity.installSessionContextForTesting {
+            makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
+        }
+    }
+    #endif
+
+    private func makeSessionContext(bootedIntoRecovery: Bool) -> VMSessionContext {
+        let context = VMSessionContext(
+            label: name,
+            bootedIntoRecovery: bootedIntoRecovery,
+            vsock: VsockFeatureCoordinator(
+                instance: self,
+                admissionGate: vsockAdmissionGate,
+                clipboardDataSink: clipboardDataSink,
+                dropDataSink: dropDataSink))
+        openRuntimeFileAccess(into: context)
+        return context
+    }
+
+    // MARK: - Activity Callbacks
+
+    /// Called by ``activity`` once the session is released; `afterRunning`
+    /// is whether that session ever settled running.
+    func sessionDidEnd(afterRunning: Bool) {
+        // A VM with no session has no display to place, and `.hidden`
+        // (headless) has no window whose close would say so.
+        displayMode = .inline
+        if afterRunning { recordLastRun(at: Date()) }
+    }
+
+    /// Called by ``activity`` once a power-off has rested the VM, before
+    /// ``VMActivity/onPoweredOff`` fires.
+    func guestDidPowerOff() {
+        // Reset so the next start lands on the display rather than inheriting
+        // a stuck settings mode from the previous session.
+        detailPaneMode = .display
+    }
+
+    /// Called by ``activity`` once an operation of `kind` has ended with the
+    /// guest running.
+    func operationDidSettleRunning(_ kind: VMOperationKind) {
+        if let sessionContext, sessionContext.runningSince == nil {
+            let now = Date()
+            sessionContext.runningSince = now
+            recordLastRun(at: now)
+        }
+        switch kind {
+        case .bringUp(.guestStart(.starting)), .resuming:
+            activateNetworkAttachment()
+            startAgentPostStartWatchdog()
+        case .bringUp(.guestStart(.restoringSavedState)), .bringUp(.reverting):
+            // Arms no watchdog: a restore resumes whatever guest state was
+            // frozen, which may be a Recovery session that never runs the
+            // agent, and no host-side flag survives the save to say which.
+            // The accept path arms once a control channel actually shows up.
+            activateNetworkAttachment()
+        case .bringUp(.settingUp), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
+            .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping,
+            .discardingSavedState, .deleting, .creatingStorageDisk, .removingStorageDisk,
+            .creatingRemovableMedia, .copyingOut:
+            break
+        }
+    }
+
+    // MARK: - Serial Console I/O
+
+    /// Begins reading from the serial output pipe.
+    ///
+    /// Output is written to the on-disk `serial.log` (size-capped by
+    /// `SerialLogWriter`) and tee'd to the `SerialSocketRelay` when enabled.
+    package func startSerialReading() {
+        guard let context = sessionContext, let outputPipe = context.serialOutputPipe else {
+            return
+        }
+
+        // Created once per session so the readability handler can capture them
+        // as `Sendable` locals — the handler must never touch `self` off-actor.
+        let writer = SerialLogWriter(
+            logURL: bundleLayout.serialLogURL, rotatedURL: bundleLayout.serialLogRotatedURL,
+            label: name)
+        context.serialLogWriter = writer
+        let relay = makeSerialRelay(in: context)
+
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+
+            writer.write(data)
+            relay?.forwardOutput(data)
+        }
+
+        #log(Self.logger, .info, "Serial reading started for '\(self.name, privacy: .public)'")
+    }
+
+    /// Creates the per-session serial relay and, when enabled, starts it.
+    ///
+    /// Also stores it on `context`; returns `nil` when the input pipe is missing.
+    private func makeSerialRelay(in context: VMSessionContext) -> SerialSocketRelay? {
+        guard let inputPipe = context.serialInputPipe else { return nil }
+        let relay = SerialSocketRelay(
+            path: Self.serialSocketPath(for: instanceID),
+            guestInputWriteHandle: inputPipe.fileHandleForWriting,
+            label: name
+        )
+        context.serialSocketRelay = relay
+        if configuration.serialSocketRelayEnabled {
+            relay.start()
+        }
+        return relay
+    }
+
+    /// On-disk path for a VM's serial relay socket.
+    ///
+    /// Short filename under the temporary directory: the VM bundle path exceeds
+    /// the 104-byte cap on `sockaddr_un.sun_path`. 16 hex digits of the UUID
+    /// keep two VMs from colliding while staying within it.
+    package static func serialSocketPath(for id: UUID) -> String {
+        let short = id.uuidString.replacingOccurrences(of: "-", with: "").prefix(16).lowercased()
+        return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-\(short).sock")
+    }
+
+    // MARK: - Clipboard Service Lifecycle
+
+    /// Starts clipboard sharing if enabled in this configuration.
+    ///
+    /// Linux uses the SPICE agent over the console-port pipes set up at config
+    /// build. macOS constructs its `VsockClipboardService` only when the guest
+    /// agent connects to the listener installed in `startVsockServices()`.
+    package func startClipboardService() {
+        // Passthrough is host-side and gated on sharing internally, so it must
+        // be refreshed even when sharing is off — hence before the guard.
+        defer { refreshClipboardPassthrough() }
+        guard configuration.clipboardSharingEnabled else { return }
+        switch configuration.guestOS {
+        case .linux:
+            startSpiceClipboardService()
+        case .macOS:
+            #log(
+                Self.logger, .info,
+                "Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
+        }
+    }
+
+    /// Starts or stops automatic clipboard passthrough to match the current
+    /// configuration and session state.
+    ///
+    /// Host-side only — no guest cooperation and no wire change — so it drives
+    /// both transports and works with the clipboard window closed.
+    func refreshClipboardPassthrough() {
+        guard let context = sessionContext else { return }
+        let shouldRun = configuration.clipboardPassthroughIsEffective && hasLiveVirtualMachine
+        if shouldRun {
+            let coordinator =
+                context.clipboardPassthroughCoordinator
+                ?? ClipboardPassthroughCoordinator(
+                    instance: self, publisher: hostClipboardPublisher,
+                    reporter: clipboardTransfers)
+            context.clipboardPassthroughCoordinator = coordinator
+            coordinator.start()
+        } else {
+            context.clipboardPassthroughCoordinator?.stop()
+            context.clipboardPassthroughCoordinator = nil
+        }
+    }
+
+    private func startSpiceClipboardService() {
+        guard let context = sessionContext,
+            let inputPipe = context.clipboardInputPipe,
+            let outputPipe = context.clipboardOutputPipe
+        else {
+            #log(Self.logger, .error, "SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
+            return
+        }
+        let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
+        service.start()
+        context.clipboardService = service
+        #log(Self.logger, .info, "SPICE clipboard service started for '\(self.name, privacy: .public)'")
+    }
+
+    // MARK: - Vsock Service Lifecycle
+
+    /// Installs vsock listeners on the live session's `VZVirtioSocketDevice`.
+    ///
+    /// A no-op when no socket device is present. Idempotent: any previously
+    /// installed listeners are torn down first. The control listener is always
+    /// installed; the log, clipboard and drop listeners are gated on
+    /// `agentLogForwardingEnabled` / `clipboardSharingEnabled` /
+    /// `dropFilesEnabled`.
+    package func startVsockServices() async {
+        stopVsockServices()
+        guard let session, session.hasVirtioSocketDevice, let vsock = sessionContext?.vsock
+        else { return }
+
+        await session.attach(
+            vsock.listeners(for: configuration, sessionID: session.id))
+        // Torn down while installing: these listeners live and die with the
+        // session that retains them, so nothing is left dangling on a device
+        // the teardown already walked — and there is no start to announce.
+        guard self.session === session else { return }
+
+        #log(Self.logger, .info, "Vsock services started for '\(self.name, privacy: .public)'")
+    }
+
+    // MARK: - Agent Policy
+
+    /// The policy pushed to a guest with nothing to push through — every
+    /// capability off, and the built-in paste ceiling.
+    static let disabledAgentPolicy = AgentPolicySnapshot(
+        logForwardingEnabled: false,
+        clipboardSharingEnabled: false,
+        dropFilesEnabled: false,
+        clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
+
+    /// The policy a given configuration produces, combined with the app-wide
+    /// clipboard preference.
+    ///
+    /// The one place a snapshot is built, so the initial Hello push, a live
+    /// toggle, and a preference change can never send differently shaped policy.
+    func agentPolicySnapshot(for configuration: VMConfiguration) -> AgentPolicySnapshot {
+        AgentPolicySnapshot(
+            logForwardingEnabled: configuration.agentLogForwardingEnabled,
+            clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            dropFilesEnabled: configuration.dropFilesEnabled,
+            clipboardMaxPasteBytes: preferences.clipboardMaxPasteBytes)
+    }
+
+    /// This instance's current policy.
+    var agentPolicySnapshot: AgentPolicySnapshot { agentPolicySnapshot(for: configuration) }
+
+    /// The ceiling the **host** enforces: the user's value, always.
+    ///
+    /// Each direction has exactly one enforcer, and it is the receiver — the side
+    /// whose paste deadline is at risk. This governs guest→host only
+    /// (`materializeForCopy` / `pasteBoundSnapshot`); the guest's own
+    /// `allowsFileURLPull` governs host→guest, and neither side caps what it
+    /// *sends*. So the guest's capability, and the control channel's health, say
+    /// nothing about what belongs here: clamping on either would drop the user's
+    /// setting over a peer that is only ever the sender in this direction.
+    package var effectiveClipboardMaxPasteBytes: Int { preferences.clipboardMaxPasteBytes }
+
+    /// Asks any live passthrough session to replay an offer a lower ceiling
+    /// refused.
+    ///
+    /// No-ops when passthrough is off.
+    func republishPassthroughIfCeilingRaised() {
+        sessionContext?.clipboardPassthroughCoordinator?.republishIfCeilingRaised()
+    }
+
+    /// Re-pushes the current policy to a connected guest agent.
+    ///
+    /// For app-wide settings that reach the guest but produce no `VMConfiguration`
+    /// diff for `applyLivePolicy` to notice. No-ops with no control channel — the
+    /// next Hello sends the current snapshot anyway.
+    func resendAgentPolicy() {
+        vsockControlService?.sendPolicyUpdate(agentPolicySnapshot)
+    }
+
+    /// Builds the control service for one accepted channel, wired to this
+    /// instance's policy, agent-info and guest-suspension hooks. Channel loss is
+    /// the accept site's to wire, uniformly for every feature.
+    ///
+    /// Every hook reads through `self` lazily, so all three track live
+    /// configuration edits and pause/resume without being re-pushed.
+    func makeControlService(for channel: VsockChannel) -> VsockControlService {
+        VsockControlService(
+            channel: channel,
+            label: name,
+            bundledAgentVersion: guestAgent.version,
+            policyProvider: { [weak self] in
+                self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
+            },
+            onAgentInfoObserved: { [weak self] info in
+                self?.recordObservedAgentInfo(info)
+            },
+            isGuestSuspended: { [weak self] in self?.isLivePaused ?? false },
+            admissionGate: vsockAdmissionGate)
+    }
+
+    // MARK: - Agent Post-Start Watchdog
+
+    /// Default grace period before the post-start watchdog fires.
+    static let defaultAgentPostStartGrace: Duration = .seconds(120)
+
+    /// Starts a one-shot timer that flips `agentExpectedButMissing = true` if
+    /// the guest agent doesn't say Hello within `grace`.
+    ///
+    /// Armed after a start, a hot resume, or an accepted control channel, and
+    /// again whenever the control channel dies under us, so a mid-session
+    /// disappearance escalates the same way a no-show after boot does. A no-op
+    /// unless the guest is macOS, the VM is running (a paused guest isn't
+    /// executing, so its silence proves nothing), the session didn't boot into
+    /// Recovery (which never runs the agent), an agent has been seen before on
+    /// this VM, the agent isn't already connected, no install is in progress,
+    /// and no watchdog is already armed. Cancelled by any inbound Hello, by a
+    /// pause, and by the session's teardown.
+    func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
+        guard let context = sessionContext else { return }
+        guard configuration.guestOS == .macOS else { return }
+        guard !context.bootedIntoRecovery else { return }
+        guard status == .running else { return }
+        guard lastSeenAgentVersion != nil else { return }
+        guard context.vsock.control?.agentVersion == nil else { return }
+        guard setupState == nil else { return }
+        guard context.agentPostStartTask == nil else { return }
+
+        context.agentPostStartGeneration &+= 1
+        let generation = context.agentPostStartGeneration
+        #log(
+            Self.logger, .debug,
+            "Agent arrival watchdog armed for '\(self.name, privacy: .public)' (grace=\(grace, privacy: .public))"
+        )
+        // The context is captured weakly: a strong hold would keep this
+        // session's `VZVirtualMachine`, pipes and services alive for the whole
+        // grace period after a teardown.
+        context.agentPostStartTask = Task { [weak self, weak context] in
+            do {
+                try await Task.sleep(for: grace)
+            } catch {
+                return
+            }
+            // Both halves of the disowning check: the context this was armed on
+            // must still be the live one, and its generation must still be the
+            // one armed here. Generation alone is an ABA test across sessions —
+            // each context counts from zero — and identity alone is one within a
+            // session, so either on its own lets a stale task fire
+            // `.expectedMissing` before a successor's grace elapsed and clear
+            // that successor's slot on the way out.
+            guard let self, let armed = context, armed === self.sessionContext,
+                armed.agentPostStartGeneration == generation
+            else { return }
+            if armed.vsock.control?.agentVersion == nil {
+                #log(
+                    Self.logger, .notice,
+                    "Guest agent expected (last seen \(self.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
+                )
+                // Set first: it is also what ``reportedGuestOSVersion`` reads
+                // as unknown for the rest of the session, whether or not the
+                // write below lands — and a write that fails is attempted
+                // again by the next session's watchdog.
+                armed.agentExpectedButMissing = true
+                // An agent that never showed up at all outranks the nudge the
+                // user silenced — reset the dismissal so a future `.waiting`
+                // surfaces normally. The reported guest OS version goes with
+                // it: nothing vouched for it this session, and "Unknown" beats
+                // a stale value. Both stay untouched when the agent did say
+                // Hello earlier in this session: it demonstrably exists, and
+                // reversing a preference nothing restores needs better evidence
+                // than one dropped channel.
+                if !armed.hasSeenAgentThisSession,
+                    self.hostState.agentInstallNudgeDismissed
+                        || self.configuration.lastSeenGuestOSVersion != nil
+                {
+                    self.recordObservation("the agent's absence") {
+                        _ = $0.updateSettings(
+                            configuration: { $0.lastSeenGuestOSVersion = nil },
+                            hostState: { $0.agentInstallNudgeDismissed = false })
+                    }
+                }
+            }
+            armed.agentPostStartTask = nil
+        }
+    }
+
+    /// Cancels the agent-arrival watchdog if armed.
+    ///
+    /// Does not clear `agentExpectedButMissing` — callers do that explicitly.
+    package func cancelAgentPostStartWatchdog() {
+        sessionContext?.cancelAgentPostStartWatchdog()
+    }
+
+    #if DEBUG
+    /// The in-flight post-start watchdog task, or `nil` when none is armed.
+    ///
+    /// Test-only seam: tests await its completion rather than polling
+    /// `agentExpectedButMissing`.
+    var agentPostStartTaskForTesting: Task<Void, Never>? { sessionContext?.agentPostStartTask }
+    #endif
+
+    /// Reacts to a `Hello` whose `agent_version` is non-empty.
+    ///
+    /// Empty agent versions are filtered upstream by `VsockControlService`:
+    /// persisting "" would silence both the install nudge and the watchdog. The
+    /// OS version has no such filter — a `nil` overwrites a stored value, so a
+    /// guest that stops vouching for its version reads Unknown, not stale.
+    func recordObservedAgentInfo(_ info: ObservedAgentInfo) {
+        // Any Hello proves the agent is alive, so clear the watchdog state
+        // before the changed guards below.
+        cancelAgentPostStartWatchdog()
+        let agentVersionChanged = lastSeenAgentVersion != info.agentVersion
+        sessionContext?.agentExpectedButMissing = false
+        sessionContext?.hasSeenAgentThisSession = true
+        // The session holds what the guest reported, so every surface shows it
+        // whether or not the write below lands; the next Hello that differs
+        // from the committed record writes again.
+        sessionContext?.observedAgentInfo = info
+        // Skip the no-op write: a `config.json` rewrite on every Hello would
+        // re-fire `VMDirectoryWatcher` reconcile.
+        if configuration.lastSeenAgentVersion != info.agentVersion
+            || configuration.lastSeenGuestOSVersion != info.osVersion
+        {
+            recordObservation("the agent's Hello") {
+                _ = $0.updateConfiguration {
+                    $0.lastSeenAgentVersion = info.agentVersion
+                    $0.lastSeenGuestOSVersion = info.osVersion
+                }
+            }
+        }
+        // Only on an agent-version change: a same-version reconnect (e.g. while
+        // the disk is mounted to run uninstall.command) must not yank the
+        // installer disk out from under the user.
+        guard agentVersionChanged else { return }
+        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: guestAgent.version) {
+            onAgentBecameCurrent?()
+        }
+    }
+
+    /// Records `date` as the last moment this VM was running
+    /// (``VMHostState/lastRunAt``).
+    private func recordLastRun(at date: Date) {
+        recordObservation("the last run") { permit in
+            _ = permit.updateSettings(configuration: { _ in }, hostState: { $0.lastRunAt = date })
+        }
+    }
+
+    /// Writes what the host observed of the guest under an
+    /// ``VMEditClasses/observations`` permit. A VM whose state admits none
+    /// keeps the observation in its session only, and the next one that
+    /// differs from the committed record writes again.
+    private func recordObservation(
+        _ what: StaticString, _ write: (borrowing VMEditPermit) -> Void
+    ) {
+        do {
+            try activity.edit(.observations, write)
+        } catch {
+            #log(
+                Self.logger, .notice,
+                "Did not record \(String(describing: what), privacy: .public) for '\(self.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    /// Stops every vsock service and unbinds the listeners that fed them —
+    /// see ``VMSessionContext/stopVsockServices()``.
+    func stopVsockServices() {
+        sessionContext?.stopVsockServices()
+    }
+
+    /// Reacts to a configuration change while the VM is running by installing
+    /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
+    /// the guest agent.
+    ///
+    /// Only `agentLogForwardingEnabled`, `clipboardSharingEnabled` and
+    /// `dropFilesEnabled` are honored at runtime. A Linux guest's clipboard
+    /// sharing never changes here: its SPICE port is a device
+    /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
+    func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
+        guard hasLiveSession else { return }
+
+        // Ahead of the live-VM guard: the coordinator exists exactly while the
+        // session has a network device, which is the guard this hot swap needs.
+        if oldConfig.networkChoice != newConfig.networkChoice {
+            networkAttachmentCoordinator?.configurationChanged()
+        }
+
+        guard hasLiveVirtualMachine else { return }
+
+        // Host-only (no vsock device), so handle it before the socket-device
+        // guard returns early for guests without a `VZVirtioSocketDevice`.
+        if oldConfig.serialSocketRelayEnabled != newConfig.serialSocketRelayEnabled {
+            applyLiveSerialRelayPolicy(enabled: newConfig.serialSocketRelayEnabled)
+        }
+
+        // Likewise host-side only, so apply it before the socket-device guard —
+        // it must work for Linux/SPICE guests too.
+        if oldConfig.clipboardPassthroughEnabled != newConfig.clipboardPassthroughEnabled
+            || oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
+        {
+            refreshClipboardPassthrough()
+        }
+
+        guard let context = sessionContext, let session = context.session,
+            session.hasVirtioSocketDevice
+        else { return }
+
+        context.vsock.applyLivePolicy(
+            oldConfig: oldConfig, newConfig: newConfig, on: session)
+    }
+
+    /// Starts or stops the host-side serial relay live.
+    ///
+    /// Flips the socket on the session's existing relay object — the output
+    /// readability handler already holds a reference to it.
+    private func applyLiveSerialRelayPolicy(enabled: Bool) {
+        if enabled {
+            sessionContext?.serialSocketRelay?.start()
+        } else {
+            sessionContext?.serialSocketRelay?.stop()
+        }
+        #log(
+            Self.logger, .notice,
+            "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
+        )
+    }
+}
+
+/// What discarding a VM's saved state does, and where it leaves the VM.
+enum VMSavedStateDiscard: Equatable {
+    /// Deletes the save file, leaving the VM stopped on its disks as they are.
+    case deletesSaveFile
+    /// Reverts the VM to its Ephemeral Mode baseline, which lands it as the
+    /// baseline holds it: the session's changes to its disks go too.
+    case revertsToBaseline(VMSnapshot)
+
+    /// The phase the VM rests at once the discard lands, and whether it holds
+    /// a saved state there — a warm baseline's own.
+    var landing: (phase: VMLifecyclePhase, holdsSaveFile: Bool) {
+        switch self {
+        case .deletesSaveFile: (.stopped, false)
+        case .revertsToBaseline(let baseline):
+            baseline.kind == .warm ? (.suspended, true) : (.stopped, false)
+        }
+    }
+}

@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers what `MainMenuController.menuNeedsUpdate(_:)` does to each menu it is
 /// the delegate of: the app menu's quit section, the revert submenu, and the
@@ -46,7 +47,7 @@ struct MainMenuRebuildTests {
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         populate(viewModel)
         let controller = MainMenuController(
-            viewModel: viewModel, windows: makeWindowRegistry(viewModel), hasBundledGuestAgentDisk: true)
+            viewModel: viewModel, windows: makeWindowRegistry(viewModel))
         return Fixture(
             controller: controller, viewModel: viewModel, mainMenu: controller.makeMainMenu())
     }

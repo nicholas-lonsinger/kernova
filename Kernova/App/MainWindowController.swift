@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCore
 import KernovaLogging
 
 /// Manages the main library window using an `NSSplitViewController` for sidebar/detail layout

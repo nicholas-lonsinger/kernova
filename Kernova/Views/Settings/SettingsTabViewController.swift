@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaLogging
 
 /// A Settings pane that can outgrow the window and shows a scroller flash to

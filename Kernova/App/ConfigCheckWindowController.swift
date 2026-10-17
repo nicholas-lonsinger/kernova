@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Hosts the Check Config Files window: a window of its own rather than a
 /// sheet, because Settings, the library window and a launch with no window

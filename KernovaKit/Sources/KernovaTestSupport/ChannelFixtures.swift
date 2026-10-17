@@ -37,7 +37,7 @@ public func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel
 /// Single-consumer: `VsockChannel.incoming` allows one iteration at a time, so a
 /// test that also needs "prove nothing arrived" against the same channel uses
 /// ``FrameRecorder`` instead of mixing the two.
-func nextFrame(from channel: VsockChannel) async throws -> Frame {
+public func nextFrame(from channel: VsockChannel) async throws -> Frame {
     let timeout = testWaitBackstop
     let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {

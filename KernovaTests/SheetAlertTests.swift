@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// `presentSheetAlert(_:in:didDismiss:completion:)` can't be unit-tested directly.
 ///

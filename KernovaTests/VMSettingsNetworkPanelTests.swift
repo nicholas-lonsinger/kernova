@@ -5,6 +5,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The Network panel's own behavior, drilled into through the shell.
 @Suite("VM Settings Network Panel Tests", .serialized, .caseScoped, .scopedWindows)

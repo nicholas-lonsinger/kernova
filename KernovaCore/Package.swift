@@ -23,9 +23,14 @@ let package = Package(
     products: [
         .library(name: "KernovaCore", targets: ["KernovaCore"]),
         .library(name: "KernovaUI", targets: ["KernovaUI"]),
+        .library(name: "KernovaCoreTestSupport", targets: ["KernovaCoreTestSupport"]),
     ],
     dependencies: [
-        .package(path: "../KernovaKit")
+        .package(path: "../KernovaKit"),
+        // For the tests, which build messages with its `with`. Any 1.x: SwiftPM
+        // resolves one version for the graph, and KernovaKit's requirement is
+        // the one that sets its floor.
+        .package(url: "https://github.com/apple/swift-protobuf.git", "1.0.0"..<"2.0.0"),
     ],
     targets: [
         .target(
@@ -33,6 +38,10 @@ let package = Package(
             dependencies: [
                 .product(name: "KernovaKit", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
+            ],
+            resources: [
+                .copy("Resources/LinuxImageCatalog.json"),
+                .copy("Resources/RestoreImageCatalog.json"),
             ],
             swiftSettings: sharedSwiftSettings
         ),
@@ -44,11 +53,30 @@ let package = Package(
             dependencies: ["KernovaCore"],
             swiftSettings: sharedSwiftSettings
         ),
+        // The fakes and fixtures every bundle testing the core shares.
+        // KernovaUITests links the product beside KernovaUI, into the one image
+        // that holds them; the app-hosted KernovaTests compiles this folder
+        // instead, since its host already holds KernovaCore
+        // (Tools/check-package-reference.sh).
+        .target(
+            name: "KernovaCoreTestSupport",
+            dependencies: [
+                "KernovaCore",
+                .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaLogging", package: "KernovaKit"),
+                .product(name: "KernovaTestSupport", package: "KernovaKit"),
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
         .testTarget(
             name: "KernovaCoreTests",
             dependencies: [
                 "KernovaCore",
+                "KernovaCoreTestSupport",
+                .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaLogging", package: "KernovaKit"),
                 .product(name: "KernovaTestSupport", package: "KernovaKit"),
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ],
             swiftSettings: sharedSwiftSettings
         ),

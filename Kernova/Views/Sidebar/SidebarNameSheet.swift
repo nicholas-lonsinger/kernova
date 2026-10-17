@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The sheets naming a smart group or a folder: a new one, and a rename.

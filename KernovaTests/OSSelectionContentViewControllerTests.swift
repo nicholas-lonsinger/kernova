@@ -3,6 +3,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("OSSelectionContentViewController Tests", .caseScoped)
 @MainActor

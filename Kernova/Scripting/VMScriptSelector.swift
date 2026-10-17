@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCore
 import KernovaKit
 
 /// How one Apple event addresses the VMs its verb runs on.

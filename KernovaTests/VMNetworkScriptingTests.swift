@@ -5,6 +5,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The dictionary's `network`: what a script reads, and what `make`, `set
 /// name` and `delete` do to the library's networks.

@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Layout tests for the Reminders settings pane.
 ///
@@ -24,7 +25,7 @@ struct RemindersSettingsViewControllerTests {
         VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -39,7 +40,8 @@ struct RemindersSettingsViewControllerTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 

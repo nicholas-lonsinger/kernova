@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 extension VMTagColor {
     var nsColor: NSColor {

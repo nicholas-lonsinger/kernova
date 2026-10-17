@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Generic popover content for asking the user to pick a disk size and
 /// confirm or cancel.

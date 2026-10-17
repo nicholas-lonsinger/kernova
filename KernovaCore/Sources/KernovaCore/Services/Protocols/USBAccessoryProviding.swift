@@ -1,0 +1,60 @@
+import Foundation
+
+/// Failures USB accessory attach and detach report.
+package enum USBAccessoryError: LocalizedError, Equatable {
+    case noVirtualMachine
+    case noUSBController
+    /// The accessory is no longer assigned to Kernova — unplugged, or handed
+    /// to another app — so there is nothing to attach.
+    case accessoryNotFound
+    /// The VM holds no passthrough device under that identifier.
+    case deviceNotFound
+
+    package var errorDescription: String? {
+        switch self {
+        case .noVirtualMachine: "The virtual machine is not running."
+        case .noUSBController: "This virtual machine has no USB controller."
+        case .accessoryNotFound: "That USB accessory is no longer available."
+        case .deviceNotFound: "That USB accessory is not attached to this virtual machine."
+        }
+    }
+}
+
+/// Observes the USB accessories macOS assigns to Kernova, and moves them on and
+/// off a running guest's USB controller.
+///
+/// macOS owns consent: the user assigns a physical accessory to Kernova in
+/// Apple's *Virtual Machine Accessories* menu extra, and this type is handed
+/// only what they assigned. It never enumerates the host's USB devices, so
+/// `accessories` is exactly what Kernova may act on and nothing wider.
+@MainActor
+package protocol USBAccessoryProviding: AnyObject {
+    /// The accessories macOS has assigned to Kernova, in arrival order.
+    var accessories: [USBAccessoryInfo] { get }
+
+    /// Called when a newly assigned accessory arrives.
+    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)? { get set }
+
+    /// What the guests are holding, asked whenever a new assignment's identity
+    /// is composed.
+    ///
+    /// macOS withdraws an accessory a guest has captured, so `accessories`
+    /// alone says a key is free while a guest's record still answers to it —
+    /// and a second unit reporting the same serial would take that key and be
+    /// read as the first one coming back from a detach.
+    ///
+    /// `nil` is "no guest holds anything", which is what a harness with no
+    /// roster means.
+    var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])? { get set }
+
+    /// Registers the listener that populates `accessories`. Idempotent; the
+    /// registration lives for the process.
+    func startObserving()
+
+    /// Attaches the accessory `reservation` names to the live USB controller
+    /// of the VM it is reserved for.
+    func attach(_ reservation: borrowing VMAccessoryReservation) async throws -> AttachedUSBAccessory
+
+    /// Detaches the passthrough device `deviceID` names.
+    func detach(deviceID: UUID, from instance: VMInstance) async throws
+}

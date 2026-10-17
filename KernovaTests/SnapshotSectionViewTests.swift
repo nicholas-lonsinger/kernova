@@ -3,6 +3,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("SnapshotSectionView Tests", .caseScoped, .scopedWindows)
 @MainActor

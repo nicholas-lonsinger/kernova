@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The VM Settings pane's Snapshots section: header readout, one row per

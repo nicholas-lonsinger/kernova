@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers ``AppTerminationController/isQuitEvent(_:)`` — which Apple event the
 /// gate reads as a quit.

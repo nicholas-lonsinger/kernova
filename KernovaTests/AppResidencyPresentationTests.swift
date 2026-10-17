@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers ``AppResidencyController/prepareToPresentWindow()`` — the chokepoint
 /// every window that bypasses the summon path goes through, and where such a

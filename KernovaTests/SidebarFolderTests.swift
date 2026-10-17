@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Folders as the sidebar lists them: the sections the projection adds, the
 /// menus that make and change them, the drags that fill and order them, and
@@ -22,7 +23,7 @@ struct SidebarFolderTests {
         VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -38,7 +39,8 @@ struct SidebarFolderTests {
             entitlements: .entitled,
             organization: organization,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 

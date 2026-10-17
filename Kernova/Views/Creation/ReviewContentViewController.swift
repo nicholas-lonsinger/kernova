@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// Step 4 of the creation wizard: review the configuration before creating.

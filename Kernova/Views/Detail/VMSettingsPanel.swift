@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The bindings every settings panel reads: the VM under edit, the view model

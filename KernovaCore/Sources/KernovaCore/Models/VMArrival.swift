@@ -1,0 +1,259 @@
+import Foundation
+import KernovaKit
+
+/// One row of the library: a VM, a create, clone or import whose bundle is
+/// still being written, or a bundle whose files Kernova can't read.
+///
+/// Every VM verb takes a ``VMInstance``, so none can reach an arrival or an
+/// unreadable bundle.
+@MainActor
+package enum LibraryEntry {
+    case vm(VMInstance)
+    case arriving(VMArrival)
+    case unreadable(UnreadableVM)
+
+    package var id: UUID {
+        switch self {
+        case .vm(let instance): instance.id
+        case .arriving(let arrival): arrival.id
+        case .unreadable(let bundle): bundle.id
+        }
+    }
+
+    package var name: String {
+        switch self {
+        case .vm(let instance): instance.name
+        case .arriving(let arrival): arrival.name
+        case .unreadable(let bundle): bundle.name
+        }
+    }
+
+    /// The configuration the row is ordered and described by; `nil` for a
+    /// bundle whose configuration cannot be read.
+    package var configuration: VMConfiguration? {
+        switch self {
+        case .vm(let instance): instance.configuration
+        case .arriving(let arrival): arrival.configuration
+        case .unreadable: nil
+        }
+    }
+
+    package var vm: VMInstance? {
+        if case .vm(let instance) = self { instance } else { nil }
+    }
+
+    package var arrival: VMArrival? {
+        if case .arriving(let arrival) = self { arrival } else { nil }
+    }
+
+    var unreadable: UnreadableVM? {
+        if case .unreadable(let bundle) = self { bundle } else { nil }
+    }
+
+    /// The row's identity as an outline-view item.
+    var object: AnyObject {
+        switch self {
+        case .vm(let instance): instance
+        case .arriving(let arrival): arrival
+        case .unreadable(let bundle): bundle
+        }
+    }
+}
+
+/// A create, clone or import in flight: the bundle it is writing under the
+/// hidden staging directory, until publication renames it to
+/// ``destinationURL`` and ``VMLibrary/adopt(_:publishing:)`` turns it into a
+/// ``VMInstance``.
+@MainActor
+@Observable
+package final class VMArrival {
+    package enum Kind: Sendable, Equatable {
+        case creating
+        case cloning
+        case importing
+
+        var displayLabel: String {
+            switch self {
+            case .creating: "Creating\u{2026}"
+            case .cloning: "Cloning\u{2026}"
+            case .importing: "Importing\u{2026}"
+            }
+        }
+
+        /// The user-facing noun for this operation ("Creation" / "Clone" / "Import").
+        var displayNoun: String {
+            switch self {
+            case .creating: "Creation"
+            case .cloning: "Clone"
+            case .importing: "Import"
+            }
+        }
+
+        package var cancelLabel: String { "Cancel \(displayNoun)" }
+
+        var cancelAlertTitle: String { "Cancel \(displayNoun)?" }
+
+        /// The verb the failure alert's title names ("Couldn't Import ...").
+        var titleVerb: String {
+            switch self {
+            case .creating: "Create"
+            case .cloning: "Clone"
+            case .importing: "Import"
+            }
+        }
+
+        /// The verb whose failure this arrival's failure is.
+        var verb: VMVerb {
+            switch self {
+            case .creating: .create
+            case .cloning: .clone
+            case .importing: .importVM
+            }
+        }
+    }
+
+    /// The bundle a clone or import copies its files from.
+    struct Source: Sendable, Equatable {
+        let bundleURL: URL
+        /// How the user knows the bundle: the path an import was given, or the
+        /// name of the VM a clone copies.
+        let label: String
+
+        /// An import's source, labelled by its path.
+        static func importing(_ bundleURL: URL) -> Source {
+            // From the components, so a directory URL's trailing slash is not shown.
+            Source(
+                bundleURL: bundleURL,
+                label: NSString.path(withComponents: bundleURL.pathComponents))
+        }
+    }
+
+    enum Stage: Equatable {
+        /// The bundle is being written under the staging directory.
+        case writing
+        /// A cancel was taken; the write is settling, and nothing publishes.
+        case cancelling
+        /// The write finished and the rename into the VMs directory is under
+        /// way — past the point a cancel can stop the rename.
+        case publishing
+        /// A cancel was taken during the rename: the published bundle goes to
+        /// the Trash instead of becoming a VM.
+        case withdrawing
+        /// The published bundle became this arrival's VM; nothing is left to
+        /// cancel.
+        case adopted
+    }
+
+    /// The identifier of the VM this arrival becomes.
+    package let id: UUID
+    package let kind: Kind
+    /// What the write was asked for — the name, listing and description the
+    /// row shows until the VM is read from its published bundle.
+    let configuration: VMConfiguration
+    /// Where publication renames the finished bundle.
+    let destinationURL: URL
+
+    /// Where the write's tree sits until publication.
+    let staged: VMStagedBundle
+
+    /// What the write copies from — `nil` for a create, which copies nothing.
+    let source: Source?
+
+    /// What the VM this arrival becomes starts with besides its
+    /// configuration, as far as it is known before the write.
+    let starting: Starting
+
+    /// The host state the VM arrives with and whether it carries snapshots: a
+    /// clone's, the values its copy writes; an import's, its source's as read
+    /// when the import registered, as the copy will leave them; a create's,
+    /// and an import's whose source's state files don't read, a new VM's.
+    struct Starting: Sendable, Equatable {
+        var hostState = VMHostState()
+        var hasSnapshots = false
+    }
+
+    private(set) var stage: Stage = .writing
+
+    package var name: String { configuration.name }
+
+    /// Whether a cancel was taken, before the rename or during it.
+    var isCancelling: Bool { stage == .cancelling || stage == .withdrawing }
+
+    /// What a surface shows for this row.
+    package var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : kind.displayLabel }
+
+    @ObservationIgnored private let run: @MainActor (VMArrival) async throws -> VMInstance
+
+    /// The arrival's outcome: the VM its published bundle became, or why none
+    /// did. Started when the arrival is made, on the main actor's next turn.
+    @ObservationIgnored private(set) lazy var settled: Task<VMInstance, any Error> = Task {
+        try await run(self)
+    }
+
+    /// Makes an arrival whose write `run` performs, starting it.
+    ///
+    /// `run` begins on a later main-actor turn, so whatever registers the
+    /// arrival in the same synchronous segment does so before it.
+    init(
+        id: UUID, kind: Kind, configuration: VMConfiguration, destinationURL: URL,
+        staged: VMStagedBundle, source: Source?, starting: Starting = Starting(),
+        run: @escaping @MainActor (VMArrival) async throws -> VMInstance
+    ) {
+        self.id = id
+        self.kind = kind
+        self.configuration = configuration
+        self.destinationURL = destinationURL
+        self.staged = staged
+        self.source = source
+        self.starting = starting
+        self.run = run
+        _ = settled
+    }
+
+    /// What a cancel found.
+    enum CancelDecision: Equatable {
+        /// The write was stopped short of publication.
+        case cancelled
+        /// The rename was under way; the published bundle goes to the Trash
+        /// before the arrival settles, so nothing receives a VM.
+        case withdrawn
+        /// An earlier cancel already took effect.
+        case alreadyCancelling
+        /// The arrival already became its VM.
+        case adopted
+    }
+
+    /// Cancels the arrival: its write is stopped short of publication, or,
+    /// once the rename has begun, its published bundle is withdrawn.
+    func requestCancel() -> CancelDecision {
+        switch stage {
+        case .writing:
+            stage = .cancelling
+            settled.cancel()
+            return .cancelled
+        case .publishing:
+            stage = .withdrawing
+            return .withdrawn
+        case .cancelling, .withdrawing:
+            return .alreadyCancelling
+        case .adopted:
+            return .adopted
+        }
+    }
+
+    /// Moves the arrival past the last point a cancel can stop its write,
+    /// answering `false` when one already has.
+    func beginPublishing() -> Bool {
+        guard stage == .writing else { return false }
+        stage = .publishing
+        return true
+    }
+
+    /// Moves a published arrival to its VM, answering `false` when a cancel
+    /// taken during the rename withdraws it instead.
+    func finishPublishing() -> Bool {
+        guard stage == .publishing else { return false }
+        stage = .adopted
+        return true
+    }
+}

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Tinted banner stacked above the settings form, naming the VM's state and
 /// what the user does next.

@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Behavioral tests for the pure-AppKit sidebar.
 ///
@@ -31,7 +32,7 @@ struct SidebarViewControllerTests {
         VMLibraryViewModel(
             storageService: storageService,
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -46,7 +47,8 @@ struct SidebarViewControllerTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 
@@ -229,7 +231,7 @@ struct SidebarViewControllerTests {
     /// attaching the disk with the status unchanged must still reach the badge.
     @Test("The agent badge follows the installer's attached state")
     func agentBadgeFollowsInstallerAttachment() async throws {
-        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))

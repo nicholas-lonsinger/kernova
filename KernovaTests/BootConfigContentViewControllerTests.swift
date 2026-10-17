@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("BootConfigContentViewController Tests", .caseScoped)
 @MainActor

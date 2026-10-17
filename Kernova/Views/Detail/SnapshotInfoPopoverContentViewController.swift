@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// Popover content shown by a snapshot row's "Get Info" menu item.

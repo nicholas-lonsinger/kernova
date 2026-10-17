@@ -5,22 +5,7 @@ import Synchronization
 import Testing
 
 @testable import Kernova
-
-extension SidebarLayout.Context {
-    /// A context naming networks by the app's own titling, over `networks`
-    /// and no host interfaces.
-    static func testing(
-        bundledAgentVersion: String? = "2.0", networks: [VMNamedNetwork] = [], tags: [VMTag] = []
-    ) -> SidebarLayout.Context {
-        SidebarLayout.Context(
-            bundledAgentVersion: bundledAgentVersion, networks: .listed(networks), tags: tags,
-            networkTitle: {
-                NetworkModeChoice.label(
-                    of: $0, entitlements: .entitled, interfaces: { [] }, networks: .listed(networks)
-                ).text
-            })
-    }
-}
+@testable import KernovaCore
 
 /// `choice` as a filter tells it apart, in a library listing every named
 /// network.
@@ -40,7 +25,7 @@ struct SidebarFilterSortGroupTests {
         VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -55,7 +40,8 @@ struct SidebarFilterSortGroupTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 

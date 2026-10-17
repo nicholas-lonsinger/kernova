@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import UniformTypeIdentifiers
 
 /// A copied or dropped file shown as a chip: the file-type icon, its name, and

@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCore
 import KernovaLogging
 
 /// AppKit container that layers pure-AppKit VM displays on top of the detail

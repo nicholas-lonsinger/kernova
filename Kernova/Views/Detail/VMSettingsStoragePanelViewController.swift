@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import UniformTypeIdentifiers
 
 /// The Storage category: the VM's disks and its hot-pluggable removable media.
@@ -814,7 +815,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         Task { [weak self] in
             guard let self, let item = currentRemovableMedia.first(where: { $0.id == id })
             else { return }
-            let isAgent = item.isBundledGuestAgentInstaller
+            let isAgent = item.isInstaller(of: instance.guestAgent)
             var shared: [String] = []
             if !isAgent {
                 shared = await viewModel.sharingVMNames(

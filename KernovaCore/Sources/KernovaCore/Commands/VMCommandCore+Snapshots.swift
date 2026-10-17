@@ -1,0 +1,457 @@
+import Foundation
+import KernovaKit
+import KernovaLogging
+
+/// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.
+extension VMCommandCore {
+    // MARK: - Sizes
+
+    /// The size of each of this VM's snapshots, read off the main
+    /// actor — the read walks every file each snapshot holds.
+    func snapshotSizes(of selector: VMSelector) async throws -> [UUID: SnapshotSize] {
+        await snapshotSizes(for: try resolve(selector))
+    }
+
+    /// The size of each of this VM's snapshots.
+    func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
+        await instance.bundle.snapshotSizes()
+    }
+
+    // MARK: - Take
+
+    /// Captures a snapshot; `asEphemeralBaseline` also turns Ephemeral Mode on
+    /// with it as the baseline, written inside the capture.
+    @discardableResult
+    func takeSnapshot(
+        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool = false
+    ) async throws -> SnapshotSummary {
+        try await takeSnapshot(
+            try resolve(selector), name: name, notes: notes,
+            asEphemeralBaseline: asEphemeralBaseline)
+    }
+
+    /// Captures a snapshot and lists it in the manifest.
+    ///
+    /// The gate is re-read here rather than trusted from whenever the caller
+    /// last looked: a sheet gathers a name and notes, and the VM can start,
+    /// stop, or suspend while it is up.
+    @discardableResult
+    func takeSnapshot(
+        _ instance: VMInstance, name: String, notes: String, asEphemeralBaseline: Bool = false
+    ) async throws -> SnapshotSummary {
+        try require(.takeSnapshot, on: instance)
+        var baselineFailure: (any Error)?
+        let snapshot = try await captureSnapshot(instance, name: name, notes: notes) {
+            permit, captured in
+            guard asEphemeralBaseline else { return }
+            // The snapshot stands as a restore point whether or not the mode
+            // turns on, so this failure is reported rather than undoing it.
+            do {
+                try permit.bundle.commitHostState {
+                    $0.applyEphemeralMode(enabled: true, baseline: captured.id)
+                }
+            } catch {
+                baselineFailure = error
+            }
+        }
+        if let baselineFailure {
+            #log(
+                Self.logger, .error,
+                "Took a snapshot of '\(instance.name, privacy: .public)' but could not make it the Ephemeral baseline: \(baselineFailure.localizedDescription, privacy: .public)"
+            )
+            throw CommandError.operationFailed(
+                verb: .takeSnapshot,
+                message:
+                    "The snapshot \u{201C}\(snapshot.name)\u{201D} was taken, but Ephemeral Mode "
+                    + "could not be turned on: \(baselineFailure.localizedDescription)")
+        }
+        return snapshotSummary(snapshot, on: instance)
+    }
+
+    /// The capture itself, listed in the manifest inside the same capture
+    /// operation, answering the snapshot that landed; `alsoRecord` writes
+    /// beside that listing under the same permit.
+    private func captureSnapshot(
+        _ instance: VMInstance, name: String, notes: String,
+        alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
+    ) async throws -> VMSnapshot {
+        // Stamped at confirm time, not when the caller decided: the VM can
+        // start, stop, or suspend in between.
+        guard
+            let mode = VMAdmission.settledCaptureMode(
+                phase: instance.phase, facts: instance.admissionFacts)
+        else {
+            #log(
+                Self.logger, .notice,
+                "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
+            )
+            throw invalidState(instance)
+        }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snapshot = VMSnapshotCaptureRequest(
+            name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
+        do {
+            return try await lifecycle.takeSnapshot(instance, mode: mode, snapshot: snapshot) {
+                permit, captured in
+                try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
+                alsoRecord(permit, captured)
+            }
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw failure(error, verb: .takeSnapshot, on: instance)
+        }
+    }
+
+    // MARK: - Revert
+
+    /// Returns the VM to a snapshot.
+    ///
+    /// A revert that resumes refuses a MAC address another active VM uses on
+    /// the snapshot's network with ``CommandError/stepRequired(_:)`` and no
+    /// route: the revert installs the snapshot's network, overwriting a change
+    /// made before it.
+    func revertToSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
+        let instance = try resolve(selector)
+        let snapshot = try requireSnapshot(id, on: instance)
+        try require(.revertToSnapshot, on: instance)
+        guard consent.covers(.revertToSnapshot) else {
+            throw CommandError.confirmationRequired(
+                Self.revertPrompt(snapshot, on: instance))
+        }
+        let identity = VMIdentityOverride(consent)
+        let decision = instance.activity.decide(
+            .operation(
+                .bringUp(
+                    .reverting(
+                        snapshotID: snapshot.id,
+                        resumesAfter: Self.revertResumes(instance, to: snapshot)))),
+            posture: .commit, identity: identity)
+        if case .refuse(let reason) = decision {
+            throw admissionRefusal(reason, on: instance, verb: .revertToSnapshot)
+        }
+        // Awaited *and* answered for: a caller that waited on the revert is told
+        // whether the rollback happened, rather than getting a success while an
+        // alert about the failure goes somewhere else.
+        try await awaitRevert(instance, startRevert(instance, to: snapshot, identity: identity))
+    }
+
+    /// The refusal a revert raises, and the copy every surface renders it with.
+    package static func revertPrompt(_ snapshot: VMSnapshot, on instance: VMInstance) -> ConfirmationPrompt {
+        ConfirmationPrompt(
+            kind: .revertToSnapshot,
+            title: "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
+            message: revertMessage(snapshot, instance),
+            confirmTitle: "Revert",
+            dismissTitle: "Cancel")
+    }
+
+    /// What the revert says the user is trading away, by what the target
+    /// snapshot holds and what the VM holds now.
+    static func revertMessage(_ snapshot: VMSnapshot, _ vm: VMInstance) -> String {
+        let taken = SnapshotDateFormat.string(from: snapshot.createdAt)
+        let unlessSnapshotTaken = vm.snapshotCaptureMode != nil ? " unless you take a snapshot first" : ""
+        let guestLoss = "Everything changed inside the guest since then will be lost\(unlessSnapshotTaken)."
+
+        switch snapshot.kind {
+        case .warm:
+            // The VM's own suspend slot is the state it would otherwise resume
+            // into, and the revert writes over it.
+            let loss =
+                vm.holdsSuspendedSession
+                ? "The suspended session this VM would resume into is replaced by the snapshot's, "
+                    + "and everything changed inside the guest since then will be lost\(unlessSnapshotTaken)."
+                : guestLoss
+            return "The VM will return to the state and settings captured \(taken). "
+                + "\(loss) The snapshot itself is kept."
+        case .cold:
+            // No memory image to come back on, so whatever session the VM holds
+            // now — running or suspended — is gone rather than replaced.
+            let session: String
+            if vm.hasLiveVirtualMachine {
+                session = "The session it is running now ends. "
+            } else if vm.holdsSuspendedSession {
+                session = "The suspended session it would resume into is discarded. "
+            } else {
+                session = ""
+            }
+            return "The VM will return to the disks and settings captured \(taken), powered off. "
+                + "\(session)\(guestLoss) The snapshot itself is kept."
+        }
+    }
+
+    /// Starts the revert of `instance` to `snapshot`, admitted and committed
+    /// before this returns — so a termination gate or a Start that reads the
+    /// VM next finds the revert — and answers its outcome.
+    ///
+    /// The manifest's current marker is written inside the revert operation,
+    /// once the snapshot's files are in the bundle.
+    ///
+    /// `identity` is what the caller can do about another active VM sharing
+    /// the machine identity a revert that resumes would claim.
+    func startRevert(
+        _ instance: VMInstance, to snapshot: VMSnapshot,
+        identity: VMIdentityOverride = .unavailable
+    ) throws -> VMOutcome {
+        do {
+            return try launchRevert(
+                instance, to: snapshot, origin: .newWork, identity: identity,
+                resolving: VMOutcome())
+        } catch {
+            throw failure(error, verb: .revertToSnapshot, on: instance)
+        }
+    }
+
+    /// ``startRevert(_:to:identity:)`` resolving `outcome`, throwing what refused it as
+    /// it was raised.
+    @discardableResult
+    private func launchRevert(
+        _ instance: VMInstance, to snapshot: VMSnapshot, origin: VMRequestOrigin,
+        identity: VMIdentityOverride = .unavailable, resolving outcome: VMOutcome
+    ) throws -> VMOutcome {
+        guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
+            #log(
+                Self.logger, .notice,
+                "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
+            )
+            throw CommandError.operationFailed(
+                verb: .revertToSnapshot,
+                message:
+                    "\u{201C}\(instance.name)\u{201D} no longer lists the snapshot \u{201C}\(snapshot.name)\u{201D}."
+            )
+        }
+        let resumesAfter = Self.revertResumes(instance, to: snapshot)
+        try lifecycle.startRevert(
+            instance, to: snapshot, resumesAfter: resumesAfter, origin: origin,
+            identity: identity, resolving: outcome,
+            commitConfiguration: { [library] permit, plan in
+                try library.commitRevertedConfiguration(plan, permit)
+            },
+            landed: { [weak self] permit in
+                try self?.commitSnapshotManifest(permit, verb: .revertToSnapshot) {
+                    $0.currentID = snapshot.id
+                }
+            })
+        // The window the VM comes back up in is chosen before the teardown
+        // the revert's task begins with.
+        if resumesAfter { readyDisplay?(instance, .attended) }
+        return outcome
+    }
+
+    /// Whether reverting `instance` to `snapshot` resumes the guest: a VM that
+    /// is live goes back to being live once the files are in place, and a cold
+    /// snapshot ends the session for good.
+    private static func revertResumes(_ instance: VMInstance, to snapshot: VMSnapshot) -> Bool {
+        instance.phase.isSettledLive && snapshot.kind == .warm
+    }
+
+    /// Waits for the revert `outcome` belongs to and throws how it failed.
+    func awaitRevert(_ instance: VMInstance, _ outcome: VMOutcome) async throws {
+        do {
+            try await outcome.value()
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw failure(error, verb: .revertToSnapshot, on: instance)
+        }
+    }
+
+    // MARK: - Ephemeral Mode
+
+    /// The revert to its baseline an Ephemeral Mode VM owes a power-off, as a
+    /// follow-up; `nil` for every other VM.
+    ///
+    /// Answered from ``VMActivity/onPoweredOff``, whose step drains it: a
+    /// restoration, it takes the VM before any other follow-up queued there
+    /// and before anything else can be decided against the VM. A failure
+    /// nobody waits on is reported.
+    func ephemeralBaselineRevert(for instance: VMInstance) -> VMFollowUp? {
+        guard let baseline = instance.ephemeralBaselineSnapshot else { return nil }
+        return VMFollowUp(scope: .vm, rank: .restoration) { [weak self, weak instance] outcome in
+            guard let self, let instance else { throw CancellationError() }
+            #log(
+                Self.logger, .notice,
+                "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
+            )
+            try self.launchRevert(
+                instance, to: baseline, origin: .powerOffRevert, resolving: outcome)
+        }
+        .reportingFailure { [weak self] error in
+            guard let self else { return }
+            self.report(self.failure(error, verb: .revertToSnapshot, on: instance), on: instance)
+        }
+    }
+
+    // MARK: - Delete
+
+    func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
+        let instance = try resolve(selector)
+        let snapshot = try requireSnapshot(id, on: instance)
+        try requireNotEphemeralBaseline(snapshot, on: instance)
+        try require(.deleteSnapshot, on: instance)
+        guard consent.covers(.deleteSnapshot) else {
+            throw CommandError.confirmationRequired(
+                Self.deleteSnapshotPrompt(snapshot, on: instance))
+        }
+        // Unlisted first, then trashed: a manifest write that fails leaves the
+        // snapshot listed with its files in place, and a trash that fails
+        // leaves no entry pointing at files that are gone — only an unlisted
+        // directory, which costs space and no data.
+        var unlisted = false
+        do {
+            try await lifecycle.discardSnapshot(instance, snapshotID: id) { permit in
+                // Decided again under the permit: taking the run lock re-reads
+                // the host state, which another copy of Kernova may have
+                // written to name this snapshot as the baseline.
+                try self.requireNotEphemeralBaseline(snapshot, on: instance)
+                try self.commitSnapshotManifest(permit, verb: .deleteSnapshot) { $0.remove(id: id) }
+                unlisted = true
+            }
+        } catch let failure as CommandError {
+            throw failure
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            guard unlisted else { throw failure(error, verb: .deleteSnapshot, on: instance) }
+            throw CommandError.operationFailed(
+                verb: .deleteSnapshot,
+                message:
+                    "\u{201C}\(snapshot.name)\u{201D} was removed from the list, but its files could not be moved to the Trash. \(error.localizedDescription)"
+            )
+        }
+        #log(
+            Self.logger, .notice,
+            "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+        )
+    }
+
+    /// Refuses deleting `instance`'s Ephemeral Mode baseline, naming the step
+    /// that comes first: every power-off of the VM returns it to that
+    /// snapshot, so the delete is taken only once the mode is off.
+    private func requireNotEphemeralBaseline(
+        _ snapshot: VMSnapshot, on instance: VMInstance
+    ) throws {
+        guard instance.isEphemeralBaseline(snapshot) else { return }
+        #log(
+            Self.logger, .notice,
+            "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
+        )
+        throw CommandError.stepRequired(ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+    }
+
+    /// Why deleting `snapshot`, `instance`'s Ephemeral Mode baseline, is
+    /// refused, and the step that lifts it.
+    func ephemeralBaselineDeleteRefusal(
+        _ snapshot: VMSnapshot, on instance: VMInstance
+    ) -> StepRequirement {
+        StepRequirement(
+            message:
+                "\u{201C}\(snapshot.name)\u{201D} is \u{201C}\(instance.name)\u{201D}\u{2019}s Ephemeral Mode "
+                + "baseline. Turn Ephemeral Mode off first, then delete it.",
+            routes: [
+                StepRoute(
+                    title: "Turn Off Ephemeral Mode",
+                    steps: [
+                        .setConfiguration(
+                            vm: summary(instance),
+                            assignments: [VMConfigurationKeyRegistry.ephemeral.assigning(false)])
+                    ], ending: .refusedVerb)
+            ])
+    }
+
+    /// The refusal a snapshot delete raises.
+    package static func deleteSnapshotPrompt(
+        _ snapshot: VMSnapshot, on instance: VMInstance
+    ) -> ConfirmationPrompt {
+        ConfirmationPrompt(
+            kind: .deleteSnapshot,
+            title: "Delete \u{201C}\(snapshot.name)\u{201D}?",
+            message:
+                "Moves this snapshot's saved state and disk copies to the Trash. "
+                + "\u{201C}\(instance.name)\u{201D} keeps the state it has now.",
+            confirmTitle: "Delete",
+            dismissTitle: "Cancel")
+    }
+
+    // MARK: - Metadata
+
+    /// Renames a snapshot; an empty name, an unchanged one, and one naming a
+    /// snapshot the manifest no longer lists are all no-ops, and a rename that
+    /// would change the name is refused while the VM's state holds its
+    /// snapshot metadata.
+    ///
+    /// What decides is whether the write would change anything, rather than
+    /// whether the snapshot is still there: the inline field commits on
+    /// end-editing whether or not the text changed, so a row deleted while its
+    /// editor was open must not raise an alert about a rename nobody made.
+    func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
+        let instance = try resolve(selector)
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let snapshot = instance.snapshotManifest.snapshot(id: id),
+            snapshot.name != trimmed
+        else { return }
+        try require(.renameSnapshot, on: instance)
+        try edit(.renameSnapshot, on: instance, verb: .renameSnapshot) { permit in
+            try commitSnapshotManifest(permit, verb: .renameSnapshot) { $0.rename(id: id, to: trimmed) }
+        }
+    }
+
+    /// Replaces a snapshot's note; a write that would change nothing is a
+    /// no-op, and one that would is refused, on the same terms a rename's are.
+    ///
+    /// Unlike a name, an empty note is a legitimate value — it clears the note.
+    /// Leading and trailing whitespace is trimmed; interior newlines are kept.
+    func setSnapshotNotes(_ selector: VMSelector, snapshot id: UUID, notes: String) throws {
+        let instance = try resolve(selector)
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.notes != trimmed
+        else { return }
+        try require(.setSnapshotNotes, on: instance)
+        try edit(.setSnapshotNotes, on: instance, verb: .setSnapshotNotes) { permit in
+            try commitSnapshotManifest(permit, verb: .setSnapshotNotes) {
+                $0.setNotes(id: id, to: trimmed)
+            }
+        }
+    }
+
+    // MARK: - Manifest
+
+    /// The snapshot `id` names on `instance`, or the refusal for one the
+    /// manifest no longer lists.
+    private func requireSnapshot(_ id: UUID, on instance: VMInstance) throws -> VMSnapshot {
+        guard let snapshot = instance.snapshotManifest.snapshot(id: id) else {
+            throw itemNotFound(instance, item: "snapshot with the identifier \(id.uuidString)")
+        }
+        return snapshot
+    }
+
+    /// Commits `change` to the manifest of the VM `permit` writes, applied to
+    /// what the file holds; a change that moves nothing writes nothing.
+    ///
+    /// On failure the manifest stays as the bundle holds it, and the verb is
+    /// refused.
+    private func commitSnapshotManifest(
+        _ permit: borrowing VMEditPermit, verb: VMVerb,
+        _ change: (inout VMSnapshotManifest) -> Void
+    ) throws {
+        let instance = permit.instance
+        do {
+            try permit.bundle.commitSnapshotManifest(change)
+        } catch let refused as VMAdmissionRefusal {
+            throw admissionRefusal(refused.refusal, on: instance, verb: verb)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw CommandError.failed(verb: verb, error: error)
+        }
+    }
+}

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Routes the detail pane to the right content for the selected VM's status.
 ///

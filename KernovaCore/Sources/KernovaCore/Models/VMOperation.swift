@@ -1,0 +1,748 @@
+import Foundation
+import KernovaKit
+
+// MARK: - Phase
+
+/// Where a VM is in its lifecycle — the one value ``VMActivity`` stores, and
+/// what its ``VMStatus``, its failure message and every liveness predicate
+/// project from.
+///
+/// Settled phases name where the VM rests or runs; ``operating(_:)`` names the
+/// one long operation that holds it. A live phase carries the session's
+/// identity, and ``VMActivity/sessionContext`` holds the session whose `id`
+/// equals it.
+package enum VMLifecyclePhase: Sendable, Equatable {
+    /// Powered off, with no saved state to come back on.
+    case stopped
+
+    /// In the library but never booted — Start runs the guest setup first.
+    case initialBoot
+
+    /// The last operation failed permanently. `message` is what the error
+    /// banner and the status tooltip read, so it cannot survive the move to any
+    /// other phase.
+    case failed(message: String)
+
+    /// Suspended to disk: the guest's memory is in the bundle's suspend slot
+    /// and nothing is live.
+    case suspended
+
+    case running(sessionID: UUID)
+
+    /// Paused with the `VZVirtualMachine` still in memory, which Resume takes
+    /// straight back — as opposed to ``suspended``.
+    case livePaused(sessionID: UUID)
+
+    /// Exactly one long operation holds the VM.
+    indirect case operating(VMOperation)
+
+    /// Evicted from the library; admits nothing.
+    case removed
+
+    // MARK: Settled
+
+    /// Whether this is a settled phase — anything but an operation.
+    var isSettled: Bool {
+        if case .operating = self { return false }
+        return true
+    }
+
+    /// Whether the VM is settled with nothing live — the phases a bring-up
+    /// begins from.
+    var isAtRest: Bool {
+        switch self {
+        case .stopped, .initialBoot, .failed, .suspended: true
+        case .running, .livePaused, .operating, .removed: false
+        }
+    }
+
+    /// Whether the VM is settled with a live session.
+    package var isSettledLive: Bool {
+        switch self {
+        case .running, .livePaused: true
+        case .stopped, .initialBoot, .failed, .suspended, .operating, .removed: false
+        }
+    }
+
+    /// The operation holding the VM, or `nil` in a settled phase.
+    package var operation: VMOperation? {
+        guard case .operating(let operation) = self else { return nil }
+        return operation
+    }
+
+    // MARK: Session Identity
+
+    /// The live session this phase names — a settled live phase's, or the
+    /// session an operation holds — or `nil`.
+    ///
+    /// A `VZVirtualMachine` is in memory exactly while this is non-`nil`.
+    package var sessionID: UUID? {
+        switch self {
+        case .running(let id), .livePaused(let id): id
+        case .operating(let operation): operation.session?.id
+        case .stopped, .initialBoot, .failed, .suspended, .removed: nil
+        }
+    }
+
+    // MARK: Presentation
+
+    /// The settled phase surfaces present: this phase, except for an operation
+    /// that declares ``VMOperationDeclaration/Status/base`` status, which
+    /// presents the phase it started from — so a USB attach or a media
+    /// reconcile never changes what the user sees.
+    ///
+    /// Once that operation's session has ended it presents the at-rest phase
+    /// the end names. Whether a suspend slot outlived the session is a bundle
+    /// fact no phase holds, so the ending commit is what settles on it.
+    var presented: VMLifecyclePhase {
+        guard case .operating(let operation) = self,
+            operation.kind.declaration.status == .base
+        else { return self }
+        switch operation.sessionState {
+        case .none:
+            return operation.startedFrom
+        case .live(let session):
+            switch session.guest {
+            case .running: return .running(sessionID: session.id)
+            case .paused: return .livePaused(sessionID: session.id)
+            }
+        case .ended(let end):
+            return end.rest.phase(slotOnDisk: false)
+        }
+    }
+
+    /// The vocabulary every automation surface and every label reads.
+    var status: VMStatus {
+        switch self {
+        case .stopped, .removed: .stopped
+        case .initialBoot: .initialBoot
+        case .failed: .error
+        case .running: .running
+        case .livePaused: .paused
+        case .suspended: .suspended
+        case .operating(let operation):
+            switch operation.kind.declaration.status {
+            case .shows(let status): status
+            case .base: presented.status
+            }
+        }
+    }
+
+    /// The permanent-failure message, or `nil` in every other phase.
+    var errorMessage: String? {
+        guard case .failed(let message) = self else { return nil }
+        return message
+    }
+
+    /// Whether a live session is presented as settled — the VMs a device can be
+    /// attached to, a display can pop out of, and a termination save-suspends.
+    var hasLiveSession: Bool { presented.isSettledLive }
+
+    /// Whether the presented phase is paused with the VM still in memory.
+    var isLivePaused: Bool {
+        if case .livePaused = presented { return true }
+        return false
+    }
+
+    /// Whether the VM counts as holding its machine identity and MAC address
+    /// against another VM's bring-up and a live network-mode switch.
+    var holdsLiveIdentity: Bool {
+        switch self {
+        case .running, .livePaused: true
+        case .stopped, .initialBoot, .failed, .suspended, .removed: false
+        case .operating(let operation):
+            switch operation.kind.declaration.holdsIdentity {
+            case .always: true
+            case .viaSession: operation.session != nil
+            case .never: false
+            }
+        }
+    }
+
+    /// Whether the VM has a display session a backing view should present.
+    var hasActiveDisplay: Bool {
+        switch self {
+        case .running, .livePaused, .suspended: true
+        case .stopped, .initialBoot, .failed, .removed: false
+        case .operating(let operation):
+            switch operation.kind.declaration.display {
+            case .shown: true
+            case .hidden: false
+            case .base: presented.hasActiveDisplay
+            }
+        }
+    }
+}
+
+// MARK: - Rest
+
+/// A phase a VM rests at with nothing live — the only kind of phase an
+/// operation's ending names.
+///
+/// Suspension is not among them: a VM rests suspended exactly while its
+/// bundle's suspend slot is on disk, which ``phase(slotOnDisk:)`` reads.
+package enum VMRestPhase: Sendable, Equatable {
+    case stopped
+    case initialBoot
+    case failed(message: String)
+
+    /// Where the VM rests: suspended while the slot is on disk, this phase
+    /// otherwise.
+    func phase(slotOnDisk: Bool) -> VMLifecyclePhase {
+        guard !slotOnDisk else { return .suspended }
+        switch self {
+        case .stopped: return .stopped
+        case .initialBoot: return .initialBoot
+        case .failed(let message): return .failed(message: message)
+        }
+    }
+}
+
+extension VMLifecyclePhase {
+    /// Where a VM with nothing live rests as its bundle stands: never booted
+    /// while a guest setup — either guest's — survives, which outranks a
+    /// suspend slot, and otherwise suspended while the slot is on disk.
+    nonisolated static func atRest(
+        for configuration: VMConfiguration, layout: VMBundleLayout
+    ) -> VMLifecyclePhase {
+        if configuration.pendingGuestSetup != nil { return .initialBoot }
+        return layout.hasSaveFile ? .suspended : .stopped
+    }
+}
+
+// MARK: - Operation
+
+/// The one long operation holding a VM.
+package struct VMOperation: Sendable, Equatable {
+    let kind: VMOperationKind
+
+    /// The settled phase the operation was admitted from — what its base
+    /// status presents before any session end.
+    package let startedFrom: VMLifecyclePhase
+
+    var sessionState: VMOperationSessionState
+
+    /// What a caller joining the operation awaits.
+    let outcome: VMOutcome
+
+    /// The session the operation holds, or `nil` while it has none — before a
+    /// bring-up creates one, or once the session ended mid-operation.
+    var session: VMOperationSession? {
+        guard case .live(let session) = sessionState else { return nil }
+        return session
+    }
+
+    /// How the operation's session ended, once it has.
+    var sessionEnd: VMSessionEnd? {
+        guard case .ended(let end) = sessionState else { return nil }
+        return end
+    }
+
+    /// The settled phase a request during the operation is classified against:
+    /// where the VM rests once its session has ended — or once the Force Stop
+    /// in flight on it lands — and the phase it started from otherwise.
+    func settledBasis(slotOnDisk: Bool) -> VMLifecyclePhase {
+        switch sessionState {
+        case .ended(let end):
+            return end.rest.phase(slotOnDisk: slotOnDisk)
+        case .live(let session) where session.stopping != nil:
+            return VMSessionEnd.poweredOff.rest.phase(slotOnDisk: slotOnDisk)
+        case .live, .none:
+            return startedFrom
+        }
+    }
+}
+
+/// The session an operation holds.
+enum VMOperationSessionState: Sendable, Equatable {
+    /// None yet: an operation admitted at rest, or a bring-up that has not
+    /// created one.
+    case none
+    case live(VMOperationSession)
+    /// The session ended mid-operation, and how.
+    case ended(VMSessionEnd)
+}
+
+/// A session an operation holds, and whether its guest is executing.
+struct VMOperationSession: Sendable, Equatable {
+    let id: UUID
+    var guest: VMGuestRunState
+    /// The outcome of the Force Stop terminating this session, while one is
+    /// in flight; admission refuses new work on the session meanwhile.
+    var stopping: VMOutcome? = nil
+}
+
+/// Whether a live guest is executing.
+package enum VMGuestRunState: Sendable, Equatable {
+    case running
+    case paused
+}
+
+/// How an operation's session ended.
+package enum VMSessionEnd: Sendable, Equatable {
+    /// The guest powered off — shut down from inside, or force stopped.
+    case poweredOff
+    /// Virtualization stopped the guest with an error.
+    case stoppedWithError(message: String)
+    /// The operation ended the session itself: a save, a revert.
+    case endedByOperation
+
+    /// Where a VM rests once a session that ended this way is gone.
+    var rest: VMRestPhase {
+        guard case .stoppedWithError(let message) = self else { return .stopped }
+        return .failed(message: message)
+    }
+}
+
+/// How an operation ended, for every caller that joined it.
+///
+/// Equal by identity: one operation, one outcome.
+@MainActor
+package final class VMOutcome: Sendable, Equatable {
+    /// How the operation ended, or `nil` until it has.
+    private(set) var result: Result<Void, any Error>?
+    private var waiters: [CheckedContinuation<Result<Void, any Error>, Never>] = []
+    /// Outcomes that resolve as this one does — ``forward(to:)``.
+    private var forwarded: [VMOutcome] = []
+
+    /// The task a launched operation runs its body in, which cancelling the
+    /// operation cancels.
+    var task: Task<Void, Never>?
+
+    /// Records how the operation ended and wakes every joined caller.
+    ///
+    /// The first resolution stands.
+    func resolve(_ result: Result<Void, any Error>) {
+        guard self.result == nil else { return }
+        self.result = result
+        let waiting = waiters
+        waiters = []
+        for waiter in waiting { waiter.resume(returning: result) }
+        let joined = forwarded
+        forwarded = []
+        for outcome in joined { outcome.resolve(result) }
+    }
+
+    /// Resolves `other` as this outcome resolves, in the same step — at once
+    /// when it already has.
+    func forward(to other: VMOutcome) {
+        guard let result else {
+            forwarded.append(other)
+            return
+        }
+        other.resolve(result)
+    }
+
+    /// Waits for the operation to end and answers how it did.
+    func ended() async -> Result<Void, any Error> {
+        if let result { return result }
+        return await withCheckedContinuation { waiters.append($0) }
+    }
+
+    /// Waits for the operation to end and rethrows how it failed.
+    func value() async throws {
+        try await ended().get()
+    }
+
+    package nonisolated static func == (lhs: VMOutcome, rhs: VMOutcome) -> Bool { lhs === rhs }
+}
+
+// MARK: - Kinds
+
+/// What an operation does.
+package enum VMOperationKind: Sendable, Equatable {
+    case bringUp(VMBringUpKind)
+    case pausing
+    /// A hot resume of a live-paused VM.
+    case resuming
+    case saving
+    case capturingSnapshot(VMCaptureMode)
+    case deletingSnapshot
+    case attachingUSB(registryID: UInt64)
+    case detachingUSB(deviceID: UUID)
+    case reconcilingMedia
+    /// A Force Stop in flight on a session nothing else holds: admitted on a
+    /// settled live VM, or handed the VM by an operation that ended on a
+    /// stopping session. It has no body; the session's end is its end.
+    case forceStopping
+    case discardingSavedState
+    case deleting
+    /// Writing a new disk image inside the bundle and adding it to the VM's
+    /// storage disks.
+    case creatingStorageDisk
+    /// Dropping a storage disk's entry and moving the file behind it to the
+    /// Trash — unless another VM still references the file, which keeps it.
+    case removingStorageDisk
+    /// Writing a new disk image where the user chose and attaching it as
+    /// removable media — hot-plugged into a live guest before the operation
+    /// ends.
+    case creatingRemovableMedia
+    /// A clone copying the VM's files out of its bundle in `mode`: a live
+    /// copy pauses the guest once to copy its disks — and, for an Exact Copy,
+    /// to write its memory into the clone's bundle first — then puts it back
+    /// as found; a suspended copy clones the suspend slot beside the disks
+    /// for an Exact Copy and leaves it out for a New Machine.
+    case copyingOut(VMCaptureMode)
+
+    /// The operations a cancel request names.
+    package enum Family: Sendable, Equatable {
+        case guestSetup
+    }
+
+    /// Whether this operation belongs to `family`.
+    func belongs(to family: Family) -> Bool {
+        switch family {
+        case .guestSetup:
+            if case .bringUp(.settingUp) = self { return true }
+            return false
+        }
+    }
+}
+
+/// An operation that brings no guest up — the kinds ``VMActivity``'s generic
+/// entries (``VMActivity/perform(_:origin:_:)``,
+/// ``VMActivity/launch(_:origin:resolving:whenEnded:_:)``,
+/// ``VMActivity/performNow(_:_:)``) take, so none of them can admit a
+/// bring-up: each bring-up has an entry of its own.
+enum VMNonBringUpKind: Sendable, Equatable {
+    case pausing
+    case resuming
+    case saving
+    case capturingSnapshot(VMCaptureMode)
+    case deletingSnapshot
+    case attachingUSB(registryID: UInt64)
+    case detachingUSB(deviceID: UUID)
+    case reconcilingMedia
+    case forceStopping
+    case discardingSavedState
+    case deleting
+    case creatingStorageDisk
+    case removingStorageDisk
+    case creatingRemovableMedia
+    case copyingOut(VMCaptureMode)
+
+    /// `kind`, unless it is a bring-up.
+    init?(_ kind: VMOperationKind) {
+        switch kind {
+        case .bringUp: return nil
+        case .pausing: self = .pausing
+        case .resuming: self = .resuming
+        case .saving: self = .saving
+        case .capturingSnapshot(let mode): self = .capturingSnapshot(mode)
+        case .deletingSnapshot: self = .deletingSnapshot
+        case .attachingUSB(let registryID): self = .attachingUSB(registryID: registryID)
+        case .detachingUSB(let deviceID): self = .detachingUSB(deviceID: deviceID)
+        case .reconcilingMedia: self = .reconcilingMedia
+        case .forceStopping: self = .forceStopping
+        case .discardingSavedState: self = .discardingSavedState
+        case .deleting: self = .deleting
+        case .creatingStorageDisk: self = .creatingStorageDisk
+        case .removingStorageDisk: self = .removingStorageDisk
+        case .creatingRemovableMedia: self = .creatingRemovableMedia
+        case .copyingOut(let mode): self = .copyingOut(mode)
+        }
+    }
+
+    var operationKind: VMOperationKind {
+        switch self {
+        case .pausing: .pausing
+        case .resuming: .resuming
+        case .saving: .saving
+        case .capturingSnapshot(let mode): .capturingSnapshot(mode)
+        case .deletingSnapshot: .deletingSnapshot
+        case .attachingUSB(let registryID): .attachingUSB(registryID: registryID)
+        case .detachingUSB(let deviceID): .detachingUSB(deviceID: deviceID)
+        case .reconcilingMedia: .reconcilingMedia
+        case .forceStopping: .forceStopping
+        case .discardingSavedState: .discardingSavedState
+        case .deleting: .deleting
+        case .creatingStorageDisk: .creatingStorageDisk
+        case .removingStorageDisk: .removingStorageDisk
+        case .creatingRemovableMedia: .creatingRemovableMedia
+        case .copyingOut(let mode): .copyingOut(mode)
+        }
+    }
+}
+
+/// A bring-up that starts no guest from what the bundle holds — the kinds
+/// ``VMActivity/launchBringUp(_:identity:whenEnded:_:)`` takes, so a guest start is
+/// admitted only through ``VMActivity/launchStartGuest(_:identity:resolving:_:)``.
+enum VMNonStartBringUpKind: Sendable, Equatable {
+    case settingUp(GuestSetupKind)
+    case reverting(snapshotID: UUID, resumesAfter: Bool)
+
+    /// `kind`, unless it is a guest start.
+    init?(_ kind: VMBringUpKind) {
+        switch kind {
+        case .guestStart: return nil
+        case .settingUp(let setup): self = .settingUp(setup)
+        case .reverting(let snapshotID, let resumesAfter):
+            self = .reverting(snapshotID: snapshotID, resumesAfter: resumesAfter)
+        }
+    }
+
+    var bringUpKind: VMBringUpKind {
+        switch self {
+        case .settingUp(let setup): .settingUp(setup)
+        case .reverting(let snapshotID, let resumesAfter):
+            .reverting(snapshotID: snapshotID, resumesAfter: resumesAfter)
+        }
+    }
+}
+
+/// An operation that brings a guest up, or holds the VM across a restore that
+/// may resume one.
+package enum VMBringUpKind: Sendable, Equatable {
+    case guestStart(VMGuestStartKind)
+    case settingUp(GuestSetupKind)
+    /// A revert to `snapshotID`, resuming the guest at its end when
+    /// `resumesAfter`.
+    case reverting(snapshotID: UUID, resumesAfter: Bool)
+
+    /// Whether admission checks this bring-up against the identities other
+    /// live VMs hold.
+    ///
+    /// A revert that resumes puts the snapshot's configuration in front of
+    /// VZ, whose address need not be the one the VM held live.
+    var checksIdentity: Bool {
+        switch self {
+        case .guestStart, .settingUp: true
+        case .reverting(_, let resumesAfter): resumesAfter
+        }
+    }
+
+    /// Whether this bring-up begins a guest session on a VM at rest — a
+    /// session whose power-off returns an Ephemeral Mode VM to its baseline.
+    var beginsSessionFromRest: Bool {
+        switch self {
+        case .guestStart, .settingUp: true
+        case .reverting: false
+        }
+    }
+}
+
+/// A bring-up that starts the guest from what the bundle holds — its disks,
+/// or its saved state.
+package enum VMGuestStartKind: Sendable, Equatable {
+    /// A cold boot, into Recovery when `recovery`.
+    case starting(recovery: Bool)
+    /// Start or Resume of a VM holding a saved state.
+    case restoringSavedState
+}
+
+/// Which guest setup a first start runs.
+package enum GuestSetupKind: Sendable, Equatable {
+    case macOSInstall
+    case linuxImageDownload
+}
+
+/// An action on a live session that takes no admission of its own.
+package enum VMSessionAction: Sendable, Equatable {
+    /// The ACPI shutdown request.
+    case requestStop
+    case forceStop
+}
+
+// MARK: - Edit Classes
+
+/// What a write to a VM's persisted state touches, as admission reads it.
+package struct VMEditClasses: OptionSet, Sendable, Hashable {
+    package let rawValue: Int
+
+    package init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
+
+    /// Hardware the `VZVirtualMachine` is built from, pinned by a live session
+    /// and by a saved state — whole, including fields a restore was observed to
+    /// tolerate: Apple promises a restore only into "a configuration compatible
+    /// with the file" and names none of them.
+    static let machineKeys = VMEditClasses(rawValue: 1 << 0)
+    /// Settings read at moments other than boot.
+    static let liveKeys = VMEditClasses(rawValue: 1 << 1)
+    /// Removable media: pinned at rest by a saved state, hot-plugged live.
+    static let hotPlugMedia = VMEditClasses(rawValue: 1 << 2)
+    /// The live network attachment swap.
+    static let networkAttachment = VMEditClasses(rawValue: 1 << 3)
+    /// Where and how the host presents the VM — its display, and the tags its
+    /// rows show — which neither a session nor a saved state reads.
+    static let hostPresentation = VMEditClasses(rawValue: 1 << 4)
+    static let snapshotMetadata = VMEditClasses(rawValue: 1 << 5)
+    static let pairingRules = VMEditClasses(rawValue: 1 << 6)
+    static let rename = VMEditClasses(rawValue: 1 << 7)
+    /// What the host records from a live guest.
+    static let observations = VMEditClasses(rawValue: 1 << 8)
+    /// The live swap of the share a running guest's one directory-sharing
+    /// device carries (``VMGuestOS/sharesDirectoriesThroughOneDevice``).
+    static let liveShares = VMEditClasses(rawValue: 1 << 9)
+    /// Which network of its mode the network device joins — the one network
+    /// move a saved state of some modes restores across
+    /// (``VMNetworkMode/savedStateRestoresOnAnotherNetworkOfThisMode``).
+    static let networkMembership = VMEditClasses(rawValue: 1 << 10)
+    /// Removing removable media — the one move of the list a saved state
+    /// restores across (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
+    /// so admission keeps it open beside one.
+    static let removableMediaRemoval = VMEditClasses(rawValue: 1 << 11)
+
+    static let all: VMEditClasses = [
+        .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
+        .snapshotMetadata, .pairingRules, .rename, .observations, .liveShares, .networkMembership,
+        .removableMediaRemoval,
+    ]
+
+    /// The classes a bring-up, save, capture or Force Stop leaves open.
+    static let presentationAndMetadata: VMEditClasses = [
+        .hostPresentation, .snapshotMetadata, .pairingRules, .rename, .observations,
+    ]
+}
+
+// MARK: - Declarations
+
+/// Everything admission and the projections read about one kind.
+struct VMOperationDeclaration: Sendable, Equatable {
+    enum Status: Sendable, Equatable {
+        /// The operation shows a status of its own.
+        case shows(VMStatus)
+        /// The operation presents the phase it started from.
+        case base
+    }
+
+    enum Identity: Sendable, Equatable {
+        case always
+        /// While the operation's session is live.
+        case viaSession
+        case never
+    }
+
+    enum Quit: Sendable, Equatable {
+        /// A quit may end the operation where it stands.
+        case interrupt
+        /// A quit waits for the operation to end.
+        case waitOut
+        /// The operation is synchronous; no quit can land during it.
+        case notApplicable
+    }
+
+    enum Display: Sendable, Equatable {
+        case shown
+        case hidden
+        case base
+    }
+
+    enum Edits: Sendable, Equatable {
+        /// These classes, where the phase the operation started from admits
+        /// them.
+        case only(VMEditClasses)
+        /// What the phase the operation started from admits, minus these.
+        case baseExcept(VMEditClasses)
+    }
+
+    /// A request that joins the operation instead of being refused as busy.
+    ///
+    /// A Force Stop joins the one in flight through the session's
+    /// ``VMOperationSession/stopping`` mark, whatever operation holds it.
+    enum Join: Sendable, Equatable {
+        case start
+        case resume
+        /// A removable-media reconcile, which a reconcile already holding the
+        /// VM carries: each of its passes reads the list the configuration
+        /// holds.
+        case reconcile
+    }
+
+    let status: Status
+    let holdsIdentity: Identity
+    let quit: Quit
+    let display: Display
+    let toleratedSessionActions: [VMSessionAction]
+    let edits: Edits
+    let joinedBy: [Join]
+}
+
+extension VMOperationKind {
+    /// This kind's declaration, stated exhaustively.
+    var declaration: VMOperationDeclaration {
+        let stoppable: [VMSessionAction] = [.requestStop, .forceStop]
+        switch self {
+        case .bringUp(.guestStart(.starting)):
+            return .init(
+                status: .shows(.starting), holdsIdentity: .always, quit: .interrupt,
+                display: .hidden, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [.start])
+        case .bringUp(.guestStart(.restoringSavedState)):
+            return .init(
+                status: .shows(.restoring), holdsIdentity: .always, quit: .interrupt,
+                display: .shown, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [.start, .resume])
+        case .bringUp(.settingUp):
+            return .init(
+                status: .shows(.installing), holdsIdentity: .always, quit: .interrupt,
+                display: .hidden, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [])
+        case .bringUp(.reverting):
+            return .init(
+                status: .shows(.restoring), holdsIdentity: .always, quit: .waitOut,
+                display: .shown, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata.subtracting(.rename)), joinedBy: [])
+        case .pausing:
+            // A pause ends live-paused, which admits no share swap.
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable, edits: .baseExcept(.liveShares), joinedBy: [])
+        case .resuming, .attachingUSB, .detachingUSB:
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable, edits: .baseExcept([]), joinedBy: [])
+        case .saving:
+            return .init(
+                status: .shows(.saving), holdsIdentity: .viaSession, quit: .waitOut,
+                display: .shown, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [])
+        case .capturingSnapshot:
+            return .init(
+                status: .shows(.snapshotting), holdsIdentity: .always, quit: .waitOut,
+                display: .shown, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [])
+        case .deletingSnapshot:
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable,
+                edits: .baseExcept(.snapshotMetadata), joinedBy: [])
+        case .reconcilingMedia:
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable, edits: .baseExcept([]),
+                joinedBy: [.reconcile])
+        case .forceStopping:
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: [], edits: .only(.presentationAndMetadata), joinedBy: [])
+        case .discardingSavedState:
+            return .init(
+                status: .base, holdsIdentity: .never, quit: .notApplicable, display: .base,
+                toleratedSessionActions: [], edits: .only([]), joinedBy: [])
+        case .deleting:
+            return .init(
+                status: .base, holdsIdentity: .never, quit: .waitOut, display: .base,
+                toleratedSessionActions: [], edits: .only([]), joinedBy: [])
+        case .creatingStorageDisk, .removingStorageDisk:
+            return .init(
+                status: .base, holdsIdentity: .never, quit: .waitOut, display: .base,
+                toleratedSessionActions: [], edits: .baseExcept(.machineKeys), joinedBy: [])
+        case .creatingRemovableMedia:
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable,
+                edits: .baseExcept(.machineKeys), joinedBy: [])
+        case .copyingOut(.stopped), .copyingOut(.suspended):
+            return .init(
+                status: .base, holdsIdentity: .never, quit: .interrupt, display: .base,
+                toleratedSessionActions: [], edits: .baseExcept(.machineKeys), joinedBy: [])
+        case .copyingOut(.live):
+            return .init(
+                status: .shows(.cloning), holdsIdentity: .always, quit: .waitOut,
+                display: .shown, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [])
+        }
+    }
+}

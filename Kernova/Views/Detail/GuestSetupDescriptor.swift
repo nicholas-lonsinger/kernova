@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaLogging
 
 /// The copy one guest-setup flow gives ``GuestSetupProgressViewController``.

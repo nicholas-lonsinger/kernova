@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The Sharing category: shared directories, the guest-agent group (macOS) or

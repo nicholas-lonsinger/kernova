@@ -1,0 +1,123 @@
+import Foundation
+import KernovaKit
+import KernovaLogging
+
+/// Result of reading a pasteboard into the clipboard buffer.
+package enum ClipboardIntakeResult: Equatable, Sendable {
+    /// Usable content. `note` carries a user-visible caveat when some
+    /// representations were skipped (e.g. an oversized TIFF dropped while
+    /// its PNG sibling survived).
+    case content(ClipboardContent, note: String?)
+    /// Nothing usable; `message` says why in user-facing terms.
+    ///
+    /// `unreadable` is `true` only when representations were present and could
+    /// not be read — a loss the user is owed a report for. A policy verdict (an
+    /// empty clipboard, a privacy marker, a text-only transport refusing a file)
+    /// is `false`: nothing was there to lose.
+    case rejected(message: String, unreadable: Bool)
+    /// Files whose bytes still have to be read off the main actor via
+    /// `read(filesAt:)` before they become `.content`.
+    ///
+    /// Several URLs, in pasteboard order, for a multi-select copy/drag.
+    /// `unresolved` counts the copied files that no longer exist, so
+    /// `read(filesAt:)` can report them alongside the ones it fails itself.
+    /// Never applied directly.
+    case pendingFiles([URL], unresolved: Int)
+}
+
+/// The host's wording for what `ClipboardPasteboardReader` made of a gesture —
+/// the Paste button, responder-chain `paste:`, drag-and-drop, and the
+/// passthrough poll.
+///
+/// Every rule about what may cross lives in the reader, shared with the guest
+/// agent and the drop service; this layer only says what the window shows.
+@MainActor
+package enum ClipboardPasteboardIntake {
+    nonisolated private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardPasteboardIntake")
+
+    package nonisolated static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
+
+    /// Reads `pasteboard` into clipboard content.
+    package static func read(
+        from pasteboard: any ClipboardReadPasteboard, allowsBinary: Bool
+    ) -> ClipboardIntakeResult {
+        switch ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: allowsBinary) {
+        case .empty:
+            return .rejected(message: "The Mac clipboard is empty", unreadable: false)
+        case .suppressed(let reason):
+            return .rejected(message: Self.suppressionMessage(for: reason), unreadable: false)
+        case .textOnlyRefusal:
+            return .rejected(message: Self.textOnlyTransportMessage, unreadable: false)
+        case .pendingFiles(let urls, let unresolved):
+            return .pendingFiles(urls, unresolved: unresolved)
+        case .content(let content, let skipped):
+            return .content(content, note: Self.skipNote(forSkipped: skipped))
+        case .nothingOfferable(let lost, let unreadable):
+            guard lost == 0 else {
+                // Every file the copy named is gone and no inline flavor stood
+                // in for one — the same total loss `read(filesAt:)` reports.
+                return .rejected(
+                    message: Self.unreadableItemsMessage(count: lost), unreadable: true)
+            }
+            return .rejected(
+                message: "The Mac clipboard has no shareable content", unreadable: unreadable)
+        }
+    }
+
+    /// Resolves copied/dropped files and folders into content, off the main
+    /// actor because the stat and the folder estimate walk are I/O.
+    ///
+    /// `unresolved` is the count `read(from:)` already dropped for having no
+    /// file left on disk, folded into the same note so one report covers every
+    /// item the copy lost on either side of the actor hop.
+    package nonisolated static func read(
+        filesAt urls: [URL], unresolved: Int = 0, allowsBinary: Bool
+    ) async -> ClipboardIntakeResult {
+        guard allowsBinary else {
+            return .rejected(message: Self.textOnlyTransportMessage, unreadable: false)
+        }
+        let intake = ClipboardPasteboardReader.resolve(filesAt: urls, unresolved: unresolved)
+        guard !intake.representations.isEmpty else {
+            return .rejected(
+                message: Self.unreadableItemsMessage(count: intake.skipped), unreadable: true)
+        }
+        if intake.skipped > 0 {
+            #log(
+                logger, .warning,
+                "Skipped \(intake.skipped, privacy: .public) unreadable copied item(s)")
+        }
+        return .content(
+            ClipboardContent(representations: intake.representations),
+            note: Self.skipNote(forSkipped: intake.skipped))
+    }
+
+    /// The user-facing reason a snapshot was dropped wholesale by an
+    /// `org.nspasteboard.*` privacy marker.
+    private static func suppressionMessage(
+        for reason: ClipboardSnapshotPolicy.SkipReason
+    ) -> String {
+        switch reason {
+        case .transientSnapshot:
+            return "Transient clipboard content isn't shared"
+        case .autoGeneratedSnapshot:
+            return "Auto-generated clipboard content isn't shared"
+        case .transientMarkerType, .fileReferenceType, .emptyData:
+            // `disposition(forTypes:)` only ever suppresses with the two
+            // snapshot reasons above; the rest are per-representation skips.
+            return "This clipboard content isn't shared"
+        }
+    }
+
+    /// The note shown when a copy went through with `count` of its items lost,
+    /// or `nil` when none were.
+    nonisolated private static func skipNote(forSkipped count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return "Skipped \(count) unreadable item\(count == 1 ? "" : "s")"
+    }
+
+    /// The rejection shown when *every* item of a copy was lost.
+    nonisolated private static func unreadableItemsMessage(count: Int) -> String {
+        count > 1 ? "Couldn't read the dropped items" : "Couldn't read the dropped item"
+    }
+}

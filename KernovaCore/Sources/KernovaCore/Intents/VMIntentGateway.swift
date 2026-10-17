@@ -1,0 +1,627 @@
+import AppIntents
+import Foundation
+import KernovaKit
+import KernovaLogging
+
+/// The App Intents front door: everything Shortcuts and Spotlight ask of
+/// Kernova passes through here and reaches ``VMCommandCore``.
+///
+/// Two things every intent needs, in one place. **Readiness:** an intent can be
+/// delivered while the app's first library read is still in flight, and a verb
+/// run against a library that has not landed yet refuses with "no virtual
+/// machine named…" — so every read and every verb awaits ``ready()`` first.
+/// **Addressing:** a ``VMEntity`` already carries the resolved identifier, so
+/// this addresses VMs by ``VMSelector/id(_:)`` alone and the ambiguity refusal
+/// can never fire from this surface.
+///
+/// It presents nothing: a refusal leaves as the ``CommandError`` the core threw,
+/// which each intent renders in the framework's idiom.
+@MainActor
+package final class VMIntentGateway {
+    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
+
+    private let commands: VMCommandCore
+    /// The app's first library read, shared with every other front door.
+    private let readiness: LibraryReadiness
+    /// Where the library is written for Spotlight to match a searched name in.
+    private let index: any VMEntityIndexing
+    /// Holds the identifiers already written to the index.
+    private let record: VMIndexRecord
+    /// Fills the library's search with a term and puts the library window in
+    /// front of the user.
+    private let showSearchResults: @MainActor (String) -> Void
+
+    /// The library subscription that keeps the Spotlight index current.
+    private var libraryEvents: Task<Void, Never>?
+
+    /// VMs a refused write left unindexed, re-attempted on the next batch.
+    private var pendingIndex: Set<UUID> = []
+    /// VMs a refused write left in the index, re-attempted on the next batch.
+    private var pendingRemove: Set<UUID> = []
+
+    package init(
+        commands: VMCommandCore,
+        readiness: LibraryReadiness,
+        index: any VMEntityIndexing = SpotlightVMEntityIndex(),
+        record: VMIndexRecord = VMIndexRecord(),
+        showSearchResults: @escaping @MainActor (String) -> Void = { _ in }
+    ) {
+        self.commands = commands
+        self.readiness = readiness
+        self.index = index
+        self.record = record
+        self.showSearchResults = showSearchResults
+        // Weakly, one main-actor call at a time: an owner that goes away
+        // between two batches is what ends the subscription.
+        libraryEvents = Task { [weak self] in
+            guard let batches = await self?.subscribeOnceReady() else { return }
+            await self?.syncWholeLibrary()
+            for await batch in batches {
+                await self?.apply(batch)
+            }
+        }
+    }
+
+    deinit {
+        libraryEvents?.cancel()
+    }
+
+    // MARK: - Readiness
+
+    /// Returns once the app's first library read has landed.
+    func ready() async {
+        await readiness.ready()
+    }
+
+    // MARK: - Reads
+
+    /// Every VM in the library, each read in full.
+    ///
+    /// A ``VMEntity`` carries the whole `info` read, so the listing pairs each
+    /// row with its own. Both calls are synchronous main-actor reads of state
+    /// already in memory, with no suspension between them — a row that lists
+    /// and then fails to read is a programming error, not a race, so it is
+    /// asserted and skipped rather than being taken for a VM that left.
+    func vms() async -> [VMEntity] {
+        await ready()
+        return commands.list(.all).compactMap { entity(for: $0.id) }
+    }
+
+    /// When the id a VM is read by was named, against when it is read.
+    private enum Naming {
+        /// In the same synchronous step, so a VM with no read is a programming
+        /// error.
+        case sameStep
+        /// Before a suspension, which the VM may not have outlived.
+        case beforeSuspension
+    }
+
+    /// One VM's whole read, `nil` for a VM with none: quietly for one named
+    /// before a suspension that has since left the library, and otherwise
+    /// asserted.
+    private func entity(for id: UUID, named: Naming = .sameStep) -> VMEntity? {
+        do {
+            return VMEntity(try commands.info(.id(id)))
+        } catch CommandError.notFound where named == .beforeSuspension {
+            return nil
+        } catch {
+            #log(
+                Self.logger, .fault,
+                "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
+            )
+            assertionFailure("Listed VM \(id.uuidString) has no info read: \(error)")
+            return nil
+        }
+    }
+
+    /// The VMs `ids` names, in library order, skipping any that have since left.
+    func vms(withIDs ids: [UUID]) async -> [VMEntity] {
+        let wanted = Set(ids)
+        return await vms().filter { wanted.contains($0.id) }
+    }
+
+    /// Every VM the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``), matched the way a person types it
+    /// rather than the way the core's `.name` selector matches — a typed
+    /// "sonoma" has neither the case nor the whole of the display name.
+    func vms(matching text: String) async -> [VMEntity] {
+        let search = SidebarNameSearch(text: text)
+        return await vms().filter { search.admits($0.name) }
+    }
+
+    func info(_ id: UUID) async throws -> VMInfo {
+        try await perform(.info, on: id) { try self.commands.info(.id(id)) }
+    }
+
+    func ipAddress(of id: UUID) async throws -> String? {
+        try await perform(.ipAddress, on: id) {
+            try self.commands.ipAddress(of: .id(id)).address
+        }
+    }
+
+    /// The VM's named restore points, newest first.
+    func snapshots(ofVM id: UUID) async throws -> [SnapshotEntity] {
+        try await perform(.snapshots, on: id) {
+            try self.commands.snapshots(of: .id(id)).map { SnapshotEntity($0, vm: id) }
+        }
+    }
+
+    // MARK: - Lifecycle
+
+    func start(_ id: UUID, recovery: Bool, consent: Consent) async throws {
+        try await perform(.start, on: id) {
+            try await self.commands.start(.id(id), recovery: recovery, consent: consent)
+        }
+    }
+
+    func stop(_ id: UUID, disposition: StopDisposition, consent: Consent) async throws {
+        try await perform(.stop, on: id) {
+            try await self.commands.stop(
+                .id(id), disposition: disposition, consent: consent)
+        }
+    }
+
+    func pause(_ id: UUID) async throws {
+        try await perform(.pause, on: id) { try await self.commands.pause(.id(id)) }
+    }
+
+    func resume(_ id: UUID, consent: Consent) async throws {
+        try await perform(.resume, on: id) {
+            try await self.commands.resume(.id(id), consent: consent)
+        }
+    }
+
+    func suspend(_ id: UUID) async throws {
+        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
+    }
+
+    func restart(_ id: UUID, consent: Consent) async throws {
+        try await perform(.restart, on: id) {
+            try await self.commands.restart(.id(id), timeout: nil, consent: consent)
+        }
+    }
+
+    func open(_ id: UUID) async throws {
+        try await perform(.open, on: id) { try self.commands.open(.id(id)) }
+    }
+
+    /// Brings the VM in front of the user whatever state it is in — its display
+    /// where there is one, else its row in the library.
+    func reveal(_ id: UUID) async throws {
+        try await perform(.reveal, on: id) { try self.commands.reveal(.id(id)) }
+    }
+
+    /// Shows the library searched for `term`, once the library has landed.
+    ///
+    /// An adapter closure rather than a verb: no VM is addressed, so there is
+    /// nothing for ``VMCommandCore`` to resolve or refuse.
+    func showSearchResults(for term: String) async {
+        await ready()
+        showSearchResults(term)
+    }
+
+    func cancelGuestSetup(_ id: UUID, consent: Consent) async throws {
+        try await perform(.cancelGuestSetup, on: id) {
+            try self.commands.cancelGuestSetup(.id(id), consent: consent)
+        }
+    }
+
+    // MARK: - Application
+
+    /// Quits Kernova, save-suspending running and paused VMs.
+    ///
+    /// Readiness first, like every verb: the library read is what the save pass
+    /// has to run over, and a quit racing it would take the process down with
+    /// nothing to suspend.
+    func quit() async {
+        await ready()
+        commands.quit()
+    }
+
+    // MARK: - Snapshots
+
+    @discardableResult
+    func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
+        try await perform(.takeSnapshot, on: id) {
+            try await self.commands.takeSnapshot(.id(id), name: name, notes: notes)
+        }
+    }
+
+    func revertToSnapshot(_ id: UUID, snapshot: SnapshotEntityID, consent: Consent) async throws {
+        try await perform(.revertToSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id)
+            try await self.commands.revertToSnapshot(.id(id), snapshot: listed, consent: consent)
+        }
+    }
+
+    func deleteSnapshot(_ id: UUID, snapshot: SnapshotEntityID, consent: Consent) async throws {
+        try await perform(.deleteSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id)
+            try await self.commands.deleteSnapshot(
+                .id(id), snapshot: listed, consent: consent)
+        }
+    }
+
+    func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
+        try await perform(.renameSnapshot, on: id) {
+            let named = try Self.requireName(newName)
+            let listed = try self.listedSnapshot(snapshot, on: id)
+            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: named)
+        }
+    }
+
+    func setSnapshotNotes(_ id: UUID, snapshot: SnapshotEntityID, notes: String) async throws {
+        try await perform(.setSnapshotNotes, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id)
+            try self.commands.setSnapshotNotes(.id(id), snapshot: listed, notes: notes)
+        }
+    }
+
+    /// The snapshot `picked` names, refusing one the VM does not list under
+    /// that identifier.
+    ///
+    /// A pick is only as current as the run that made it — the Shortcut can
+    /// have been re-pointed at another VM since, and the snapshot itself can
+    /// have been deleted or dropped by a revert — so the identifier resolves
+    /// against the named VM's own listing, for every snapshot verb rather than
+    /// only the ones the core happens to catch. A revert or delete would be
+    /// refused there anyway; a rename or a note edit would not, because both
+    /// are documented no-ops for an identifier the manifest does not list, so
+    /// the miss would report success having changed nothing.
+    ///
+    /// Both halves of the pick are checked, because a clone carries its
+    /// source's snapshot identifiers: one the named VM lists can still be a
+    /// pick made in the VM it was copied from.
+    private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
+        guard let summary = commands.list(.all).first(where: { $0.id == vm }) else {
+            throw CommandError.notFound(.id(vm))
+        }
+        let listed = try commands.snapshots(of: .id(vm))
+        guard picked.vm == vm, listed.contains(where: { $0.id == picked.snapshot }) else {
+            throw CommandError.itemNotFound(
+                vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
+        }
+        return picked.snapshot
+    }
+
+    // MARK: - Library
+
+    /// Copies the VM's bundle, answering the arrival the copy fills.
+    ///
+    /// Unwaited, so the clone answers without suspending once its arrival is
+    /// registered, and the `info` read is the same main-actor turn — the row is
+    /// always there to describe.
+    func clone(_ id: UUID, outcome: CloneOutcome?) async throws -> VMEntity {
+        try await perform(.clone, on: id) {
+            let copy = try await self.commands.clone(
+                .id(id), outcome: outcome, waitForOutcome: false)
+            return VMEntity(try self.commands.info(.id(copy.id)))
+        }
+    }
+
+    /// Copies a bundle outside the library into it, answering the VM the copy
+    /// became once it has settled.
+    ///
+    /// The one library verb here that waits, and the security-scoped bracket is
+    /// why: the authority to read `url` is the caller's, held only for the span
+    /// of this call, and the copy reads the source for as long as it runs.
+    /// Answering the arrival the way ``clone(_:outcome:)`` does would
+    /// drop that authority out from under a copy still reading through it.
+    func importVM(from url: URL) async throws -> VMEntity {
+        try await perform(.importVM, on: nil) {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let settled = try await self.commands.importVM(from: url, waitForOutcome: true)
+            return VMEntity(try self.commands.info(.id(settled.id)))
+        }
+    }
+
+    func rename(_ id: UUID, to newName: String) async throws {
+        try await perform(.rename, on: id) {
+            try self.commands.rename(.id(id), to: Self.requireName(newName))
+        }
+    }
+
+    /// Moves the VM's bundle to the Trash.
+    ///
+    /// The permanent delete and the external files a delete can also remove are
+    /// both left to the app's own sheet: one is a user-confirmed exception to
+    /// the project's file-deletion rule, and the other names files this surface
+    /// never showed the user.
+    func delete(_ id: UUID, consent: Consent) async throws {
+        try await perform(.delete, on: id) {
+            try await self.commands.delete(
+                .id(id), permanently: false, alsoRemoving: [], consent: consent)
+        }
+    }
+
+    func cancelPreparing(_ id: UUID, consent: Consent) async throws {
+        try await perform(.cancelPreparing, on: id) {
+            try self.commands.cancelPreparing(.id(id), consent: consent)
+        }
+    }
+
+    // MARK: - Configuration
+
+    /// Every configuration key, in presentation order.
+    func configurationKeys() async -> [VMSettingKeyEntity] {
+        await ready()
+        return commands.configurationKeys().map(VMSettingKeyEntity.init)
+    }
+
+    /// The keys `names` names, in presentation order, skipping any the
+    /// keyspace no longer holds.
+    func configurationKeys(named names: [String]) async -> [VMSettingKeyEntity] {
+        let wanted = Set(names)
+        return await configurationKeys().filter { wanted.contains($0.id) }
+    }
+
+    /// Every key whose name contains `text`, ignoring case.
+    func configurationKeys(matching text: String) async -> [VMSettingKeyEntity] {
+        await configurationKeys().filter { $0.id.localizedCaseInsensitiveContains(text) }
+    }
+
+    /// Writes `value` to `key` of the VM, answering the value the key ended up
+    /// holding.
+    func setConfiguration(_ id: UUID, key: String, value: String, consent: Consent) async throws -> String {
+        try await perform(.setConfiguration, on: id) {
+            let answered = try self.commands.setConfiguration(
+                .id(id), assignments: [ConfigurationEntry(key: key, value: value)], consent: consent)
+            guard let held = answered.first else {
+                assertionFailure("setConfiguration answered nothing for \(key)")
+                return value
+            }
+            return held.value
+        }
+    }
+
+    // MARK: - Networks
+
+    /// Every named network, ordered by name, each with the VMs on it read in
+    /// full — read the same way as ``vms()``.
+    func networks() async throws -> [NetworkEntity] {
+        try await perform(.networks, on: nil) { try self.commands.networks().map(self.entity(for:)) }
+    }
+
+    /// The networks `ids` names, skipping any that have since been deleted.
+    func networks(withIDs ids: [UUID]) async throws -> [NetworkEntity] {
+        let wanted = Set(ids)
+        return try await networks().filter { wanted.contains($0.id) }
+    }
+
+    /// Every network whose name contains `text`, ignoring case.
+    func networks(matching text: String) async throws -> [NetworkEntity] {
+        try await networks().filter { $0.name.localizedCaseInsensitiveContains(text) }
+    }
+
+    func createNetwork(name: String, kind: NetworkKind) async throws -> NetworkEntity {
+        try await perform(.createNetwork, on: nil) {
+            self.entity(for: try self.commands.createNetwork(name: name, kind: kind))
+        }
+    }
+
+    func renameNetwork(_ id: UUID, to newName: String) async throws {
+        try await perform(.renameNetwork, on: id) {
+            try self.commands.renameNetwork(id.uuidString, to: newName)
+        }
+    }
+
+    /// Deletes the network; refused while a VM is set to join it.
+    func deleteNetwork(_ id: UUID) async throws {
+        try await perform(.deleteNetwork, on: id) {
+            try self.commands.deleteNetwork(id.uuidString)
+        }
+    }
+
+    private func entity(for network: NetworkSummary) -> NetworkEntity {
+        NetworkEntity(network, members: network.members.compactMap { entity(for: $0.id) })
+    }
+
+    // MARK: - Groups
+
+    /// The library's smart groups, then its folders, each with the VMs in it
+    /// read in full — read the same way as ``vms()``.
+    func groups() async throws -> [VMGroupEntity] {
+        try await perform(.groups, on: nil) {
+            try self.commands.groups().map { group in
+                VMGroupEntity(group, members: group.members.compactMap { self.entity(for: $0.id) })
+            }
+        }
+    }
+
+    /// Every group whose name the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``) — matched as ``vms(matching:)``
+    /// matches a VM.
+    func groups(matching text: String) async throws -> [VMGroupEntity] {
+        let search = SidebarNameSearch(text: text)
+        return try await groups().filter { search.admits($0.name) }
+    }
+
+    /// Takes `action` on every VM in `group`, answering the VMs it was done to,
+    /// in the group's order and as they stand once it is done — less any
+    /// deleted since its turn, which has nothing left to read.
+    ///
+    /// A VM the action concerned and left undone fails the intent, with one
+    /// line per such VM — what the `kernova` tool's exit 10 and the app's
+    /// summary alert report.
+    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> [VMEntity] {
+        try await perform(action.verb, on: nil) {
+            let report = try await self.commands.groupAction(action, on: group)
+            guard report.undone.isEmpty else {
+                throw CommandError.operationFailed(
+                    verb: action.verb, title: report.undoneTitle, message: report.undoneMessage)
+            }
+            return report.results.compactMap { result in
+                guard case .done = result.outcome else { return nil }
+                return self.entity(for: result.vm.id, named: .beforeSuspension)
+            }
+        }
+    }
+
+    // MARK: - Arguments
+
+    /// `name` with its surrounding whitespace gone, refusing one that carries
+    /// nothing else.
+    ///
+    /// Both rename verbs in the core trim and return without writing when
+    /// nothing is left, because an inline field commits on end-editing whether
+    /// or not the text changed and must not raise an alert about a rename
+    /// nobody made. A Shortcut supplies the name deliberately — often from a
+    /// variable that resolves to nothing — so the same input is a refusal
+    /// here, rather than a success that renamed nothing.
+    private static func requireName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CommandError.invalidArgument(
+                "A name is at least one character that is not a space.")
+        }
+        return trimmed
+    }
+
+    // MARK: - Dispatch
+
+    /// Runs `verb` once the library read has landed, logging any refusal.
+    ///
+    /// The log line is the only trace an App Intents failure leaves: the
+    /// framework shows it to whoever ran the intent and reports it nowhere
+    /// else — no alert, no window, nothing a later session can read back.
+    ///
+    /// `id` names the VM the verb addresses — the network, for a network
+    /// verb — and is `nil` for one that addresses neither yet: an import names
+    /// a file, and neither the row it fills nor the network a create lists has
+    /// an identifier until the core has made it.
+    private func perform<T>(
+        _ verb: VMVerb, on id: UUID?, _ body: () async throws -> T
+    ) async throws -> T {
+        await ready()
+        do {
+            return try await body()
+        } catch let failure as CommandError {
+            let subject = id.map { " for \($0.uuidString)" } ?? ""
+            #log(
+                Self.logger, .notice,
+                "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message, privacy: .public)"
+            )
+            throw failure
+        }
+    }
+
+    // MARK: - Library Tracking
+
+    /// Subscribes to library changes once the app's first read has landed.
+    ///
+    /// The subscription is taken on the turn readiness resolves on, with
+    /// nothing awaited in between: the core seeds its diff from the library as
+    /// it stands when the first subscriber arrives, so subscribing behind the
+    /// first read leaves the load itself emitting nothing — which is what
+    /// ``syncWholeLibrary()`` then covers.
+    private func subscribeOnceReady() async -> AsyncStream<[VMLibraryEvent]> {
+        await ready()
+        return commands.events()
+    }
+
+    /// Writes every VM into the index, then drops the records of VMs the index
+    /// still holds from an earlier run.
+    ///
+    /// The index is never emptied: writing first and pruning second, by
+    /// identifier, is what keeps the library findable through a process that
+    /// ends between the two. A refused write leaves both the index and the
+    /// recorded identifiers as they stand, so the previous run's records answer
+    /// until the retry lands.
+    private func syncWholeLibrary() async {
+        let all = await vms()
+        let current = all.map(\.id)
+        let stale = record.indexedVMIDs.subtracting(current)
+        guard await write("indexing every VM", { try await self.index.index(all) }) else {
+            pendingIndex.formUnion(current)
+            return
+        }
+        pendingIndex.subtract(current)
+        record.indexedVMIDs = Set(current)
+        if !stale.isEmpty { await removeFromIndex(Array(stale)) }
+    }
+
+    /// Brings the index up to what one pass over the library found,
+    /// re-attempting whatever an earlier write was refused.
+    ///
+    /// One batch is at most one write of each kind, and a batch showing the
+    /// index nothing new is still a moment to retry.
+    private func apply(_ batch: [VMLibraryEvent]) async {
+        var present: [UUID] = []
+        var absent: [UUID] = []
+        for event in batch {
+            switch event {
+            case .added(let summary): present.append(summary.id)
+            case .renamed(let id, _, _): present.append(id)
+            case .removed(let id, _): absent.append(id)
+            case .statusChanged, .agentStatusChanged, .failure: break
+            }
+        }
+        let changed = !present.isEmpty || !absent.isEmpty
+        guard changed || !pendingIndex.isEmpty || !pendingRemove.isEmpty else { return }
+        let removing = absent.appending(pendingRemove)
+        if !removing.isEmpty { await removeFromIndex(removing) }
+        let indexing = present.appending(pendingIndex)
+        if !indexing.isEmpty { await addToIndex(indexing) }
+    }
+
+    /// Writes the VMs `ids` names, dropping any that has since left the library.
+    private func addToIndex(_ ids: [UUID]) async {
+        let entities = await vms(withIDs: ids)
+        guard !entities.isEmpty else {
+            pendingIndex.subtract(ids)
+            return
+        }
+        guard
+            await write(
+                "indexing \(entities.count) VMs", { try await self.index.index(entities) })
+        else {
+            pendingIndex.formUnion(ids)
+            return
+        }
+        pendingIndex.subtract(ids)
+        record.indexedVMIDs.formUnion(entities.map(\.id))
+    }
+
+    /// Drops the records the VMs `ids` names.
+    private func removeFromIndex(_ ids: [UUID]) async {
+        guard
+            await write(
+                "removing \(ids.count) VMs from the index",
+                { try await self.index.remove(ids) })
+        else {
+            pendingRemove.formUnion(ids)
+            return
+        }
+        pendingRemove.subtract(ids)
+        record.indexedVMIDs.subtract(ids)
+    }
+
+    /// Runs one index write, logging a refusal and answering whether it landed.
+    ///
+    /// Spotlight is how a searched name is matched, never how a verb runs: a
+    /// refusal must neither fail an intent nor end the subscription that would
+    /// carry the next write. The caller keeps the identifiers a refused write
+    /// covered and the next batch re-attempts them, since this process stays up
+    /// for days and a relaunch is far too long to leave a name unmatchable.
+    private func write(_ operation: String, _ body: () async throws -> Void) async -> Bool {
+        do {
+            try await body()
+            return true
+        } catch {
+            #log(
+                Self.logger, .warning,
+                "Spotlight failed \(operation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+    }
+}
+
+extension Array where Element == UUID {
+    /// Self, followed by every element of `others` it does not already carry.
+    fileprivate func appending(_ others: Set<UUID>) -> [UUID] {
+        var seen = Set(self)
+        return self + others.filter { seen.insert($0).inserted }
+    }
+}

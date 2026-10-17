@@ -3,6 +3,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VM Settings Overview Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor

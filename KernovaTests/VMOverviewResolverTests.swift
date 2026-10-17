@@ -3,6 +3,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VM Overview Resolver Tests", .serialized, .caseScoped)
 @MainActor

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Step-by-step progress UI for a guest setup — a macOS install
 /// (download → install), or a Linux installer image (download → verify, or

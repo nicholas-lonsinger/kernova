@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The Network category: the Mode picker — every network the VM can join, in

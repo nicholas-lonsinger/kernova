@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCore
 import Virtualization
 
 extension MacOSDirectoryShare {

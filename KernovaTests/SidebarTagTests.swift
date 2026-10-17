@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Color tags: their definitions in the library file, each VM's assignments in
 /// its host state, and every surface that shows, filters, groups or edits
@@ -21,7 +22,7 @@ struct SidebarTagTests {
         VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -37,7 +38,8 @@ struct SidebarTagTests {
             entitlements: .entitled,
             organization: VMOrganizationDirectory(fileURL: nil),
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 

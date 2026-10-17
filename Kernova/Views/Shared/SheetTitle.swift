@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// A sheet's headline title, followed by an info button holding `info` when it
 /// has paragraphs — the home for background about the sheet as a whole.

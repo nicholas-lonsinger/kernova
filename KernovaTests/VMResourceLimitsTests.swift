@@ -4,6 +4,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VMResourceLimits Tests", .caseScoped)
 struct VMResourceLimitsTests {

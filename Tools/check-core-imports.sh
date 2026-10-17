@@ -5,10 +5,12 @@
 # can re-export AppKit. Every module a KernovaCore file imports is therefore on
 # an allowlist, not off a deny-list.
 #
-# The `KernovaCore` target may import only `core_modules`; `KernovaCoreTests`
-# may also import `test_modules`. Other targets in the package are out of
-# scope. A new entry names a module that re-exports neither AppKit nor
-# Virtualization; what a module merely imports is KernovaCore/Package.swift's
+# The `KernovaCore` target may import only `core_modules`;
+# `KernovaCoreTestSupport` may also import `support_modules`, and
+# `KernovaCoreTests` `test_modules`. Every entry is a module that reaches none
+# of AppKit, SwiftUI or Virtualization — importing it alone leaves `NSView`,
+# `SwiftUI.View` and `VZVirtualMachine` out of scope — and a new one is checked
+# the same way; what a module merely imports is KernovaCore/Package.swift's
 # MemberImportVisibility setting's concern.
 #
 # The compiler's own parser lists each file's imports
@@ -29,10 +31,12 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-core_modules='Foundation KernovaKit KernovaLogging'
-test_modules='Testing KernovaCore KernovaTestSupport'
+core_modules='Foundation KernovaKit KernovaLogging AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
+test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport SwiftProtobuf CoreGraphics Observation'
+support_modules='Testing KernovaCore KernovaTestSupport CoreGraphics Observation'
 
 sources_root='KernovaCore/Sources/KernovaCore'
+support_root='KernovaCore/Sources/KernovaCoreTestSupport'
 tests_root='KernovaCore/Tests/KernovaCoreTests'
 
 swiftc=$(xcrun --find swiftc) || { echo "check-core-imports: swiftc not found" >&2; exit 1; }
@@ -48,7 +52,7 @@ imported() {
     local flags=$1
     shift
     # shellcheck disable=SC2086 # the flags are words by design
-    "$swiftc" -frontend -emit-imported-modules $flags "$@" -o -
+    "$swiftc" -frontend -emit-imported-modules -swift-version 6 -module-name CoreImports $flags "$@" -o -
 }
 
 # off_list <allowed> — the lines of stdin not on the allowlist.
@@ -84,12 +88,14 @@ check() {
 }
 
 check "$sources_root" "$core_modules"
+check "$support_root" "$core_modules $support_modules"
 check "$tests_root" "$core_modules $test_modules"
 
 if [ -n "$violations" ]; then
     echo "check-core-imports: KernovaCore imports a module off its allowlist:" >&2
     printf '%s' "$violations" | sort -u >&2
-    echo "  allowed in $sources_root: $core_modules; in $tests_root, also: $test_modules" >&2
+    echo "  allowed in $sources_root: $core_modules; in $support_root, also: $support_modules;" \
+        "in $tests_root, also: $test_modules" >&2
     failed=1
 fi
 

@@ -1,6 +1,7 @@
 import Foundation
 
 @testable import Kernova
+@testable import KernovaCore
 
 extension VMCreationViewModel {
     /// A wizard over the real Virtualization engine, as the app builds one,

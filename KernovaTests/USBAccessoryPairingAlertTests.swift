@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// What the prompt says, and what each of its buttons answers with.
 @Suite("USB Accessory Pairing Alert Tests", .caseScoped)

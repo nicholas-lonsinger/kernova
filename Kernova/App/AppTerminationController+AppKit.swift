@@ -1,5 +1,6 @@
 import Cocoa
 import KernovaAppRegistry
+import KernovaCore
 
 /// What ``AppTerminationController`` reads from and asks of AppKit: the quit
 /// Apple Event being handled, the running application that sent it, and the

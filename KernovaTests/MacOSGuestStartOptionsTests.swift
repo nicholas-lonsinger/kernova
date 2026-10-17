@@ -2,6 +2,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The one-shot start options a macOS boot carries: a recovery boot, an armed
 /// guest account, and the exclusion between them.

@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers `AppAlertPresenter` against the app's real windows: the library
 /// window a ``Harness`` shows and closes, and display windows for routing that

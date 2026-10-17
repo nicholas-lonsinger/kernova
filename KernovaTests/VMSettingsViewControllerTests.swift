@@ -5,6 +5,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VMSettingsViewController Tests", .serialized, .caseScoped)
 @MainActor

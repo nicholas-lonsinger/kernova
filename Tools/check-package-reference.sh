@@ -11,11 +11,13 @@
 #
 # A remote XCRemoteSwiftPackageReference is untouched.
 #
-# No project target takes KernovaKit's `KernovaTestSupport` product; the
-# project's test bundles compile its folder instead. Linked into the app-hosted
-# KernovaTests, the product puts a second KernovaKit in the test process: Xcode
-# then builds KernovaKit as a framework in test builds only, and
+# No project target links KernovaKit's `KernovaTestSupport` product directly;
+# a bundle that compiles its folder takes it that way instead. Linked into the
+# app-hosted KernovaTests, the product puts a second KernovaKit in the test
+# process: Xcode then builds KernovaKit as a framework in test builds only, and
 # `-I Products/<config>` resolves the stale static module ahead of it.
+# KernovaUITests compiles no such folder and gets it through KernovaCore's
+# `KernovaCoreTestSupport` product, which the one-copy rule below covers.
 #
 # A hosted test process holds one copy of each package product, so a test
 # bundle and the app its TEST_HOST names never both link package products: the
@@ -136,4 +138,4 @@ if [ -n "$violations" ]; then
     exit 1
 fi
 
-pass "package references: $(echo "$packages" | paste -sd ' ' -) are top-level peers, not package dependencies, no project target takes KernovaTestSupport, and no hosted test bundle links package products alongside its host ($hosted_pairs pairs)"
+pass "package references: $(echo "$packages" | paste -sd ' ' -) are top-level peers, not package dependencies, no project target links KernovaTestSupport directly, and no hosted test bundle links package products alongside its host ($hosted_pairs pairs)"

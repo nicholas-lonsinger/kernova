@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("RestoreImageURLSheetContentViewController Tests", .caseScoped)
 @MainActor

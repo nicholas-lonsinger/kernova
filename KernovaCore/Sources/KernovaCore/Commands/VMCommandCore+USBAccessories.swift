@@ -1,0 +1,279 @@
+import Foundation
+import KernovaKit
+import KernovaLogging
+
+/// The USB accessory verbs: what a guest is holding, what macOS has assigned to
+/// Kernova that nothing holds, and the two edits that move one between them.
+///
+/// Every one of them refuses on the capability first, so a build that cannot
+/// pass accessories through answers the same way whichever verb asks.
+extension VMCommandCore {
+    /// What a refusal calls the capability, completing "This build of Kernova
+    /// does not support …" — or, for the one VM-scoped cause, "This virtual
+    /// machine does not support …".
+    static let usbAccessoryCapability = "USB accessory passthrough"
+
+    // MARK: - Reads
+
+    /// The accessories the VM's guest is holding right now, each named by the
+    /// attachment a detach takes back.
+    package func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
+        try requireUSBAccessoryService()
+        let names = listingNames()
+        return try resolve(selector).liveUSBAccessories.map {
+            summary(of: $0.accessory, named: names, deviceID: $0.deviceID)
+        }
+    }
+
+    /// The accessories macOS has assigned to Kernova that no guest is holding.
+    ///
+    /// Addresses no VM: the user assigns an accessory to the app rather than to
+    /// a guest, so which VM could take it is the caller's question, not the
+    /// list's.
+    package func availableUSBAccessories() throws -> [USBAccessorySummary] {
+        let service = try requireUSBAccessoryService()
+        let held = library.accessoryHolders.heldRegistryIDs
+        let names = listingNames()
+        return service.accessories
+            .filter { !held.contains($0.registryID) }
+            .map { summary(of: $0, named: names) }
+    }
+
+    /// The accessories one VM takes back automatically, or every VM's when
+    /// `selector` is `nil`.
+    ///
+    /// Unlike the two listings above, these rows describe hardware that is
+    /// usually not plugged in — which is the whole reason they can be listed
+    /// and removed at all.
+    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
+        try requireUSBAccessoryService()
+        let instances = try selector.map { [try resolve($0)] } ?? library.instances
+        return instances.flatMap { instance in
+            instance.usbPairings.pairings.map { pairing in
+                USBPairingSummary(
+                    vm: instance.name, key: pairing.key, name: Self.pairingName(pairing),
+                    pairedAt: pairing.pairedAt)
+            }
+        }
+    }
+
+    /// What a listing calls a remembered accessory, qualified by the port when
+    /// the rule names one.
+    private static func pairingName(_ pairing: USBAccessoryPairing) -> String {
+        guard let label = pairing.namedReceptacleLabel else { return pairing.displayName }
+        return "\(pairing.displayName) (\(label))"
+    }
+
+    // MARK: - Edits
+
+    /// Stops the VM taking the accessory `key` names back.
+    func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
+        try requireUSBAccessoryService()
+        let instance = try resolve(selector)
+        try require(.forgetUSBPairing, on: instance)
+        // A key nothing answers to is a miss rather than a quiet success: the
+        // caller named something that is not there, and succeeding would tell a
+        // script the rule was removed.
+        guard instance.usbPairings.pairing(forKey: key) != nil else {
+            throw itemNotFound(instance, item: "remembered USB accessory \u{201C}\(key)\u{201D}")
+        }
+        do {
+            try instance.activity.edit(.pairingRules) { permit in
+                try library.updateUSBPairings(permit) { $0.remove(key: key) }
+            }
+        } catch let refused as VMAdmissionRefusal {
+            throw admissionRefusal(refused.refusal, on: instance, verb: .forgetUSBPairing)
+        } catch {
+            throw CommandError.operationFailed(
+                verb: .forgetUSBPairing,
+                message:
+                    "Nothing changed: the virtual machine\u{2019}s remembered accessories could not be written. \(error.localizedDescription)"
+            )
+        }
+        #log(
+            Self.logger, .notice,
+            "'\(instance.name, privacy: .public)' will no longer take USB accessory \(key, privacy: .public) back automatically"
+        )
+    }
+
+    /// Passes the accessory `registryID` names through to the VM's running
+    /// guest.
+    func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
+        let (instance, sessionID, service) = try admitUSBAccessoryEdit(selector)
+        // An accessory macOS has not assigned to Kernova is a miss, not a
+        // failed attach: the caller named something that is not there, and the
+        // thing that is not there is the accessory rather than anything about
+        // the VM.
+        guard service.accessories.contains(where: { $0.registryID == registryID }) else {
+            throw CommandError.itemNotFoundOnHost(
+                item: "USB accessory with the identifier \(registryID)")
+        }
+        do {
+            // Placing a device *is* the answer to "which VM", whichever surface
+            // asked — the menu, the CLI, or the prompt an arrival raises. A
+            // rule created only by the prompt would leave a user who plugs a
+            // drive in with nothing running, and attaches it from the menu,
+            // re-placing it every time.
+            let attached = try await lifecycle.attachUSBAccessory(
+                registryID, to: instance, for: sessionID
+            ) { permit, attached in
+                self.rememberAccessoryEdit(
+                    on: instance,
+                    failure:
+                        "\(attached.accessory.displayName) is attached to \u{201C}\(instance.name)\u{201D}, but Kernova could not record that it takes the accessory back automatically."
+                ) {
+                    try self.usbAccessoryPairings?.userAttached(attached.accessory, permit)
+                }
+            }
+            #log(
+                Self.logger, .notice,
+                "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
+            )
+        } catch {
+            throw usbRefusal(error, on: instance)
+        }
+    }
+
+    /// Takes the passthrough device `deviceID` names back off the guest.
+    func detachUSBAccessory(_ selector: VMSelector, device deviceID: UUID) async throws {
+        let (instance, sessionID, _) = try admitUSBAccessoryEdit(selector)
+        // An identifier no attachment answers to is a refusal, not a quiet
+        // success: the lifecycle treats a device VZ has already let go as done,
+        // which is right for an unplug that got there first and wrong for a
+        // caller who named the wrong device.
+        guard
+            let held = instance.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
+        else {
+            throw itemNotFound(
+                instance, item: "USB accessory with the device identifier \(deviceID.uuidString)")
+        }
+        usbAccessoryPairings?.userDetaching(held.accessory)
+        do {
+            // Taking a device back by hand is how a user ends a pairing
+            // without opening settings, and it is the only way the returning
+            // device stays with the Mac.
+            try await lifecycle.detachUSBAccessory(
+                deviceID: deviceID, from: instance, for: sessionID
+            ) { permit in
+                self.rememberAccessoryEdit(
+                    on: instance,
+                    failure:
+                        "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there."
+                ) {
+                    try self.usbAccessoryPairings?.userReleased(held.accessory, permit)
+                }
+            }
+            #log(
+                Self.logger, .notice,
+                "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
+            )
+        } catch {
+            throw usbRefusal(error, on: instance)
+        }
+    }
+
+    /// Records what an attach or detach means for the accessories `instance`
+    /// takes back, reporting `failure` when the pairing write fails or another
+    /// VM refuses the move (``failure(_:verb:on:)``).
+    ///
+    /// Reported rather than thrown: the device change the verb made stands,
+    /// and only its remembering did not land.
+    private func rememberAccessoryEdit(
+        on instance: VMInstance, failure: String, _ record: () throws -> Void
+    ) {
+        do {
+            try record()
+        } catch {
+            let cause = self.failure(error, verb: .editUSBAccessory, on: instance)
+            report(
+                .operationFailed(
+                    verb: .editUSBAccessory, message: "\(failure) \(cause.localizedDescription)"),
+                on: instance)
+        }
+    }
+
+    /// The VM an accessory edit acts on, the session it acts for and the
+    /// service that performs it — or the refusal the build, the selector or the
+    /// VM's state owes first.
+    ///
+    /// The session is read here and carried into the lifecycle call, so an edit
+    /// overtaken by a stop refuses rather than driving the controller of
+    /// whichever session came next.
+    private func admitUSBAccessoryEdit(
+        _ selector: VMSelector
+    ) throws -> (VMInstance, UUID, any USBAccessoryProviding) {
+        let service = try requireUSBAccessoryService()
+        let instance = try resolve(selector)
+        try require(.editUSBAccessories, on: instance)
+        guard let sessionID = instance.attachableSessionID else { throw invalidState(instance) }
+        return (instance, sessionID, service)
+    }
+
+    // MARK: - Support
+
+    /// The service that moves accessories on and off a guest, or the refusal a
+    /// build without the capability owes.
+    ///
+    /// The cause is the build — the OS version, or a signature without the
+    /// entitlement — so the refusal says so. The one genuinely VM-scoped cause
+    /// is a VM configured without a USB controller, which ``usbRefusal(_:on:)``
+    /// answers separately.
+    @discardableResult
+    private func requireUSBAccessoryService() throws -> any USBAccessoryProviding {
+        guard let service = lifecycle.usbAccessoryService else {
+            throw CommandError.unsupportedByBuild(capability: Self.usbAccessoryCapability)
+        }
+        return service
+    }
+
+    /// What to call each accessory Kernova knows about, over every one of them
+    /// at once.
+    ///
+    /// Computed across the whole set rather than per listing, because the two
+    /// listings are read side by side — a guest's accessories above the free
+    /// ones in one menu — and two identical devices have to be told apart
+    /// across that boundary as readily as within it.
+    ///
+    /// Each accessory appears once. macOS withdraws an accessory a guest has
+    /// captured, but not always before the guest's own listing is read, and one
+    /// counted twice would look like two of a kind and qualify itself.
+    private func listingNames() -> [UInt64: String] {
+        let attached = library.accessoryHolders.attachedEntries.map(\.attached.accessory)
+        let attachedIDs = Set(attached.map(\.registryID))
+        let assigned = (lifecycle.usbAccessoryService?.accessories ?? [])
+            .filter { !attachedIDs.contains($0.registryID) }
+        return USBAccessoryInfo.listingNames(for: attached + assigned)
+    }
+
+    /// One accessory as a caller names it, carrying the attachment identifier a
+    /// detach takes back when a guest is holding it.
+    private func summary(
+        of accessory: USBAccessoryInfo, named names: [UInt64: String], deviceID: UUID? = nil
+    ) -> USBAccessorySummary {
+        USBAccessorySummary(
+            registryID: accessory.registryID,
+            name: names[accessory.registryID] ?? accessory.displayName,
+            vendorID: accessory.descriptor.vendorID,
+            productID: accessory.descriptor.productID,
+            deviceID: deviceID)
+    }
+
+    /// The command refusal an attach or detach failure stands for.
+    ///
+    /// A guest that went away under the call is a state refusal rather than a
+    /// failure: what the VM accepts now is what the caller needs to hear.
+    private func usbRefusal(_ error: any Error, on instance: VMInstance) -> CommandError {
+        guard let accessoryError = error as? USBAccessoryError else {
+            return failure(error, verb: .editUSBAccessory, on: instance)
+        }
+        return switch accessoryError {
+        case .noVirtualMachine:
+            invalidState(instance)
+        case .noUSBController:
+            .unsupported(capability: Self.usbAccessoryCapability)
+        case .accessoryNotFound, .deviceNotFound:
+            .operationFailed(
+                verb: .editUSBAccessory, message: accessoryError.localizedDescription)
+        }
+    }
+}

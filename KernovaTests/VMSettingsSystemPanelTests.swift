@@ -5,6 +5,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The System panel's own behavior, drilled into through the shell.
 @Suite("VM Settings System Panel Tests", .serialized, .caseScoped, .scopedWindows)
@@ -484,7 +485,7 @@ struct VMSettingsSystemPanelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -499,7 +500,7 @@ struct VMSettingsSystemPanelTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard())
+            hostPasteboard: FakePasteboard(), guestAgent: .testing)
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(guestOS: .macOS) {
             $0.displayResolution = resolution

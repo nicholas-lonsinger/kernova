@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// The multi-step VM creation wizard, presented as a fixed-size sheet.
 ///

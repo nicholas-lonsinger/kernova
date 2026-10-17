@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCore
 import Virtualization
 
 /// This Mac's answers, as Virtualization gives them.

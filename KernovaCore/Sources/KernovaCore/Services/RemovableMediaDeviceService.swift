@@ -1,0 +1,122 @@
+import Foundation
+import KernovaLogging
+
+/// Manages runtime USB mass storage device attach/detach via XHCI controller.
+@MainActor
+package final class RemovableMediaDeviceService: RemovableMediaAttaching {
+    package init() {}
+
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "RemovableMediaDeviceService")
+
+    package func attach(
+        diskImagePath: String,
+        readOnly: Bool,
+        desiredUUID: UUID?,
+        to instance: VMInstance
+    ) async throws -> RemovableMediaDeviceInfo {
+        guard let session = instance.session else {
+            #log(
+                Self.logger, .error,
+                "Cannot attach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
+            throw RemovableMediaDeviceError.noVirtualMachine
+        }
+        guard session.hasUSBController else {
+            #log(
+                Self.logger, .error,
+                "Cannot attach USB device: no USB controller for '\(instance.name, privacy: .public)'")
+            throw RemovableMediaDeviceError.noUSBController
+        }
+
+        let resolved: PathValidation.ResolvedPath
+        do {
+            resolved = try PathValidation.resolveFile(at: diskImagePath, requireWritable: !readOnly)
+            resolved.logResolution(logger: Self.logger, context: "USB disk image")
+        } catch {
+            let basename = URL(fileURLWithPath: diskImagePath).lastPathComponent
+            switch error {
+            case .notFound:
+                #log(Self.logger, .error, "USB disk image not found: '\(basename, privacy: .public)'")
+                throw RemovableMediaDeviceError.diskImageNotFound(diskImagePath)
+            case .unexpectedType:
+                #log(Self.logger, .error, "USB disk image path is a directory: '\(basename, privacy: .public)'")
+                throw RemovableMediaDeviceError.diskImageIsDirectory(diskImagePath)
+            case .notWritable:
+                #log(Self.logger, .error, "USB disk image is not writable: '\(basename, privacy: .public)'")
+                throw RemovableMediaDeviceError.diskImageNotWritable(diskImagePath)
+            case .notReadable:
+                #log(
+                    Self.logger, .fault, "Unexpected .notReadable from resolveFile for '\(basename, privacy: .public)'")
+                assertionFailure("resolveFile should never throw .notReadable")
+                throw RemovableMediaDeviceError.diskImageNotFound(diskImagePath)
+            }
+        }
+
+        let url = resolved.url
+        let uuid: UUID
+        do {
+            uuid = try await session.attachMassStorage(url: url, readOnly: readOnly, uuid: desiredUUID)
+        } catch let error as VMSessionError {
+            #log(
+                Self.logger, .error,
+                "Cannot attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
+            throw RemovableMediaDeviceError.noUSBController
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
+
+        let info = RemovableMediaDeviceInfo(id: uuid, path: diskImagePath, readOnly: readOnly)
+
+        #log(
+            Self.logger, .notice,
+            "Attached USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
+        )
+        return info
+    }
+
+    package func detach(
+        deviceInfo: RemovableMediaDeviceInfo,
+        from instance: VMInstance
+    ) async throws {
+        guard let session = instance.session else {
+            #log(
+                Self.logger, .error,
+                "Cannot detach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
+            throw RemovableMediaDeviceError.noVirtualMachine
+        }
+        guard session.hasUSBController else {
+            #log(
+                Self.logger, .error,
+                "Cannot detach USB device: no USB controller for '\(instance.name, privacy: .public)'")
+            throw RemovableMediaDeviceError.noUSBController
+        }
+
+        do {
+            try await session.detachUSBDevice(uuid: deviceInfo.id)
+        } catch VMSessionError.usbDeviceNotFound {
+            #log(
+                Self.logger, .error,
+                "USB device '\(deviceInfo.displayName, privacy: .public)' not found on controller for VM '\(instance.name, privacy: .public)'"
+            )
+            throw RemovableMediaDeviceError.deviceNotFound
+        } catch VMSessionError.usbControllerUnavailable {
+            throw RemovableMediaDeviceError.noUSBController
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
+
+        #log(
+            Self.logger, .notice,
+            "Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'"
+        )
+    }
+}

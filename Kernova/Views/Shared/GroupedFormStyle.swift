@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// Shared design tokens and atom factories for the native macOS *grouped form*

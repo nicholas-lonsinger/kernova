@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// One remembered USB accessory: what it is called, where it was and when it
 /// was placed, and the button that forgets it.

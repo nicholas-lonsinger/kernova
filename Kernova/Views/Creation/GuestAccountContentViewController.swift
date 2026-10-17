@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Step 4 of the creation wizard for macOS guests: the account Virtualization
 /// creates inside the guest, shown only while the wizard is creating one.

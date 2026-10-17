@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// A row's tags as a line of colored dots, one per tag in the library's order
 /// of its tags, and the one accessibility element that names them.

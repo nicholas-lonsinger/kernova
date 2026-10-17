@@ -37,7 +37,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
 
 Build and test through the `Makefile` (`make help`); its `xcodebuild` flags are not the obvious ones.
 
-Test waits are event-driven; the seams and their contracts are `KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift` and `KernovaTests/TestHelpers.swift` (`waitForChange`).
+Test waits are event-driven; the seams and their contracts are `KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift` and `KernovaCore/Sources/KernovaCoreTestSupport/TestHelpers.swift` (`waitForChange`).
 
 A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. A change that turns the test green while that structure still permits the failure — a loosened assertion, a longer wait, a retry — is a patch, and an intermittent failure is owed the same root cause as a steady one.
 

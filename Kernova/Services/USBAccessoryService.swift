@@ -1,5 +1,6 @@
 import AccessoryAccess
 import Foundation
+import KernovaCore
 import KernovaLogging
 import Virtualization
 
