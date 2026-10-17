@@ -1,9 +1,11 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Covers `AppAlertPresenter` against the app's real windows: the library

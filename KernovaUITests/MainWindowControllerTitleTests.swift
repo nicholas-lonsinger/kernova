@@ -3,6 +3,7 @@ import KernovaKit
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("MainWindowController window title", .caseScoped)

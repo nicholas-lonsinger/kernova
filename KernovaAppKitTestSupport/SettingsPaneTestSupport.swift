@@ -1,3 +1,5 @@
+import AppKit
+
 @testable import KernovaUI
 
 /// Enough VMs that the Reminders pane outgrows the tallest window the screen

@@ -1,9 +1,11 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The sidebar's name search: how it narrows every sidebar section and what

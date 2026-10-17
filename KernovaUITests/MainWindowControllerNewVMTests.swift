@@ -1,6 +1,8 @@
 import AppKit
+import KernovaTestSupport
 import Testing
 
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Covers how `MainWindowController` takes New VM out of the toolbar while the

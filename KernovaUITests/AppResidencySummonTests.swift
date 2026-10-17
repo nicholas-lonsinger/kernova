@@ -1,8 +1,10 @@
 import AppKit
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Covers the summon an in-app click runs —

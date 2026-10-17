@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Covers what `MainMenuController.menuNeedsUpdate(_:)` does to each menu it is
