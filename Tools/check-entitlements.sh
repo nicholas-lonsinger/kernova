@@ -19,6 +19,9 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 full="Kernova/Resources/Kernova.entitlements"
 dev="Kernova/Resources/Kernova.Development.entitlements"
+# Signed by whatever identity a checkout has, ad-hoc included, so it holds no
+# restricted key either.
+test_host="KernovaTestHost/KernovaTestHost.entitlements"
 
 # Every key amfid treats as restricted: claiming one under an ad-hoc signature
 # is fatal at exec ("adhoc signed but contains restricted entitlements"), so
@@ -47,10 +50,12 @@ for key in "${restricted[@]}"; do
         echo "check-entitlements: $key missing from $full" >&2
         status=1
     fi
-    if keys "$dev" | grep -Fxq "$key"; then
-        echo "check-entitlements: $key must not be in $dev" >&2
-        status=1
-    fi
+    for profileless in "$dev" "$test_host"; do
+        if keys "$profileless" | grep -Fxq "$key"; then
+            echo "check-entitlements: $key must not be in $profileless" >&2
+            status=1
+        fi
+    done
 done
 
 if ! diff_out=$(diff <(keys "$full" | grep -Fxv -f <(restricted_lines)) <(keys "$dev")); then
@@ -61,6 +66,6 @@ if ! diff_out=$(diff <(keys "$full" | grep -Fxv -f <(restricted_lines)) <(keys "
 fi
 
 if [ "$status" -eq 0 ]; then
-    pass "entitlements: variant key parity"
+    pass "entitlements: variant key parity; no restricted key in the test host"
 fi
 exit "$status"

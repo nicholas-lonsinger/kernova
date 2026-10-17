@@ -1,0 +1,23 @@
+// The KernovaTestHost app, both configurations: the process KernovaUITests
+// runs in, built only for testing.
+//
+// Its own bundle identifier and no sandbox, so a test run shares neither the
+// installed app's Launch Services identity nor its container. LSUIElement keeps
+// it out of the Dock and ⌘-Tab, and it never activates on its own.
+//
+// No signing identity or team is assigned here: a target xcconfig outranks
+// Config/Local.xcconfig, and host and test bundle must sign together.
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = app.kernova.testhost
+MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)
+
+GENERATE_INFOPLIST_FILE = YES
+CURRENT_PROJECT_VERSION = 1
+INFOPLIST_KEY_LSUIElement = YES
+INFOPLIST_KEY_NSPrincipalClass = NSApplication
+SWIFT_EMIT_LOC_STRINGS = NO
+
+ENABLE_APP_SANDBOX = NO
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_ENTITLEMENTS = KernovaTestHost/KernovaTestHost.entitlements

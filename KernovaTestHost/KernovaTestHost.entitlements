@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Virtualization.framework refuses to build a VZVirtualMachine in a
+	     process without it, so a test that builds one runs in this host. -->
+	<key>com.apple.security.virtualization</key>
+	<true/>
+</dict>
+</plist>

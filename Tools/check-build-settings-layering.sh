@@ -7,10 +7,13 @@
 # shadow the xcconfig — this check is what turns that into a lint failure
 # instead of a divergence nobody reads.
 #
-# The app and both test bundles additionally assign no signing of their own: a
-# target xcconfig outranks Config/Local.xcconfig, so an identity, team, profile
-# or entitlement path written there reverts a developer to ad-hoc signing while
-# `make doctor` goes on reporting Local.xcconfig's values.
+# The app, the test host and the test bundles additionally assign no signing
+# of their own: a target xcconfig outranks Config/Local.xcconfig, so an
+# identity, team or profile written there reverts a developer to ad-hoc signing
+# while `make doctor` goes on reporting Local.xcconfig's values. The app's
+# entitlement path is Local.xcconfig's to choose too; the test host's plist
+# holds no restricted key (Tools/check-entitlements.sh), so it signs under any
+# identity and names its path itself.
 #
 # Reports every violation before failing, so one run fixes them all.
 
@@ -78,14 +81,17 @@ violations=$(awk '
     }
 ' "$pbxproj" "$pbxproj")
 
-# The three targets Config/Local.xcconfig has to reach. KernovaCLI.xcconfig and
+# The targets Config/Local.xcconfig has to reach. KernovaCLI.xcconfig and
 # KernovaRelaunchHelper.xcconfig pin Release to `-` because export re-signs
 # them, so they are out of scope here.
 signing_files=(
     Config/Targets/Kernova.xcconfig
     Config/Targets/KernovaTests.xcconfig
     Config/Targets/KernovaMacOSAgentTests.xcconfig
+    Config/Targets/KernovaTestHost.xcconfig
+    Config/Targets/KernovaUITests.xcconfig
 )
+app_file=Config/Targets/Kernova.xcconfig
 
 for f in "${signing_files[@]}"; do
     if [ ! -f "$f" ]; then
@@ -97,7 +103,7 @@ done
 # A declaration is NAME, optional [condition] groups, then `=`; the condition
 # is part of the spelling, not an escape, so a conditioned assignment fails the
 # same way an unconditioned one does.
-signing_violations=$(awk '
+signing_violations=$(awk -v app="$app_file" '
     {
         line = $0
         sub(/\/\/.*$/, "", line)
@@ -112,7 +118,7 @@ signing_violations=$(awk '
             printf "  %s:%d: %s — Config/Local.xcconfig has to reach this target\n", FILENAME, FNR, name
         else if (name == "PROVISIONING_PROFILE_SPECIFIER" && value != "")
             printf "  %s:%d: %s = %s — leave it empty\n", FILENAME, FNR, name, value
-        else if (name == "CODE_SIGN_ENTITLEMENTS" && value != "$(KERNOVA_APP_ENTITLEMENTS)")
+        else if (name == "CODE_SIGN_ENTITLEMENTS" && FILENAME == app && value !="$(KERNOVA_APP_ENTITLEMENTS)")
             printf "  %s:%d: %s = %s — read $(KERNOVA_APP_ENTITLEMENTS) instead\n", FILENAME, FNR, name, value
     }
 ' "${signing_files[@]}")
@@ -134,4 +140,4 @@ fi
 [ "$failed" -eq 0 ] || exit 1
 
 pass "build settings: every configuration is xcconfig-backed with an empty inline block"
-pass "signing: the app and test xcconfigs name no identity, team, profile, or entitlement path"
+pass "signing: the app, test host, and test xcconfigs name no identity, team, or profile, and the app's entitlement path is KERNOVA_APP_ENTITLEMENTS"
