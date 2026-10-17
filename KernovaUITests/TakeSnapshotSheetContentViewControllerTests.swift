@@ -1,0 +1,183 @@
+import AppKit
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaUI
+
+@Suite("TakeSnapshotSheet Tests", .caseScoped)
+@MainActor
+struct TakeSnapshotSheetContentViewControllerTests {
+    private func makeSheet(
+        vmName: String = "Dev Mac", suggestedName: String = "Snapshot",
+        mode: VMCaptureMode = .live, purpose: TakeSnapshotPurpose = .restorePoint
+    ) -> TakeSnapshotSheetContentViewController {
+        let sheet = TakeSnapshotSheetContentViewController(
+            vmName: vmName, suggestedName: suggestedName, mode: mode, purpose: purpose)
+        sheet.loadViewIfNeeded()
+        return sheet
+    }
+
+    @Test("A baseline capture names what the new baseline returns the VM to")
+    func baselineCaptureNamesTheBaseline() {
+        let sheet = makeSheet(mode: .live, purpose: .ephemeralBaseline)
+        #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .warm), in: sheet.view) != nil)
+
+        // The VM finishing its shutdown makes the capture cold, and the note
+        // follows it.
+        sheet.update(mode: .stopped)
+        #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .cold), in: sheet.view) != nil)
+        #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .warm), in: sheet.view) == nil)
+    }
+
+    @Test("A restore point says nothing about Ephemeral Mode")
+    func restorePointHasNoBaselineNote() {
+        let sheet = makeSheet(mode: .live)
+        for kind in [VMSnapshotKind.warm, .cold] {
+            #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: kind), in: sheet.view) == nil)
+        }
+    }
+
+    @Test("The title names the VM")
+    func titleNamesTheVM() {
+        let sheet = makeSheet(vmName: "Dev Mac")
+        #expect(
+            findLabel(withText: "Take Snapshot of \u{201C}Dev Mac\u{201D}", in: sheet.view) != nil)
+    }
+
+    @Test("The Name field is prefilled with the suggestion and Notes is optional")
+    func fieldsStartPrefilled() {
+        let sheet = makeSheet(suggestedName: "Snapshot 3")
+        #expect(sheet.enteredName == "Snapshot 3")
+        #expect(sheet.enteredNotes.isEmpty)
+        #expect(findLabel(withText: "Optional", in: sheet.view) != nil)
+    }
+
+    @Test("Confirming hands back what was typed, newlines and all")
+    func confirmSendsTheEnteredValues() {
+        let sheet = makeSheet()
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
+        firstSubview(NSTextField.self, in: sheet.view) { $0.placeholderString == "Name" }?
+            .stringValue = "Before Xcode"
+        firstSubview(NSTextView.self, in: sheet.view)?.string = "tools configured\nand licensed"
+
+        let confirm = findButton(titled: "Take Snapshot", in: sheet.view)
+        confirm.map { _ = $0.target?.perform($0.action, with: $0) }
+
+        #expect(confirmations.count == 1)
+        #expect(confirmations.first?.name == "Before Xcode")
+        #expect(confirmations.first?.notes == "tools configured\nand licensed")
+    }
+
+    @Test("Cancel is the Escape button and reports a cancel")
+    func cancelReportsACancel() {
+        let sheet = makeSheet()
+        var cancels = 0
+        sheet.onCancel = { cancels += 1 }
+        let cancel = findButton(titled: "Cancel", in: sheet.view)
+
+        #expect(cancel?.keyEquivalent == "\u{1B}")
+        cancel.map { _ = $0.target?.perform($0.action, with: $0) }
+
+        #expect(cancels == 1)
+    }
+
+    @Test("Take Snapshot is the Return default")
+    func confirmIsTheDefaultButton() {
+        let sheet = makeSheet()
+        #expect(findButton(titled: "Take Snapshot", in: sheet.view)?.keyEquivalent == "\r")
+    }
+
+    // MARK: - What the Notes box hands back to the sheet
+
+    /// The Notes box answers Return and Escape itself, so the sheet's default
+    /// and Cancel buttons never see them while it has focus. These cover what
+    /// it hands back in their place.
+    private func notesBox(
+        _ sheet: TakeSnapshotSheetContentViewController
+    ) throws -> (NotesEditorView, NSTextView) {
+        let editor = try #require(firstSubview(NotesEditorView.self, in: sheet.view))
+        return (editor, try #require(firstSubview(NSTextView.self, in: editor)))
+    }
+
+    @Test("A commit from the Notes box confirms the sheet")
+    func notesCommitConfirmsTheSheet() throws {
+        let sheet = makeSheet()
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
+        let (editor, textView) = try notesBox(sheet)
+
+        textView.string = "tools configured"
+        editor.commitIfChanged()
+
+        #expect(confirmations.count == 1)
+        #expect(confirmations.first?.notes == "tools configured")
+    }
+
+    @Test("Escape in the Notes box cancels the sheet rather than erasing the note")
+    func escapeInNotesCancelsTheSheet() throws {
+        let sheet = makeSheet()
+        var cancels = 0
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onCancel = { cancels += 1 }
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
+        let (_, textView) = try notesBox(sheet)
+        textView.string = "tools configured"
+
+        textView.cancelOperation(nil)
+
+        #expect(cancels == 1)
+        #expect(confirmations.isEmpty)
+    }
+
+    // MARK: - Per-mode copy
+
+    @Test("A memory-and-disks capture says so, and warns about the pause")
+    func warmCopyNamesMemoryAndThePause() {
+        let sheet = makeSheet(mode: .live)
+        #expect(sheet.headerBodyText.contains("memory, disks, and settings"))
+        #expect(sheet.captionText?.contains("pauses briefly") == true)
+        #expect(findLabel(containing: "pauses briefly", in: sheet.view)?.isHidden == false)
+    }
+
+    @Test("A suspended-state capture names the suspended session, and says nothing about pausing")
+    func suspendedCopyNamesTheSuspendedSession() {
+        let sheet = makeSheet(mode: .suspended)
+        #expect(sheet.headerBodyText.contains("suspended session"))
+        #expect(sheet.captionText == "The virtual machine stays suspended.")
+    }
+
+    @Test("A capture of a stopped VM says the VM comes back powered off, with no caption")
+    func coldCopyNamesTheOutcome() {
+        let sheet = makeSheet(mode: .stopped)
+        #expect(sheet.headerBodyText.contains("disks and settings"))
+        #expect(sheet.headerBodyText.contains("powered off"))
+        #expect(!sheet.headerBodyText.contains("memory, disks, and settings"))
+        #expect(sheet.captionText == nil)
+    }
+
+    @Test("The shared-blocks explanation sits behind the title's info button")
+    func sharedBlocksLiveInTitleInfo() throws {
+        let sheet = makeSheet(mode: .live)
+        let info = try #require(firstSubview(InfoButtonView.self, in: sheet.view))
+        #expect(info.paragraphs == [.body(TakeSnapshotSheetContentViewController.sharedBlocksExplanation)])
+        #expect(findLabel(containing: "share their blocks", in: sheet.view) == nil)
+    }
+
+    @Test("A guest powering off while the sheet is up moves its copy to a capture with no memory")
+    func updatingTheModeRewritesTheRenderedCopy() {
+        let sheet = makeSheet(mode: .live)
+        let body = findLabel(containing: "memory, disks, and settings", in: sheet.view)
+        #expect(body != nil)
+
+        sheet.update(mode: .stopped)
+
+        #expect(sheet.mode == .stopped)
+        // The same labels, rewritten — not a stale copy left on screen.
+        #expect(body?.stringValue.contains("powered off") == true)
+        #expect(findLabel(containing: "memory, disks, and settings", in: sheet.view) == nil)
+        // A stopped VM has no pause to warn about, so the caption hides.
+        #expect(findLabel(containing: "pauses briefly", in: sheet.view)?.isHidden ?? true)
+    }
+}

@@ -1,0 +1,207 @@
+import AppKit
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaUI
+@testable import KernovaVirtualization
+
+/// The detail pane across the library's empty-until-read interval. The app now
+/// presents its window before the library has been read, so the pane has to
+/// distinguish "no VMs" from "no VMs *yet*".
+@Suite("DetailContainer library-load state", .serialized, .caseScoped, .scopedWindows)
+@MainActor
+struct DetailContainerLibraryLoadTests {
+    private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "DetailContainerLibraryLoadTests")
+
+    private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
+        -> VMLibraryViewModel
+    {
+        VMLibraryViewModel(
+            storageService: storageService,
+            diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
+            virtualizationHost: VirtualizationHost(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
+            preferences: preferences,
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard(),
+            bundleProducts: .testing
+        )
+    }
+
+    /// Hosts the container in a window and runs the appearance pass that builds
+    /// its content and arms its observation, as the split view controller does.
+    private func present(_ controller: DetailContainerViewController) {
+        controller.loadViewIfNeeded()
+        showInTestWindow(controller.view, size: NSSize(width: 900, height: 600))
+        controller.viewDidAppear()
+    }
+
+    /// Runs after every main-actor task already queued, so an `ObservationLoop`
+    /// wake-up enqueued by the mutation under test has been applied.
+    ///
+    /// `ObservationLoop` applies through `Task { @MainActor … }` enqueued
+    /// synchronously from the mutation, so a task enqueued afterwards lands
+    /// behind it — a deterministic hand-off, not a poll or a settle delay.
+    private func drainMainActor() async {
+        await Task { @MainActor in }.value
+    }
+
+    private func hasEmptyState(_ controller: DetailContainerViewController) -> Bool {
+        func search(_ view: NSView) -> Bool {
+            if view is DetailEmptyStateView { return true }
+            return view.subviews.contains(where: search)
+        }
+        return search(controller.view)
+    }
+
+    private func labels(in controller: DetailContainerViewController) -> [String] {
+        func collect(_ view: NSView) -> [String] {
+            ((view as? NSTextField).map { [$0.stringValue] } ?? [])
+                + view.subviews.flatMap(collect)
+        }
+        return collect(controller.view)
+    }
+
+    private func storageHoldingOneVM() -> (MockVMStorageService, VMConfiguration) {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "Library VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url = scratch.url
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+        return (storage, config)
+    }
+
+    @Test("The no-VM empty state is withheld until the library has been read")
+    func emptyStateWithheldBeforeLoad() {
+        let (storage, _) = storageHoldingOneVM()
+        let viewModel = makeViewModel(storageService: storage)
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+
+        // The library holds a VM that simply hasn't been read yet, so "No Virtual
+        // Machine Selected" — and its New Virtual Machine button — would be a
+        // false claim the user can act on.
+        #expect(viewModel.hasLoadedLibrary == false)
+        #expect(hasEmptyState(controller) == false)
+    }
+
+    @Test("A library that reads back empty reaches the no-VM empty state")
+    func emptyStateShownAfterEmptyLoad() async {
+        let viewModel = makeViewModel()
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+        #expect(hasEmptyState(controller) == false)
+
+        await viewModel.loadVMs()
+        await drainMainActor()
+
+        // Load completion is the only change here — an empty library leaves
+        // `instances` and `selectedID` exactly as they were — so this pins the
+        // pane's observation of it. Tracking only the instance list would strand
+        // the pane blank for the whole session.
+        #expect(viewModel.hasLoadedLibrary == true)
+        #expect(hasEmptyState(controller) == true)
+    }
+
+    @Test("A loaded VM replaces the withheld state with its detail content")
+    func detailShownAfterPopulatedLoad() async {
+        let (storage, config) = storageHoldingOneVM()
+        let viewModel = makeViewModel(storageService: storage)
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+
+        await viewModel.loadVMs()
+        await drainMainActor()
+
+        #expect(viewModel.selectedID == config.id)
+        #expect(viewModel.instances.map(\.name) == ["Library VM"])
+        #expect(hasEmptyState(controller) == false)
+    }
+
+    @Test("A selected arrival shows the placeholder carrying its label, which follows its stage")
+    func selectedArrivalShowsThePlaceholder() async {
+        let viewModel = makeViewModel()
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+        await viewModel.loadVMs()
+        let gate = GatedStep()
+
+        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
+        await drainMainActor()
+
+        #expect(viewModel.selectedEntry?.arrival === arrival)
+        #expect(hasEmptyState(controller) == false)
+        #expect(labels(in: controller).contains("Importing\u{2026}"))
+
+        #expect(arrival.requestCancel() == .cancelled)
+        await drainMainActor()
+        #expect(labels(in: controller).contains("Cancelling\u{2026}"))
+
+        gate.release()
+        await arrival.settle()
+    }
+
+    /// A library holding one bundle whose `config.json` names "Bad VM" and
+    /// holds a network mode no mode spells.
+    private func storageHoldingAnUnreadableBundle() throws -> MockVMStorageService {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["networkMode"] = "plan9-mode"
+        storage.files.setData(
+            try JSONSerialization.data(withJSONObject: object),
+            atRelativePath: VMBundleLayout.configRelativePath, in: try storage.bundleURL(for: config))
+        return storage
+    }
+
+    @Test("A selected unreadable bundle shows the empty state naming it, with the config check")
+    func selectedUnreadableBundleShowsTheEmptyState() async throws {
+        let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+        await viewModel.loadVMs()
+        await drainMainActor()
+
+        #expect(viewModel.selectedEntry?.unreadable?.name == "Bad VM")
+        #expect(labels(in: controller).contains("Kernova can\u{2019}t read \u{201C}Bad VM\u{201D}"))
+    }
+
+    @Test("A load that finds an unreadable file brings up the check once a library window attaches")
+    func theCheckWaitsForALibraryWindow() async throws {
+        let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
+        var checks: [VMLibraryViewModel.ConfigCheckRequest] = []
+        viewModel.onShowConfigCheck = { checks.append($0) }
+
+        await viewModel.loadVMs()
+        #expect(checks.isEmpty)
+
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        #expect(viewModel.libraryWindowPresenter === controller)
+        #expect(checks == [.automatic])
+
+        // Reported once: a reconcile that finds the same bundle asks for nothing.
+        viewModel.reconcileWithDisk()
+        #expect(checks == [.automatic])
+    }
+}

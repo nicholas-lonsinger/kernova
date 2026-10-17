@@ -1,0 +1,420 @@
+import AppKit
+import Foundation
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaUI
+@testable import KernovaVirtualization
+
+/// Layout tests for the Reminders settings pane.
+///
+/// The pane hugs its content when short and scrolls past a height cap. The
+/// regression risk is the capped state: the pane's frame is fixed by the tab
+/// controller, and a hug constraint that outranks the text's compression
+/// resistance resolves the shortfall by collapsing every section header and
+/// caption to zero height instead of scrolling.
+@Suite("Reminders Settings Tests", .serialized, .caseScoped, .scopedWindows)
+@MainActor
+struct RemindersSettingsViewControllerTests {
+    private let preferences: AppPreferences
+
+    init() {
+        self.preferences = makeTestPreferences()
+    }
+
+    private func makeViewModel() -> VMLibraryViewModel {
+        VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
+            virtualizationHost: VirtualizationHost(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
+            preferences: preferences,
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard(),
+            bundleProducts: .testing
+        )
+    }
+
+    /// Builds the pane with `vmCount` VMs and runs the appear-time layout the
+    /// way NSTabViewController does: it reads `preferredContentSize` at switch
+    /// time and sizes the pane's view to exactly that.
+    private func makeLaidOutController(vmCount: Int) -> RemindersSettingsViewController {
+        makeLaidOutPane(vmCount: vmCount).controller
+    }
+
+    /// As ``makeLaidOutController(vmCount:)``, also handing back the view model
+    /// so a test can drive the app-wide install-prompt preference.
+    private func makeLaidOutPane(vmCount: Int) -> (
+        controller: RemindersSettingsViewController, viewModel: VMLibraryViewModel
+    ) {
+        let viewModel = makeViewModel()
+        for index in 1...vmCount {
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
+        }
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        controller.view.setFrameSize(controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+        return (controller, viewModel)
+    }
+
+    /// A laid-out pane hosted in an on-screen window, for the flash assertions.
+    ///
+    /// The window has to be up before the geometry settles: the cue only fires
+    /// against a visible window, so measuring it off screen would count flashes
+    /// the app never shows.
+    private func makeShownPane(vmCount: Int) -> RemindersSettingsViewController {
+        let viewModel = makeViewModel()
+        for index in 1...vmCount {
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
+        }
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        // Measure while detached, exactly as the pane does before the tab
+        // controller sizes the window, then hand the window that measurement.
+        controller.viewWillAppear()
+        showInTestWindow(controller.view, size: controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+        // Stands in for the tab container's `viewDidAppear`. Ordering a window on
+        // screen changes no geometry, so nothing re-runs the cue on its own — the
+        // arrival hook is what spends the flash once there is something to see.
+        controller.rearmScrollMoreCue()
+        return controller
+    }
+
+    /// Every switch in the pane wired to `action`, in row order.
+    private func switches(action name: String, in controller: RemindersSettingsViewController)
+        -> [NSSwitch]
+    {
+        allSubviews(NSSwitch.self, in: controller.view) {
+            $0.action.map(NSStringFromSelector) == name
+        }
+    }
+
+    private func vmSwitches(in controller: RemindersSettingsViewController) -> [NSSwitch] {
+        switches(action: "vmReminderToggled:", in: controller)
+    }
+
+    /// Flips the app-wide install-reminder switch the way a click does, so the
+    /// pane's own action wiring is what drives the change.
+    private func setAppWideInstallReminder(
+        on: Bool, in controller: RemindersSettingsViewController
+    ) throws {
+        let toggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let action = try #require(toggle.action)
+        toggle.state = on ? .on : .off
+        let delivered = NSApp.sendAction(action, to: toggle.target, from: toggle)
+        #expect(delivered)
+    }
+
+    private func expectHeadersVisible(in root: NSView) {
+        for text in ["App Reminders", "Virtual Machine Reminders"] {
+            let header = findLabel(withText: text, in: root)
+            #expect(header != nil, "header '\(text)' missing from the view tree")
+            if let header {
+                #expect(header.frame.height > 0, "header '\(text)' collapsed: \(header.frame)")
+            }
+        }
+    }
+
+    @Test("A VM list past the height cap scrolls instead of collapsing the text")
+    func cappedPaneScrollsAndKeepsText() throws {
+        let controller = makeLaidOutController(vmCount: overflowingVMCount())
+        defer { controller.viewDidDisappear() }
+
+        expectHeadersVisible(in: controller.view)
+
+        // The content must keep its natural height and overflow the capped
+        // pane — a squeezed document exactly matching the pane's height is the
+        // collapse bug, not scrolling.
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
+        let documentView = try #require(scrollView.documentView)
+        #expect(documentView.frame.height > scrollView.frame.height)
+    }
+
+    /// Each section's governing switch heads its own card.
+    @Test("Each reminder switch is its own single-row card")
+    func remindersAreSeparateCards() throws {
+        let controller = makeLaidOutController(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        #expect(findLabel(withText: "Menu bar quit reminder", in: controller.view) != nil)
+        #expect(findLabel(withText: "Guest agent install reminder", in: controller.view) != nil)
+        // Two app-wide switches plus one per VM.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
+
+        let menuBarToggle = try #require(
+            switches(action: "menuBarQuitToggled", in: controller).first)
+        let agentToggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let menuBarCard = try #require(enclosingGroupedFormCard(of: menuBarToggle))
+        let agentCard = try #require(enclosingGroupedFormCard(of: agentToggle))
+        #expect(menuBarCard !== agentCard)
+        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
+        #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
+    }
+
+    /// Apple's guidance for showing that one control governs others is to indent
+    /// the subordinates beneath it.
+    ///
+    /// The greying only speaks while the governing switch is off; the indent
+    /// states the relationship at all times.
+    @Test("The per-VM rows are indented beneath the switch that governs them")
+    func perVMRowsIndentUnderGoverningSwitch() throws {
+        let controller = makeLaidOutController(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        let agentToggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let governingCard = try #require(enclosingGroupedFormCard(of: agentToggle))
+        let vmToggle = try #require(vmSwitches(in: controller).first)
+        let vmCard = try #require(enclosingGroupedFormCard(of: vmToggle))
+
+        let root = controller.view
+        let governingLeading = governingCard.convert(governingCard.bounds, to: root).minX
+        let subordinateLeading = vmCard.convert(vmCard.bounds, to: root).minX
+        #expect(subordinateLeading - governingLeading == groupedFormSubOptionIndent)
+    }
+
+    @Test("Turning the app-wide install reminder off disables and explains the per-VM rows")
+    func appWideDisableGreysPerVMRows() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
+        // A state note holds no text while its state is off.
+        #expect(findLabel(containing: "No effect while the reminder above is off", in: controller.view) == nil)
+
+        try setAppWideInstallReminder(on: false, in: controller)
+
+        #expect(viewModel.agentInstallPromptDisabled == true)
+        #expect(vmSwitches(in: controller).allSatisfy { !$0.isEnabled })
+        let explanation = try #require(
+            findLabel(containing: "No effect while the reminder above is off", in: controller.view))
+        #expect(!explanation.isHidden)
+
+        try setAppWideInstallReminder(on: true, in: controller)
+
+        #expect(viewModel.agentInstallPromptDisabled == false)
+        #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
+        #expect(explanation.isHidden)
+    }
+
+    /// The window is sized once per tab selection.
+    ///
+    /// So the caption appearing grows the content in place with nothing to say
+    /// the pane now overflows; re-arming the indicator is what lets the scroller
+    /// flash again.
+    @Test("Revealing the override caption flashes the scroller again")
+    func revealingOverrideCaptionRearmsFlash() throws {
+        let controller = makeShownPane(vmCount: overflowingVMCount())
+        defer { controller.viewDidDisappear() }
+        let indicator = try #require(controller.scrollMoreIndicatorForTesting)
+
+        // The pane overflows the height cap, so appearing flashes — exactly
+        // once, against the pane's settled geometry rather than the zero-height
+        // frame the first row build runs under.
+        #expect(indicator.flashCountForTesting == 1)
+
+        // The latch is one-shot, so without a re-arm the caption could grow the
+        // content with no cue at all.
+        try setAppWideInstallReminder(on: false, in: controller)
+        #expect(indicator.flashCountForTesting == 2)
+
+        // A refresh that moves neither the row count nor the caption must not
+        // re-arm, or an unrelated toggle would flash the scroller for nothing.
+        try setAppWideInstallReminder(on: false, in: controller)
+        #expect(indicator.flashCountForTesting == 2)
+    }
+
+    /// A tab switch adopts the pane into the already-visible Settings window
+    /// before its appearance pass runs.
+    ///
+    /// The appearance pass's layout churn therefore recomputes overflow against
+    /// a window the flash may fire in — while the tab transition still hides the
+    /// pane. The first visit must hold the cue for the container's arrival hook:
+    /// one spent here plays its fade-in where nobody can see, and the arrival
+    /// re-arm then meets a scroller already at full alpha — solid, then a bare
+    /// fade-out, unlike every later visit.
+    @Test("The first visit holds the flash for the arrival cue")
+    func firstVisitHoldsFlashForArrivalCue() throws {
+        let viewModel = makeViewModel()
+        for index in 1...overflowingVMCount() {
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
+        }
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+
+        // Host the pane in an on-screen window first, as the tab view does — and
+        // sized, because the tab view pins the adopted view to its own bounds
+        // (the outgoing pane's height) before any appearance callback runs. The
+        // pre-appearance row build and measurement layout therefore both run
+        // against real, overflowing geometry in a visible window.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 400))
+        showInTestWindow(host)
+        defer { controller.viewDidDisappear() }
+        controller.view.setFrameSize(NSSize(width: 520, height: 400))
+        host.addSubview(controller.view)
+        controller.viewWillAppear()
+        controller.view.layoutSubtreeIfNeeded()
+
+        let indicator = try #require(controller.scrollMoreIndicatorForTesting)
+        #expect(indicator.flashCountForTesting == 0)
+
+        // The container's arrival hook spends it — the first flash anyone sees.
+        controller.rearmScrollMoreCue()
+        #expect(indicator.flashCountForTesting == 1)
+    }
+
+    /// The override note describes the per-VM switches, so with none on screen
+    /// it would point at nothing.
+    @Test("The override note does not show when there are no virtual machines")
+    func perVMCaptionsHideWithoutVMs() throws {
+        let controller = RemindersSettingsViewController(viewModel: makeViewModel())
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+        controller.view.setFrameSize(controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+
+        // Turning the app-wide reminder off is what would reveal the override
+        // caption; the empty state has to suppress it anyway.
+        try setAppWideInstallReminder(on: false, in: controller)
+
+        let visible = allSubviews(NSTextField.self, in: controller.view) { !$0.isHidden }
+            .map(\.stringValue)
+        #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
+        // The override caption is a note of the per-VM card, which the empty
+        // state does not build.
+        #expect(findLabel(containing: "No effect", in: controller.view) == nil)
+    }
+
+    /// The disabled rows keep showing each VM's own setting, so turning the
+    /// app-wide reminder back on restores what the user had chosen.
+    @Test("A disabled per-VM row still reflects its VM's dismissed flag")
+    func disabledPerVMRowKeepsItsState() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+        viewModel.library.editHostState(of: viewModel.instances[0]) {
+            $0.agentInstallNudgeDismissed = true
+        }
+        viewModel.agentInstallPromptDisabled = true
+        controller.viewWillAppear()
+
+        let switches = vmSwitches(in: controller)
+        #expect(switches.count == 2)
+        #expect(switches[0].state == .off)
+        #expect(switches[1].state == .on)
+    }
+
+    @Test("Only a VM the install reminder applies to gets a per-VM row")
+    func onlyMacOSVMsGetARow() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).count == 1)
+        #expect(findLabel(withText: "Mac", in: controller.view) != nil)
+        #expect(findLabel(withText: "Tux", in: controller.view) == nil)
+    }
+
+    @Test("A per-VM switch whose edit does not land goes back to what its VM holds")
+    func unsavedPerVMEditRepaintsTheSwitch() throws {
+        let viewModel = makeViewModel()
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let instance = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS, files: storage.files)
+        storage.saveHostStateError = CocoaError(.fileWriteNoPermission)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+        let toggle = try #require(vmSwitches(in: controller).first)
+
+        toggle.state = .off
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(!instance.hostState.agentInstallNudgeDismissed)
+        #expect(toggle.state == .on)
+    }
+
+    @Test("With only Linux VMs the section says there is no macOS VM")
+    func onlyLinuxVMsShowTheEmptyState() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).isEmpty)
+        #expect(findLabel(withText: "No macOS virtual machines yet.", in: controller.view) != nil)
+    }
+
+    /// Seven VMs put the pane within a note's height of a fixed 520-point cap,
+    /// which is where a cap below the screen's would clip the note's growth.
+    @Test("The override note grows the Settings window by its full height")
+    func overrideNoteGrowsWindowByItsHeight() throws {
+        let viewModel = makeViewModel()
+        for index in 1...7 {
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
+        }
+        let tabController = SettingsTabViewController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled, .closable])
+        window.contentViewController = tabController
+        window.orderFront(nil)
+        let item = try #require(
+            tabController.tabViewItems.first { $0.viewController is RemindersSettingsViewController })
+        tabController.tabView.selectTabViewItem(item)
+        let controller = try #require(item.viewController as? RemindersSettingsViewController)
+        defer { controller.viewDidDisappear() }
+        window.layoutIfNeeded()
+        let paneBefore = controller.preferredContentSize.height
+        let windowBefore = window.contentLayoutRect.height
+
+        try setAppWideInstallReminder(on: false, in: controller)
+        window.layoutIfNeeded()
+
+        let note = try #require(
+            findLabel(containing: "No effect while the reminder above is off", in: controller.view))
+        #expect(note.frame.height > 0)
+        let growth = note.frame.height + GroupedFormStyle.cardStackSpacing
+        #expect(controller.preferredContentSize.height == paneBefore + growth)
+        #expect(window.contentLayoutRect.height == windowBefore + growth)
+
+        // Nothing overflows, so nothing scrolls.
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
+        let documentView = try #require(scrollView.documentView)
+        #expect(documentView.frame.height <= scrollView.frame.height)
+    }
+
+    @Test("A short VM list hugs the content with the text laid out")
+    func shortPaneHugsContentAndKeepsText() throws {
+        let controller = makeLaidOutController(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        expectHeadersVisible(in: controller.view)
+
+        // Hugged: everything fits, so nothing scrolls.
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
+        let documentView = try #require(scrollView.documentView)
+        #expect(documentView.frame.height <= scrollView.frame.height)
+    }
+}
