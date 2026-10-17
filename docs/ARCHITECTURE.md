@@ -135,8 +135,8 @@ view-backed item.
 
 `KernovaKit/Package.swift` names every product and why each is shaped as it is.
 `KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
-Virtualization; the app links it and reaches its `package` declarations, and
-its tests run without the app as host. Its `KernovaVirtualization` target is
+Virtualization; the app links it and reaches its `package` declarations. Its
+`KernovaVirtualization` target is
 the engine, over the core, and its `KernovaUI` target is the AppKit layer; the
 app links both.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`

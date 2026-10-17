@@ -6,11 +6,9 @@ import Security
 /// Answers what this build's signature authorizes, so feature UI can degrade
 /// gracefully in builds signed without a restricted entitlement.
 ///
-/// The answer is a property of the signature, not the code, and under test the
-/// process is the test host, whose signing follows the machine: a gitignored
-/// `Config/Local.xcconfig` can opt into the restricted keys the default signing
-/// omits. An answer read from the process makes a test's outcome depend on
-/// where it runs.
+/// The answer is a property of the signature, not the code, and a test runs in
+/// the `xctest` runner or `KernovaTestHost`, each signed as itself rather than
+/// as the app, so an answer read from the process would describe the runner.
 package struct EntitlementService: Sendable {
     /// Whether VZ networking beyond NAT — bridged, host-only, and app-managed
     /// vmnet networks — is authorized (`com.apple.vm.networking`).

@@ -143,11 +143,10 @@ enum TestAdmission {
     /// Width sources in priority order, each paired with the label the log line
     /// reports so a run shows which mechanism actually delivered the value.
     ///
-    /// The environment is the only source. A dropped width *file* was tried and
-    /// removed: no test process is sandboxed, so `NSHomeDirectory()` is the
-    /// developer's real home, where a leftover file would silently gate every
-    /// later local run — the same failure the world-writable `/tmp` entry was
-    /// dropped for.
+    /// The environment is the only source: no test process is sandboxed, so a
+    /// width file would sit in the developer's real home or a shared temporary
+    /// directory, where one left behind would silently gate every later local
+    /// run.
     private static func candidates() -> [(String, String?)] {
         let environment = ProcessInfo.processInfo.environment
         return [

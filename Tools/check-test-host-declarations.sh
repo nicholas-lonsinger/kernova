@@ -6,9 +6,10 @@
 #   OSAScriptingDefinition, naming an sdef among the bundle's resources, once
 #   NSAppleScriptEnabled turns scripting on. A bundle missing either loads no
 #   dictionary, and nothing fails to compile.
-# - `UTType(exportedAs:)` looks its identifier up in UTExportedTypeDeclarations,
-#   and a bundle that declares none gets a type with none of the app's
-#   extension or conformance.
+# - `UTType(exportedAs:)` expects its identifier in the main bundle's
+#   UTExportedTypeDeclarations and logs a "was expected to be declared"
+#   warning when it is missing. Declared there, the type the host sees is the
+#   app's, not whatever a Kernova.app Launch Services last registered says.
 #
 # Checks each target's Info.plist (the INFOPLIST_FILE its xcconfig assigns):
 # that both carry the scripting keys, that the sdef the plist names is one
