@@ -638,7 +638,8 @@ package final class VMLibraryViewModel {
     /// A collaborator over the user's own state — the VMs directory, the
     /// defaults domain, the Trash, the Downloads folder, the host's vmnet
     /// networks and their store, its ARP table, the signature's entitlements,
-    /// the host's notifications and its pasteboard — takes no default: the test host
+    /// the host's notifications and its pasteboard, the app bundle's products
+    /// and the disk images made from them — takes no default: the test host
     /// runs as the app, in its container and with its signature, so a default
     /// would hand that state to every test that left it out. Nor does one the
     /// Virtualization engine makes — the host's answers, the bundle machine
@@ -647,7 +648,7 @@ package final class VMLibraryViewModel {
     /// supplies each.
     package init(
         storageService: any VMStorageProviding,
-        diskImageService: any DiskImageProviding = DiskImageService(),
+        diskImageService: any DiskImageProviding,
         machineFiles: any VMBundleMachineFileWorking,
         virtualizationHost: any VirtualizationHostProviding,
         virtualizationService: any VirtualizationProviding,
@@ -676,7 +677,7 @@ package final class VMLibraryViewModel {
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
         hostNotifications: HostNotifications,
         hostPasteboard: any ClipboardPasteboard,
-        guestAgent: BundledGuestAgent
+        bundleProducts: AppBundleProducts
     ) {
         self.storageService = storageService
         self.localImageInspector = localImageInspector
@@ -710,7 +711,7 @@ package final class VMLibraryViewModel {
             bridgedInterfaces: bridgedInterfaces,
             appActivation: hostNotifications.appDidBecomeActive,
             hostPasteboard: hostPasteboard,
-            guestAgent: guestAgent
+            bundleProducts: bundleProducts
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(

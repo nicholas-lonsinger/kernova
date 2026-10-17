@@ -1219,7 +1219,8 @@ struct VMInstanceTests {
         defer { guest.close() }
 
         let control = VsockControlService(
-            channel: host, label: "watchdog-test", bundledAgentVersion: BundledGuestAgent.testing.version)
+            channel: host, label: "watchdog-test", hostVersion: AppBundleProducts.testing.hostVersion,
+            bundledAgentVersion: BundledGuestAgent.testing.version)
         instance.sessionContext?.vsock.control = control
         control.start()
         defer { control.stop() }

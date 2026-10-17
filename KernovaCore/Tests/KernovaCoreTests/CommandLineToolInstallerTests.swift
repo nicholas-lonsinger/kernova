@@ -11,19 +11,39 @@ import Testing
 struct CommandLineToolInstallerTests {
     private let scratch = TestScratchDirectory(prefix: "knv-install")
 
+    /// The installer of a copy at `This.app` in the scratch directory, which
+    /// holds no tool until a test makes one.
+    private var installer: CommandLineToolInstaller {
+        CommandLineToolInstaller(appBundleURL: scratch.url.appendingPathComponent("This.app", isDirectory: true))
+    }
+
     init() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
+    @Test("A link into this copy's own tool is its own, and is rewritten")
+    func installRewritesThisCopysLink() throws {
+        _ = try makeTool("This.app/Contents/Helpers/kernova", in: scratch.url)
+        let destination = scratch.url.appendingPathComponent("kernova")
+        try installer.installSymlink(at: destination)
+
+        #expect(installer.occupant(at: destination) == .thisCopysLink)
+        try installer.installSymlink(at: destination)
+
+        let target = try FileManager.default.destinationOfSymbolicLink(
+            atPath: destination.path(percentEncoded: false))
+        #expect(target == installer.bundledToolURL.path(percentEncoded: false))
     }
 
     @Test("Installing writes a link pointing at the bundled tool")
     func installWritesASymlink() throws {
         let destination = scratch.url.appendingPathComponent("kernova")
 
-        try CommandLineToolInstaller.installSymlink(at: destination)
+        try installer.installSymlink(at: destination)
 
         let target = try FileManager.default.destinationOfSymbolicLink(
             atPath: destination.path(percentEncoded: false))
-        #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+        #expect(target == installer.bundledToolURL.path(percentEncoded: false))
     }
 
     @Test("Something already at the path is left alone")
@@ -33,7 +53,7 @@ struct CommandLineToolInstallerTests {
         try existing.write(to: destination)
 
         #expect(throws: InstallFailure.exists) {
-            try CommandLineToolInstaller.installSymlink(at: destination)
+            try installer.installSymlink(at: destination)
         }
         // Untouched: replacing it could delete a tool the user relies on.
         #expect(try Data(contentsOf: destination) == existing)
@@ -45,9 +65,9 @@ struct CommandLineToolInstallerTests {
         try FileManager.default.createSymbolicLink(
             at: destination, withDestinationURL: URL(fileURLWithPath: "/usr/bin/env"))
 
-        #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
+        #expect(installer.occupant(at: destination) == .somethingElse)
         #expect(throws: InstallFailure.exists) {
-            try CommandLineToolInstaller.installSymlink(at: destination)
+            try installer.installSymlink(at: destination)
         }
     }
 
@@ -63,13 +83,13 @@ struct CommandLineToolInstallerTests {
         // `fileExists` follows the link and reports nothing there, which is the
         // trap: the create would fail EEXIST and read as a write problem.
         #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-        #expect(CommandLineToolInstaller.occupant(at: destination) == .staleKernovaLink)
+        #expect(installer.occupant(at: destination) == .staleKernovaLink)
 
-        try CommandLineToolInstaller.installSymlink(at: destination)
+        try installer.installSymlink(at: destination)
 
         let target = try FileManager.default.destinationOfSymbolicLink(
             atPath: destination.path(percentEncoded: false))
-        #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+        #expect(target == installer.bundledToolURL.path(percentEncoded: false))
     }
 
     @Test("A dangling link pointing anywhere else is left alone")
@@ -79,9 +99,9 @@ struct CommandLineToolInstallerTests {
             at: destination,
             withDestinationURL: scratch.url.appendingPathComponent("some-other-tool"))
 
-        #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
+        #expect(installer.occupant(at: destination) == .somethingElse)
         #expect(throws: InstallFailure.exists) {
-            try CommandLineToolInstaller.installSymlink(at: destination)
+            try installer.installSymlink(at: destination)
         }
     }
 
@@ -104,18 +124,18 @@ struct CommandLineToolInstallerTests {
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: other)
 
         guard
-            case .anotherCopysLink(let app) = CommandLineToolInstaller.occupant(at: destination)
+            case .anotherCopysLink(let app) = installer.occupant(at: destination)
         else {
             Issue.record("expected a link into another copy")
             return
         }
         #expect(app.path == scratch.url.appendingPathComponent("Other.app").path)
 
-        try CommandLineToolInstaller.installSymlink(at: destination)
+        try installer.installSymlink(at: destination)
 
         let target = try FileManager.default.destinationOfSymbolicLink(
             atPath: destination.path(percentEncoded: false))
-        #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+        #expect(target == installer.bundledToolURL.path(percentEncoded: false))
     }
 
     @Test("A relative link is read from its own folder")
@@ -129,7 +149,7 @@ struct CommandLineToolInstallerTests {
             withDestinationPath: "../Other.app/Contents/Helpers/kernova")
 
         guard
-            case .anotherCopysLink(let app) = CommandLineToolInstaller.occupant(at: destination)
+            case .anotherCopysLink(let app) = installer.occupant(at: destination)
         else {
             Issue.record("expected a link into another copy")
             return
@@ -143,16 +163,16 @@ struct CommandLineToolInstallerTests {
         let destination = scratch.url.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: loose)
 
-        #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
+        #expect(installer.occupant(at: destination) == .somethingElse)
         #expect(throws: InstallFailure.exists) {
-            try CommandLineToolInstaller.installSymlink(at: destination)
+            try installer.installSymlink(at: destination)
         }
     }
 
     @Test("A free path holds nothing")
     func freePathHoldsNothing() throws {
         #expect(
-            CommandLineToolInstaller.occupant(at: scratch.url.appendingPathComponent("kernova"))
+            installer.occupant(at: scratch.url.appendingPathComponent("kernova"))
                 == .nothing)
     }
 
@@ -161,7 +181,7 @@ struct CommandLineToolInstallerTests {
         // The system volume is read-only, and no grant makes it otherwise.
         let destination = URL(fileURLWithPath: "/System/kernova-should-not-exist")
         do {
-            try CommandLineToolInstaller.installSymlink(at: destination)
+            try installer.installSymlink(at: destination)
             Issue.record("expected the write to be refused")
             try? FileManager.default.removeItem(at: destination)
         } catch InstallFailure.unwritable(let detail) {
@@ -173,7 +193,7 @@ struct CommandLineToolInstallerTests {
 
     @Test("The tool is offered from Contents/Helpers, never from Contents/MacOS")
     func bundledToolLivesInHelpers() {
-        let path = CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false)
+        let path = installer.bundledToolURL.path(percentEncoded: false)
         #expect(path.hasSuffix("/Contents/Helpers/kernova"))
         // A case-insensitive volume makes Contents/MacOS/kernova the app's own
         // executable — Config/Targets/KernovaCLI.xcconfig.
@@ -183,9 +203,9 @@ struct CommandLineToolInstallerTests {
     @Test("The manual command names both ends of the link the panel would have made")
     func manualCommandNamesBothEnds() {
         let destination = URL(fileURLWithPath: "/usr/local/bin/kernova")
-        let command = CommandLineToolInstaller.manualCommand(for: destination)
+        let command = installer.manualCommand(for: destination)
         #expect(command.hasPrefix("ln -s "))
-        #expect(command.contains(CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false)))
+        #expect(command.contains(installer.bundledToolURL.path(percentEncoded: false)))
         #expect(command.contains("/usr/local/bin/kernova"))
     }
 }

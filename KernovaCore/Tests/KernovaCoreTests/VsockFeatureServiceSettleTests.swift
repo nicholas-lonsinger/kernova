@@ -38,7 +38,8 @@ struct VsockFeatureServiceSettleTests {
         switch kind {
         case .control:
             return VsockControlService(
-                channel: channel, label: label, bundledAgentVersion: BundledGuestAgent.testing.version)
+                channel: channel, label: label, hostVersion: AppBundleProducts.testing.hostVersion,
+                bundledAgentVersion: BundledGuestAgent.testing.version)
         case .log:
             return VsockGuestLogService(channel: channel, label: label)
         case .drop:

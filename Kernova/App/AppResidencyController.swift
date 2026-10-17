@@ -174,7 +174,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// built yet.
     func start(provenance: AppResidencyPolicy.LaunchProvenance) {
         let line = AppResidencyPolicy.residentProvenanceLine(
-            bundlePath: Bundle.main.bundlePath,
+            bundlePath: viewModel.library.bundleProducts.bundleURL.path,
             build: Self.buildNumber,
             configuration: Self.buildConfiguration,
             vmNetworkingEntitled: viewModel.entitlements.hasVMNetworking,

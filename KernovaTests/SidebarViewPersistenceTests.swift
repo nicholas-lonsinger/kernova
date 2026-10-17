@@ -44,7 +44,7 @@ struct SidebarViewPersistenceTests {
             networks: VMNetworkDirectory(fileURL: nil),
             organization: organization,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard(), guestAgent: .testing)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
         let (macID, linuxID) = (macID, linuxID)
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS) { $0.id = macID }
         viewModel.library.admitFixture(name: "Linux", guestOS: .linux) { $0.id = linuxID }

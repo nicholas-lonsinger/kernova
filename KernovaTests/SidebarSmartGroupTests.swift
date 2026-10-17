@@ -41,7 +41,7 @@ struct SidebarSmartGroupTests {
             organization: organization,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
     }
 

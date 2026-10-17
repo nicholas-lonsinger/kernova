@@ -668,7 +668,7 @@ extension VMBundle {
     fileprivate func permitted(_ commit: (borrowing VMEditPermit) throws -> Void) throws {
         let instance = VMInstance(
             bundle: self, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
-            guestAgent: .testing)
+            bundleProducts: .testing)
         try instance.activity.performNow(.creatingStorageDisk) { context in
             try commit(context.permit)
             return .rest(.asStarted, ())

@@ -39,7 +39,7 @@ struct SettingsTabViewControllerTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         for index in 1...vmCount {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)

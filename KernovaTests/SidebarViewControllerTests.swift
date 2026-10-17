@@ -48,7 +48,7 @@ struct SidebarViewControllerTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
     }
 

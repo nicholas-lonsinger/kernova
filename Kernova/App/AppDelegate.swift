@@ -114,9 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let vmnetNetworks = VmnetNetworkService(operations: vmnetOperator)
         let bridgedInterfaces = HostBridgedInterfaceProvider()
         let hostNotifications = HostNotifications.appKit()
-        let guestAgent = BundledGuestAgent(bundle: .main)
+        let bundleProducts = AppBundleProducts(bundle: .main)
+        let guestAgent = bundleProducts.guestAgent
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
+            diskImageService: DiskImageService(products: bundleProducts),
             machineFiles: VMBundleMachineFiles(
                 fileSystem: FileManager.default, platform: VirtualizationPlatformFiles()),
             virtualizationHost: VirtualizationHost(),
@@ -147,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             organization: VMOrganizationDirectory(fileURL: VMOrganizationDirectory.productionFileURL),
             hostNotifications: hostNotifications,
             hostPasteboard: NSPasteboard.general,
-            guestAgent: guestAgent)
+            bundleProducts: bundleProducts)
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,

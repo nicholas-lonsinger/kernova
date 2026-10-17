@@ -73,7 +73,7 @@ struct ClipboardPasteLimitPolicyPushTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard(), guestAgent: .testing)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
 
         let instance = makeInstance(in: viewModel.library, preferences: preferences)
         let guest = try attachControlService(to: instance)

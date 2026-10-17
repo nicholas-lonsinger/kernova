@@ -500,7 +500,7 @@ struct VMSettingsSystemPanelTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard(), guestAgent: .testing)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
         viewModel.presenter = presenter
         let instance = viewModel.library.registerFixture(guestOS: .macOS) {
             $0.displayResolution = resolution

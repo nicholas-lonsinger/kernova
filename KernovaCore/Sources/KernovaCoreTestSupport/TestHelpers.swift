@@ -78,7 +78,7 @@ func makeWiredLibrary(
     bridgedInterfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
     appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive,
     hostPasteboard: any ClipboardPasteboard = FakePasteboard(),
-    guestAgent: BundledGuestAgent = .testing,
+    bundleProducts: AppBundleProducts = .testing,
     virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost()
 ) -> VMLibrary {
     let library = VMLibrary(
@@ -96,7 +96,7 @@ func makeWiredLibrary(
         bridgedInterfaces: bridgedInterfaces,
         appActivation: appActivation,
         hostPasteboard: hostPasteboard,
-        guestAgent: guestAgent)
+        bundleProducts: bundleProducts)
     return library
 }
 
@@ -482,7 +482,7 @@ func withOperation<T>(
 ) async throws -> T {
     let instance = VMInstance(
         bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
-        guestAgent: .testing)
+        bundleProducts: .testing)
     return try await withOperation(on: instance, .deletingSnapshot, body)
 }
 

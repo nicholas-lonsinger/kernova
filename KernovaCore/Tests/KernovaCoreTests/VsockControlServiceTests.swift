@@ -89,6 +89,7 @@ struct VsockControlServiceTests {
     /// `start()` after wiring the recorder.
     private func makeService(
         channel: VsockChannel,
+        hostVersion: String = "1.0",
         bundledAgentVersion: String? = "0.9.0",
         clock: any EngineClock = makePlatformEngineClock(),
         heartbeatInterval: TimeInterval? = nil,
@@ -102,6 +103,7 @@ struct VsockControlServiceTests {
         let service = VsockControlService(
             channel: channel,
             label: "test",
+            hostVersion: hostVersion,
             bundledAgentVersion: bundledAgentVersion,
             clock: clock,
             cadence: ControlChannelCadence(
@@ -181,6 +183,26 @@ struct VsockControlServiceTests {
         #expect(hello.agentInfo.os == "macOS")
         #expect(hello.agentInfo.osVersion == KernovaOSVersion.current)
         #expect(hello.agentInfo.osVersion.allSatisfy { $0.isNumber || $0 == "." })
+    }
+
+    @Test("Host Hello advertises the host version and bundled agent version it was handed")
+    func hostHelloAdvertisesHandedVersions() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host, hostVersion: "7.3", bundledAgentVersion: "0.9.0")
+        service.start()
+        defer { service.stop() }
+
+        let received = try await nextFrame(from: guest)
+        guard case .hello(let hello) = received.payload else {
+            Issue.record("Expected hello payload, got \(String(describing: received.payload))")
+            return
+        }
+        #expect(hello.agentInfo.agentVersion == "7.3")
+        #expect(hello.bundledAgentVersion == "0.9.0")
     }
 
     // MARK: - agentStatus matrix

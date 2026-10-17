@@ -40,7 +40,7 @@ struct SidebarFolderTests {
             organization: organization,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
     }
 

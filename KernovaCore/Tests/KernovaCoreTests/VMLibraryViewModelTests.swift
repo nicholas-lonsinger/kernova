@@ -54,7 +54,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -86,7 +86,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -2964,7 +2964,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -3781,7 +3781,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5837,7 +5837,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5960,7 +5960,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -6363,7 +6363,7 @@ struct VMLibraryViewModelTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
