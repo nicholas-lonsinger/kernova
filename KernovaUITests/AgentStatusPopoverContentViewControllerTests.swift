@@ -1,4 +1,5 @@
 import AppKit
+import KernovaTestSupport
 @testable import KernovaCore
 @testable import KernovaUI
 import Testing

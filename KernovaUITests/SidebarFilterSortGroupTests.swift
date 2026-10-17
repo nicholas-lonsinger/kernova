@@ -1,10 +1,12 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Synchronization
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 @testable import KernovaVirtualization
 
