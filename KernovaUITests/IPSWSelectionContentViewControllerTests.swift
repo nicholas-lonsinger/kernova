@@ -1,7 +1,9 @@
 import AppKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("IPSWSelectionContentViewController Tests", .caseScoped)

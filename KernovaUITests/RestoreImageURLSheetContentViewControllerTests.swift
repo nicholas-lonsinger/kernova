@@ -1,8 +1,10 @@
 import AppKit
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("RestoreImageURLSheetContentViewController Tests", .caseScoped)
