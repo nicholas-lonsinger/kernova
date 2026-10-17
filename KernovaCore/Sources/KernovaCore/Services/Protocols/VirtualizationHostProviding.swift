@@ -4,7 +4,7 @@ import Foundation
 /// resources a guest may be given, fresh machine identities, and its verdict on
 /// a guest account.
 ///
-/// The engine answers it (`VirtualizationHost`); `AppDelegate` hands that to
+/// The engine answers it (`VirtualizationHost`); `KernovaApp` hands that to
 /// everything that asks.
 package protocol VirtualizationHostProviding: Sendable {
     /// The CPU and memory bounds every guest on this Mac is held to.

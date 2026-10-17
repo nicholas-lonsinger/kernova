@@ -7,12 +7,14 @@ nothing here restates one.
 
 ## Composition
 
-`AppDelegate.init` (`Kernova/App/`) is the composition root. It builds
-`VMLibraryViewModel`, then `AppWindowRegistry` (holding
+`KernovaApp.main()` (`Kernova/App/`) is the composition root and the one
+branch on process mode; the unit-test host takes the arm that builds none of
+it. It reads `Bundle.main` once, into `AppBundleProducts`, builds the production
+services and the `VMLibraryViewModel` over them, and hands that to
+`AppDelegate.init`, which builds `AppWindowRegistry` (holding
 `VMDisplayPlacementController`), `AppAlertPresenter` (attached to the view
 model before the library's first read), `AppResidencyController`,
-`MainMenuController` and `AppTerminationController`. `AppDelegate.main()` is the one branch on
-process mode, and the unit-test host takes the arm that builds none of it.
+`MainMenuController` and `AppTerminationController`.
 
 What those owners decide lives in AppKit-free types they call:
 `AppResidencyPolicy`, `VMDisplayPlacement`, `AlertQueue` and
@@ -100,7 +102,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   absence) and `VirtualizationHost`. Code outside the
   engine and the AppKit layer reaches it only through `VMSessionOperating`,
   `VirtualizationHostProviding` and the `Services/Protocols/` seams, whose
-  engine implementations `AppDelegate` builds.
+  engine implementations `KernovaApp` builds.
 - Network: `VmnetNetworkService` (process-wide) and the `VmnetSessionNetworks`
   view each session attaches through and `NetworkAttachmentCoordinator` (one
   of each per session, held by `VMSessionContext`), and `GuestAddressObserver`

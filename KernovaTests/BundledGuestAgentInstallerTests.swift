@@ -7,7 +7,7 @@ import Testing
 /// only the app as host has one to match.
 @Suite("Bundled guest agent installer", .caseScoped)
 struct BundledGuestAgentInstallerTests {
-    /// The test host's agent, read as `AppDelegate` reads it.
+    /// The test host's agent, read as `KernovaApp` reads it.
     private let agent = AppBundleProducts(bundle: .main).guestAgent
 
     @Test("isInstaller(of:) matches the app's bundled DMG path only")
