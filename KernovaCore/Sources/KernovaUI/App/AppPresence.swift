@@ -8,7 +8,7 @@ import AppKit
 /// composition root builds, so a test host that builds its own stand-in never
 /// reaches the desktop.
 @MainActor
-protocol AppPresence: AnyObject {
+package protocol AppPresence: AnyObject {
     var activationPolicy: NSApplication.ActivationPolicy { get }
     func setActivationPolicy(_ policy: NSApplication.ActivationPolicy)
 
@@ -25,23 +25,25 @@ protocol AppPresence: AnyObject {
 
 /// ``AppPresence`` over `NSApp`.
 @MainActor
-final class SystemAppPresence: AppPresence {
-    var activationPolicy: NSApplication.ActivationPolicy { NSApp.activationPolicy() }
+package final class SystemAppPresence: AppPresence {
+    package init() {}
 
-    func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
+    package var activationPolicy: NSApplication.ActivationPolicy { NSApp.activationPolicy() }
+
+    package func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
         NSApp.setActivationPolicy(policy)
     }
 
-    var isActive: Bool { NSApp.isActive }
+    package var isActive: Bool { NSApp.isActive }
 
-    func activate() {
+    package func activate() {
         guard !NSApp.isActive else { return }
         NSApp.activate()
     }
 
-    var isHidden: Bool { NSApp.isHidden }
+    package var isHidden: Bool { NSApp.isHidden }
 
-    func unhideWithoutActivation() {
+    package func unhideWithoutActivation() {
         NSApp.unhideWithoutActivation()
     }
 }

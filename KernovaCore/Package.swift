@@ -66,7 +66,13 @@ let package = Package(
         // in Kernova.xcodeproj, hosted by KernovaTestHost.
         .target(
             name: "KernovaUI",
-            dependencies: ["KernovaCore"],
+            dependencies: [
+                "KernovaCore",
+                "KernovaVirtualization",
+                .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAppRegistry", package: "KernovaKit"),
+                .product(name: "KernovaLogging", package: "KernovaKit"),
+            ],
             swiftSettings: sharedSwiftSettings
         ),
         // The fakes and fixtures every bundle testing the core shares.

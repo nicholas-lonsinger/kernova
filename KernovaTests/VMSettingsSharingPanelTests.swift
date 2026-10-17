@@ -1,11 +1,11 @@
-import KernovaKit
 import AVFoundation
 import AppKit
+import KernovaKit
 import Testing
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// The Sharing panel's own behavior, drilled into through the shell.
 @Suite("VM Settings Sharing Panel Tests", .serialized, .caseScoped, .scopedWindows)

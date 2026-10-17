@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import UniformTypeIdentifiers
 
 extension NSOpenPanel {

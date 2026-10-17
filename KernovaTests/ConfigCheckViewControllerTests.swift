@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// The check window's layout and keys, over a source the test drives.
 @Suite("Config check window", .caseScoped)

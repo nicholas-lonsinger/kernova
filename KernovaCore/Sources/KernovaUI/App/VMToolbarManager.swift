@@ -1,5 +1,6 @@
 import Cocoa
 import KernovaCore
+import KernovaKit
 import KernovaLogging
 
 /// Shared toolbar logic for VM window controllers.

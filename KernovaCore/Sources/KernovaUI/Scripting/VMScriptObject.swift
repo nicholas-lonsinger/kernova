@@ -13,7 +13,7 @@ import KernovaLogging
 /// gateway runs and records a refusal of on the command being answered.
 @MainActor
 @objc(VMScriptObject)
-final class VMScriptObject: NSObject {
+package final class VMScriptObject: NSObject {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMScriptObject")
 
@@ -104,7 +104,7 @@ final class VMScriptObject: NSObject {
 
     /// How a script names this VM back — `virtual machine id "…"` of the
     /// application, which is the one form no rename or reorder invalidates.
-    nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
+    package nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
             #log(Self.logger, .fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")

@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// The shared inline-edit state machine every editable name and note runs on.
 @Suite("Inline Editable Label Tests", .serialized, .caseScoped, .scopedWindows)

@@ -1,7 +1,7 @@
 import Foundation
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 extension VMCreationViewModel {

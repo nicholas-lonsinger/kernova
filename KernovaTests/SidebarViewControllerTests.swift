@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// Behavioral tests for the pure-AppKit sidebar.

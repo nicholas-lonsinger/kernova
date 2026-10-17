@@ -51,7 +51,7 @@ NSLayoutConstraint.activate([])'
 expect prose-in-a-comment '' '// NSApp.activate() is AppPresence'"'"'s job'
 
 expect presence-owner '' 'NSApp.activate()
-NSApp.setActivationPolicy(policy)' 'Kernova/App/AppPresence.swift'
+NSApp.setActivationPolicy(policy)' 'KernovaCore/Sources/KernovaUI/App/AppPresence.swift'
 
 expect launch-services '1 2 3' 'NSWorkspace.shared.openApplication(at: url, configuration: c)
 NSWorkspace.shared.open([u], withApplicationAt: Bundle.main.bundleURL, configuration: c)

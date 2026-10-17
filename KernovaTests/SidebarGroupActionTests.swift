@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// A group header's Start All, Suspend All and Stop All: what the menu counts

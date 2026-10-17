@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// What the sidebar keeps across a relaunch: its options, its selected row,

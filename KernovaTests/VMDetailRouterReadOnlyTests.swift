@@ -1,8 +1,8 @@
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Whether the detail pane's settings form takes edits: the catalog's answer
 /// for every route that shows the form, and no reading at all for a route

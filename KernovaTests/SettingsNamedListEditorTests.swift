@@ -2,8 +2,8 @@ import AppKit
 import KernovaLogging
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// The Settings list editor's inline rename against a list that changes
 /// under it.

@@ -4,8 +4,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// How an Apple event's addressing becomes the core's ``VMSelector``.
 ///

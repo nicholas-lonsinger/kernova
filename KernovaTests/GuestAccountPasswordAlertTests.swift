@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// What the resume prompt says, what each of its three buttons answers with,

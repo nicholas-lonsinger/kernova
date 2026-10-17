@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 import UniformTypeIdentifiers
 
 /// The Storage category: the VM's disks and its hot-pluggable removable media.

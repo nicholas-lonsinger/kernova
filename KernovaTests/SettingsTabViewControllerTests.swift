@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// Tests for the Settings window's tab container.

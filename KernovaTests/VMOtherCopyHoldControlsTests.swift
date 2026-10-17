@@ -1,9 +1,9 @@
-import KernovaKit
 import AppKit
+import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Every control that writes a VM's state, swept across every settings panel
 /// on a VM another copy of Kernova holds: each one dims through the catalog,

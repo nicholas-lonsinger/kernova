@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// Unit tests for `AppResidencyController.windowCloseAffectsActivationPolicy(_:)`
 /// — the pure

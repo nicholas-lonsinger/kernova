@@ -1,7 +1,7 @@
-import Testing
 import AppKit
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
+import Testing
 
 @Suite("AgentStatusPopoverContentViewController Tests", .caseScoped)
 @MainActor

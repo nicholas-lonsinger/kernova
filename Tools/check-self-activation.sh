@@ -17,8 +17,9 @@
 #   - `withApplicationAt:` naming `Bundle.main.bundleURL`, the
 #     `open(_:withApplicationAt:configuration:)` route to the same request;
 #   - `.open(Bundle.main.bundleURL`, opening the bundle as a document;
-#   - outside Kernova/App/AppPresence.swift, `NSApp` (optional-chained or not)
-#     or `NSApplication.shared` reaching `activate`, `activationPolicy`,
+#   - outside KernovaCore/Sources/KernovaUI/App/AppPresence.swift, `NSApp`
+#     (optional-chained or not) or `NSApplication.shared` reaching
+#     `activate`, `activationPolicy`,
 #     `setActivationPolicy`, `isActive`, `hide`, `unhide`,
 #     `unhideWithoutActivation`, `unhideAllApplications`, `isHidden` or
 #     `deactivate`, and `NSRunningApplication.current` reaching `activate` or
@@ -42,7 +43,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-presence_owner='Kernova/App/AppPresence.swift'
+presence_owner='KernovaCore/Sources/KernovaUI/App/AppPresence.swift'
 
 if [ "$#" -gt 0 ]; then
     list_files() { printf '%s\n' "$@"; }

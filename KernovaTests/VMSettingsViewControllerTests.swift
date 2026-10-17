@@ -1,11 +1,11 @@
-import KernovaKit
 import AVFoundation
 import AppKit
+import KernovaKit
 import Testing
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("VMSettingsViewController Tests", .serialized, .caseScoped)
 @MainActor

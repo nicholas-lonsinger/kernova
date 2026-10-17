@@ -2,8 +2,8 @@ import AVFoundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("VM Overview Resolver Tests", .serialized, .caseScoped)
 @MainActor

@@ -1,8 +1,8 @@
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// The sidebar's projection — ``SidebarLayout``, the ``SidebarTree`` built from
 /// it, and the selection and reorder rules over both — on synthetic layouts

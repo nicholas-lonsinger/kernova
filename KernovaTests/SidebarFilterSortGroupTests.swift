@@ -4,8 +4,8 @@ import KernovaKit
 import Synchronization
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// `choice` as a filter tells it apart, in a library listing every named

@@ -5,7 +5,7 @@ import KernovaKit
 import KernovaLogging
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+package final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The one owner of which user-facing windows exist, and whether any is on
     /// screen.
     private let windows: AppWindowRegistry
@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// Builds the app's owners over `viewModel`, the library the entry point
     /// (`KernovaApp`) built over the production services.
-    init(
+    package init(
         viewModel: VMLibraryViewModel, copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>,
         presence: any AppPresence
     ) {
@@ -117,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// re-import a bundle already in the library. Starting the read costs nothing
     /// here; the task body only runs once the main actor yields, and its file I/O
     /// is off the main actor either way.
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    package func applicationWillFinishLaunching(_ notification: Notification) {
         libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
         // Before `lifecycle.start(provenance:)`, so an intent delivered during
         // launch resolves against a published gateway, and the command socket
@@ -129,11 +129,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// opening anything: `AppResidencyController.start(provenance:)` owns
     /// presentation, and answering `true` only reports that the request was
     /// taken.
-    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+    package func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
         true
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    package func applicationDidFinishLaunching(_ notification: Notification) {
         mainMenu.install()
 
         // Staged file URLs outlive the window and the process that staged them
@@ -188,15 +188,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// miniaturized windows and untracked panels AppKit's own last-window rule
     /// does not — letting AppKit terminate too would double-fire on a different
     /// predicate.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    package func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
-    func applicationDidUnhide(_ notification: Notification) {
+    package func applicationDidUnhide(_ notification: Notification) {
         lifecycle.noteDidUnhide()
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool)
+    package func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool)
         -> Bool
     {
         // AppKit's flag counts no `NSPanel` — the About panel is one Kernova
@@ -207,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return true
     }
 
-    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+    package func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
         let item = NSMenuItem(
             title: "Show Library", action: #selector(summonLibraryFromDockMenu), keyEquivalent: "")
@@ -224,11 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         lifecycle.summonUserInterface()
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    package func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         NSApplication.TerminateReply(termination.handleTerminationRequest())
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    package func applicationWillTerminate(_ notification: Notification) {
         termination.handleWillTerminate()
     }
 
@@ -248,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// screen — and dragging the library up behind it would surface a window
     /// nobody asked for, the same rule the status item's per-VM open follows.
     /// A link with a refusal to show summons the library itself.
-    func application(_ application: NSApplication, open urls: [URL]) {
+    package func application(_ application: NSApplication, open urls: [URL]) {
         let (links, files) = VMURLRoute.partition(urls)
         for link in links {
             lifecycle.openAutomationLink(link)
@@ -288,7 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// `NSApplication` is the scripting root, and the dictionary gives it
     /// `virtual machines` and `networks` elements — keys it forwards here.
-    func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
+    package func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
         Self.scriptingKeys.contains(key)
     }
 
@@ -300,7 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     nonisolated static let networksKey = "networks"
 
     /// Every element key the application's dictionary entry declares.
-    nonisolated static let scriptingKeys: Set<String> = [virtualMachinesKey, networksKey]
+    package nonisolated static let scriptingKeys: Set<String> = [virtualMachinesKey, networksKey]
 
     /// Every VM in the library, as the dictionary's `virtual machine` elements.
     ///
@@ -333,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// What `make new …` creates as an element of the application: Cocoa asks
     /// `NSApplication`, which forwards a key this delegate handles.
-    nonisolated override func newScriptingObject(
+    package nonisolated override func newScriptingObject(
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
@@ -553,7 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// AppKit asks a menu item's *target*, and a nil-target item resolves to
     /// this delegate — so the answer is forwarded to the menu's own owner.
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    package func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         mainMenu.validate(menuItem)
     }
 }

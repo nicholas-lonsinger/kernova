@@ -1,11 +1,11 @@
-import KernovaKit
 import AVFoundation
 import AppKit
+import KernovaKit
 import Testing
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// The General panel's own behavior, drilled into through the shell.

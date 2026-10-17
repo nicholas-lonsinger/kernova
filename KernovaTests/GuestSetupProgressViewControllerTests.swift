@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("GuestSetupProgressViewController Tests", .caseScoped)
 @MainActor

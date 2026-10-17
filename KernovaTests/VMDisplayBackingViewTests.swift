@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("VMDisplayBackingView Tests", .caseScoped)
 @MainActor

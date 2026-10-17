@@ -1,9 +1,9 @@
-import KernovaKit
 import AppKit
+import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Shared fixtures for the app-level suites that build AppKit components; the
 /// view model they build over is `makeLibraryViewModel(preferences:)`.

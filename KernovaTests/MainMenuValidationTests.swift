@@ -1,8 +1,8 @@
 import AppKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Covers `MainMenuController.validate(_:)` — the one decision behind every menu
 /// command's enablement and the titles that name what the command will do.

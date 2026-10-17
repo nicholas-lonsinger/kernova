@@ -1,6 +1,6 @@
 import AppKit
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// Stands in for `NSApp`'s activation policy, hidden state and activation,
 /// so no test changes the test host's Dock presence or asks for the front.

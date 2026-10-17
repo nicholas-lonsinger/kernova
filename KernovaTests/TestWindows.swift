@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 // MARK: - Scope
 

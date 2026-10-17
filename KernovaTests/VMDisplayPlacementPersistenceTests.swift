@@ -1,8 +1,8 @@
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// What a placement transition persists.
 @Suite("VMDisplayPlacementController placement persistence", .serialized, .caseScoped)

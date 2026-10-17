@@ -2,8 +2,8 @@ import AppKit
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Covers `VMDisplayPlacementController.readyDisplay(for:presence:)` — the
 /// window a bring-up opens, and how it goes on screen, as

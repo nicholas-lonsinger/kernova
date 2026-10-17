@@ -4,8 +4,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// What each script command reads off its event and asks of the gateway.
 ///

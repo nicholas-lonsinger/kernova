@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// Covers how `MainWindowController` takes New VM out of the toolbar while the
 /// sidebar is collapsed and puts it back: in the live toolbar, around a
