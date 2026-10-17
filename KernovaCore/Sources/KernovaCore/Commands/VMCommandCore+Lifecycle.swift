@@ -291,7 +291,7 @@ extension VMCommandCore {
     /// password it turns down produces no account, and a boot that ran anyway
     /// would have spent the one window macOS reads one in on a typo. The
     /// swallow-and-warn in
-    /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
+    /// `MacOSGuestProvisioning.macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)`
     /// stays as the last line of defence, where coming up unprovisioned beats
     /// not coming up at all.
     func holdGuestAccountPassword(

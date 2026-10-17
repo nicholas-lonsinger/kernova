@@ -25,7 +25,7 @@ package enum GuestStartRoute: Equatable, Sendable {
     }
 
     /// Whether this route carries the guest's provisioning options, which
-    /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
+    /// `MacOSGuestProvisioning.macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)`
     /// states only one of the three can.
     package var deliversGuestProvisioning: Bool { self == .coldBoot }
 }

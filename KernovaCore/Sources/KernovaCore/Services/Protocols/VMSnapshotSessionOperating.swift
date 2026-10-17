@@ -14,6 +14,6 @@ package protocol VMSnapshotSessionOperating: Sendable {
     func resume() async throws
     /// Detaches the USB device carrying `uuid`. A save path calls it for every
     /// passthrough accessory before writing state — see
-    /// ``VirtualizationService/detachUSBAccessories(_:session:)``.
+    /// ``VMLiveStateCapture/detachUSBAccessories(_:session:)``.
     func detachUSBDevice(uuid: UUID) async throws
 }

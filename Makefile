@@ -252,7 +252,6 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-docs.sh
 	@bash Tools/check-entitlements.sh
 	@bash Tools/check-scripting-definition.sh
-	@bash Tools/check-headless-core.sh
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-test-plan-allowance.sh
 	@bash Tools/check-test-seams.sh

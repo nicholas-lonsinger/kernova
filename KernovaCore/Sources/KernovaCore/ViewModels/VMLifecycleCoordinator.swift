@@ -21,7 +21,7 @@ final class VMLifecycleCoordinator {
     let downloadService: any Downloading
 
     /// Passes host USB accessories through to a guest, or `nil` when this build
-    /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
+    /// cannot — see `USBAccessorySupport.makeService(entitlements:)`.
     let usbAccessoryService: (any USBAccessoryProviding)?
 
     /// Trashes what the user can see: an image that failed verification, the
@@ -188,10 +188,10 @@ final class VMLifecycleCoordinator {
     ///
     /// A warm capture takes every passthrough accessory off before it writes
     /// the guest's state, for the reason
-    /// ``VirtualizationService/detachUSBAccessories(_:session:)`` gives. Unlike
+    /// ``VMLiveStateCapture/detachUSBAccessories(_:session:)`` gives. Unlike
     /// a suspend the guest is still running afterwards, so each one is owed
     /// back to it as it goes
-    /// (``VirtualizationService/detachUSBAccessories(owingReturns:session:)``):
+    /// (``VMLiveStateCapture/detachUSBAccessories(owingReturns:session:)``):
     /// the capture's detach resets the device, macOS assigns it back after a
     /// delay nothing bounds, and that arrival follows the attach to this VM.
     /// `record` that throws leaves nothing behind: unlisted files are files no

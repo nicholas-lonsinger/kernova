@@ -25,7 +25,7 @@ The root also builds the one `AppPresence` those owners share. Every window
 controller builds its window through a `WindowStage`; the test stage parks each
 window beyond every display, and the sheets on it go up beside it.
 
-`VMLibraryViewModel.init` (`Kernova/ViewModels/`) builds everything beneath the
+`VMLibraryViewModel.init` (`KernovaCore/Sources/KernovaCore/ViewModels/`) builds everything beneath the
 UI: `VMLifecycleCoordinator` over the services, `VMLibrary`,
 `VMSleepWakeCoordinator`, `USBAccessoryCoordinator` and `VMCommandCore`. Each
 `VMInstance` owns a `VMActivity`, the one writer of its lifecycle phase and live
@@ -36,7 +36,7 @@ The seams between the App-layer owners are protocols: `AppLaunchHosting`,
 
 ## Front doors
 
-Every verb is a `VMCommandCore` method (`Kernova/Commands/`); `VMAdmission`
+Every verb is a `VMCommandCore` method (`KernovaCore/Sources/KernovaCore/Commands/`); `VMAdmission`
 decides what a VM admits, which `VMCapabilityCatalog` reads for every surface
 and `VMActivity` commits, and `VMConfigurationKeyRegistry` names every
 configuration key. Five surfaces call the core and present its refusals in
@@ -47,20 +47,20 @@ their own idiom:
   `LibraryWindowPresenting` (the library window's own surfaces).
 - `VMCommandSocketListener` → `VMCommandEnvelopeRouter` — the `kernova` tool,
   over the app-group `AF_UNIX` socket.
-- `VMIntentGateway` (`Kernova/Intents/`) — Shortcuts and Spotlight.
-- `VMURLGateway` (`Kernova/URLs/`) — `kernova:` links, from
+- `VMIntentGateway` (`KernovaCore/Sources/KernovaCore/Intents/`) — Shortcuts and Spotlight.
+- `VMURLGateway` (`KernovaCore/Sources/KernovaCore/URLs/`) — `kernova:` links, from
   `application(_:open:)`.
 - `VMScriptingGateway` (`Kernova/Scripting/`) — Apple events, through the
   delegate's `virtualMachines` element.
 
-## Models (`Kernova/Models/`)
+## Models (`KernovaCore/Sources/KernovaCore/Models/`)
 
 `VMConfiguration` (`config.json`), `VMHostState` (`host-state.json`),
 `VMSnapshotManifest` (`Snapshots/manifest.json`) and `USBAccessoryPairingSet`
 (`usb-accessories.json`) are what persists in a bundle; the library's named
 networks (`Networks.json`) and its smart groups, folders and tag definitions (`Organization.json`) persist apart
 from every bundle, each file written only by its directory — `VMNetworkDirectory`
-and `VMOrganizationDirectory` (`Kernova/ViewModels/`), which `VMLibrary` owns,
+and `VMOrganizationDirectory` (`KernovaCore/Sources/KernovaCore/ViewModels/`), which `VMLibrary` owns,
 both through `CoordinatedJSONFile`. `VMBundle` holds their committed
 values and is the one writer of a library bundle's readable files, through
 `VMBundleFiles` over the `VMBundleFileAccessing` seam
@@ -70,7 +70,9 @@ passes the policy `VMLibrary` builds every bundle with through `VMBundle.Factory
 A bundle a create, clone or import is still writing is a `VMStagedBundle`,
 minted only for a fresh path under the staging directory. `VMBundle` is also the one writer
 of the bundle's machine files, through the `VMBundleMachineFileWorking` seam
-(`VMBundleMachineFiles` in production) that only `VMBundle.Factory` holds.
+(`VMBundleMachineFiles` in production) that only `VMBundle.Factory` holds; it
+writes the firmware and platform files through `VMPlatformFileWriting`, which
+the engine's `VirtualizationPlatformFiles` answers.
 `VMInstance` is the `@MainActor`
 runtime owner of one VM: it reads its state off its `VMBundle`, and its
 `VMActivity` holds the lifecycle phase and at most one `VMSessionContext`,
@@ -89,7 +91,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `VMConfiguration.effectiveGuestMacOSVersion` of
 `VMInstance.effectiveConfiguration`, the one source of a guest's version.
 
-## Services (`Kernova/Services/`)
+## Services (`KernovaCore/Sources/KernovaCore/Services/`; the engine's in `Kernova/Services/`)
 
 - VZ-facing, the engine: `ConfigurationBuilder` (the one
   `VZVirtualMachineConfiguration` translation), `VMSession`,
@@ -134,7 +136,8 @@ view-backed item.
 `KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
 Virtualization; the app links it and reaches its `package` declarations, and
 its tests run without the app as host. Its `KernovaUI` target is the AppKit
-layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`.
+layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`. Its `KernovaCoreTestSupport` holds the
+fakes and fixtures those tests share with the app-hosted `KernovaTests`.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
 (`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
 `KernovaUITests` each explain

@@ -1,9 +1,9 @@
 import Foundation
 
-/// One paragraph rendered inside an ``InfoPopoverContentViewController``.
+/// One paragraph rendered inside an `InfoPopoverContentViewController`.
 package enum InfoPopoverParagraph: Equatable {
     /// Wrapping body text in the shared `.callout` style, in which a
-    /// backtick-delimited span renders in ``CalloutStyle/codeFont`` without
+    /// backtick-delimited span renders in `CalloutStyle.codeFont` without
     /// its backticks.
     case body(String)
     /// Monospaced, selectable text for shell commands and similar

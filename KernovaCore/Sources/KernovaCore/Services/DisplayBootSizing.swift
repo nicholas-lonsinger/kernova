@@ -17,7 +17,7 @@ package struct DisplayBootSurface: Equatable, Sendable {
 /// surface, and the HiDPI ⇄ standard rewrite the settings switch performs.
 ///
 /// Pure and stateless; the values it returns are exactly what
-/// ``ConfigurationBuilder`` hands to VZ.
+/// `ConfigurationBuilder` hands to VZ.
 struct DisplayBootSizing: Sendable {
     /// A boot resolution in pixels, with the density VZ reports to a macOS guest.
     struct Resolution: Equatable, Sendable {
