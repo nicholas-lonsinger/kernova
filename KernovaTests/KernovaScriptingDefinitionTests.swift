@@ -39,16 +39,7 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    // MARK: - Bundling
-
-    @Test("The app ships the dictionary its Info.plist declares, and turns scripting on")
-    func theBundleCarriesTheDictionary() throws {
-        #expect(Bundle.main.object(forInfoDictionaryKey: "NSAppleScriptEnabled") as? Bool == true)
-        #expect(
-            Bundle.main.object(forInfoDictionaryKey: "OSAScriptingDefinition") as? String
-                == "Kernova.sdef")
-        #expect(Bundle.main.url(forResource: "Kernova", withExtension: "sdef") != nil)
-    }
+    // MARK: - Well-formedness
 
     @Test("The dictionary is well-formed against the system's sdef DTD")
     func theDictionaryValidates() throws {

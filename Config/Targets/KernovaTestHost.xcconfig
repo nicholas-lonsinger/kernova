@@ -12,7 +12,10 @@ PRODUCT_NAME = $(TARGET_NAME)
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova.testhost
 MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)
 
+// The generated Info.plist merges in the scripting keys, which have no
+// INFOPLIST_KEY_ build setting; the sdef they name is the app's own file.
 GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_FILE = KernovaTestHost/Info.plist
 CURRENT_PROJECT_VERSION = 1
 INFOPLIST_KEY_LSUIElement = YES
 INFOPLIST_KEY_NSPrincipalClass = NSApplication

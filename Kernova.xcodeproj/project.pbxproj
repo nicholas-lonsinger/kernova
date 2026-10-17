@@ -126,6 +126,13 @@
 			);
 			target = A1000003 /* Kernova */;
 		};
+		A10000E1 /* Exceptions for "Kernova" folder in "KernovaTestHost" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/Kernova.sdef,
+			);
+			target = A1000702 /* KernovaTestHost */;
+		};
 		A100020D /* Exceptions for "KernovaMacOSAgent" folder in "KernovaMacOSAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -148,6 +155,13 @@
 			);
 			target = A1000303 /* KernovaMacOSAgentTests */;
 		};
+		A10000E2 /* Exceptions for "KernovaTestHost" folder in "KernovaTestHost" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A1000702 /* KernovaTestHost */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -155,6 +169,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A10000E0 /* Exceptions for "Kernova" folder in "Kernova" target */,
+				A10000E1 /* Exceptions for "Kernova" folder in "KernovaTestHost" target */,
 			);
 			path = Kernova;
 			sourceTree = "<group>";
@@ -195,6 +210,9 @@
 		};
 		A1000701 /* KernovaTestHost */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A10000E2 /* Exceptions for "KernovaTestHost" folder in "KernovaTestHost" target */,
+			);
 			path = KernovaTestHost;
 			sourceTree = "<group>";
 		};
@@ -501,6 +519,7 @@
 			buildPhases = (
 				A1000703 /* Sources */,
 				A1000704 /* Frameworks */,
+				A1000708 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -606,6 +625,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A1000708 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000050 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
