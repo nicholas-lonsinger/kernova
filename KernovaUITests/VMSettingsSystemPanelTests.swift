@@ -1,10 +1,12 @@
 import AVFoundation
 import AppKit
 import KernovaKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 @testable import KernovaVirtualization
 

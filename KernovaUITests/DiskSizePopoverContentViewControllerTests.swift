@@ -1,6 +1,8 @@
 import AppKit
-@testable import KernovaUI
+import KernovaTestSupport
 import Testing
+
+@testable import KernovaUI
 
 @Suite("DiskSizePopoverContentViewController Tests", .caseScoped)
 @MainActor
