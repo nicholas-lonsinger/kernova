@@ -1,7 +1,9 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Whether the detail pane's settings form takes edits: the catalog's answer

@@ -1,8 +1,10 @@
 import AppKit
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Every control that writes a VM's state, swept across every settings panel
