@@ -6,22 +6,22 @@ import Foundation
 /// hardware model are measured. ``version`` and ``build`` are read out of
 /// Apple's filename convention and are absent whenever the filename does not
 /// follow it, so nothing that gates the install may depend on them.
-struct ProbedRestoreImage: Sendable, Equatable {
-    var url: URL
-    var sizeBytes: UInt64
+package struct ProbedRestoreImage: Sendable, Equatable {
+    package var url: URL
+    package var sizeBytes: UInt64
     /// Marketing version parsed from the filename, e.g. `"15.6.1"`.
-    var version: String?
+    package var version: String?
     /// Apple build parsed from the filename, e.g. `"24G90"`.
     var build: String?
 
     /// The filename the download lands on, derived from ``url``.
-    var suggestedFilename: String {
+    package var suggestedFilename: String {
         RestoreImageFilename.destination(for: url)
     }
 
     /// Version and build as one phrase, or a fallback when the filename did not
     /// follow Apple's convention.
-    var versionSummary: String {
+    package var versionSummary: String {
         switch (version, build) {
         case (let version?, let build?): "macOS \(version) (\(build))"
         case (let version?, nil): "macOS \(version)"
@@ -34,7 +34,7 @@ struct ProbedRestoreImage: Sendable, Equatable {
     ///
     /// `nil` when the filename yielded no version — the answer is unknown, which
     /// is not the same as a "no".
-    func isSupported(onHost host: OperatingSystemVersion) -> Bool? {
+    package func isSupported(onHost host: OperatingSystemVersion) -> Bool? {
         version.flatMap(MacOSVersion.init)?.isSupported(onHost: host)
     }
 

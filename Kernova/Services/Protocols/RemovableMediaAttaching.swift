@@ -2,7 +2,7 @@ import Foundation
 
 /// Abstraction for runtime removable-media attach/detach operations.
 @MainActor
-protocol RemovableMediaAttaching: Sendable {
+package protocol RemovableMediaAttaching: Sendable {
     /// Attaches a disk image as a USB mass storage device.
     ///
     /// `desiredUUID` overrides the auto-generated device UUID so the runtime

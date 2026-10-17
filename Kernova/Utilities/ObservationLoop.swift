@@ -6,7 +6,7 @@ import KernovaKit
 /// The observation runs until this handle is deallocated OR ``cancel()`` is
 /// called, whichever comes first.
 @MainActor
-final class ObservationLoop {
+package final class ObservationLoop {
     fileprivate var isCancelled = false
     private let track: () -> Void
     private let apply: () -> Void
@@ -18,7 +18,7 @@ final class ObservationLoop {
     }
 
     /// Stops the observation loop; idempotent.
-    func cancel() {
+    package func cancel() {
         isCancelled = true
     }
 
@@ -55,7 +55,7 @@ final class ObservationLoop {
 /// the caller — dropping it or calling ``ObservationLoop/cancel()`` stops the
 /// loop at (or before) the next scheduled fire.
 @MainActor
-func observeRecurring(
+package func observeRecurring(
     track: @escaping () -> Void,
     apply: @escaping () -> Void
 ) -> ObservationLoop {
@@ -63,7 +63,7 @@ func observeRecurring(
 }
 
 /// How long an observed-change wait may last, and the clock that measures it.
-struct ObservedChangeDeadline: Sendable {
+package struct ObservedChangeDeadline: Sendable {
     /// Seconds from the start of the wait.
     let seconds: TimeInterval
     /// What measures them.
@@ -109,7 +109,7 @@ private final class ObservationLoopBox {
 /// `predicate` must be side-effect-free and must read every value it inspects
 /// through an `@Observable` getter, or nothing wakes the wait.
 @MainActor
-func waitForObservedChange(until predicate: @escaping @MainActor () -> Bool) async {
+package func waitForObservedChange(until predicate: @escaping @MainActor () -> Bool) async {
     _ = await waitForObservedChange(until: predicate, before: nil)
 }
 
@@ -120,7 +120,7 @@ func waitForObservedChange(until predicate: @escaping @MainActor () -> Bool) asy
 /// same; the deadline re-reads it before answering, so a change landing in the
 /// same instant is a satisfied wait rather than an expiry.
 @MainActor
-func waitForObservedChange(
+package func waitForObservedChange(
     until predicate: @escaping @MainActor () -> Bool, before deadline: ObservedChangeDeadline?
 ) async -> Bool {
     guard !predicate() else { return true }

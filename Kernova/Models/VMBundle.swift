@@ -25,7 +25,7 @@ import KernovaLogging
 /// reached only through ``MachineFiles``.
 @MainActor
 @Observable
-final class VMBundle {
+package final class VMBundle {
     nonisolated fileprivate static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMBundle")
 
     @ObservationIgnored private let files: VMBundleFiles
@@ -379,7 +379,7 @@ extension VMBundle {
     /// Non-copyable, and held inside the context, so it cannot outlive the
     /// operation either.
     @MainActor
-    struct MachineFiles: ~Copyable, Sendable {
+    package struct MachineFiles: ~Copyable, Sendable {
         private let owner: VMInstance
 
         // periphery:ignore:parameters key - an access token: its type admits the caller
@@ -393,23 +393,23 @@ extension VMBundle {
         /// Where the bundle lives — the directory a configuration build for
         /// this operation reads the disks and the firmware and platform files
         /// from.
-        var url: URL { bundle.url }
+        package var url: URL { bundle.url }
 
         // MARK: Suspend slot
 
         /// Where the suspend slot lives — the URL VZ writes a save into and
         /// restores one from.
-        var saveFileURL: URL { VMBundleLayout(bundleURL: bundle.url).saveFileURL }
+        package var saveFileURL: URL { VMBundleLayout(bundleURL: bundle.url).saveFileURL }
 
         /// Whether the bundle holds a suspend slot.
-        var hasSaveFile: Bool { VMBundleLayout(bundleURL: bundle.url).hasSaveFile }
+        package var hasSaveFile: Bool { VMBundleLayout(bundleURL: bundle.url).hasSaveFile }
 
         /// Removes the suspend slot, if the bundle holds one.
         ///
         /// Synchronous so a caller resting the VM can do both in one step. A
         /// removal the file system turned down leaves the slot in place and
         /// logs it; the caller reads ``hasSaveFile`` to learn which happened.
-        func removeSaveFile() {
+        package func removeSaveFile() {
             bundle.removeSaveFileLoggingRefusal()
         }
 
@@ -417,7 +417,7 @@ extension VMBundle {
 
         /// Creates snapshot `id`'s directory holding `configuration`, answering
         /// where its saved state goes and which bundle files it copies.
-        func prepareSnapshot(
+        package func prepareSnapshot(
             _ id: UUID, configuration: VMConfiguration
         ) async throws -> VMSnapshotCapturePlan {
             try await bundle.offMainActor {
@@ -426,7 +426,7 @@ extension VMBundle {
         }
 
         /// Clones `relativePaths` into snapshot `id`'s directory.
-        func captureDisks(intoSnapshot id: UUID, relativePaths: [String]) async throws {
+        package func captureDisks(intoSnapshot id: UUID, relativePaths: [String]) async throws {
             try await bundle.offMainActor {
                 try $0.captureDisks(bundleURL: $1, snapshotID: id, relativePaths: relativePaths)
             }
@@ -434,13 +434,13 @@ extension VMBundle {
 
         /// Clones the suspend slot into snapshot `id`'s own saved state,
         /// leaving the slot in place.
-        func captureSuspendSlot(intoSnapshot id: UUID) async throws {
+        package func captureSuspendSlot(intoSnapshot id: UUID) async throws {
             try await bundle.offMainActor { try $0.captureSuspendSlot(bundleURL: $1, snapshotID: id) }
         }
 
         /// Removes snapshot `id`'s directory outright — a capture that failed
         /// partway, or one no manifest lists.
-        func removeSnapshotDirectory(_ id: UUID) async {
+        package func removeSnapshotDirectory(_ id: UUID) async {
             await bundle.offMainActorInfallibly {
                 $0.removeSnapshotDirectory(bundleURL: $1, snapshotID: id)
             }
@@ -455,7 +455,7 @@ extension VMBundle {
 
         /// What snapshot `id` holds, checked complete; touches nothing in the
         /// bundle.
-        func planRestore(
+        package func planRestore(
             fromSnapshot id: UUID, kind: VMSnapshotKind
         ) async throws -> VMSnapshotRestorePlan {
             try await bundle.offMainActor {
@@ -465,7 +465,7 @@ extension VMBundle {
 
         /// Clones what `plan` restores from snapshot `id` into the restore
         /// staging directory; touches nothing else in the bundle.
-        func stageRestore(fromSnapshot id: UUID, plan: VMSnapshotRestorePlan) async throws {
+        package func stageRestore(fromSnapshot id: UUID, plan: VMSnapshotRestorePlan) async throws {
             try await bundle.offMainActor {
                 try $0.stageRestore(bundleURL: $1, snapshotID: id, plan: plan)
             }
@@ -473,12 +473,12 @@ extension VMBundle {
 
         /// Swaps the staged files into the bundle and removes the staging
         /// directory.
-        func installRestore(_ plan: VMSnapshotRestorePlan) async throws {
+        package func installRestore(_ plan: VMSnapshotRestorePlan) async throws {
             try await bundle.offMainActor { try $0.installRestore(bundleURL: $1, plan: plan) }
         }
 
         /// Removes the restore staging directory, if the bundle holds one.
-        func discardRestoreStaging() async {
+        package func discardRestoreStaging() async {
             await bundle.offMainActorInfallibly { $0.sweepRestoreStaging(bundleURL: $1) }
         }
 
@@ -504,13 +504,13 @@ extension VMBundle {
 
         /// Creates the EFI variable store an EFI boot reads, unless the bundle
         /// already holds one.
-        func ensureEFIVariableStore() async throws {
+        package func ensureEFIVariableStore() async throws {
             try await bundle.offMainActor { try $0.ensureEFIVariableStore(bundleURL: $1) }
         }
 
         /// Writes the macOS platform files an install of `hardwareModel` boots
         /// from, answering the machine identifier the bundle now holds.
-        func createMacPlatformFiles(hardwareModel: Data) async throws -> Data {
+        package func createMacPlatformFiles(hardwareModel: Data) async throws -> Data {
             let bundle = bundle
             let machineIdentifier = try await bundle.offMainActor {
                 try $0.createMacPlatformFiles(bundleURL: $1, hardwareModel: hardwareModel)

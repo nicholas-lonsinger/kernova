@@ -7,7 +7,7 @@ import Foundation
 /// started life as however far the guest is upgraded afterwards. The live
 /// counterpart is ``VMConfiguration/lastSeenGuestOSVersion``, which only a
 /// running guest agent can answer for.
-enum InstalledImage: Sendable, Equatable {
+package enum InstalledImage: Sendable, Equatable {
     /// A macOS restore image, by the marketing version and Apple build the
     /// image itself carries.
     case macOSRestoreImage(version: String, build: String)
@@ -40,7 +40,7 @@ enum InstalledImage: Sendable, Equatable {
 
     /// The digest the attached ISO hashed to — `nil` for a macOS restore image,
     /// and for a catalog record that carries no digest.
-    var digest: InstallerImageDigest? {
+    package var digest: InstallerImageDigest? {
         switch self {
         case .macOSRestoreImage: nil
         case .linuxCatalogImage(_, _, let digest): digest
@@ -49,7 +49,7 @@ enum InstalledImage: Sendable, Equatable {
     }
 
     /// What the settings card shows for the record.
-    var displayName: String {
+    package var displayName: String {
         switch self {
         case .macOSRestoreImage(let version, let build): "macOS \(version) (\(build))"
         case .linuxCatalogImage(let distribution, let version, _): "\(distribution) \(version)"
@@ -79,7 +79,7 @@ extension InstalledImage: Codable {
         case digest
     }
 
-    func encode(to encoder: any Encoder) throws {
+    package func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .macOSRestoreImage(let version, let build):
@@ -98,7 +98,7 @@ extension InstalledImage: Codable {
         }
     }
 
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .kind) {
         case .macOSRestoreImage:

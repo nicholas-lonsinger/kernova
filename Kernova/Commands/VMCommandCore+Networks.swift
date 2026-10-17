@@ -12,7 +12,7 @@ extension VMCommandCore {
     /// Addresses no VM: a network is the library's, and a VM joins one through
     /// its `network.membership` key. Refuses while the library's list of
     /// networks cannot be read, rather than answering none.
-    func networks() throws -> [NetworkSummary] {
+    package func networks() throws -> [NetworkSummary] {
         library.networks.reload()
         return try library.networks.listedNetworks(verb: .networks).map(summary)
     }
@@ -32,7 +32,7 @@ extension VMCommandCore {
     /// name another network has, ignoring case, and one a membership value
     /// already spells.
     @discardableResult
-    func createNetwork(name: String, kind: NetworkKind) throws -> NetworkSummary {
+    package func createNetwork(name: String, kind: NetworkKind) throws -> NetworkSummary {
         library.networks.reload()
         let kind = VmnetNetworkKind(kind)
         let probe = VMJoinedNetwork.vmnet(VmnetNetworkID(kind: kind, scope: .named(UUID())))
@@ -49,7 +49,7 @@ extension VMCommandCore {
 
     /// Renames the network `network` names, by identifier or by name. A VM
     /// names its network by identifier, so no VM changes.
-    func renameNetwork(_ network: String, to newName: String) throws {
+    package func renameNetwork(_ network: String, to newName: String) throws {
         library.networks.reload()
         let network = try library.networks.requireNetwork(named: network, verb: .renameNetwork)
         try library.networks.rename(network.id, to: newName, verb: .renameNetwork)
@@ -64,7 +64,7 @@ extension VMCommandCore {
     /// own, which narrows what it reaches and widens nothing
     /// (docs/NETWORKING.md). An inert VM whose state takes no such change, and
     /// a snapshot taken on the network, keep naming it, unlisted.
-    func deleteNetwork(_ network: String) throws {
+    package func deleteNetwork(_ network: String) throws {
         library.networks.reload()
         let network = try library.networks.requireNetwork(named: network, verb: .deleteNetwork)
         let key = VMConfigurationKeyRegistry.networkMembership
@@ -125,7 +125,7 @@ extension VMCommandCore {
 }
 
 extension NetworkKind {
-    init(_ kind: VmnetNetworkKind) {
+    package init(_ kind: VmnetNetworkKind) {
         switch kind {
         case .nat: self = .nat
         case .hostOnly: self = .hostOnly
@@ -134,7 +134,7 @@ extension NetworkKind {
 }
 
 extension VmnetNetworkKind {
-    init(_ kind: NetworkKind) {
+    package init(_ kind: NetworkKind) {
         switch kind {
         case .nat: self = .nat
         case .hostOnly: self = .hostOnly

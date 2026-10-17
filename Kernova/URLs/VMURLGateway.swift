@@ -18,7 +18,7 @@ import KernovaLogging
 /// summons the library to land it in, because an alert with no window to show
 /// in is one the person only meets later, stale, when they next open Kernova.
 @MainActor
-final class VMURLGateway {
+package final class VMURLGateway {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMURLGateway")
 
     private let commands: VMCommandCore
@@ -34,7 +34,7 @@ final class VMURLGateway {
     /// Shows the user what a link was refused for.
     private let present: @MainActor (CommandError) -> Void
 
-    init(
+    package init(
         commands: VMCommandCore,
         readiness: LibraryReadiness,
         prepareToSurface: @escaping @MainActor @Sendable () -> Void,
@@ -58,7 +58,7 @@ final class VMURLGateway {
     /// Only a route waits for the library read — what a link *says* is decided
     /// by the URL alone, so a link naming no route Kernova offers is refused
     /// straight away.
-    func handle(_ url: URL) async {
+    package func handle(_ url: URL) async {
         switch VMURLRoute.delivery(of: url) {
         case .notALink:
             #log(Self.logger, .fault, "A URL carrying no Kernova link reached the link front door")

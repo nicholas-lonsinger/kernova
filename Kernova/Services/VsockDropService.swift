@@ -17,11 +17,11 @@ import KernovaLogging
 /// generations, because the user asked for both sets of files.
 @MainActor
 @Observable
-final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting {
+package final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting {
     // MARK: - Observable state
 
     /// `true` between `start()` and `stop()`.
-    private(set) var isConnected: Bool = false
+    package private(set) var isConnected: Bool = false
 
     // MARK: - Private state
 
@@ -291,7 +291,7 @@ extension VsockDropService: ClipboardEndpointDelegate {
     /// drop, and the guest closes this channel on every control reconnect (its
     /// client pauses until the next `Hello`), so a service left standing would
     /// keep advertising a drop it can no longer send.
-    func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
+    package func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
         settle(reason: .channelLost)
     }
 }

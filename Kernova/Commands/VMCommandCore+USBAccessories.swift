@@ -17,7 +17,7 @@ extension VMCommandCore {
 
     /// The accessories the VM's guest is holding right now, each named by the
     /// attachment a detach takes back.
-    func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
+    package func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
         try requireUSBAccessoryService()
         let names = listingNames()
         return try resolve(selector).liveUSBAccessories.map {
@@ -30,7 +30,7 @@ extension VMCommandCore {
     /// Addresses no VM: the user assigns an accessory to the app rather than to
     /// a guest, so which VM could take it is the caller's question, not the
     /// list's.
-    func availableUSBAccessories() throws -> [USBAccessorySummary] {
+    package func availableUSBAccessories() throws -> [USBAccessorySummary] {
         let service = try requireUSBAccessoryService()
         let held = library.accessoryHolders.heldRegistryIDs
         let names = listingNames()

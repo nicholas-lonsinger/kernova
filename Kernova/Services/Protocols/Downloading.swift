@@ -2,7 +2,7 @@ import Foundation
 
 /// Abstraction for the resumable file transfer every guest-setup pipeline
 /// fetches its image through.
-protocol Downloading: Sendable {
+package protocol Downloading: Sendable {
     /// Downloads the file at `remoteURL` to `destinationURL`, resuming a
     /// partial download already beside it and skipping over a completed one.
     ///

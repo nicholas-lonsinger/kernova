@@ -2,7 +2,7 @@ import KernovaKit
 import Foundation
 
 /// What a snapshot captured, which decides what reverting to it produces.
-enum VMSnapshotKind: String, Codable, Sendable {
+package enum VMSnapshotKind: String, Codable, Sendable {
     /// The guest's memory as a VZ saved state, plus a copy of the bundle's
     /// disks and the VM's configuration. Reverting lands the VM suspended on
     /// that memory image, or running when it was live.
@@ -15,7 +15,7 @@ enum VMSnapshotKind: String, Codable, Sendable {
 /// How a capture — a snapshot, or a clone's copy — started right now would be
 /// taken, which decides the work it does and, for a snapshot, the
 /// ``VMSnapshotKind`` it produces.
-enum VMCaptureMode: Sendable, Equatable {
+package enum VMCaptureMode: Sendable, Equatable {
     /// A live `VZVirtualMachine` (running or live-paused) is paused while its
     /// disks are copied, and may write a fresh saved state inside that pause.
     case live
@@ -24,13 +24,13 @@ enum VMCaptureMode: Sendable, Equatable {
     /// The disks and configuration, from a stopped VM.
     case stopped
 
-    var kind: VMSnapshotKind { self == .stopped ? .cold : .warm }
+    package var kind: VMSnapshotKind { self == .stopped ? .cold : .warm }
 }
 
 /// What a capture is asked to take. The kind is not part of it: the capture
 /// operation's ``VMCaptureMode`` decides it.
-struct VMSnapshotCaptureRequest: Sendable, Equatable, Identifiable {
-    var id: UUID
+package struct VMSnapshotCaptureRequest: Sendable, Equatable, Identifiable {
+    package var id: UUID
     var name: String
     var createdAt: Date
     /// Free-form user note, empty when none was entered.
@@ -44,16 +44,16 @@ struct VMSnapshotCaptureRequest: Sendable, Equatable, Identifiable {
     }
 
     /// The manifest record of this request captured in `mode`.
-    func record(capturedIn mode: VMCaptureMode) -> VMSnapshotRecord {
+    package func record(capturedIn mode: VMCaptureMode) -> VMSnapshotRecord {
         VMSnapshotRecord(id: id, name: name, createdAt: createdAt, notes: notes, kind: mode.kind)
     }
 }
 
 /// One named restore point as `Snapshots/manifest.json` records it, before
 /// there is a configuration it was taken under.
-struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
-    var id: UUID
-    var name: String
+package struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
+    package var id: UUID
+    package var name: String
     var createdAt: Date
     /// Free-form user note, empty when none was entered.
     var notes: String
@@ -73,7 +73,7 @@ struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
     // Custom `init(from:)` for `kind`, a fact about what the snapshot holds on
     // disk: a record with no kind states a warm snapshot, where synthesized
     // `Codable` would fail the whole manifest.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
         self.name = try c.decode(String.self, forKey: .name)
@@ -92,7 +92,7 @@ struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
 ///
 /// Equality covers ``network``: two values that differ in it describe
 /// different captured states, and its address is what reserves it.
-struct VMSnapshot: Sendable, Equatable, Identifiable {
+package struct VMSnapshot: Sendable, Equatable, Identifiable {
     /// What the manifest records.
     var record: VMSnapshotRecord
 
@@ -104,7 +104,7 @@ struct VMSnapshot: Sendable, Equatable, Identifiable {
     /// is stored; the manifest does not repeat it.
     let network: VMCapturedNetwork?
 
-    init(_ record: VMSnapshotRecord, network: VMCapturedNetwork?) {
+    package init(_ record: VMSnapshotRecord, network: VMCapturedNetwork?) {
         self.record = record
         self.network = network
     }
@@ -113,17 +113,17 @@ struct VMSnapshot: Sendable, Equatable, Identifiable {
     /// while the snapshot is listed (``VMMACAddressRegistry``).
     var macAddress: String? { network?.macAddress }
 
-    var id: UUID { record.id }
-    var createdAt: Date { record.createdAt }
-    var kind: VMSnapshotKind { record.kind }
+    package var id: UUID { record.id }
+    package var createdAt: Date { record.createdAt }
+    package var kind: VMSnapshotKind { record.kind }
 
-    var name: String {
+    package var name: String {
         get { record.name }
         set { record.name = newValue }
     }
 
     /// Free-form user note, empty when none was entered.
-    var notes: String {
+    package var notes: String {
         get { record.notes }
         set { record.notes = newValue }
     }
@@ -132,14 +132,14 @@ struct VMSnapshot: Sendable, Equatable, Identifiable {
 /// The network device a snapshot's configuration was captured with — the part
 /// of what a revert installs that decides which network the VM lands on, and
 /// under which address.
-struct VMCapturedNetwork: Sendable, Equatable, Codable {
+package struct VMCapturedNetwork: Sendable, Equatable, Codable {
     var networkEnabled: Bool
     var networkMode: VMNetworkMode
     var networkMembership: VMNetworkMembership
     var bridgedInterfaceIdentifier: String?
     var macAddress: String?
 
-    init(
+    package init(
         networkEnabled: Bool, networkMode: VMNetworkMode,
         networkMembership: VMNetworkMembership, bridgedInterfaceIdentifier: String?,
         macAddress: String?
@@ -152,7 +152,7 @@ struct VMCapturedNetwork: Sendable, Equatable, Codable {
     }
 
     /// What `configuration` carries.
-    init(_ configuration: VMConfiguration) {
+    package init(_ configuration: VMConfiguration) {
         self.init(
             networkEnabled: configuration.networkEnabled, networkMode: configuration.networkMode,
             networkMembership: configuration.networkMembership,
@@ -176,7 +176,7 @@ struct VMCapturedNetwork: Sendable, Equatable, Codable {
     /// can't read, so the value never reaches a running VM — it only decides
     /// which address stays reserved, and what identity checks expect a revert
     /// to land.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled, absentMeans: false, in: decoder)
         networkMode = try c.decode(VMNetworkMode.self, forKey: .networkMode, absentMeans: .nat, in: decoder)
@@ -210,17 +210,17 @@ struct VMSnapshotManifestRecord: Codable, Sendable, Equatable {
 
 /// Every snapshot a VM bundle holds, plus which one the VM was last taken from
 /// or reverted to.
-struct VMSnapshotManifest: Sendable, Equatable {
+package struct VMSnapshotManifest: Sendable, Equatable {
     /// Storage order is the order snapshots were taken; ``ordered`` is what the
     /// UI reads.
-    var snapshots: [VMSnapshot]
+    package var snapshots: [VMSnapshot]
 
     /// The snapshot the VM's current state descends from, marked "Current" in
     /// the UI; `nil` once that snapshot is deleted, or before the first one is
     /// taken.
-    var currentID: UUID?
+    package var currentID: UUID?
 
-    init(snapshots: [VMSnapshot] = [], currentID: UUID? = nil) {
+    package init(snapshots: [VMSnapshot] = [], currentID: UUID? = nil) {
         self.snapshots = snapshots
         self.currentID = currentID
     }
@@ -231,13 +231,13 @@ struct VMSnapshotManifest: Sendable, Equatable {
     }
 
     /// Newest first — the list order every surface renders.
-    var ordered: [VMSnapshot] {
+    package var ordered: [VMSnapshot] {
         snapshots.sorted { $0.createdAt > $1.createdAt }
     }
 
     var isEmpty: Bool { snapshots.isEmpty }
 
-    func snapshot(id: UUID) -> VMSnapshot? {
+    package func snapshot(id: UUID) -> VMSnapshot? {
         snapshots.first { $0.id == id }
     }
 
@@ -248,7 +248,7 @@ struct VMSnapshotManifest: Sendable, Equatable {
     ///
     /// Every surface that turns the mode on resolves the baseline through this,
     /// so none of them can pin a different one.
-    func defaultEphemeralBaseline(preferring chosen: UUID?) -> UUID? {
+    package func defaultEphemeralBaseline(preferring chosen: UUID?) -> UUID? {
         if let chosen, snapshot(id: chosen) != nil { return chosen }
         if let currentID, snapshot(id: currentID) != nil { return currentID }
         return ordered.first?.id
@@ -256,7 +256,7 @@ struct VMSnapshotManifest: Sendable, Equatable {
 
     /// A default name for a new snapshot that doesn't collide with an existing
     /// one — `"Snapshot"`, then `"Snapshot 2"`, `"Snapshot 3"`, …
-    var defaultNewName: String {
+    package var defaultNewName: String {
         UniqueName.firstAvailable(prefix: "Snapshot", existing: snapshots.map(\.name))
     }
 

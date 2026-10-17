@@ -82,7 +82,7 @@ extension VMLibrary {
     }
 
     /// One file Use Defaults left as it was, and why.
-    struct ConfigFileRepairFailure: Sendable {
+    package struct ConfigFileRepairFailure: Sendable {
         let file: UnreadableConfigFile
         let reason: String
     }

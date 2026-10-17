@@ -3,7 +3,7 @@ import KernovaKit
 import KernovaLogging
 
 /// A realizable network attachment for a live VM, as recovery plans it.
-enum NetworkAttachmentPlan: Equatable, Sendable {
+package enum NetworkAttachmentPlan: Equatable, Sendable {
     /// The system NAT attachment — the NAT mode in an unentitled build.
     case nat
     case bridged(String)
@@ -30,7 +30,7 @@ enum NetworkAttachmentPlan: Equatable, Sendable {
 }
 
 /// The network the user chose for a VM, as attachment recovery needs it.
-struct NetworkChoice: Equatable {
+package struct NetworkChoice: Equatable {
     let joinedNetwork: VMJoinedNetwork
     /// The persisted bridged interface, `nil` for Automatic.
     let bridgedInterfaceIdentifier: String?
@@ -39,7 +39,7 @@ struct NetworkChoice: Equatable {
 extension VMConfiguration {
     /// The network the user chose, as attachment recovery consumes it; `nil`
     /// when the VM has no network device.
-    var networkChoice: NetworkChoice? {
+    package var networkChoice: NetworkChoice? {
         joinedNetwork.map {
             NetworkChoice(joinedNetwork: $0, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier)
         }
@@ -48,7 +48,7 @@ extension VMConfiguration {
 
 /// A live VM's network device, as attachment recovery drives it.
 @MainActor
-protocol NetworkDeviceControlling: AnyObject {
+package protocol NetworkDeviceControlling: AnyObject {
     /// The plan the device's current attachment realizes, `nil` while detached.
     var currentPlan: NetworkAttachmentPlan? { get }
     /// Realizes `plan` on the device. Returns `false` when the host cannot
@@ -62,7 +62,7 @@ protocol NetworkDeviceControlling: AnyObject {
 
 /// Host link-change events, as attachment recovery consumes them.
 @MainActor
-protocol NetworkLinkObserving: AnyObject {
+package protocol NetworkLinkObserving: AnyObject {
     /// Starts delivering link-change events to `onChange` until `stop()`.
     func start(onChange: @escaping @MainActor () -> Void)
     func stop()
@@ -83,7 +83,7 @@ protocol NetworkLinkObserving: AnyObject {
 /// choice to keep attachment churn away from boot, restore, and state saves;
 /// runtime attachment swaps themselves carry no VZ state precondition.
 @MainActor
-final class NetworkAttachmentCoordinator {
+package final class NetworkAttachmentCoordinator {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "NetworkAttachmentCoordinator")
 
@@ -139,7 +139,7 @@ final class NetworkAttachmentCoordinator {
     /// (cancelled) task resuming late cannot clear its replacement's handle.
     private var vmnetMaterializationGeneration = 0
 
-    init(
+    package init(
         vmName: String,
         device: any NetworkDeviceControlling,
         interfaces: any BridgedInterfaceProviding,
@@ -178,7 +178,7 @@ final class NetworkAttachmentCoordinator {
         reconcile(trigger: "activate")
     }
 
-    func stop() {
+    package func stop() {
         isActive = false
         linkObserver.stop()
         cancelRetry()

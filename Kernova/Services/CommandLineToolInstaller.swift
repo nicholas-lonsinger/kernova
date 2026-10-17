@@ -7,7 +7,7 @@ import KernovaLogging
 /// A symlink rather than a copy: the tool and the app it talks to ship
 /// together, so a copy would go stale the first time the app updated and would
 /// then be refused by the protocol-version check instead of just working.
-enum CommandLineToolInstaller {
+package enum CommandLineToolInstaller {
     /// Where the tool lives inside the app bundle.
     ///
     /// `Contents/Helpers`, never `Contents/MacOS` —
@@ -24,7 +24,7 @@ enum CommandLineToolInstaller {
     /// The container is the same condition the listener binds under, so the
     /// affordance and the capability cannot disagree: a build that would offer
     /// an Install button leading to a tool that can reach nothing offers none.
-    static var isAvailable: Bool {
+    package static var isAvailable: Bool {
         KernovaAppGroup.containerURL() != nil
             && FileManager.default.fileExists(atPath: bundledToolURL.path(percentEncoded: false))
     }
@@ -38,7 +38,7 @@ enum CommandLineToolInstaller {
     /// here is the whole reason somebody clicked Install in this copy.
     ///
     /// - Throws: ``InstallFailure``.
-    static func installSymlink(at destination: URL) throws {
+    package static func installSymlink(at destination: URL) throws {
         let manager = FileManager.default
         let path = destination.path(percentEncoded: false)
 
@@ -68,7 +68,7 @@ enum CommandLineToolInstaller {
     }
 
     /// What is already at a destination.
-    enum Occupant: Equatable {
+    package enum Occupant: Equatable {
         /// The path is free.
         case nothing
         /// A link into a Kernova bundle that is gone — the app moved, or that
@@ -92,7 +92,7 @@ enum CommandLineToolInstaller {
     /// dangling link reads as absent through the latter, so the create would
     /// fail `EEXIST` and be reported as a write problem instead of the stale
     /// link it is.
-    static func occupant(at destination: URL) -> Occupant {
+    package static func occupant(at destination: URL) -> Occupant {
         let manager = FileManager.default
         let path = destination.path(percentEncoded: false)
         guard let attributes = try? manager.attributesOfItem(atPath: path) else { return .nothing }
@@ -132,7 +132,7 @@ enum CommandLineToolInstaller {
     }
 
     /// The command that does by hand what the panel does.
-    static func manualCommand(for destination: URL) -> String {
+    package static func manualCommand(for destination: URL) -> String {
         "ln -s \"\(bundledToolURL.path(percentEncoded: false))\" \"\(destination.path(percentEncoded: false))\""
     }
 

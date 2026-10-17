@@ -1,7 +1,7 @@
 import Foundation
 
 /// Abstraction for VM bundle storage operations, enabling dependency injection and testing.
-protocol VMStorageProviding: Sendable {
+package protocol VMStorageProviding: Sendable {
     var vmsDirectory: URL { get throws }
     /// What every bundle's state files are read and written through.
     var bundleFiles: any VMBundleFileAccessing { get }

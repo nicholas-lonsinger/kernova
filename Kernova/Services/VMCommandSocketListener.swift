@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import KernovaKit
 import KernovaLogging
+import System
 
 /// The app's command socket: an `AF_UNIX` listener in the app-group container
 /// carrying length-prefixed `VMCommandRequest`/`VMCommandResponse` frames.
@@ -17,7 +18,7 @@ import KernovaLogging
 /// publishes no socket and logs why: the capability is absent rather than
 /// present and broken.
 @MainActor
-final class VMCommandSocketListener {
+package final class VMCommandSocketListener {
     /// Owner-only on the socket file, so the group container's own rules are
     /// not the only thing standing between a stranger and the socket.
     private static let socketFileMode = mode_t(S_IRUSR | S_IWUSR)
@@ -58,7 +59,7 @@ final class VMCommandSocketListener {
     ///
     /// `prepareToSurface` readies the app to put a window on screen without
     /// activating it; the client that asked is the one that activates it.
-    init(
+    package init(
         router: VMCommandEnvelopeRouter,
         authorizer: (any PeerAuthorizing)?,
         copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>,
@@ -73,7 +74,7 @@ final class VMCommandSocketListener {
     }
 
     /// Binds the socket and begins accepting same-team clients.
-    func start() {
+    package func start() {
         let socketPath: String
         switch copyClaim {
         case .success(let claim):

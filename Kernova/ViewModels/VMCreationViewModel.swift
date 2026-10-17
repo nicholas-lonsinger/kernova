@@ -6,14 +6,14 @@ import KernovaLogging
 ///
 /// The full set; which of them a given configuration walks is
 /// ``VMCreationViewModel/steps``.
-enum VMCreationStep: String, CaseIterable, Sendable {
+package enum VMCreationStep: String, CaseIterable, Sendable {
     case osSelection
     case bootConfig
     case resources
     case guestAccount
     case review
 
-    var title: String {
+    package var title: String {
         switch self {
         case .osSelection: "OS"
         case .bootConfig: "Boot"
@@ -25,7 +25,7 @@ enum VMCreationStep: String, CaseIterable, Sendable {
 }
 
 /// IPSW source selection for macOS VM creation.
-enum IPSWSource: Sendable {
+package enum IPSWSource: Sendable {
     case downloadLatest
     case catalogVersion
     case customURL
@@ -33,7 +33,7 @@ enum IPSWSource: Sendable {
 
     /// Whether this source obtains the image over the network, and so shares
     /// the download destination, overwrite warning, and resume affordance.
-    var downloadsImage: Bool {
+    package var downloadsImage: Bool {
         switch self {
         case .downloadLatest, .catalogVersion, .customURL: true
         case .localFile: false
@@ -46,7 +46,7 @@ enum IPSWSource: Sendable {
 ///
 /// Set only through ``VMCreationViewModel``'s `select` methods. `Equatable` but
 /// not `Hashable` — the payloads are not — so keys go on ``IPSWSource``.
-enum IPSWSelection: Sendable, Equatable {
+package enum IPSWSelection: Sendable, Equatable {
     case downloadLatest
     case catalogVersion(RestoreImageCatalogEntry)
     case customURL(ProbedRestoreImage)
@@ -67,7 +67,7 @@ enum IPSWSelection: Sendable, Equatable {
 /// choice carries, so a source cannot be current without its pick.
 ///
 /// Set only through ``VMCreationViewModel``'s `select` methods.
-enum LinuxImageSelection: Sendable, Equatable {
+package enum LinuxImageSelection: Sendable, Equatable {
     /// A distribution from the bundled catalog. Nothing is on disk yet — the
     /// image is resolved and downloaded after the VM is created.
     case catalogEntry(LinuxImageCatalogEntry)
@@ -82,18 +82,18 @@ enum LinuxImageSelection: Sendable, Equatable {
 /// State machine for the VM creation wizard.
 @MainActor
 @Observable
-final class VMCreationViewModel {
+package final class VMCreationViewModel {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCreationViewModel")
 
     /// Backs the "Choose a Version…" picker.
     ///
     /// Read only while that source is selected; the other two sources never
     /// touch it.
-    let catalogService = RestoreImageCatalogService()
+    package let catalogService = RestoreImageCatalogService()
 
     /// Backs the "Paste an IPSW URL…" sheet's pre-download check; its size read
     /// alone also sizes the image "Download Latest" would fetch.
-    let probeService: any RestoreImageProbing
+    package let probeService: any RestoreImageProbing
 
     /// Reads an IPSW already on disk before the wizard adopts it.
     let localImageInspector: any LocalRestoreImageInspecting
@@ -102,17 +102,17 @@ final class VMCreationViewModel {
     let ipswService: any IPSWProviding
 
     /// Backs the Linux "Choose a Distribution…" picker.
-    let linuxCatalogService = LinuxImageCatalogService()
+    package let linuxCatalogService = LinuxImageCatalogService()
 
     /// Backs the Linux "Image URL…" sheet's pre-download check — the same
     /// service the install pipeline resolves through, so a URL is admitted on
     /// one set of rules at both ends.
-    let linuxImageResolveService: any LinuxImageResolving
+    package let linuxImageResolveService: any LinuxImageResolving
 
     /// What Virtualization answers about this Mac: the bounds the resource
     /// steps clamp to, the new VM's machine identifier, and the verdict on the
     /// account the wizard gathers.
-    let host: any VirtualizationHostProviding
+    package let host: any VirtualizationHostProviding
 
     /// The Virtualization-backed collaborators — `host`, `localImageInspector`
     /// and `ipswService` — take no default: the engine makes them, and
@@ -143,7 +143,7 @@ final class VMCreationViewModel {
     /// local file's inspection finishing is the ordinary way — and a step
     /// nothing brings back would leave Next and Back dead with no dot lit and
     /// only Cancel out.
-    var currentStep: VMCreationStep = .osSelection
+    package var currentStep: VMCreationStep = .osSelection
 
     /// Moves the user back off a step that has just left the walk, and nowhere
     /// otherwise.
@@ -171,7 +171,7 @@ final class VMCreationViewModel {
     /// The guest to create. Only a macOS guest is offered an account, so this
     /// decides the walk — see ``clampToWalkedStep()`` — and a change resets the
     /// resources to the new guest's defaults.
-    var selectedOS: VMGuestOS = .macOS {
+    package var selectedOS: VMGuestOS = .macOS {
         didSet {
             clampToWalkedStep()
             guard oldValue != selectedOS else { return }
@@ -182,16 +182,16 @@ final class VMCreationViewModel {
 
     // MARK: - Step 2: Boot Config
 
-    var selectedBootMode: VMBootMode = .efi
+    package var selectedBootMode: VMBootMode = .efi
 
     /// The image the install runs from. Its version is what the account is
     /// offered against, so it decides the walk — see ``clampToWalkedStep()``.
-    private(set) var ipswSelection: IPSWSelection = .downloadLatest {
+    package private(set) var ipswSelection: IPSWSelection = .downloadLatest {
         didSet { clampToWalkedStep() }
     }
 
     /// Which source is current, for the radios and the source labels.
-    var ipswSource: IPSWSource { ipswSelection.source }
+    package var ipswSource: IPSWSource { ipswSelection.source }
 
     /// What "Download Latest" will fetch, once ``loadLatestImageDetails()`` has
     /// answered; `nil` until then, and after a lookup that failed.
@@ -200,7 +200,7 @@ final class VMCreationViewModel {
     /// and to name the download destination. It carries the version the account
     /// is offered against under that source, so it decides the walk — see
     /// ``clampToWalkedStep()``.
-    private(set) var latestImage: LatestRestoreImage? {
+    package private(set) var latestImage: LatestRestoreImage? {
         didSet { clampToWalkedStep() }
     }
 
@@ -208,7 +208,7 @@ final class VMCreationViewModel {
     ///
     /// A second read, so it can be absent while the version and build are
     /// known; the wizard then names those alone.
-    private(set) var latestImageSizeBytes: UInt64?
+    package private(set) var latestImageSizeBytes: UInt64?
 
     /// The lookup in flight, so a second trigger joins it instead of starting
     /// another.
@@ -216,7 +216,7 @@ final class VMCreationViewModel {
 
     /// The local-file inspection in flight, so a re-entered boot-config step
     /// can pick its watch back up after the VC that started it was torn down.
-    private(set) var localFileInspectionTask: Task<Void, Never>?
+    package private(set) var localFileInspectionTask: Task<Void, Never>?
 
     /// Bumped on every ``selectLocalFile(path:bookmark:)`` call; only the task
     /// started at the current generation clears ``localFileInspectionTask``
@@ -232,15 +232,15 @@ final class VMCreationViewModel {
 
     /// The last catalog pick, kept after the source moves off it so the version
     /// picker re-opens on it.
-    private(set) var lastCatalogPick: RestoreImageCatalogEntry?
+    package private(set) var lastCatalogPick: RestoreImageCatalogEntry?
     /// The last checked URL, on the same terms.
-    private(set) var lastPastedImage: ProbedRestoreImage?
+    package private(set) var lastPastedImage: ProbedRestoreImage?
     /// Always inside Downloads — there is no custom-destination picker.
     ///
     /// Every download source names the file through ``RestoreImageFilename``;
     /// "Download Latest" starts on the fixed fallback and adopts the looked-up
     /// image's name once ``loadLatestImageDetails()`` answers.
-    var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
+    package var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             if ipswDownloadPath != confirmedOverwritePath {
                 confirmedOverwritePath = nil
@@ -250,27 +250,27 @@ final class VMCreationViewModel {
     private var confirmedOverwritePath: String?
 
     /// The Linux EFI image, once chosen; `nil` until the user picks one.
-    private(set) var linuxSelection: LinuxImageSelection?
+    package private(set) var linuxSelection: LinuxImageSelection?
 
-    var kernelPath: String?
-    var initrdPath: String?
-    var kernelCommandLine: String?
+    package var kernelPath: String?
+    package var initrdPath: String?
+    package var kernelCommandLine: String?
 
     /// Security bookmarks paired with the panel-picked paths above; each is set
     /// alongside its path at pick time.
-    var kernelBookmark: Data?
-    var initrdBookmark: Data?
+    package var kernelBookmark: Data?
+    package var initrdBookmark: Data?
 
     // MARK: - Step 3: Resources
 
-    var vmName: String = "My Virtual Machine"
+    package var vmName: String = "My Virtual Machine"
 
     // Start at the defaults of `selectedOS`'s initial value, which `init` sets.
-    var cpuCount: Int
-    var memorySize: VMMemorySize
+    package var cpuCount: Int
+    package var memorySize: VMMemorySize
 
-    var diskSizeInGB: Int = VMGuestOS.defaultDiskSizeInGB
-    var networkEnabled: Bool = true
+    package var diskSizeInGB: Int = VMGuestOS.defaultDiskSizeInGB
+    package var networkEnabled: Bool = true
 
     // MARK: - Step 4: Guest Account
 
@@ -281,17 +281,17 @@ final class VMCreationViewModel {
     /// left on for an image that could deliver the account must not survive a
     /// pick that cannot. Turning it off takes the account step out of the walk
     /// — see ``clampToWalkedStep()``.
-    var unattendedSetupEnabled: Bool = false {
+    package var unattendedSetupEnabled: Bool = false {
         didSet { clampToWalkedStep() }
     }
 
-    var guestAccountFullName: String = ""
-    var guestAccountUsername: String = ""
-    var guestAccountPassword: String = ""
+    package var guestAccountFullName: String = ""
+    package var guestAccountUsername: String = ""
+    package var guestAccountPassword: String = ""
     /// The second spelling of the password, which exists only in this form.
-    var guestAccountVerifyPassword: String = ""
-    var guestAccountLogsInAutomatically: Bool = true
-    var guestAccountEnablesRemoteLogin: Bool = false
+    package var guestAccountVerifyPassword: String = ""
+    package var guestAccountLogsInAutomatically: Bool = true
+    package var guestAccountEnablesRemoteLogin: Bool = false
 
     /// The macOS version the current pick names, or `nil` while it names none.
     ///
@@ -308,7 +308,7 @@ final class VMCreationViewModel {
     }
 
     /// Whether to offer the account toggle for the current guest and pick.
-    var offersUnattendedSetup: Bool {
+    package var offersUnattendedSetup: Bool {
         selectedOS == .macOS
             && MacOSGuestProvisioning.offersUnattendedSetup(forImageVersion: selectedImageVersion)
     }
@@ -340,7 +340,7 @@ final class VMCreationViewModel {
 
     /// The account to persist with the VM, minus its password, or `nil` when
     /// the wizard is creating none.
-    var unattendedSetupIntent: GuestAccountIntent? {
+    package var unattendedSetupIntent: GuestAccountIntent? {
         guard unattendedSetupActive else { return nil }
         let credentials = guestAccountCredentials
         return GuestAccountIntent(
@@ -378,7 +378,7 @@ final class VMCreationViewModel {
 
     /// Whether to auto-start the VM immediately after the wizard creates it,
     /// backing the "Start this VM after creation" toggle on the Review step.
-    var startAfterCreate: Bool = true
+    package var startAfterCreate: Bool = true
 
     // MARK: - Navigation
 
@@ -387,7 +387,7 @@ final class VMCreationViewModel {
     /// The account step is **absent** rather than disabled when nothing can
     /// deliver an account — "Capability degrades by absence" — so the indicator,
     /// Next and Back all read one list.
-    var steps: [VMCreationStep] {
+    package var steps: [VMCreationStep] {
         VMCreationStep.allCases.filter { $0 != .guestAccount || unattendedSetupActive }
     }
 
@@ -397,7 +397,7 @@ final class VMCreationViewModel {
     /// of its own, so what blocks it is always an earlier step's form. The hint
     /// names that step: the user walked past it, and a disabled button beside
     /// an empty line says only that something is wrong somewhere.
-    var validationMessage: String? {
+    package var validationMessage: String? {
         if currentStep == .review {
             guard let blocking = stepBlockingCreate, let reason = message(blocking) else {
                 return nil
@@ -446,7 +446,7 @@ final class VMCreationViewModel {
         }
     }
 
-    var canAdvance: Bool {
+    package var canAdvance: Bool {
         switch currentStep {
         case .osSelection:
             true
@@ -462,7 +462,7 @@ final class VMCreationViewModel {
     }
 
     /// Whether Create may run from the Review step.
-    var canCreate: Bool { stepBlockingCreate == nil }
+    package var canCreate: Bool { stepBlockingCreate == nil }
 
     /// The step whose form still blocks Create, or `nil` when none does.
     ///
@@ -477,7 +477,7 @@ final class VMCreationViewModel {
         return nil
     }
 
-    var effectiveBootMode: VMBootMode {
+    package var effectiveBootMode: VMBootMode {
         switch selectedOS {
         case .macOS: .macOS
         case .linux: selectedBootMode
@@ -501,12 +501,12 @@ final class VMCreationViewModel {
         }
     }
 
-    func goNext() {
+    package func goNext() {
         guard let nextStep = nextStep else { return }
         currentStep = nextStep
     }
 
-    func goBack() {
+    package func goBack() {
         guard let prevStep = previousStep else { return }
         currentStep = prevStep
     }
@@ -539,7 +539,7 @@ final class VMCreationViewModel {
     /// home-relative layout: under the sandbox this resolves through the
     /// container's `Downloads` symlink, which the downloads.read-write
     /// entitlement covers — no save panel or bookmark needed.
-    static var downloadsDirectory: URL {
+    package static var downloadsDirectory: URL {
         guard
             let downloads = FileManager.default.urls(
                 for: .downloadsDirectory, in: .userDomainMask
@@ -558,7 +558,7 @@ final class VMCreationViewModel {
     /// `filename` must be one path component: callers derive it through
     /// ``SafeFilename``, which is what keeps a URL-supplied name from walking
     /// out of Downloads.
-    static func downloadPath(forFilename filename: String) -> String {
+    package static func downloadPath(forFilename filename: String) -> String {
         downloadsDirectory.appendingPathComponent(filename).path(percentEncoded: false)
     }
 
@@ -571,7 +571,7 @@ final class VMCreationViewModel {
     /// filename would let an already-downloaded image of a *different* version
     /// satisfy the download step, installing something other than what the
     /// wizard shows.
-    func selectCatalogEntry(_ entry: RestoreImageCatalogEntry) {
+    package func selectCatalogEntry(_ entry: RestoreImageCatalogEntry) {
         ipswSelection = .catalogVersion(entry)
         lastCatalogPick = entry
         ipswDownloadPath = Self.downloadPath(forFilename: entry.suggestedFilename)
@@ -579,7 +579,7 @@ final class VMCreationViewModel {
 
     /// Commits a checked URL, on the same per-image destination terms as a
     /// catalog pick.
-    func selectPastedImage(_ image: ProbedRestoreImage) {
+    package func selectPastedImage(_ image: ProbedRestoreImage) {
         ipswSelection = .customURL(image)
         lastPastedImage = image
         ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
@@ -590,7 +590,7 @@ final class VMCreationViewModel {
     ///
     /// The one operation that drops both sheet seeds: choosing to install
     /// whatever is newest retracts the earlier "install *this* build" answers.
-    func selectDownloadLatest() {
+    package func selectDownloadLatest() {
         ipswSelection = .downloadLatest
         lastCatalogPick = nil
         lastPastedImage = nil
@@ -605,7 +605,7 @@ final class VMCreationViewModel {
     /// The selection carries `.pending` until the inspection lands with a
     /// verdict — ``bootConfigValid`` blocks Next on a local file until that
     /// verdict is ``LocalRestoreImageInspection/usable(_:)``.
-    func selectLocalFile(path: String, bookmark: Data?) {
+    package func selectLocalFile(path: String, bookmark: Data?) {
         localFileInspectionTask?.cancel()
         ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: bookmark))
         localFileInspectionGeneration += 1
@@ -654,19 +654,19 @@ final class VMCreationViewModel {
     ///
     /// Nothing is downloaded here: the wizard stays offline, and the image is
     /// resolved and fetched once the VM exists.
-    func selectLinuxCatalogEntry(_ entry: LinuxImageCatalogEntry) {
+    package func selectLinuxCatalogEntry(_ entry: LinuxImageCatalogEntry) {
         linuxSelection = .catalogEntry(entry)
     }
 
     /// Commits a checked URL, on the same "downloaded after the VM exists"
     /// terms as a catalog pick.
-    func selectLinuxCustomURL(_ image: CustomLinuxImage, sizeBytes: UInt64) {
+    package func selectLinuxCustomURL(_ image: CustomLinuxImage, sizeBytes: UInt64) {
         linuxSelection = .customURL(image: image, sizeBytes: sizeBytes)
     }
 
     /// Commits a panel-picked ISO together with the grant minted for it, which
     /// is `nil` when the bookmark could not be created.
-    func selectLocalISO(path: String, bookmark: Data?) {
+    package func selectLocalISO(path: String, bookmark: Data?) {
         linuxSelection = .localISO(path: path, bookmark: bookmark)
     }
 
@@ -685,7 +685,7 @@ final class VMCreationViewModel {
     /// - Returns: the lookup to await for its result, or `nil` when the details
     ///   are already known and nothing had to run.
     @discardableResult
-    func loadLatestImageDetails() -> Task<Void, Never>? {
+    package func loadLatestImageDetails() -> Task<Void, Never>? {
         if let latestImageTask { return latestImageTask }
         guard latestImage == nil else { return nil }
         let ipswService = self.ipswService
@@ -725,7 +725,7 @@ final class VMCreationViewModel {
         FileManager.default.fileExists(atPath: ipswDownloadPath)
     }
 
-    var shouldShowOverwriteWarning: Bool {
+    package var shouldShowOverwriteWarning: Bool {
         ipswSource.downloadsImage
             && ipswDownloadPathFileExists
             && confirmedOverwritePath != ipswDownloadPath
@@ -816,7 +816,7 @@ final class VMCreationViewModel {
     ///
     /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by
     /// a failed disposal from offering a resume with nothing behind it.
-    var hasResumableDownload: Bool {
+    package var hasResumableDownload: Bool {
         guard ipswSource.downloadsImage,
             !ipswDownloadPathFileExists
         else { return false }
@@ -824,7 +824,7 @@ final class VMCreationViewModel {
         return DownloadBundle(url: bundleURL).isResumable
     }
 
-    func confirmOverwrite() {
+    package func confirmOverwrite() {
         confirmedOverwritePath = ipswDownloadPath
     }
 
@@ -840,7 +840,7 @@ final class VMCreationViewModel {
     /// No bookmark: the file was adopted without a panel, so there is no grant
     /// to capture — and none is needed, the Downloads location being
     /// entitlement-covered.
-    func useExistingDownloadFile(at path: String, inspected: InspectedRestoreImage) {
+    package func useExistingDownloadFile(at path: String, inspected: InspectedRestoreImage) {
         ipswSelection = .localFile(
             LocalRestoreImage(path: path, bookmark: nil, inspection: .usable(inspected)))
     }
@@ -857,7 +857,7 @@ final class VMCreationViewModel {
     }
 
     /// What inspecting the file at the download destination established.
-    enum ExistingFileVerdict: Equatable {
+    package enum ExistingFileVerdict: Equatable {
         /// Adopted. Carries what the file turned out to be.
         case adopted(InspectedRestoreImage)
         /// A different build than the one the wizard is showing; **not** adopted,
@@ -886,7 +886,7 @@ final class VMCreationViewModel {
     /// both the verdict and any adoption describe the file the user was asked
     /// about, so the path comes in as the caller's snapshot and the build is
     /// snapshotted before the inspection.
-    func adoptExistingDownloadFile(at path: String) async -> ExistingFileVerdict {
+    package func adoptExistingDownloadFile(at path: String) async -> ExistingFileVerdict {
         let expectedBuild = expectedBuild
         let url = URL(fileURLWithPath: path)
         let inspected: InspectedRestoreImage

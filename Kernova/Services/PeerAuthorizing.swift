@@ -7,7 +7,7 @@ import Security
 /// The states a ``PeerAuthorizing`` tells apart with certainty, kept apart so a
 /// refused client is told what the check found rather than whichever refusal is
 /// the most common.
-enum PeerRefusal: Equatable, Sendable {
+package enum PeerRefusal: Equatable, Sendable {
     /// The peer was not resolved to a code identity.
     case unidentified
     /// The peer's signature does not validate against Apple's roots.
@@ -30,13 +30,13 @@ enum PeerRefusal: Equatable, Sendable {
 }
 
 /// What a ``PeerAuthorizing`` made of a connecting peer.
-enum PeerAuthorization: Equatable, Sendable {
+package enum PeerAuthorization: Equatable, Sendable {
     case authorized
     case refused(PeerRefusal)
 }
 
 /// Whether the process on the other end of a connection may drive this app.
-protocol PeerAuthorizing: Sendable {
+package protocol PeerAuthorizing: Sendable {
     /// Whether the peer behind `token` is one this build answers, and when it
     /// is not, which refusal that is.
     func authorization(ofPeer token: audit_token_t) -> PeerAuthorization
@@ -61,7 +61,7 @@ protocol PeerAuthorizing: Sendable {
 /// `init?` answers `nil` for a build whose signature names no team, so an
 /// ad-hoc build has no authorizer, publishes no socket, and degrades by
 /// absence.
-struct SameTeamPeerAuthorizer: PeerAuthorizing {
+package struct SameTeamPeerAuthorizer: PeerAuthorizing {
     /// Every peer has to chain to an Apple root before its team is even read —
     /// a self-signed binary can claim any team identifier it likes.
     private static let anchorRequirement = "anchor apple generic"
@@ -73,7 +73,7 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         subsystem: "app.kernova", category: "SameTeamPeerAuthorizer")
 
     /// Reads this build's own team, or fails when it has none.
-    init?() {
+    package init?() {
         // Read from this process's own signature, never written down: a
         // hardcoded team would admit the wrong peers in any build signed with
         // another one.
@@ -87,7 +87,7 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         ownTeam = team
     }
 
-    func authorization(ofPeer token: audit_token_t) -> PeerAuthorization {
+    package func authorization(ofPeer token: audit_token_t) -> PeerAuthorization {
         let attributes =
             [kSecGuestAttributeAudit: Data(Self.bytes(of: token))] as CFDictionary
         var peer: SecCode?

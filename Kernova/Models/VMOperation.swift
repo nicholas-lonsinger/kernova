@@ -11,7 +11,7 @@ import KernovaKit
 /// one long operation that holds it. A live phase carries the session's
 /// identity, and ``VMActivity/sessionContext`` holds the session whose `id`
 /// equals it.
-enum VMLifecyclePhase: Sendable, Equatable {
+package enum VMLifecyclePhase: Sendable, Equatable {
     /// Powered off, with no saved state to come back on.
     case stopped
 
@@ -57,7 +57,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
     }
 
     /// Whether the VM is settled with a live session.
-    var isSettledLive: Bool {
+    package var isSettledLive: Bool {
         switch self {
         case .running, .livePaused: true
         case .stopped, .initialBoot, .failed, .suspended, .operating, .removed: false
@@ -65,7 +65,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
     }
 
     /// The operation holding the VM, or `nil` in a settled phase.
-    var operation: VMOperation? {
+    package var operation: VMOperation? {
         guard case .operating(let operation) = self else { return nil }
         return operation
     }
@@ -76,7 +76,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
     /// session an operation holds — or `nil`.
     ///
     /// A `VZVirtualMachine` is in memory exactly while this is non-`nil`.
-    var sessionID: UUID? {
+    package var sessionID: UUID? {
         switch self {
         case .running(let id), .livePaused(let id): id
         case .operating(let operation): operation.session?.id
@@ -181,7 +181,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
 ///
 /// Suspension is not among them: a VM rests suspended exactly while its
 /// bundle's suspend slot is on disk, which ``phase(slotOnDisk:)`` reads.
-enum VMRestPhase: Sendable, Equatable {
+package enum VMRestPhase: Sendable, Equatable {
     case stopped
     case initialBoot
     case failed(message: String)
@@ -213,12 +213,12 @@ extension VMLifecyclePhase {
 // MARK: - Operation
 
 /// The one long operation holding a VM.
-struct VMOperation: Sendable, Equatable {
+package struct VMOperation: Sendable, Equatable {
     let kind: VMOperationKind
 
     /// The settled phase the operation was admitted from — what its base
     /// status presents before any session end.
-    let startedFrom: VMLifecyclePhase
+    package let startedFrom: VMLifecyclePhase
 
     var sessionState: VMOperationSessionState
 
@@ -273,13 +273,13 @@ struct VMOperationSession: Sendable, Equatable {
 }
 
 /// Whether a live guest is executing.
-enum VMGuestRunState: Sendable, Equatable {
+package enum VMGuestRunState: Sendable, Equatable {
     case running
     case paused
 }
 
 /// How an operation's session ended.
-enum VMSessionEnd: Sendable, Equatable {
+package enum VMSessionEnd: Sendable, Equatable {
     /// The guest powered off — shut down from inside, or force stopped.
     case poweredOff
     /// Virtualization stopped the guest with an error.
@@ -298,7 +298,7 @@ enum VMSessionEnd: Sendable, Equatable {
 ///
 /// Equal by identity: one operation, one outcome.
 @MainActor
-final class VMOutcome: Sendable, Equatable {
+package final class VMOutcome: Sendable, Equatable {
     /// How the operation ended, or `nil` until it has.
     private(set) var result: Result<Void, any Error>?
     private var waiters: [CheckedContinuation<Result<Void, any Error>, Never>] = []
@@ -344,13 +344,13 @@ final class VMOutcome: Sendable, Equatable {
         try await ended().get()
     }
 
-    nonisolated static func == (lhs: VMOutcome, rhs: VMOutcome) -> Bool { lhs === rhs }
+    package nonisolated static func == (lhs: VMOutcome, rhs: VMOutcome) -> Bool { lhs === rhs }
 }
 
 // MARK: - Kinds
 
 /// What an operation does.
-enum VMOperationKind: Sendable, Equatable {
+package enum VMOperationKind: Sendable, Equatable {
     case bringUp(VMBringUpKind)
     case pausing
     /// A hot resume of a live-paused VM.
@@ -385,7 +385,7 @@ enum VMOperationKind: Sendable, Equatable {
     case copyingOut(VMCaptureMode)
 
     /// The operations a cancel request names.
-    enum Family: Sendable, Equatable {
+    package enum Family: Sendable, Equatable {
         case guestSetup
     }
 
@@ -492,7 +492,7 @@ enum VMNonStartBringUpKind: Sendable, Equatable {
 
 /// An operation that brings a guest up, or holds the VM across a restore that
 /// may resume one.
-enum VMBringUpKind: Sendable, Equatable {
+package enum VMBringUpKind: Sendable, Equatable {
     case guestStart(VMGuestStartKind)
     case settingUp(GuestSetupKind)
     /// A revert to `snapshotID`, resuming the guest at its end when
@@ -523,7 +523,7 @@ enum VMBringUpKind: Sendable, Equatable {
 
 /// A bring-up that starts the guest from what the bundle holds — its disks,
 /// or its saved state.
-enum VMGuestStartKind: Sendable, Equatable {
+package enum VMGuestStartKind: Sendable, Equatable {
     /// A cold boot, into Recovery when `recovery`.
     case starting(recovery: Bool)
     /// Start or Resume of a VM holding a saved state.
@@ -531,13 +531,13 @@ enum VMGuestStartKind: Sendable, Equatable {
 }
 
 /// Which guest setup a first start runs.
-enum GuestSetupKind: Sendable, Equatable {
+package enum GuestSetupKind: Sendable, Equatable {
     case macOSInstall
     case linuxImageDownload
 }
 
 /// An action on a live session that takes no admission of its own.
-enum VMSessionAction: Sendable, Equatable {
+package enum VMSessionAction: Sendable, Equatable {
     /// The ACPI shutdown request.
     case requestStop
     case forceStop
@@ -546,8 +546,12 @@ enum VMSessionAction: Sendable, Equatable {
 // MARK: - Edit Classes
 
 /// What a write to a VM's persisted state touches, as admission reads it.
-struct VMEditClasses: OptionSet, Sendable, Hashable {
-    let rawValue: Int
+package struct VMEditClasses: OptionSet, Sendable, Hashable {
+    package let rawValue: Int
+
+    package init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
 
     /// Hardware the `VZVirtualMachine` is built from, pinned by a live session
     /// and by a saved state — whole, including fields a restore was observed to

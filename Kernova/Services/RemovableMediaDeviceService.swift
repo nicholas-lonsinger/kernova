@@ -3,11 +3,13 @@ import KernovaLogging
 
 /// Manages runtime USB mass storage device attach/detach via XHCI controller.
 @MainActor
-final class RemovableMediaDeviceService: RemovableMediaAttaching {
+package final class RemovableMediaDeviceService: RemovableMediaAttaching {
+    package init() {}
+
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RemovableMediaDeviceService")
 
-    func attach(
+    package func attach(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID?,
@@ -77,7 +79,7 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
         return info
     }
 
-    func detach(
+    package func detach(
         deviceInfo: RemovableMediaDeviceInfo,
         from instance: VMInstance
     ) async throws {

@@ -1,9 +1,9 @@
 /// The short forms that name a snapshot's kind — the snapshot row's subtitle,
 /// a Shortcuts snapshot's subtitle, and Get Info's "Captured" row read them.
-enum SnapshotKindCopy {
+package enum SnapshotKindCopy {
     /// The state a snapshot of `kind` captured, short enough to sit between a
     /// row's date and its size.
-    static func stateLabel(_ kind: VMSnapshotKind) -> String {
+    package static func stateLabel(_ kind: VMSnapshotKind) -> String {
         switch kind {
         case .warm: "Running state"
         case .cold: "Powered off"
@@ -13,7 +13,7 @@ enum SnapshotKindCopy {
     /// What reverting to a snapshot of `kind` puts back, for Get Info. Both
     /// kinds carry the VM's settings, so the running state is the part that
     /// tells them apart.
-    static func capturedContents(_ kind: VMSnapshotKind) -> String {
+    package static func capturedContents(_ kind: VMSnapshotKind) -> String {
         switch kind {
         case .warm: "Running state, disks, and settings"
         case .cold: "Disks and settings"

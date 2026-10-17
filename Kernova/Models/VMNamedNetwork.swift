@@ -7,16 +7,16 @@ import Foundation
 ///
 /// Lives at library level, in ``VMNetworkDirectory``; a VM names it by ``id``,
 /// so a rename touches no VM.
-struct VMNamedNetwork: Codable, Sendable, Hashable, Identifiable {
-    let id: UUID
+package struct VMNamedNetwork: Codable, Sendable, Hashable, Identifiable {
+    package let id: UUID
     var name: String
     /// The mode every VM on it runs in. Fixed at creation: a VM joins the
     /// network only in this mode, so changing it would move every member.
-    let kind: VmnetNetworkKind
+    package let kind: VmnetNetworkKind
 
     /// The kinds the New Network sheet offers, in its order: the first is the
     /// kind a new network gets unless another is chosen.
-    static let kindsInCreationOrder: [VmnetNetworkKind] = [.nat, .hostOnly]
+    package static let kindsInCreationOrder: [VmnetNetworkKind] = [.nat, .hostOnly]
 
     /// The kind a new network gets unless another is chosen.
     static var defaultKind: VmnetNetworkKind { kindsInCreationOrder[0] }
@@ -30,7 +30,7 @@ struct VMNamedNetwork: Codable, Sendable, Hashable, Identifiable {
 }
 
 extension VMNamedNetwork {
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             id: try c.decode(UUID.self, forKey: .id),

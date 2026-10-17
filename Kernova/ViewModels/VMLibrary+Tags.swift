@@ -26,28 +26,28 @@ extension VMLibrary {
 
     /// Every tag, in the order every list of them shows them; `nil` while the
     /// file defining them can't be read.
-    var tags: [VMTag]? { organization.tags }
+    package var tags: [VMTag]? { organization.tags }
 
     /// The tags `instance` carries, in the library's order of its tags: none
     /// while the file defining them can't be read, since an assignment shows
     /// only the tags the library defines.
-    func tags(of instance: VMInstance) -> [VMTag] {
+    package func tags(of instance: VMInstance) -> [VMTag] {
         (organization.tags ?? []).assigned(instance.hostState.tags)
     }
 
     /// Defines a new tag named `name` in `color`.
     @discardableResult
-    func createTag(named name: String, color: VMTagColor) throws -> VMTag {
+    package func createTag(named name: String, color: VMTagColor) throws -> VMTag {
         try organization.createTag(named: name, color: color)
     }
 
     /// Renames the tag `id` identifies.
-    func renameTag(_ id: UUID, to name: String) throws {
+    package func renameTag(_ id: UUID, to name: String) throws {
         try organization.renameTag(id, to: name)
     }
 
     /// Shows the tag `id` identifies in `color`.
-    func setColor(_ color: VMTagColor, ofTag id: UUID) throws {
+    package func setColor(_ color: VMTagColor, ofTag id: UUID) throws {
         try organization.setColor(color, ofTag: id)
     }
 
@@ -58,7 +58,7 @@ extension VMLibrary {
     /// the condition, which no VM passes from then on, until the user clears
     /// it. A VM whose state takes no edit now keeps the assignment, which is
     /// inert.
-    func deleteTag(_ id: UUID) throws {
+    package func deleteTag(_ id: UUID) throws {
         try organization.removeTag(id)
         for instance in instances where instance.hostState.tags.contains(id) {
             do {
@@ -74,7 +74,7 @@ extension VMLibrary {
     }
 
     /// Puts the tag `id` identifies on `instance`, or takes it off.
-    func setTag(_ id: UUID, assigned: Bool, on instance: VMInstance) throws {
+    package func setTag(_ id: UUID, assigned: Bool, on instance: VMInstance) throws {
         try changeTags(of: instance) { tags in
             if assigned {
                 tags.insert(id)

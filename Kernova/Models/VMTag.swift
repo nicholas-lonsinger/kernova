@@ -7,18 +7,18 @@ import Foundation
 /// The definition lives at library level, in ``VMOrganizationDirectory``; each
 /// VM's assignments live in its ``VMHostState/tags``, by ``id``. Its name is
 /// unique among tags ignoring case.
-struct VMTag: Codable, Sendable, Hashable, Identifiable {
-    let id: UUID
-    var name: String
-    var color: VMTagColor
+package struct VMTag: Codable, Sendable, Hashable, Identifiable {
+    package let id: UUID
+    package var name: String
+    package var color: VMTagColor
 }
 
 /// The colors a tag takes: the system's adaptive palette, which follows the
 /// appearance and the accessibility contrast settings.
-enum VMTagColor: String, Codable, CaseIterable, Sendable {
+package enum VMTagColor: String, Codable, CaseIterable, Sendable {
     case red, orange, yellow, green, blue, purple, gray
 
-    var title: String {
+    package var title: String {
         switch self {
         case .red: "Red"
         case .orange: "Orange"

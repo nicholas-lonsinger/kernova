@@ -1,7 +1,7 @@
 import Foundation
 
 /// Why a user-supplied restore image URL was refused.
-enum RestoreImageProbeError: LocalizedError, Equatable {
+package enum RestoreImageProbeError: LocalizedError, Equatable {
     case insecureURL
     case unreachable(statusCode: Int)
     case unknownSize
@@ -10,7 +10,7 @@ enum RestoreImageProbeError: LocalizedError, Equatable {
     case unreadableStructure
     case transportFailed(description: String)
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .insecureURL:
             "That link isn't secure. Restore images must be served over HTTPS."
@@ -47,7 +47,7 @@ extension RestoreImageProbeError {
 }
 
 /// Abstraction for checking a user-supplied restore image URL before download.
-protocol RestoreImageProbing: Sendable {
+package protocol RestoreImageProbing: Sendable {
     /// Establishes that `url` serves an image that can install into a VM, and
     /// how large it is, without downloading it.
     func probe(_ url: URL) async throws -> ProbedRestoreImage

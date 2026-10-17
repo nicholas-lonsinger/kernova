@@ -7,9 +7,9 @@ import Foundation
 /// one clock wakes on the same tick.
 @MainActor
 @Observable
-final class MinuteClock {
+package final class MinuteClock {
     /// The moment of the latest tick.
-    private(set) var now: Date
+    package private(set) var now: Date
 
     /// A clock standing at `now` until ``advance(to:)`` moves it.
     init(now: Date = Date()) {
@@ -17,7 +17,7 @@ final class MinuteClock {
     }
 
     /// The app's clock, ticking at the start of each wall-clock minute.
-    static let wall: MinuteClock = {
+    package static let wall: MinuteClock = {
         let clock = MinuteClock()
         clock.tickEachMinute()
         return clock

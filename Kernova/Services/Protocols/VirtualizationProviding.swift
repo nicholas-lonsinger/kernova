@@ -6,7 +6,7 @@ import Foundation
 /// A restore consumes the save file, so once the start is over nothing
 /// distinguishes the three; the start that took the branch is the only thing
 /// that can say which it was.
-enum GuestStartRoute: Equatable, Sendable {
+package enum GuestStartRoute: Equatable, Sendable {
     /// Booted the guest from its disks.
     case coldBoot
     /// The cold boot a Recovery start performs, carrying that start's caveat:
@@ -17,7 +17,7 @@ enum GuestStartRoute: Equatable, Sendable {
     case restoredSavedState
 
     /// The route `kind` takes.
-    init(_ kind: VMGuestStartKind) {
+    package init(_ kind: VMGuestStartKind) {
         switch kind {
         case .starting(let recovery): self = recovery ? .recoveryBoot : .coldBoot
         case .restoringSavedState: self = .restoredSavedState
@@ -27,7 +27,7 @@ enum GuestStartRoute: Equatable, Sendable {
     /// Whether this route carries the guest's provisioning options, which
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
     /// states only one of the three can.
-    var deliversGuestProvisioning: Bool { self == .coldBoot }
+    package var deliversGuestProvisioning: Bool { self == .coldBoot }
 }
 
 /// The Virtualization work each lifecycle operation's body runs.
@@ -37,7 +37,7 @@ enum GuestStartRoute: Equatable, Sendable {
 /// calls that ``VMActivity/requestStop(_:)`` and ``VMActivity/forceStop(_:)``
 /// make once they have admitted the session action.
 @MainActor
-protocol VirtualizationProviding: Sendable {
+package protocol VirtualizationProviding: Sendable {
     /// Brings the guest up the way `context`'s kind names — a cold boot, a
     /// Recovery boot, or the restore of the bundle's saved state — answering
     /// how it reached the guest.

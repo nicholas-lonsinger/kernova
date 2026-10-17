@@ -13,7 +13,7 @@ import KernovaLogging
 /// back into live access via ``ScopedAccess``. A `nil` bookmark falls through to
 /// the raw path, which the sandbox denies for out-of-container files — surfacing
 /// the missing-file UX, from which re-picking mints a fresh bookmark.
-enum SecurityScopedBookmark {
+package enum SecurityScopedBookmark {
     fileprivate static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "SecurityScopedBookmark")
 
@@ -26,7 +26,7 @@ enum SecurityScopedBookmark {
 
     /// Captures a panel-picked URL as the `(path, bookmark)` pair the models
     /// persist.
-    static func capture(_ url: URL) -> (path: String, bookmark: Data?) {
+    package static func capture(_ url: URL) -> (path: String, bookmark: Data?) {
         (url.path(percentEncoded: false), make(for: url))
     }
 

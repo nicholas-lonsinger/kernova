@@ -69,7 +69,7 @@ struct VMConfigurationWriteContext: Sendable {
 ///
 /// Reading a key and writing back what it answered changes nothing, which is
 /// what makes `get` output valid `set` input.
-struct VMConfigurationKey: Sendable {
+package struct VMConfigurationKey: Sendable {
     /// A key whose value lives in the VM's configuration.
     struct ConfigurationField: Sendable {
         /// The value as `set` accepts it back.
@@ -187,7 +187,7 @@ struct VMConfigurationKey: Sendable {
     func applies(to guestOS: VMGuestOS) -> Bool { appliesToGuest(guestOS) }
 
     /// Whether the key means anything for the VM `configuration` describes.
-    func applies(_ configuration: VMConfiguration) -> Bool { applies(to: configuration.guestOS) }
+    package func applies(_ configuration: VMConfiguration) -> Bool { applies(to: configuration.guestOS) }
 
     /// The value as `set` accepts it back.
     func read(_ settings: VMSettings) -> String {
@@ -249,12 +249,12 @@ struct VMConfigurationKey: Sendable {
     }
 
     /// An assignment of `value` to this key.
-    func assigning(_ value: String) -> ConfigurationEntry {
+    package func assigning(_ value: String) -> ConfigurationEntry {
         ConfigurationEntry(key: name, value: value)
     }
 
     /// An assignment of `value` to this key, spelled the way a read answers it.
-    func assigning(_ value: Bool) -> ConfigurationEntry {
+    package func assigning(_ value: Bool) -> ConfigurationEntry {
         assigning(String(value))
     }
 
@@ -305,14 +305,14 @@ struct VMConfigurationKey: Sendable {
 /// ``VMCommandCore/setConfiguration(_:assignments:consent:)`` with these keys,
 /// so a key added here becomes addressable everywhere at once. ``keys`` order
 /// is presentation order.
-enum VMConfigurationKeyRegistry {
+package enum VMConfigurationKeyRegistry {
     /// What the network mode key answers, and takes, for a VM with no network
     /// device at all.
-    static let noNetworkValue = "none"
+    package static let noNetworkValue = "none"
 
     /// What the MAC address key takes for a fresh address. A read answers the
     /// address itself, never this.
-    static let newMACAddressValue = "new"
+    package static let newMACAddressValue = "new"
 
     static let keys: [VMConfigurationKey] = [
         cpus, memory, displayWidth, displayHeight, displayHiDPI, displaySizeToWindow,
@@ -330,7 +330,7 @@ enum VMConfigurationKeyRegistry {
 
     // MARK: - Resources
 
-    static let cpus = VMConfigurationKey(
+    package static let cpus = VMConfigurationKey(
         name: "cpus",
         summary: "Virtual CPU cores, within what Virtualization allows on this Mac.",
         gate: .atRest,
@@ -340,7 +340,7 @@ enum VMConfigurationKeyRegistry {
                 value, key: "cpus", in: context.resourceLimits.cpuCount)
         })
 
-    static let memory = VMConfigurationKey(
+    package static let memory = VMConfigurationKey(
         name: "memory",
         summary: "Guest memory in gigabytes, to the nearest megabyte: 8, or 1.5 for 1536 MB.",
         gate: .atRest,
@@ -352,7 +352,7 @@ enum VMConfigurationKeyRegistry {
 
     // MARK: - Display
 
-    static let displayWidth = VMConfigurationKey(
+    package static let displayWidth = VMConfigurationKey(
         name: "display.width",
         summary: "Display width the guest lays out at; a Retina guest boots at twice this.",
         gate: .atRest,
@@ -364,7 +364,7 @@ enum VMConfigurationKeyRegistry {
         },
         refusalOnResult: sizedToWindowRefusal("display.width"))
 
-    static let displayHeight = VMConfigurationKey(
+    package static let displayHeight = VMConfigurationKey(
         name: "display.height",
         summary: "Display height the guest lays out at; a Retina guest boots at twice this.",
         gate: .atRest,
@@ -376,7 +376,7 @@ enum VMConfigurationKeyRegistry {
         },
         refusalOnResult: sizedToWindowRefusal("display.height"))
 
-    static let displayHiDPI = VMConfigurationKey(
+    package static let displayHiDPI = VMConfigurationKey(
         name: "display.hidpi",
         summary: "Boot the guest display Retina-sharp: true or false.",
         gate: .atRest,
@@ -395,7 +395,7 @@ enum VMConfigurationKeyRegistry {
                 config.displayResolution, toHiDPI: hiDPI)
         })
 
-    static let displaySizeToWindow = VMConfigurationKey(
+    package static let displaySizeToWindow = VMConfigurationKey(
         name: "display.sizeToWindow",
         summary: "Size the display to its window at each cold start: true or false.",
         gate: .atRest,
@@ -415,7 +415,7 @@ enum VMConfigurationKeyRegistry {
                 config.displayResolution, toHiDPI: hiDPI)
         })
 
-    static let displayAutoResize = VMConfigurationKey(
+    package static let displayAutoResize = VMConfigurationKey(
         name: "display.autoResize",
         summary: "Let the guest follow the window as it is resized: true or false.",
         gate: .live,
@@ -425,7 +425,7 @@ enum VMConfigurationKeyRegistry {
                 value, key: "display.autoResize")
         })
 
-    static let displayPreference = VMConfigurationKey(
+    package static let displayPreference = VMConfigurationKey(
         name: "display.preference",
         summary: "Where the display opens: inline, popOut or fullscreen.",
         readHostState: { $0.displayPreference.rawValue },
@@ -437,7 +437,7 @@ enum VMConfigurationKeyRegistry {
 
     // MARK: - Audio and Input
 
-    static let audioInput = VMConfigurationKey(
+    package static let audioInput = VMConfigurationKey(
         name: "audio.input",
         summary: "Let the guest capture from this Mac's audio input: true or false.",
         gate: .atRest,
@@ -446,7 +446,7 @@ enum VMConfigurationKeyRegistry {
             config.audioInputEnabled = try ConfigurationValue.boolean(value, key: "audio.input")
         })
 
-    static let audioOutput = VMConfigurationKey(
+    package static let audioOutput = VMConfigurationKey(
         name: "audio.output",
         summary: "Play the guest's sound through this Mac: true or false.",
         gate: .atRest,
@@ -456,7 +456,7 @@ enum VMConfigurationKeyRegistry {
                 value, key: "audio.output")
         })
 
-    static let inputDevices = VMConfigurationKey(
+    package static let inputDevices = VMConfigurationKey(
         name: "input.devices",
         summary: "The keyboard and pointer a macOS guest sees: automatic, mac or usb.",
         gate: .atRest,
@@ -466,7 +466,7 @@ enum VMConfigurationKeyRegistry {
             config.inputDeviceMode = try ConfigurationValue.choice(value, key: "input.devices")
         })
 
-    static let inputSystemKeys = VMConfigurationKey(
+    package static let inputSystemKeys = VMConfigurationKey(
         name: "input.systemKeys",
         summary: "When system hot keys go to the guest: never, fullscreenOnly or always.",
         gate: .live,
@@ -476,7 +476,7 @@ enum VMConfigurationKeyRegistry {
                 value, key: "input.systemKeys")
         })
 
-    static let serialSocket = VMConfigurationKey(
+    package static let serialSocket = VMConfigurationKey(
         name: "serial.socket",
         summary: "Expose the serial port over a local UNIX socket: true or false.",
         gate: .live,
@@ -488,7 +488,7 @@ enum VMConfigurationKeyRegistry {
 
     // MARK: - Network
 
-    static let networkMode = VMConfigurationKey(
+    package static let networkMode = VMConfigurationKey(
         name: "network.mode",
         summary: "The network the guest joins: none, nat, bridged or hostOnly.",
         gate: .networkMode,
@@ -506,7 +506,7 @@ enum VMConfigurationKeyRegistry {
         },
         refusalOnResult: namedNetworkRefusal)
 
-    static let networkBridgedInterface = VMConfigurationKey(
+    package static let networkBridgedInterface = VMConfigurationKey(
         name: "network.bridgedInterface",
         summary: "BSD name of the interface a bridged guest attaches to; empty is automatic.",
         gate: .networkDevice,
@@ -516,7 +516,7 @@ enum VMConfigurationKeyRegistry {
             config.bridgedInterfaceIdentifier = trimmed.isEmpty ? nil : trimmed
         })
 
-    static let networkMembership = VMConfigurationKey(
+    package static let networkMembership = VMConfigurationKey(
         name: "network.membership",
         summary:
             "Which network of its mode a nat or hostOnly guest joins: common, the one every "
@@ -611,7 +611,7 @@ enum VMConfigurationKeyRegistry {
         throw CommandError.unsupportedByBuild(capability: network.entitledCapability)
     }
 
-    static let networkMAC = VMConfigurationKey(
+    package static let networkMAC = VMConfigurationKey(
         name: "network.mac",
         summary:
             "The guest's MAC address as six colon-separated hex pairs, or \(newMACAddressValue) "
@@ -646,7 +646,7 @@ enum VMConfigurationKeyRegistry {
 
     // MARK: - Startup
 
-    static let autoStart = VMConfigurationKey(
+    package static let autoStart = VMConfigurationKey(
         name: "autoStart",
         summary: "Start the VM each time Kernova opens: true or false.",
         readHostState: { String($0.startsAutomaticallyOnLaunch) },
@@ -655,7 +655,7 @@ enum VMConfigurationKeyRegistry {
             return { $0.startsAutomaticallyOnLaunch = enabled }
         })
 
-    static let ephemeral = VMConfigurationKey(
+    package static let ephemeral = VMConfigurationKey(
         name: "ephemeral",
         summary: "Return the VM to its baseline snapshot at every shutdown: true or false.",
         readHostState: { String($0.ephemeralModeEnabled) },
@@ -679,7 +679,7 @@ enum VMConfigurationKeyRegistry {
             }
         })
 
-    static let ephemeralBaseline = VMConfigurationKey(
+    package static let ephemeralBaseline = VMConfigurationKey(
         name: "ephemeral.baseline",
         summary:
             "The snapshot Ephemeral Mode returns to, by identifier or name; setting one turns "
@@ -709,7 +709,7 @@ enum VMConfigurationKeyRegistry {
 
     // MARK: - Guest Agent
 
-    static let clipboardSharing = VMConfigurationKey(
+    package static let clipboardSharing = VMConfigurationKey(
         name: "clipboard.sharing",
         summary: "Exchange clipboard text with the guest: true or false.",
         gateByGuest: { $0.sharesClipboardThroughDevice ? .atRest : .live },
@@ -719,7 +719,7 @@ enum VMConfigurationKeyRegistry {
                 value, key: "clipboard.sharing")
         })
 
-    static let clipboardPassthrough = VMConfigurationKey(
+    package static let clipboardPassthrough = VMConfigurationKey(
         name: "clipboard.passthrough",
         summary:
             "Forward the clipboard both ways with no window step, which needs sharing on.",
@@ -737,7 +737,7 @@ enum VMConfigurationKeyRegistry {
                 + "Set clipboard.sharing=true as well."
         })
 
-    static let dropFiles = VMConfigurationKey(
+    package static let dropFiles = VMConfigurationKey(
         name: "dropFiles",
         summary: "Send files dropped on the display to the guest's Downloads: true or false.",
         gate: .live,
@@ -747,7 +747,7 @@ enum VMConfigurationKeyRegistry {
             config.dropFilesEnabled = try ConfigurationValue.boolean(value, key: "dropFiles")
         })
 
-    static let agentLogForwarding = VMConfigurationKey(
+    package static let agentLogForwarding = VMConfigurationKey(
         name: "agent.logForwarding",
         summary: "Forward the guest agent's log records to this Mac: true or false.",
         gate: .live,
@@ -758,7 +758,7 @@ enum VMConfigurationKeyRegistry {
                 value, key: "agent.logForwarding")
         })
 
-    static let agentInstallReminder = VMConfigurationKey(
+    package static let agentInstallReminder = VMConfigurationKey(
         name: "agent.installReminder",
         summary: "Remind in the sidebar while the guest agent has not connected: true or false.",
         applies: { $0 == .macOS },

@@ -1,11 +1,12 @@
 import Foundation
+import KernovaKit
 
 /// Which content the detail pane shows for a given VM, derived purely from the
 /// VM's lifecycle phase and related flags.
 ///
 /// Whether a form it shows takes edits is the catalog's answer, not the
 /// route's (`VMDetailRouterViewController`).
-enum DetailRoute: Equatable {
+package enum DetailRoute: Equatable {
     /// Show the settings form.
     case settings
     /// VM exists but hasn't completed its initial boot; show the initial-boot
@@ -26,7 +27,7 @@ enum DetailRoute: Equatable {
     case display
 
     /// Resolves the route the detail pane should display.
-    static func resolve(
+    package static func resolve(
         phase: VMLifecyclePhase,
         hasSetupState: Bool,
         detailPaneMode: DetailPaneMode

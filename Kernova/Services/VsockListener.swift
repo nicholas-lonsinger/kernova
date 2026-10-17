@@ -27,7 +27,7 @@ enum VsockAdmission: Equatable, Sendable {
 /// connection on: the admission check and a data port's hand-off are
 /// synchronous there, and only a framed port's `onConnect` hops to the main
 /// actor.
-struct VsockListener: Sendable {
+package struct VsockListener: Sendable {
     typealias OnConnect = @MainActor (VsockChannel) -> Void
 
     /// Takes ownership of one accepted descriptor, unwrapped, synchronously on
@@ -49,7 +49,7 @@ struct VsockListener: Sendable {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockListener")
 
-    let port: UInt32
+    package let port: UInt32
     private let shouldAdmit: ShouldAdmit?
     private let handoff: Handoff
 
@@ -85,7 +85,7 @@ struct VsockListener: Sendable {
     /// Nothing on this path reads main-actor state or waits on a main-queue
     /// hop: a framed port's `onConnect` is queued and not awaited, and a data
     /// port's `onAcceptFd` runs synchronously right here.
-    func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
+    package func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
         guard fd >= 0 else {
             #log(
                 Self.logger, .error,
@@ -211,7 +211,7 @@ struct VsockListener: Sendable {
 
 /// The queue-side install of a VM's vsock listeners, as the main actor drives
 /// it.
-protocol VsockListenerInstalling: Sendable {
+package protocol VsockListenerInstalling: Sendable {
     func attach(_ listeners: [VsockListener]) async
     func detach(ports: [UInt32]) async
 }

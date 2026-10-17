@@ -680,7 +680,7 @@ extension VMCommandCore {
     }
 
     /// The refusal a create, clone or import cancel raises.
-    static func cancelPreparingPrompt(_ kind: VMArrival.Kind) -> ConfirmationPrompt {
+    package static func cancelPreparingPrompt(_ kind: VMArrival.Kind) -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .cancelPreparing,
             title: kind.cancelAlertTitle,
@@ -794,7 +794,7 @@ extension VMCommandCore {
     /// the files outside the bundle a caller may choose to take too — a list of
     /// only shared or missing ones offers no choice, so the clause is left out
     /// unless one of them is selectable.
-    static func deletePrompt(
+    package static func deletePrompt(
         _ instance: VMInstance, permanently: Bool, externals: [ExternalAttachment]
     ) -> ConfirmationPrompt {
         let name = "\u{201C}\(instance.name)\u{201D}"

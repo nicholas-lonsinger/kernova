@@ -7,12 +7,12 @@ import KernovaKit
 /// Every VM verb takes a ``VMInstance``, so none can reach an arrival or an
 /// unreadable bundle.
 @MainActor
-enum LibraryEntry {
+package enum LibraryEntry {
     case vm(VMInstance)
     case arriving(VMArrival)
     case unreadable(UnreadableVM)
 
-    var id: UUID {
+    package var id: UUID {
         switch self {
         case .vm(let instance): instance.id
         case .arriving(let arrival): arrival.id
@@ -20,7 +20,7 @@ enum LibraryEntry {
         }
     }
 
-    var name: String {
+    package var name: String {
         switch self {
         case .vm(let instance): instance.name
         case .arriving(let arrival): arrival.name
@@ -30,7 +30,7 @@ enum LibraryEntry {
 
     /// The configuration the row is ordered and described by; `nil` for a
     /// bundle whose configuration cannot be read.
-    var configuration: VMConfiguration? {
+    package var configuration: VMConfiguration? {
         switch self {
         case .vm(let instance): instance.configuration
         case .arriving(let arrival): arrival.configuration
@@ -38,11 +38,11 @@ enum LibraryEntry {
         }
     }
 
-    var vm: VMInstance? {
+    package var vm: VMInstance? {
         if case .vm(let instance) = self { instance } else { nil }
     }
 
-    var arrival: VMArrival? {
+    package var arrival: VMArrival? {
         if case .arriving(let arrival) = self { arrival } else { nil }
     }
 
@@ -66,8 +66,8 @@ enum LibraryEntry {
 /// ``VMInstance``.
 @MainActor
 @Observable
-final class VMArrival {
-    enum Kind: Sendable, Equatable {
+package final class VMArrival {
+    package enum Kind: Sendable, Equatable {
         case creating
         case cloning
         case importing
@@ -89,7 +89,7 @@ final class VMArrival {
             }
         }
 
-        var cancelLabel: String { "Cancel \(displayNoun)" }
+        package var cancelLabel: String { "Cancel \(displayNoun)" }
 
         var cancelAlertTitle: String { "Cancel \(displayNoun)?" }
 
@@ -145,8 +145,8 @@ final class VMArrival {
     }
 
     /// The identifier of the VM this arrival becomes.
-    let id: UUID
-    let kind: Kind
+    package let id: UUID
+    package let kind: Kind
     /// What the write was asked for — the name, listing and description the
     /// row shows until the VM is read from its published bundle.
     let configuration: VMConfiguration
@@ -174,13 +174,13 @@ final class VMArrival {
 
     private(set) var stage: Stage = .writing
 
-    var name: String { configuration.name }
+    package var name: String { configuration.name }
 
     /// Whether a cancel was taken, before the rename or during it.
     var isCancelling: Bool { stage == .cancelling || stage == .withdrawing }
 
     /// What a surface shows for this row.
-    var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : kind.displayLabel }
+    package var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : kind.displayLabel }
 
     @ObservationIgnored private let run: @MainActor (VMArrival) async throws -> VMInstance
 

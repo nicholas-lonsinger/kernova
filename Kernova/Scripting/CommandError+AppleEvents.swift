@@ -42,13 +42,13 @@ extension CommandError {
 
 extension NSScriptCommand {
     /// Records what the script reads back instead of a result.
-    func refuse(_ number: Int, _ message: String) {
+    package func refuse(_ number: Int, _ message: String) {
         scriptErrorNumber = number
         scriptErrorString = message
     }
 
     /// Records the core's refusal, in the number and words a script reads it as.
-    func refuse(_ refusal: CommandError) {
+    package func refuse(_ refusal: CommandError) {
         refuse(refusal.appleEventErrorNumber, refusal.appleEventErrorString)
     }
 }

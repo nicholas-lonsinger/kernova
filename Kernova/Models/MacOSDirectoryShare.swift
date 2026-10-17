@@ -5,16 +5,16 @@ import Foundation
 ///
 /// Built only by ``make(for:serving:)``, for a boot and for a live share swap
 /// alike.
-struct MacOSDirectoryShare: Sendable, Equatable {
-    struct Entry: Sendable, Equatable {
+package struct MacOSDirectoryShare: Sendable, Equatable {
+    package struct Entry: Sendable, Equatable {
         /// The ``SharedDirectory/id`` this entry shares.
         let id: UUID
-        let name: String
-        let url: URL
-        let readOnly: Bool
+        package let name: String
+        package let url: URL
+        package let readOnly: Bool
     }
 
-    let entries: [Entry]
+    package let entries: [Entry]
 
     /// The share a macOS guest's one directory-sharing device carries for
     /// `directories` — what a boot builds the device with, and, given the share
@@ -26,7 +26,7 @@ struct MacOSDirectoryShare: Sendable, Equatable {
     /// entry is resolved and validated from its path, under its
     /// ``SharedDirectory/mountName`` unless a name already taken forces the id
     /// prefix.
-    static func make(
+    package static func make(
         for directories: [SharedDirectory], serving: MacOSDirectoryShare? = nil
     ) throws -> MacOSDirectoryShare {
         let served = Dictionary(

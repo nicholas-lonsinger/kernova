@@ -2,7 +2,7 @@ import Foundation
 
 /// The bundle-relative items a snapshot or a clone takes, and the copy that
 /// moves them between bundles.
-enum VMBundleItems {
+package enum VMBundleItems {
     // MARK: - Captured payload
 
     /// The bundle-relative paths a snapshot captures alongside the saved state.
@@ -21,7 +21,7 @@ enum VMBundleItems {
     /// `layout` is the directory the firmware files are looked for in — the VM's
     /// bundle while capturing, the snapshot's own directory while working out
     /// what it holds.
-    static func capturedRelativePaths(
+    package static func capturedRelativePaths(
         for configuration: VMConfiguration, layout: VMBundleLayout
     ) -> [String] {
         let disks = configuration.effectiveStorageDisks(layout: layout)
@@ -41,7 +41,7 @@ enum VMBundleItems {
 
     /// What ``copyItems(_:from:to:ifMissing:)`` does about a path the source
     /// lacks.
-    enum MissingItem {
+    package enum MissingItem {
         /// Leaves it out of the copy.
         case skip
         /// Throws what the closure makes of the relative path.
@@ -54,7 +54,7 @@ enum VMBundleItems {
     /// Copies each file or directory `relativePaths` names from the root at
     /// `source` to the same relative path under `destination`, creating the
     /// parent directories it needs.
-    static func copyItems(
+    package static func copyItems(
         _ relativePaths: [String], from source: URL, to destination: URL, ifMissing: MissingItem
     ) throws {
         let manager = FileManager.default

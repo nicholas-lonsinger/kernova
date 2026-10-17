@@ -1,7 +1,7 @@
 import Foundation
 
 /// Failures USB accessory attach and detach report.
-enum USBAccessoryError: LocalizedError, Equatable {
+package enum USBAccessoryError: LocalizedError, Equatable {
     case noVirtualMachine
     case noUSBController
     /// The accessory is no longer assigned to Kernova — unplugged, or handed
@@ -10,7 +10,7 @@ enum USBAccessoryError: LocalizedError, Equatable {
     /// The VM holds no passthrough device under that identifier.
     case deviceNotFound
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .noVirtualMachine: "The virtual machine is not running."
         case .noUSBController: "This virtual machine has no USB controller."
@@ -28,7 +28,7 @@ enum USBAccessoryError: LocalizedError, Equatable {
 /// only what they assigned. It never enumerates the host's USB devices, so
 /// `accessories` is exactly what Kernova may act on and nothing wider.
 @MainActor
-protocol USBAccessoryProviding: AnyObject {
+package protocol USBAccessoryProviding: AnyObject {
     /// The accessories macOS has assigned to Kernova, in arrival order.
     var accessories: [USBAccessoryInfo] { get }
 

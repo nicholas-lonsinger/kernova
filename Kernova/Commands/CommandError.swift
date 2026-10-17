@@ -3,7 +3,7 @@ import KernovaKit
 
 /// A way out of a failure that a caller performs by acting on the app's own
 /// model, offered as data rather than as a presenter call.
-enum CommandRecovery: Sendable, Equatable {
+package enum CommandRecovery: Sendable, Equatable {
     /// A start or resume failed on one attachment. Removing that entry (the
     /// file or folder is untouched) and starting again is the offered way out.
     case removeStartFailedAttachment(StartFailedAttachment)
@@ -24,7 +24,7 @@ enum CommandRecovery: Sendable, Equatable {
 /// Each case is a refusal a surface renders in its own idiom — an AppKit alert
 /// in process, a ``CommandErrorDTO`` on the wire. The mapping belongs to each
 /// transport; the vocabulary lives here.
-enum CommandError: Error, Sendable, Equatable {
+package enum CommandError: Error, Sendable, Equatable {
     /// No VM answers to the selector.
     case notFound(VMSelector)
     /// The VM answered; something the verb named on it did not — a snapshot,
@@ -110,7 +110,7 @@ extension CommandError {
     var alertTitle: String { dto.title }
 
     /// What a surface tells the user, in one sentence per fact.
-    var message: String { dto.message }
+    package var message: String { dto.message }
 
     /// Whether the VM already had work in flight that this verb would race.
     var isBusy: Bool {
@@ -192,5 +192,5 @@ extension CommandError {
 }
 
 extension CommandError: LocalizedError {
-    var errorDescription: String? { message }
+    package var errorDescription: String? { message }
 }

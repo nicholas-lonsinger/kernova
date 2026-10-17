@@ -36,11 +36,11 @@ struct MainAppRegistration: LoginItemRegistration {
 /// `.status` is the source of truth and is **never persisted locally** — the
 /// toggle reads it live, so a change made in System Settings is always
 /// reflected.
-struct LoginItemService {
+package struct LoginItemService {
     private let registration: LoginItemRegistration
 
     /// The process-wide instance over the real `SMAppService` registration.
-    @MainActor static let shared = LoginItemService()
+    @MainActor package static let shared = LoginItemService()
 
     init(registration: LoginItemRegistration = MainAppRegistration()) {
         self.registration = registration
@@ -49,9 +49,9 @@ struct LoginItemService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "LoginItem")
 
     /// The live registration status.
-    var status: SMAppService.Status { registration.status }
+    package var status: SMAppService.Status { registration.status }
 
-    var isEnabled: Bool { registration.status == .enabled }
+    package var isEnabled: Bool { registration.status == .enabled }
 
     /// Registers or unregisters the app as a login item, returning the resulting
     /// status.
@@ -60,7 +60,7 @@ struct LoginItemService {
     /// with the item disabled in System Settings, `register()` throws while
     /// `status` reports `.requiresApproval`, which the caller deep-links on.
     @discardableResult
-    func setEnabled(_ enabled: Bool) -> SMAppService.Status {
+    package func setEnabled(_ enabled: Bool) -> SMAppService.Status {
         do {
             if enabled { try registration.register() } else { try registration.unregister() }
         } catch {
@@ -78,7 +78,7 @@ struct LoginItemService {
     }
 
     /// Opens System Settings → General → Login Items & Extensions.
-    func openLoginItemsSettings() {
+    package func openLoginItemsSettings() {
         SMAppService.openSystemSettingsLoginItems()
     }
 }

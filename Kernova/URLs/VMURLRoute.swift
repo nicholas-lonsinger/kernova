@@ -6,7 +6,7 @@ import KernovaKit
 /// A pure function over the URL: the app's URL front door decides nothing about
 /// what a link says, so the reading is testable without AppKit and without a
 /// command core.
-enum VMURLRoute: Equatable {
+package enum VMURLRoute: Equatable {
     /// Bring the VM's display in front of the user.
     case open(VMSelector)
     /// Put the VM in front of the user whatever state it is in.
@@ -91,7 +91,7 @@ enum VMURLRoute: Equatable {
 
     /// Splits one delivered batch into the links this front door answers and the
     /// files the import path takes.
-    static func partition(_ urls: [URL]) -> (links: [URL], files: [URL]) {
+    package static func partition(_ urls: [URL]) -> (links: [URL], files: [URL]) {
         var links: [URL] = []
         var files: [URL] = []
         for url in urls {

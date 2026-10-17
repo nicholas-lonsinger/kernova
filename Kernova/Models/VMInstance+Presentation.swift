@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 /// Whether the VM display takes files dragged onto it, and if not, why.
-enum DisplayDropAvailability {
+package enum DisplayDropAvailability {
     /// This VM has never run a guest agent, or has drag and drop switched off, so
     /// the display is not a drag destination at all — a drag over it behaves as
     /// if Kernova were not there.
@@ -30,7 +30,7 @@ extension VMInstance {
     ///
     /// A VM that is not running refuses too: pausing tears down no vsock, so the
     /// channel stays connected while the guest is frozen and cannot answer.
-    var displayDropAvailability: DisplayDropAvailability {
+    package var displayDropAvailability: DisplayDropAvailability {
         guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
             lastSeenAgentVersion != nil
         else { return .none }
@@ -50,7 +50,7 @@ extension VMInstance {
     ///
     /// `stagedIn` is where a promise drag wrote its files; the service holds it
     /// until that drop settles, and a refused drop leaves it to the caller.
-    func sendDroppedFilesToGuest(_ urls: [URL], stagedIn stagingDirectory: URL? = nil) -> Bool {
+    package func sendDroppedFilesToGuest(_ urls: [URL], stagedIn stagingDirectory: URL? = nil) -> Bool {
         guard displayDropAvailability == .available, let service = vsockDropService else {
             return false
         }
@@ -59,12 +59,12 @@ extension VMInstance {
 
     /// Reports a drag the display took that produced no file to send — a file
     /// promise the source failed to write.
-    func reportUnreadableDropToGuest() {
+    package func reportUnreadableDropToGuest() {
         vsockDropService?.reportUnreadableDrop()
     }
 
     /// What a person reads for this VM's status.
-    var statusDisplayName: String {
+    package var statusDisplayName: String {
         status.displayName(heldByAnotherCopy: heldByAnotherCopy)
     }
 
@@ -73,7 +73,7 @@ extension VMInstance {
     ///
     /// What an agent reports is peer-supplied, so it is read through
     /// `KernovaOSVersion.numericVersion(in:)` rather than shown raw.
-    var guestOSVersionDisplay: String? {
+    package var guestOSVersionDisplay: String? {
         guard let reported = reportedGuestOSVersion, !reported.isEmpty else {
             return nil
         }
@@ -81,7 +81,7 @@ extension VMInstance {
     }
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
-    var statusToolTip: String? {
+    package var statusToolTip: String? {
         if heldByAnotherCopy { return statusDisplayName + "." }
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
@@ -115,7 +115,7 @@ extension VMInstance {
     /// catalog answers, so the title, the tooltip and the command the slot
     /// invokes come from one derivation and a VM is never offered a word its
     /// state won't honour.
-    enum StopAction {
+    package enum StopAction {
         /// A live guest, which takes a graceful shutdown request.
         case stop
         /// No live guest to shut down: the slot deletes the bundle's saved state.
@@ -126,7 +126,7 @@ extension VMInstance {
         case revertToBaseline
 
         /// Menu title; the two confirming variants take the ellipsis.
-        var menuTitle: String {
+        package var menuTitle: String {
             switch self {
             case .stop: "Stop"
             case .discardSavedState: "Discard Saved State…"
@@ -136,7 +136,7 @@ extension VMInstance {
 
         /// Toolbar label — the menu title without the trailing ellipsis, which
         /// is a menu-only convention.
-        var toolbarLabel: String {
+        package var toolbarLabel: String {
             switch self {
             case .stop: "Stop"
             case .discardSavedState: "Discard Saved State"
@@ -145,7 +145,7 @@ extension VMInstance {
         }
 
         /// Toolbar tooltip for the slot while it can be invoked.
-        var toolTip: String {
+        package var toolTip: String {
             switch self {
             case .stop: "Stop the virtual machine"
             case .discardSavedState: "Discard the virtual machine's saved state"

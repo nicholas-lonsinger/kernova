@@ -20,7 +20,7 @@ extension UTType {
 
     /// Whether bytes of this type must be decoded with the RTFD document type —
     /// flat-RTFD carries attachments, so it needs `.rtfd`, not `.rtf`.
-    var needsRTFDDocumentType: Bool {
+    package var needsRTFDDocumentType: Bool {
         conforms(to: .flatRTFD)
     }
 }
@@ -31,7 +31,7 @@ extension ClipboardContent {
     ///
     /// A non-empty filename marks a distinct file the receiver materializes, so
     /// several of these mean several files.
-    var filePayloads: [Representation] {
+    package var filePayloads: [Representation] {
         representations.filter { !$0.filename.isEmpty }
     }
 

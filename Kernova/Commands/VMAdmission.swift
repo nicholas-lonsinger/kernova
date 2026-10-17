@@ -6,9 +6,9 @@ import KernovaKit
 ///
 /// Pure: the same request, phase and facts always decide the same way, which
 /// is what lets a surface's answer and the commit agree by construction.
-enum VMAdmission {
+package enum VMAdmission {
     /// Something asked of one VM.
-    enum Request: Sendable, Equatable {
+    package enum Request: Sendable, Equatable {
         /// Start, resolved from the facts to the bring-up it performs.
         case start(recovery: Bool)
         /// Resume: a hot resume of a live-paused VM, or the restore of a saved
@@ -23,7 +23,7 @@ enum VMAdmission {
         case affordance(VMAffordance)
     }
 
-    enum Decision: Equatable {
+    package enum Decision: Equatable {
         case admit
         /// The request asks for what the operation holding the VM is already
         /// producing; await its outcome.
@@ -31,7 +31,7 @@ enum VMAdmission {
         case refuse(Refusal)
     }
 
-    enum Refusal: Equatable, Sendable {
+    package enum Refusal: Equatable, Sendable {
         /// An operation holds the VM, and the request would be admitted once
         /// it ends.
         case busy(VMOperationKind)
@@ -65,7 +65,7 @@ enum VMAdmission {
         /// would fail, leaving the session's changes on the disks.
         case ephemeralBaselineUnreadable
 
-        static func == (lhs: Refusal, rhs: Refusal) -> Bool {
+        package static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
             case (.busy(let l), .busy(let r)): l == r
             case (.takesStoppedVM(let l), .takesStoppedVM(let r)): l == r
@@ -88,7 +88,7 @@ enum VMAdmission {
     /// They differ only for Start and Resume: a VM holding a saved state is
     /// offered Resume rather than Start, and a request that would join a
     /// bring-up is committed, never offered.
-    enum Posture: Sendable, Equatable {
+    package enum Posture: Sendable, Equatable {
         case offer
         case commit
     }
@@ -598,7 +598,7 @@ enum VMAdmission {
 /// ``exempts(_:)`` holds that pairing: any other request made under it is
 /// decided as new work, so no caller can carry an exemption onto a request
 /// it was not made for.
-enum VMRequestOrigin: Sendable, Equatable {
+package enum VMRequestOrigin: Sendable, Equatable {
     /// A person's verb, or work the app starts on its own — refused an
     /// operation once the termination has begun.
     case newWork
@@ -631,7 +631,7 @@ enum VMRequestOrigin: Sendable, Equatable {
 }
 
 /// A request that reads what a VM presents rather than moving it.
-enum VMAffordance: Sendable, Equatable {
+package enum VMAffordance: Sendable, Equatable {
     /// Info, the address, the snapshot list, reveal, Show in Finder.
     case inspect
     /// Open the display, or toggle the settings pane over it.

@@ -14,7 +14,7 @@ import KernovaKit
 /// Headless: it holds the prompt's words but presents nothing — the pane raises
 /// an alert with them, and a wire client receives them as a
 /// ``CommandError/confirmationRequired(_:)``.
-enum ClipboardPassthroughConsent {
+package enum ClipboardPassthroughConsent {
     /// Whether moving from `current` to `candidate` turns effective passthrough
     /// on — the whole of what consent is owed for.
     static func isNewlyEffective(
@@ -26,7 +26,7 @@ enum ClipboardPassthroughConsent {
     /// What passthrough exposes while it runs: the consent prompt's message and
     /// the passthrough switch's info, worded to read right before and after
     /// the user turns it on.
-    static func disclosure(vmName: String) -> String {
+    package static func disclosure(vmName: String) -> String {
         "While it\u{2019}s on, \u{201C}\(vmName)\u{201D} continuously receives whatever you "
             + "copy on this Mac, and its own clipboard is placed here \u{2014} with no per-copy "
             + "confirmation. That includes passwords and other sensitive content."

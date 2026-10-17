@@ -3,7 +3,7 @@ import CoreSpotlight
 import Foundation
 
 /// Where VMs are written so Spotlight can find them by name.
-protocol VMEntityIndexing: Sendable {
+package protocol VMEntityIndexing: Sendable {
     /// Writes `vms`, replacing whatever was held for the same identifiers.
     func index(_ vms: [VMEntity]) async throws
 
@@ -27,7 +27,7 @@ struct SpotlightVMEntityIndex: VMEntityIndexing {
 /// Where the identifiers already written to the index are recorded, in
 /// `UserDefaults` so a later launch reads them back.
 @MainActor
-final class VMIndexRecord {
+package final class VMIndexRecord {
     /// The literal `UserDefaults` key the identifiers are stored under.
     private static let key = "SpotlightIndexedVMIDs"
 

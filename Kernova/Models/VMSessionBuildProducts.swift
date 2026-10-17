@@ -6,7 +6,7 @@ import Foundation
 ///
 /// `@unchecked Sendable`: built off the main actor and handed over whole —
 /// nothing touches a pipe here until the session context adopts it.
-struct VMSessionBuildProducts: @unchecked Sendable {
+package struct VMSessionBuildProducts: @unchecked Sendable {
     let serialInputPipe: Pipe
     let serialOutputPipe: Pipe
     let clipboardInputPipe: Pipe?
@@ -22,5 +22,19 @@ struct VMSessionBuildProducts: @unchecked Sendable {
     /// The session's view of the vmnet networks the build's network attachment
     /// joins — the one the session's attachment recovery must classify and
     /// re-materialize through, and whose life holds the VM's own networks.
-    let vmnetNetworks: VmnetSessionNetworks
+    package let vmnetNetworks: VmnetSessionNetworks
+
+    package init(
+        serialInputPipe: Pipe, serialOutputPipe: Pipe, clipboardInputPipe: Pipe?, clipboardOutputPipe: Pipe?,
+        coldRemovableMedia: [RemovableMediaDeviceInfo], directoryShare: MacOSDirectoryShare?,
+        vmnetNetworks: VmnetSessionNetworks
+    ) {
+        self.serialInputPipe = serialInputPipe
+        self.serialOutputPipe = serialOutputPipe
+        self.clipboardInputPipe = clipboardInputPipe
+        self.clipboardOutputPipe = clipboardOutputPipe
+        self.coldRemovableMedia = coldRemovableMedia
+        self.directoryShare = directoryShare
+        self.vmnetNetworks = vmnetNetworks
+    }
 }

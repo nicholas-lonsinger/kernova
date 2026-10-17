@@ -5,7 +5,7 @@ import KernovaKit
 /// ``VMListQuery`` with every name in it resolved, so reading one fails for
 /// no reason.
 @MainActor
-struct VMLibrarySelection {
+package struct VMLibrarySelection {
     /// The attributes an admitted entry has.
     let filter: VMLibraryFilter
     /// Groups an admitted entry is in, every one of them.
@@ -14,7 +14,7 @@ struct VMLibrarySelection {
     let sort: VMLibrarySort
 
     /// Every entry, in library order.
-    static let all = VMLibrarySelection(filter: VMLibraryFilter(), groups: [], sort: .manual)
+    package static let all = VMLibrarySelection(filter: VMLibraryFilter(), groups: [], sort: .manual)
 
     /// The manual order: the first folder's own, else the library's.
     var manualOrder: [UUID]? { groups.lazy.compactMap(\.order).first }
@@ -75,7 +75,7 @@ extension VMCommandCore {
     /// The VMs `selection` admits, in its order — each one the sidebar would
     /// list under the same filter, an arrival included. ``VMLibrarySelection/all``
     /// is every VM in library order.
-    func list(_ selection: VMLibrarySelection) -> [VMSummary] {
+    package func list(_ selection: VMLibrarySelection) -> [VMSummary] {
         library.refreshFromOtherCopies()
         return entries(in: selection).map(summary)
     }

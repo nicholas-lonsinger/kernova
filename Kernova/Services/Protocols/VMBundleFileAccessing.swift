@@ -2,7 +2,7 @@ import Foundation
 
 /// What holds a bundle's run lock for as long as it is retained, released the
 /// moment the last reference goes.
-typealias VMBundleLockHolder = AnyObject & Sendable
+package typealias VMBundleLockHolder = AnyObject & Sendable
 
 /// Where a VM bundle's state files are read and replaced, one coordinated
 /// access at a time, and where its directory's run lock is taken.
@@ -11,7 +11,7 @@ typealias VMBundleLockHolder = AnyObject & Sendable
 /// so every file the body touches is read or replaced under it. A body must
 /// not start a second access on the same bundle: a nested coordination of the
 /// same package from the same thread waits on the outer one forever.
-protocol VMBundleFileAccessing: Sendable {
+package protocol VMBundleFileAccessing: Sendable {
     /// Takes the run lock on the bundle directory at `bundleURL` without
     /// waiting.
     ///
@@ -42,14 +42,14 @@ protocol VMBundleFileAccessing: Sendable {
 }
 
 /// The files of one bundle as a coordinated access sees them.
-protocol VMBundleFileReading {
+package protocol VMBundleFileReading {
     /// The bytes at `relativePath` inside the bundle, or `nil` when no file is
     /// there; throws when one is there and cannot be read.
     func data(atRelativePath relativePath: String) throws -> Data?
 }
 
 /// ``VMBundleFileReading`` plus the one write a state file takes.
-protocol VMBundleFileWriting: VMBundleFileReading {
+package protocol VMBundleFileWriting: VMBundleFileReading {
     /// Replaces the file at `relativePath` with `data` in one atomic step,
     /// creating the directory it sits in when that is missing inside the
     /// bundle; a bundle that is not there fails the write.

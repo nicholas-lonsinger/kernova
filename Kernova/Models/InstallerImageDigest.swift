@@ -3,14 +3,14 @@ import Foundation
 /// What an installer image's SHA-256 was compared with — never how the bytes
 /// arrived, since a file adopted from Downloads is held to the same digest a
 /// fresh download is.
-enum DigestSource: Sendable, Equatable {
+package enum DigestSource: Sendable, Equatable {
     /// A row in the distribution's checksum list, read from this URL.
     case checksumList(URL)
     /// The checksum the user typed beside a pasted URL.
     case enteredByUser
 
     /// The source as a noun phrase, for composing into UI copy.
-    var phrase: String {
+    package var phrase: String {
         switch self {
         case .checksumList(let url): "the checksum list on \(Self.host(of: url))"
         case .enteredByUser: "the checksum you entered"
@@ -18,7 +18,7 @@ enum DigestSource: Sendable, Equatable {
     }
 
     /// The source as a standalone value, for a row or a summary line.
-    var title: String {
+    package var title: String {
         switch self {
         case .checksumList(let url): "Checksum list on \(Self.host(of: url))"
         case .enteredByUser: "Checksum you entered"
@@ -57,14 +57,14 @@ struct ExpectedDigest: Sendable, Equatable {
 /// Built in code only by ``ExpectedDigest/match(_:filename:)`` or
 /// ``unchecked(filename:sha256:)``, so a record claiming a match came from an
 /// equal expected digest; decoding restores one those built.
-struct InstallerImageDigest: Sendable, Equatable {
+package struct InstallerImageDigest: Sendable, Equatable {
     /// The name the source gave the image the digest belongs to.
-    let filename: String
+    package let filename: String
     /// Lowercase hex.
-    let sha256: String
+    package let sha256: String
     /// What the digest matched, or `nil` when it was computed but compared with
     /// nothing.
-    let matched: DigestSource?
+    package let matched: DigestSource?
 
     fileprivate init(filename: String, sha256: String, matched: DigestSource?) {
         self.filename = filename
@@ -86,7 +86,7 @@ private let notVerified = "Not verified"
 extension InstallerImageDigest {
     /// The settings card's Verification value: what the digest matched, or that
     /// it was compared with nothing.
-    var verificationSummary: String {
+    package var verificationSummary: String {
         matched.map { "Matched \($0.phrase)" } ?? notVerified
     }
 }
@@ -96,16 +96,16 @@ extension InstallerImageDigest {
 /// result.
 extension DigestSource {
     /// A download badge's secondary line.
-    var pendingCheckLine: String { "Checked after download against \(phrase)" }
+    package var pendingCheckLine: String { "Checked after download against \(phrase)" }
 }
 
 /// The wizard's forms for a pick that may have nothing to check against.
 extension DigestSource? {
     /// A download badge's secondary line.
-    var pendingCheckLine: String { self?.pendingCheckLine ?? notVerified }
+    package var pendingCheckLine: String { self?.pendingCheckLine ?? notVerified }
 
     /// The Review step's Verification value.
-    var pendingCheckTitle: String { self?.title ?? notVerified }
+    package var pendingCheckTitle: String { self?.title ?? notVerified }
 }
 
 // MARK: - Codable
@@ -124,7 +124,7 @@ extension InstallerImageDigest: Codable {
         case checksumListURL
     }
 
-    func encode(to encoder: any Encoder) throws {
+    package func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(filename, forKey: .filename)
         try c.encode(sha256, forKey: .sha256)
@@ -139,7 +139,7 @@ extension InstallerImageDigest: Codable {
         }
     }
 
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let sha256 = try c.decode(String.self, forKey: .sha256)
         guard ChecksumManifest.isSHA256(sha256) else {

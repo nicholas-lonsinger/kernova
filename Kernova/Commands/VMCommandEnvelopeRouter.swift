@@ -9,13 +9,13 @@ import KernovaLogging
 /// nothing else — the grant a sandboxed client's named path needs included,
 /// which the verb that acts on the path obtains for itself.
 @MainActor
-struct VMCommandEnvelopeRouter {
+package struct VMCommandEnvelopeRouter {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMCommandEnvelopeRouter")
 
     let commands: VMCommandCore
 
-    init(commands: VMCommandCore) {
+    package init(commands: VMCommandCore) {
         self.commands = commands
     }
 

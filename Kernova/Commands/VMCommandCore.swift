@@ -3,7 +3,7 @@ import KernovaKit
 import KernovaLogging
 
 /// Whether somebody asked for one VM's bring-up in particular.
-enum VMBringUpPresence: Sendable, Equatable {
+package enum VMBringUpPresence: Sendable, Equatable {
     /// Someone asked for this VM: its start runs the guest setup it still
     /// owes, and its display is readied as the app's posture allows.
     case attended
@@ -52,7 +52,7 @@ enum VMBringUpPresence: Sendable, Equatable {
 /// a batch's destination reservations have to see each other's arrivals,
 /// which one suspension point between them would break.
 @MainActor
-final class VMCommandCore {
+package final class VMCommandCore {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
 
     // MARK: - Collaborators
@@ -646,7 +646,7 @@ final class VMCommandCore {
     // is how a script sees that copy's work, and it runs without this copy
     // ever becoming active.
 
-    func info(_ selector: VMSelector) throws -> VMInfo {
+    package func info(_ selector: VMSelector) throws -> VMInfo {
         switch try resolveEntry(selector) {
         case .vm(let instance):
             instance.activity.refreshFromBundle()

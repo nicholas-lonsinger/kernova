@@ -8,14 +8,14 @@ import Foundation
 /// every run. Read-only calls (`contentsOfDirectory`, `copyItem`, …) stay on
 /// `FileManager.default` at their call sites. `Sendable` because trashing runs
 /// in `Task.detached`, so the injected value crosses isolation domains.
-protocol FileSystemOperating: Sendable {
+package protocol FileSystemOperating: Sendable {
     func fileExists(atPath path: String) -> Bool
     func trashItem(at url: URL) throws
     func removeItem(at url: URL) throws
 }
 
 extension FileManager: FileSystemOperating {
-    func trashItem(at url: URL) throws {
+    package func trashItem(at url: URL) throws {
         try trashItem(at: url, resultingItemURL: nil)
     }
 }

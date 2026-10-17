@@ -1,17 +1,18 @@
 import Foundation
+import KernovaKit
 
 /// What the config check window says about the files a check found it
 /// cannot read.
-struct ConfigCheckReport: Equatable {
-    let files: [UnreadableConfigFile]
+package struct ConfigCheckReport: Equatable {
+    package let files: [UnreadableConfigFile]
     /// The folder each file's path is written relative to; a file outside it
     /// is written in full.
     let libraryDirectory: URL?
 
     /// How many files Use Defaults rewrites.
-    var repairableCount: Int { files.filter(\.isRepairable).count }
+    package var repairableCount: Int { files.filter(\.isRepairable).count }
 
-    var header: String {
+    package var header: String {
         switch files.count {
         case 0: "Kernova read every config file."
         case 1: "Kernova can\u{2019}t read 1 config file."
@@ -21,7 +22,7 @@ struct ConfigCheckReport: Equatable {
 
     /// One entry per file — its owner, its path, then a line per problem —
     /// with a blank line between entries.
-    var body: String {
+    package var body: String {
         files.map { file in
             ([file.owner.title, "  " + relativePath(of: file.url)]
                 + file.problems.map { "  " + $0.reportLine(fileName: file.fileName) })
@@ -30,7 +31,7 @@ struct ConfigCheckReport: Equatable {
     }
 
     /// What Use Defaults does, `nil` when there is nothing it can rewrite.
-    var footer: String? {
+    package var footer: String? {
         switch repairableCount {
         case 0:
             nil
@@ -51,7 +52,7 @@ struct ConfigCheckReport: Equatable {
 
     /// What Show in Finder selects: each file, or the folder a missing file
     /// would be in.
-    var revealedURLs: [URL] {
+    package var revealedURLs: [URL] {
         files.map { file in
             file.problems.contains { $0.issue == .fileMissing }
                 ? file.url.deletingLastPathComponent() : file.url

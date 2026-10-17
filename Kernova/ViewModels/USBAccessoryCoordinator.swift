@@ -7,17 +7,17 @@ import KernovaLogging
 /// Raised by the coordinator and answered by whichever surface asked the user.
 /// The answer writes nothing itself: it goes back through the attach verb, so
 /// the pairing is written by the one path every attach takes.
-struct USBAccessoryPairingRequest {
+package struct USBAccessoryPairingRequest {
     /// Identifies this prompt, so a second answer to it is ignored.
     let id: UUID
     /// The accessory, named the way a listing would name it — qualified by its
     /// receptacle where another accessory would read identically.
-    let accessory: USBAccessorySummary
+    package let accessory: USBAccessorySummary
     /// The guests that could take it, in library order.
-    let candidates: [VMInstance]
+    package let candidates: [VMInstance]
     /// Answers the prompt: a VM to pass the accessory through to, or `nil` to
     /// keep it on the Mac.
-    let answer: @MainActor (VMInstance?) -> Void
+    package let answer: @MainActor (VMInstance?) -> Void
 }
 
 /// Starts the accessory listener, keeps each guest's record of what it holds

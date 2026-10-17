@@ -2,7 +2,7 @@ import Foundation
 import KernovaLogging
 
 /// Which piece of work a ``SetupStep`` stands for.
-enum SetupStepID: String, Sendable, Equatable {
+package enum SetupStepID: String, Sendable, Equatable {
     case download
     case install
     case verify
@@ -10,21 +10,21 @@ enum SetupStepID: String, Sendable, Equatable {
 }
 
 /// One step of a guest-setup flow, as the progress indicator draws it.
-struct SetupStep: Sendable, Equatable {
-    let id: SetupStepID
+package struct SetupStep: Sendable, Equatable {
+    package let id: SetupStepID
     /// Name shown beside the step's circle.
-    let label: String
+    package let label: String
 }
 
 /// How far the running step has got.
-enum SetupStepProgress: Sendable, Equatable {
+package enum SetupStepProgress: Sendable, Equatable {
     /// A transfer, which reports a speed and an estimate alongside its fraction.
     case download(DownloadProgress)
     /// Completion alone, `0...1`.
     case fraction(Double)
 
     /// The value the progress bar shows.
-    var fraction: Double {
+    package var fraction: Double {
         switch self {
         case .download(let download): download.fraction
         case .fraction(let value): value
@@ -33,7 +33,7 @@ enum SetupStepProgress: Sendable, Equatable {
 }
 
 /// How a step reads relative to the one running.
-enum SetupStepState: Sendable, Equatable {
+package enum SetupStepState: Sendable, Equatable {
     case pending
     case active
     case completed
@@ -44,17 +44,17 @@ enum SetupStepState: Sendable, Equatable {
 ///
 /// Never persisted: an interrupted setup resumes from the VM's install context,
 /// which is what survives a relaunch.
-struct GuestSetupState: Sendable, Equatable {
+package struct GuestSetupState: Sendable, Equatable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "GuestSetupState")
 
     /// Every step this run will take, fixed for its duration so the indicator
     /// can be built once when the view mounts.
-    let steps: [SetupStep]
+    package let steps: [SetupStep]
 
     /// Index into ``steps`` of the step now running.
     private(set) var currentStepIndex: Int
 
-    var progress: SetupStepProgress
+    package var progress: SetupStepProgress
 
     init(steps: [SetupStep], currentStepIndex: Int = 0, progress: SetupStepProgress) {
         self.steps = steps
@@ -63,16 +63,16 @@ struct GuestSetupState: Sendable, Equatable {
     }
 
     /// The step now running, or `nil` when the index names none.
-    var currentStep: SetupStep? {
+    package var currentStep: SetupStep? {
         steps.indices.contains(currentStepIndex) ? steps[currentStepIndex] : nil
     }
 
     /// Whether to draw the step indicator at all: a single-step flow says
     /// nothing the progress bar doesn't already.
-    var showsStepIndicator: Bool { steps.count > 1 }
+    package var showsStepIndicator: Bool { steps.count > 1 }
 
     /// How the step at `index` reads relative to the one running.
-    func state(ofStepAt index: Int) -> SetupStepState {
+    package func state(ofStepAt index: Int) -> SetupStepState {
         if index < currentStepIndex { return .completed }
         if index == currentStepIndex { return .active }
         return .pending

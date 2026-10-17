@@ -65,7 +65,7 @@ extension DiskImageService: DiskImageProviding {}
 ///
 /// Only ``writeFailed(_:)`` may have touched the destination file — the other
 /// cases throw before any write begins, so cleanup there is unnecessary.
-enum DiskImageError: LocalizedError {
+package enum DiskImageError: LocalizedError {
     /// No bundled template matches the requested size.
     case templateMissing(sizeInGB: Int)
     /// Reading the bundled template's compressed bytes failed.
@@ -76,7 +76,7 @@ enum DiskImageError: LocalizedError {
     /// leaving a partial file there.
     case writeFailed(any Error)
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .templateMissing(let sizeInGB):
             "No bundled disk-image template for \(sizeInGB) GB."

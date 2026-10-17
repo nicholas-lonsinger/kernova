@@ -8,8 +8,8 @@ import Foundation
 /// writes back; every consumer selects the kinds it handles through a ``Kind``
 /// predicate, so a new kind is a compile error at each site rather than a walk
 /// someone has to remember to widen.
-struct ExternalFileReference: Sendable, Equatable {
-    enum Kind: Sendable, Equatable, CaseIterable {
+package struct ExternalFileReference: Sendable, Equatable {
+    package enum Kind: Sendable, Equatable, CaseIterable {
         case kernel
         case initrd
         case storageDisk
@@ -21,7 +21,7 @@ struct ExternalFileReference: Sendable, Equatable {
     /// The referenced item's own id, or — for the kinds a configuration holds
     /// at most one of — an id seeded on the configuration.
     let id: UUID
-    let kind: Kind
+    package let kind: Kind
     let label: String
     let path: String
     let bookmark: Data?
@@ -39,7 +39,7 @@ extension ExternalFileReference.Kind {
 
     /// Whether ``AttachmentFileMonitor`` watches this kind, so the settings row
     /// standing for it badges a file that has gone missing.
-    var isExistenceMonitored: Bool {
+    package var isExistenceMonitored: Bool {
         switch self {
         case .storageDisk, .removableMedia, .sharedDirectory: true
         case .kernel, .initrd, .localIPSW: false
@@ -97,7 +97,7 @@ extension Sequence<ExternalFileReference> {
     ///
     /// The bookmark is what lets a sandboxed probe of an out-of-container path
     /// answer at all.
-    var bookmarksByPath: [String: Data?] {
+    package var bookmarksByPath: [String: Data?] {
         var refs: [String: Data?] = [:]
         for reference in self {
             if (refs[reference.path] ?? nil) != nil { continue }

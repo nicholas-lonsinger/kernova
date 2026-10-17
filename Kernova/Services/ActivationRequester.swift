@@ -12,15 +12,15 @@
 ///
 /// Task-local, so it reaches a `Task {}` the verb starts but not a
 /// `Task.detached`: work that needs it stays structured.
-struct ActivationRequester: Sendable {
+package struct ActivationRequester: Sendable {
     /// The requester of the request the current task is answering.
-    @TaskLocal static var current: ActivationRequester?
+    @TaskLocal package static var current: ActivationRequester?
 
     private let request: @MainActor @Sendable () -> Void
 
     /// Wraps what makes the process presentable and asks the requester to
     /// activate it.
-    init(_ request: @escaping @MainActor @Sendable () -> Void) {
+    package init(_ request: @escaping @MainActor @Sendable () -> Void) {
         self.request = request
     }
 
@@ -33,7 +33,7 @@ struct ActivationRequester: Sendable {
     /// Asks the current request's requester, if its door installed one, to
     /// bring the process forward.
     @MainActor
-    static func requestActivation() {
+    package static func requestActivation() {
         current?.requestActivation()
     }
 }

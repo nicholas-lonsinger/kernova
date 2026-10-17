@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The app puts a different question to the user for each, so the request says
 /// which rather than leaving the panel to guess.
-enum SandboxedSource: Sendable {
+package enum SandboxedSource: Sendable {
     /// A `.kernova` bundle the library copies in and never opens again.
     case vmBundle
     /// A folder a VM shares with its guest, reopened at every boot.
@@ -17,7 +17,7 @@ enum SandboxedSource: Sendable {
 /// with no file access of its own, so it holds no grant it could hand over and
 /// the app is what has to obtain one.
 @MainActor
-protocol SandboxSourceAuthorizing: AnyObject {
+package protocol SandboxSourceAuthorizing: AnyObject {
     /// Answers a URL the app may read `url` through, asking the user when the
     /// sandbox does not already admit it.
     func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL

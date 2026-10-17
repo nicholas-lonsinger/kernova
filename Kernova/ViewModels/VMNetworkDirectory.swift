@@ -12,13 +12,13 @@ import KernovaLogging
 /// list.
 @MainActor
 @Observable
-final class VMNetworkDirectory {
+package final class VMNetworkDirectory {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMNetworkDirectory")
 
     /// Where the library every copy of the app shares keeps its networks,
     /// beside the folder its VMs live in.
-    nonisolated static let productionFileURL = URL.applicationSupportDirectory
+    package nonisolated static let productionFileURL = URL.applicationSupportDirectory
         .appendingPathComponent("Kernova", isDirectory: true)
         .appendingPathComponent("Networks.json", isDirectory: false)
 
@@ -50,15 +50,15 @@ final class VMNetworkDirectory {
 
     /// What the file held the last time it was read: every named network,
     /// ordered by name.
-    typealias State = ConfigFileState<[VMNamedNetwork]>
+    package typealias State = ConfigFileState<[VMNamedNetwork]>
 
-    private(set) var state: State = .listed([])
+    package private(set) var state: State = .listed([])
 
     /// The file the networks persist in, `nil` to keep them in memory only.
     @ObservationIgnored nonisolated let file: CoordinatedJSONFile<File>?
 
     /// The networks `fileURL` holds — none when there is no file yet.
-    init(fileURL: URL?) {
+    package init(fileURL: URL?) {
         self.file = fileURL.map(Self.file(at:))
         reload()
     }
@@ -238,7 +238,7 @@ extension ConfigFileState where Listed == [VMNamedNetwork] {
     /// The network `id` identifies when it is listed in `kind`'s mode, `nil`
     /// otherwise — a network listed only in the other mode is one the library
     /// does not list — and while the list can't be read.
-    func network(_ id: UUID, of kind: VmnetNetworkKind) -> VMNamedNetwork? {
+    package func network(_ id: UUID, of kind: VmnetNetworkKind) -> VMNamedNetwork? {
         listed?.first { $0.id == id && $0.kind == kind }
     }
 }

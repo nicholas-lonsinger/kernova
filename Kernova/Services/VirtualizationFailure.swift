@@ -4,7 +4,7 @@ import KernovaKit
 /// How a failure Virtualization reported is classified: which start failures
 /// are transient, which are this copy's own file-lock contention, and what a
 /// log line says about the chain beneath one.
-enum VirtualizationFailure {
+package enum VirtualizationFailure {
     /// `VZErrorDomain` and the `VZErrorCode`s classified here, as
     /// `Virtualization/VZError.h` declares them.
     enum Framework {
@@ -25,7 +25,7 @@ enum VirtualizationFailure {
     /// code, no `EAGAIN`) — matching localized text would be locale-fragile. A
     /// disk-image attach failure arrives wrapped in a `ConfigurationBuilderError`,
     /// so unwrap before matching or the contention retry never fires.
-    nonisolated static func isFileLockContention(_ error: Error) -> Bool {
+    package nonisolated static func isFileLockContention(_ error: Error) -> Bool {
         if let builderError = error as? ConfigurationBuilderError,
             let underlying = builderError.underlyingAttachError
         {
@@ -82,7 +82,7 @@ enum VirtualizationFailure {
 
     /// `domain code` for each error *under* `error`, bounded by
     /// ``maxUnderlyingErrorDepth``; `"none"` when nothing is nested.
-    static func underlyingChainDescription(_ error: NSError) -> String {
+    package static func underlyingChainDescription(_ error: NSError) -> String {
         let nested = underlyingErrorChain(error).dropFirst()
         guard !nested.isEmpty else { return "none" }
         return nested.map { "\($0.domain) \($0.code)" }.joined(separator: " → ")
@@ -102,7 +102,7 @@ enum VirtualizationFailure {
 
     /// `true` when `error` is a failed save-file restore — the one start/resume
     /// failure that rests at `.suspended` instead of `.error` or `.stopped`.
-    static func isRestoreFailure(_ error: Error) -> Bool {
+    package static func isRestoreFailure(_ error: Error) -> Bool {
         guard let virtualizationError = error as? VirtualizationError,
             case .restoreFailed = virtualizationError
         else { return false }
@@ -111,7 +111,7 @@ enum VirtualizationFailure {
 
     /// `error` with one `restoreFailed` wrapper peeled off, so the contention
     /// and transience classifiers can read the VZ failure underneath.
-    static func unwrappedRestoreFailure(_ error: Error) -> Error {
+    package static func unwrappedRestoreFailure(_ error: Error) -> Error {
         guard let virtualizationError = error as? VirtualizationError,
             case .restoreFailed(let underlying, _) = virtualizationError
         else { return error }
@@ -121,7 +121,7 @@ enum VirtualizationFailure {
 
 // MARK: - Errors
 
-enum VirtualizationError: LocalizedError {
+package enum VirtualizationError: LocalizedError {
     case invalidStateTransition(from: VMStatus, action: String)
     case noVirtualMachine
     case noSaveFile
@@ -136,7 +136,7 @@ enum VirtualizationError: LocalizedError {
     /// The revert wrote the snapshot back, and bringing the VM up on it failed.
     case revertResumeFailed(underlying: any Error)
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .invalidStateTransition(let status, let action):
             "Cannot \(action) VM in \(status.displayName) state."
@@ -170,7 +170,7 @@ enum VirtualizationError: LocalizedError {
 /// chain-walking classifiers (`isVirtualMachineLimitExceeded`,
 /// `underlyingChainDescription`) see through the wrapper.
 extension VirtualizationError: CustomNSError {
-    var errorUserInfo: [String: Any] {
+    package var errorUserInfo: [String: Any] {
         switch self {
         case .restoreFailed(let underlying, _), .revertResumeFailed(let underlying):
             [NSUnderlyingErrorKey: underlying as NSError]

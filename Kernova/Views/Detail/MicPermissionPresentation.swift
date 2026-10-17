@@ -4,7 +4,7 @@ import Foundation
 
 /// What the Audio section should show beneath the Audio Input toggle, derived
 /// purely from the system permission status and whether audio input is enabled.
-enum MicWarningState: Equatable {
+package enum MicWarningState: Equatable {
     /// No supplementary UI: audio input disabled, permission granted, or not yet
     /// requested — macOS asks on first use.
     case none
@@ -31,6 +31,6 @@ func micPermissionPresentation(_ status: AVAuthorizationStatus, audioInputEnable
 /// The guest agent ships only for macOS guests, so the section is hidden for
 /// Linux. On macOS it also gates whether clipboard sharing nests inside the
 /// agent group; on Linux clipboard is SPICE-based and stands alone.
-func isGuestAgentSectionVisible(guestOS: VMGuestOS) -> Bool {
+package func isGuestAgentSectionVisible(guestOS: VMGuestOS) -> Bool {
     guestOS == .macOS
 }

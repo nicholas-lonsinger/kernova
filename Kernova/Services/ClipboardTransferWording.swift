@@ -7,27 +7,27 @@ import KernovaKit
 /// Every surface reads the same value: the status-item notice takes `headline`
 /// and `message`, the clipboard window's banner takes `message`, and the
 /// dropdown's per-VM line takes `menuLine`.
-struct ClipboardTransferWording: Equatable {
+package struct ClipboardTransferWording: Equatable {
     /// The notice's bold first line, naming the VM and which direction the
     /// clipboard failed to move in.
-    let headline: String
+    package let headline: String
     /// The full sentence — the window's banner and the notice's body.
-    let message: String
+    package let message: String
     /// The compact fragment under the VM's dropdown row, with no trailing period
     /// since it reads as a menu line rather than prose.
-    let menuLine: String
+    package let menuLine: String
     /// Whether a surface may add that the Mac clipboard still holds what it held
     /// before.
     ///
     /// True only for the over-cap copy refusal, the one outcome that refuses the
     /// publish whole and so leaves the previous contents in place; after any
     /// other failure the sentence would be a guess.
-    let mentionsMacClipboardKept: Bool
+    package let mentionsMacClipboardKept: Bool
 
     /// Shown for a Copy to Mac refused over the deadline-safe cap, wherever it
     /// surfaces: the click's own inline outcome and the report an automatic
     /// passthrough publish raises are the same refusal.
-    static func overCopyBudgetMessage(limitBytes: Int) -> String {
+    package static func overCopyBudgetMessage(limitBytes: Int) -> String {
         "Too large to copy to your Mac — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit."
     }
 
@@ -43,7 +43,7 @@ struct ClipboardTransferWording: Equatable {
     /// may already have landed. "Sharing stopped" covers every way the session
     /// ends — the VM stopping, the toggle, a reconnect — where "the VM
     /// disconnected" would name only one.
-    static func wording(for finish: ClipboardTransferFinish, vmName: String)
+    package static func wording(for finish: ClipboardTransferFinish, vmName: String)
         -> ClipboardTransferWording?
     {
         guard let failure = finish.failure else { return nil }

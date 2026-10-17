@@ -6,14 +6,14 @@ extension VMInstance {
     /// The flavor of the Start control for this VM: setup-flavored when a macOS
     /// install or a Linux image download is pending, reflecting what Start will
     /// actually do.
-    enum StartAction {
+    package enum StartAction {
         case start
         case install
         case resumeInstall
         case download
         case resumeDownload
 
-        var label: String {
+        package var label: String {
             switch self {
             case .start: "Start"
             case .install: "Install"
@@ -25,7 +25,7 @@ extension VMInstance {
     }
 
     /// The action the Start control performs for this VM's current setup state.
-    var startAction: StartAction {
+    package var startAction: StartAction {
         switch configuration.pendingGuestSetup {
         case .macOSInstall:
             return hasResumableInstallDownload ? .resumeInstall : .install
@@ -42,7 +42,7 @@ extension VMInstance {
     ///
     /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by a
     /// failed disposal from labelling a from-scratch download as a resume.
-    var hasResumableInstallDownload: Bool {
+    package var hasResumableInstallDownload: Bool {
         guard let destinationURL = pendingSetupDownloadDestination else { return false }
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destinationURL))
         return bundle.isResumable

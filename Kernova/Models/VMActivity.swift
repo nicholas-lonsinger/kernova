@@ -24,7 +24,7 @@ import KernovaLogging
 /// other request can be decided against it.
 @MainActor
 @Observable
-final class VMActivity {
+package final class VMActivity {
     /// The VM this activity belongs to, which every context and permit it
     /// mints names.
     ///
@@ -320,7 +320,7 @@ final class VMActivity {
     /// `identity` is what the request can do about another active VM sharing
     /// the machine identity a committed bring-up would claim; an offer checks
     /// no identity.
-    func decide(
+    package func decide(
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
         posture: VMAdmission.Posture, identity: VMIdentityOverride = .unavailable
     ) -> VMAdmission.Decision {
@@ -1293,17 +1293,17 @@ enum VMRunLockHold: ~Copyable {
 ///
 /// Non-copyable and passed borrowed, so it cannot be stored, captured by a
 /// task, or used after its operation ended.
-struct VMOperationContext: ~Copyable, Sendable {
+package struct VMOperationContext: ~Copyable, Sendable {
     private let activity: VMActivity
     let kind: VMOperationKind
 
     /// The machine-file operations on the bundle of the VM this operation
     /// holds — the only way to reach them.
-    let bundle: VMBundle.MachineFiles
+    package let bundle: VMBundle.MachineFiles
 
     /// The permit the operation's own writes to the VM's state files act
     /// with.
-    let permit: VMEditPermit
+    package let permit: VMEditPermit
 
     /// What ``VMBundle/MachineFiles/init(of:_:)`` asks for, so only a context
     /// can reach a VM's machine files: the initializer is `fileprivate`, which
@@ -1321,31 +1321,31 @@ struct VMOperationContext: ~Copyable, Sendable {
     }
 
     /// The VM this operation holds.
-    var instance: VMInstance { permit.instance }
+    package var instance: VMInstance { permit.instance }
 
     /// The operation's live session, or `nil` once it ended or before a
     /// bring-up created one.
-    @MainActor var session: (any VMSessionOperating)? {
+    @MainActor package var session: (any VMSessionOperating)? {
         activity.operationSessionID == nil ? nil : activity.session
     }
 
     /// The identity of the operation's live session, or `nil`.
-    @MainActor var sessionID: UUID? { activity.operationSessionID }
+    @MainActor package var sessionID: UUID? { activity.operationSessionID }
 
     /// How the operation's session ended, once it has.
-    @MainActor var sessionEnd: VMSessionEnd? { activity.operationSessionEnd }
+    @MainActor package var sessionEnd: VMSessionEnd? { activity.operationSessionEnd }
 
     /// Ends the operation's session itself — a save, a revert, a retried boot
     /// attempt — keeping the operation; before a bring-up has bound a session,
     /// releases the context it opened.
-    @MainActor func endSession() {
+    @MainActor package func endSession() {
         activity.endOperationSessionItself()
     }
 
     /// Drops the attachment `deviceID` names from what this VM's guest
     /// holds, answering it — `nil` when the guest held no such attachment.
     @MainActor @discardableResult
-    func releaseAccessory(deviceID: UUID) -> AttachedUSBAccessory? {
+    package func releaseAccessory(deviceID: UUID) -> AttachedUSBAccessory? {
         activity.accessoryLeftGuest(deviceID: deviceID)
     }
 }
@@ -1373,10 +1373,10 @@ struct VMUSBAttachContext: ~Copyable, Sendable {
 /// Minted only by an attach's admission, once the reservation is written.
 /// Non-copyable and passed borrowed, so it cannot outlive the operation that
 /// reserved it.
-struct VMAccessoryReservation: ~Copyable, Sendable {
-    let registryID: UInt64
+package struct VMAccessoryReservation: ~Copyable, Sendable {
+    package let registryID: UInt64
     /// The VM the accessory is reserved for.
-    let instance: VMInstance
+    package let instance: VMInstance
 
     fileprivate init(registryID: UInt64, instance: VMInstance) {
         self.registryID = registryID
@@ -1404,8 +1404,8 @@ struct AccessoryHoldersKey {
 /// ``VMActivity/beginSessionContext(_:_:)``, ``VMActivity/adoptBuildProducts(_:_:)``
 /// and ``VMActivity/beginSession(_:_:)`` take, so only a bring-up, admitted
 /// past the identity check, can open and fill a session.
-struct VMBringUpContext: ~Copyable, Sendable {
-    let operation: VMOperationContext
+package struct VMBringUpContext: ~Copyable, Sendable {
+    package let operation: VMOperationContext
 
     fileprivate init(operation: consuming VMOperationContext) {
         self.operation = operation
@@ -1422,9 +1422,9 @@ struct VMBringUpContext: ~Copyable, Sendable {
 
 /// The authority a guest start's body acts with: a bring-up admitted as
 /// `kind`, minted only by ``VMActivity/launchStartGuest(_:identity:resolving:_:)``.
-struct VMGuestStartContext: ~Copyable, Sendable {
-    let bringUp: VMBringUpContext
-    let kind: VMGuestStartKind
+package struct VMGuestStartContext: ~Copyable, Sendable {
+    package let bringUp: VMBringUpContext
+    package let kind: VMGuestStartKind
 
     fileprivate init(bringUp: consuming VMBringUpContext, kind: VMGuestStartKind) {
         self.bringUp = bringUp
@@ -1435,9 +1435,9 @@ struct VMGuestStartContext: ~Copyable, Sendable {
 /// The authority a capture's body acts with: a snapshot capture or a clone's
 /// copy admitted in `mode`, minted only by ``VMActivity/captureSnapshot(_:_:)``
 /// and ``VMActivity/launchCopyOut(_:_:)``.
-struct VMCaptureContext: ~Copyable, Sendable {
-    let operation: VMOperationContext
-    let mode: VMCaptureMode
+package struct VMCaptureContext: ~Copyable, Sendable {
+    package let operation: VMOperationContext
+    package let mode: VMCaptureMode
 
     fileprivate init(operation: consuming VMOperationContext, mode: VMCaptureMode) {
         self.operation = operation
@@ -1447,14 +1447,14 @@ struct VMCaptureContext: ~Copyable, Sendable {
     /// Records `item`, which the guest holds, as owed back to this VM, for
     /// its next arrival to take there — nothing when nothing durable
     /// identifies it.
-    @MainActor func oweReturn(of item: AttachedUSBAccessory) {
+    @MainActor package func oweReturn(of item: AttachedUSBAccessory) {
         let instance = operation.instance
         instance.peers?.accessoryHolders.oweReturn(of: item, to: instance, AccessoryHoldersKey())
     }
 
     /// Takes back the return ``oweReturn(of:)`` recorded for `item`, whose
     /// detach failed and which the guest still holds.
-    @MainActor func forgiveReturn(of item: AttachedUSBAccessory) {
+    @MainActor package func forgiveReturn(of item: AttachedUSBAccessory) {
         guard let identity = item.accessory.identity else { return }
         let instance = operation.instance
         instance.peers?.accessoryHolders.spendOwedReturn(
@@ -1464,12 +1464,12 @@ struct VMCaptureContext: ~Copyable, Sendable {
 
 /// The authority a revert's body acts with: a bring-up admitted to revert to
 /// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:origin:identity:resolving:_:)``.
-struct VMRevertContext: ~Copyable, Sendable {
-    let bringUp: VMBringUpContext
-    let snapshot: VMSnapshot
+package struct VMRevertContext: ~Copyable, Sendable {
+    package let bringUp: VMBringUpContext
+    package let snapshot: VMSnapshot
     /// Whether the revert brings the guest back up on the snapshot's saved
     /// state once the files are in place.
-    let resumesAfter: Bool
+    package let resumesAfter: Bool
 
     fileprivate init(bringUp: consuming VMBringUpContext, snapshot: VMSnapshot, resumesAfter: Bool) {
         self.bringUp = bringUp
@@ -1484,7 +1484,7 @@ struct VMRevertContext: ~Copyable, Sendable {
 ///
 /// Non-copyable and passed borrowed, so it cannot be stored or outlive the
 /// admission that minted it.
-struct VMEditPermit: ~Copyable, Sendable {
+package struct VMEditPermit: ~Copyable, Sendable {
     /// What admission minted a permit for.
     enum Authority: Sendable, Equatable {
         /// An edit admitted for these classes beside whatever holds the VM.
@@ -1530,7 +1530,7 @@ struct VMEditPermit: ~Copyable, Sendable {
     /// changes nothing and is refused as
     /// ``VMLibrary/SettingsRefusal/noLibrary``.
     @MainActor @discardableResult
-    func updateConfiguration(_ mutate: (inout VMConfiguration) -> Void) -> VMLibrary.SettingsWrite {
+    package func updateConfiguration(_ mutate: (inout VMConfiguration) -> Void) -> VMLibrary.SettingsWrite {
         instance.onUpdateConfiguration?(self, mutate) ?? .refused(.noLibrary)
     }
 
@@ -1552,7 +1552,7 @@ extension VMOperationContext {
 
 /// Where an operation leaves the VM — a live phase or an at-rest one, never
 /// another operation or removal.
-enum VMOperationRest: Sendable, Equatable {
+package enum VMOperationRest: Sendable, Equatable {
     /// Live with the operation's session — or, once that session ended, where
     /// its end rests the VM.
     case live(VMGuestRunState)
@@ -1569,7 +1569,7 @@ enum VMOperationRest: Sendable, Equatable {
 
 /// How an operation's body ended. Only ``VMActivity/delete(_:)`` removes a
 /// VM.
-enum VMOperationEnding<T> {
+package enum VMOperationEnding<T> {
     case rest(VMOperationRest, T)
     case failed(VMOperationRest, any Error)
 }

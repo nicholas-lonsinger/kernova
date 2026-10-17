@@ -1,7 +1,7 @@
 import Foundation
 
 /// Formatting utilities for display values.
-enum DataFormatters {
+package enum DataFormatters {
     private nonisolated(unsafe) static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
@@ -14,7 +14,7 @@ enum DataFormatters {
     }()
 
     /// Formats a byte count into a human-readable string (e.g., "4.2 GB").
-    static func formatBytes(_ bytes: UInt64) -> String {
+    package static func formatBytes(_ bytes: UInt64) -> String {
         byteFormatter.string(fromByteCount: Int64(bytes))
     }
 
@@ -22,7 +22,7 @@ enum DataFormatters {
     ///
     /// Uses `%7.3f` padding so the numeric part is always 7 characters wide,
     /// preventing horizontal jitter as values change during downloads.
-    static func formatBytesFixedWidth(_ bytes: UInt64) -> String {
+    package static func formatBytesFixedWidth(_ bytes: UInt64) -> String {
         let kb = Double(bytes) / 1_000
         let mb = kb / 1_000
         let gb = mb / 1_000
@@ -45,7 +45,7 @@ enum DataFormatters {
     /// Formats a download speed in bytes/second into a human-readable string (e.g., "42.5 MB/s").
     ///
     /// Uses fixed-width formatting to prevent horizontal jitter during rapid updates.
-    static func formatSpeed(_ bytesPerSecond: Double) -> String {
+    package static func formatSpeed(_ bytesPerSecond: Double) -> String {
         let kb = bytesPerSecond / 1_000
         let mb = kb / 1_000
         let gb = mb / 1_000
@@ -69,7 +69,7 @@ enum DataFormatters {
     /// The hour field is left-padded with a figure space (U+2007) so the rendered
     /// width is constant under a monospaced-digit font; ``etaUnknownPlaceholder``
     /// is the same-width rendering for a `nil` result.
-    static func formatETA(remainingBytes: Int64, bytesPerSecond: Double) -> String? {
+    package static func formatETA(remainingBytes: Int64, bytesPerSecond: Double) -> String? {
         guard bytesPerSecond > 1_000 else { return nil }
         let seconds = Double(remainingBytes) / bytesPerSecond
         guard seconds.isFinite, seconds > 0, seconds < 360_000 else { return nil }
@@ -89,13 +89,13 @@ enum DataFormatters {
     ///
     /// Figure dashes (U+2012) render at the same advance as a digit under the
     /// monospaced-digit font.
-    static let etaUnknownPlaceholder = "\u{2007}\u{2012}:\u{2012}\u{2012}:\u{2012}\u{2012}"
+    package static let etaUnknownPlaceholder = "\u{2007}\u{2012}:\u{2012}\u{2012}:\u{2012}\u{2012}"
 
     /// A disk size in GB as the number and unit a display shows, in TB from
     /// 1000 GB up.
     ///
     /// Examples: `10` → `("10", "GB")`, `1500` → `("1.5", "TB")`.
-    static func diskSizeParts(_ sizeInGB: Int) -> (number: String, unit: String) {
+    package static func diskSizeParts(_ sizeInGB: Int) -> (number: String, unit: String) {
         guard sizeInGB >= 1000 else { return ("\(sizeInGB)", "GB") }
         return (String(format: "%.1f", Double(sizeInGB) / 1000), "TB")
     }
@@ -103,7 +103,7 @@ enum DataFormatters {
     /// Formats a disk size in GB for display, using TB for sizes >= 1000 GB.
     ///
     /// Examples: `10` → `"10 GB"`, `1500` → `"1.5 TB"`.
-    static func formatDiskSize(_ sizeInGB: Int) -> String {
+    package static func formatDiskSize(_ sizeInGB: Int) -> String {
         let parts = diskSizeParts(sizeInGB)
         return "\(parts.number) \(parts.unit)"
     }
@@ -112,12 +112,12 @@ enum DataFormatters {
     /// locale's list conjunction.
     ///
     /// English: "A", "A and B", "A, B, and C" with the Oxford comma.
-    static func quotedList(_ items: [String]) -> String {
+    package static func quotedList(_ items: [String]) -> String {
         ListFormatter.localizedString(byJoining: items.map { "\u{201C}\($0)\u{201D}" })
     }
 
     /// Joins `items` as alternatives: "A", "A or B", "A, B, or C".
-    static func alternatives(_ items: [String]) -> String {
+    package static func alternatives(_ items: [String]) -> String {
         guard items.count > 2 else { return items.joined(separator: " or ") }
         return items.dropLast().joined(separator: ", ") + ", or " + items[items.count - 1]
     }

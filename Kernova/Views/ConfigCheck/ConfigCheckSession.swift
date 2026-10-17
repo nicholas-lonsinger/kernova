@@ -4,7 +4,7 @@ import KernovaLogging
 /// What the config check reads and repairs the library's config files
 /// through.
 @MainActor
-protocol ConfigCheckSource: AnyObject {
+package protocol ConfigCheckSource: AnyObject {
     func checkConfigFiles() async throws -> [UnreadableConfigFile]
     func useDefaults(in files: [UnreadableConfigFile]) async -> [VMLibrary.ConfigFileRepairFailure]
     /// The folder the report writes paths relative to, `nil` when it cannot
@@ -21,10 +21,10 @@ extension VMLibraryViewModel: ConfigCheckSource {}
 /// begun changes nothing it did not begin.
 @MainActor
 @Observable
-final class ConfigCheckSession {
+package final class ConfigCheckSession {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigCheckSession")
 
-    enum Work: Equatable {
+    package enum Work: Equatable {
         case idle
         /// The check `token` names is under way, and only its result lands.
         case checking(token: Int)
@@ -32,28 +32,28 @@ final class ConfigCheckSession {
         case repairing
     }
 
-    private(set) var work: Work = .idle
+    package private(set) var work: Work = .idle
     /// What the last check found, `nil` while none has finished or the last
     /// one failed.
-    private(set) var report: ConfigCheckReport?
+    package private(set) var report: ConfigCheckReport?
     /// Why the last check could not list the files, `nil` when it could.
-    private(set) var failure: String?
+    package private(set) var failure: String?
 
     @ObservationIgnored private let source: any ConfigCheckSource
     @ObservationIgnored private var lastToken = 0
 
     /// Told the files a Use Defaults left as they were, as the report it
     /// started from names them.
-    @ObservationIgnored var onRepairFailures: ((_ lines: [String]) -> Void)?
+    @ObservationIgnored package var onRepairFailures: ((_ lines: [String]) -> Void)?
 
-    init(source: any ConfigCheckSource) {
+    package init(source: any ConfigCheckSource) {
         self.source = source
     }
 
     /// Reads every config file again; a check already under way is
     /// superseded, and one asked for during Use Defaults is the check it ends
     /// in.
-    func check() {
+    package func check() {
         if work == .repairing { return }
         lastToken += 1
         let token = lastToken
@@ -85,7 +85,7 @@ final class ConfigCheckSession {
 
     /// Puts the defaults in place in every repairable file the report lists,
     /// then checks again — only while no other work is under way.
-    func useDefaults() {
+    package func useDefaults() {
         guard work == .idle, let report, report.repairableCount > 0 else { return }
         work = .repairing
         Task { [weak self, source] in

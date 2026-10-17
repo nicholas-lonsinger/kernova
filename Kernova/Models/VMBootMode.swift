@@ -1,7 +1,7 @@
 import Foundation
 
 /// The boot mode for a virtual machine.
-enum VMBootMode: String, Codable, Sendable {
+package enum VMBootMode: String, Codable, Sendable {
     /// Boot a macOS guest using the macOS boot loader.
     case macOS
 
@@ -11,7 +11,7 @@ enum VMBootMode: String, Codable, Sendable {
     /// Boot a Linux guest directly from a kernel image.
     case linuxKernel
 
-    var displayName: String {
+    package var displayName: String {
         switch self {
         case .macOS: "macOS Boot Loader"
         case .efi: "EFI Boot"

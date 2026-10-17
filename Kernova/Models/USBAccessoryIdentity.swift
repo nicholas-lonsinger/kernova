@@ -14,14 +14,14 @@ import Foundation
 /// guest go back to it after a stop, a quit, or a replug. ``receptacleKey`` is
 /// the one part that stays in memory — it says where the unit was *this* time,
 /// which is a fact about the session and not about the unit.
-struct USBAccessoryIdentity: Sendable, Equatable, Hashable {
+package struct USBAccessoryIdentity: Sendable, Equatable, Hashable {
     /// How much the key can be trusted to name one *unit* rather than one
     /// model in one place.
     ///
     /// Stored alongside the key wherever a key is, rather than parsed back out
     /// of it: a serial may legally contain `@`, so the two spellings are not
     /// separable after the fact.
-    enum Form: String, Sendable, Equatable, Hashable, Codable {
+    package enum Form: String, Sendable, Equatable, Hashable, Codable {
         /// Built on the serial number the device reports, which follows it to
         /// any port.
         case serialNumber
@@ -34,10 +34,10 @@ struct USBAccessoryIdentity: Sendable, Equatable, Hashable {
 
     /// The key itself — `vid:pid:bcdDevice:serial`, or
     /// `vid:pid:bcdDevice@receptacle`.
-    let key: String
+    package let key: String
     /// Which of the two `key` is, so a caller can tell a claim about a unit
     /// from a claim about a port.
-    let form: Form
+    package let form: Form
     /// The receptacle the unit was in when this was composed, `nil` when the
     /// node named none.
     ///

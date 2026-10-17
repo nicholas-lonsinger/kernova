@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Spelled the way `VZMACAddress` spells and reads them, which the engine
 /// lane's tests pin.
-enum GuestMACAddress {
+package enum GuestMACAddress {
     /// A fresh locally-administered unicast address.
     static func random() -> String {
         var octets = (0..<6).map { _ in UInt8.random(in: .min ... .max) }
@@ -23,7 +23,7 @@ enum GuestMACAddress {
     /// addresses, none of which a station can send from: a guest configured
     /// with one gets no link, and the host can never observe it on the network
     /// (docs/NETWORKING.md, refuse at entry what cannot take effect).
-    static func normalized(_ text: String) -> String? {
+    package static func normalized(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let octets = octets(spelledBy: trimmed), octets[0] & 0b1 == 0,
             octets.contains(where: { $0 != 0 })

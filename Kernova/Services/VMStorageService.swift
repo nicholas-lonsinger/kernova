@@ -6,7 +6,7 @@ import KernovaLogging
 ///
 /// Each VM is a `.kernova` document package named by its UUID; `VMBundleLayout`
 /// owns the names of the files inside it.
-struct VMStorageService: Sendable {
+package struct VMStorageService: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMStorageService")
 
     /// Whether `url` looks like a `.kernova` bundle, by extension.
@@ -15,7 +15,7 @@ struct VMStorageService: Sendable {
     }
 
     /// The library every copy of the app shares. Touches no disk.
-    static let productionLibraryDirectory = URL.applicationSupportDirectory
+    package static let productionLibraryDirectory = URL.applicationSupportDirectory
         .appendingPathComponent("Kernova", isDirectory: true)
         .appendingPathComponent("VMs", isDirectory: true)
 
@@ -36,7 +36,7 @@ struct VMStorageService: Sendable {
     /// A service over the library at `libraryDirectory`; touches no disk.
     ///
     /// - Parameter libraryDirectory: ``productionLibraryDirectory`` in production.
-    init(libraryDirectory: URL) {
+    package init(libraryDirectory: URL) {
         self.libraryDirectory = libraryDirectory
         stagingRoot = ProcessStagingRoot(
             parent: libraryDirectory.appendingPathComponent(".Staging", isDirectory: true))
@@ -44,7 +44,7 @@ struct VMStorageService: Sendable {
 
     // MARK: - Directory Helpers
 
-    var vmsDirectory: URL {
+    package var vmsDirectory: URL {
         get throws {
             let vmsDir = libraryDirectory
 
@@ -55,9 +55,9 @@ struct VMStorageService: Sendable {
         }
     }
 
-    var bundleFiles: any VMBundleFileAccessing { CoordinatedBundleFileAccess() }
+    package var bundleFiles: any VMBundleFileAccessing { CoordinatedBundleFileAccess() }
 
-    func bundleURL(for configuration: VMConfiguration) throws -> URL {
+    package func bundleURL(for configuration: VMConfiguration) throws -> URL {
         try vmsDirectory.appendingPathComponent(
             "\(configuration.id.uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
@@ -71,7 +71,7 @@ struct VMStorageService: Sendable {
     /// keeps the source bundle's id, so a configuration id would give a retried
     /// import the path of an earlier attempt whose discard failed. The directory
     /// does not exist, which import's `copyItem` requires.
-    func makeStagedBundleURL() throws -> URL {
+    package func makeStagedBundleURL() throws -> URL {
         try stagingRoot.claim()
         return stagingRoot.url.appendingPathComponent(
             "\(UUID().uuidString).\(VMBundleFormat.fileExtension)",
@@ -92,7 +92,7 @@ struct VMStorageService: Sendable {
     ///
     /// - Throws: ``VMStorageError/bundleAlreadyExists(_:)`` when the destination
     ///   is occupied; a `POSIXError` for any other failure.
-    func publishBundle(from stagedURL: URL, to bundleURL: URL) throws {
+    package func publishBundle(from stagedURL: URL, to bundleURL: URL) throws {
         let result = stagedURL.withUnsafeFileSystemRepresentation { source in
             bundleURL.withUnsafeFileSystemRepresentation { destination -> Int32 in
                 guard let source, let destination else { return ENAMETOOLONG }
@@ -112,13 +112,13 @@ struct VMStorageService: Sendable {
             "Published VM bundle \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
-    func bundleIdentity(at bundleURL: URL) -> VMBundleIdentity? {
+    package func bundleIdentity(at bundleURL: URL) -> VMBundleIdentity? {
         VMBundleIdentity(bundleAt: bundleURL)
     }
 
     /// Removes a staged tree outright: its payload is incomplete or unpublished,
     /// and its source still exists.
-    func discardStagedBundle(at stagedURL: URL) throws {
+    package func discardStagedBundle(at stagedURL: URL) throws {
         try FileManager.default.removeItem(at: stagedURL)
         #log(
             Self.logger, .notice,
@@ -133,7 +133,7 @@ struct VMStorageService: Sendable {
     /// launch. Nothing has to await the task: a root some process holds, this
     /// one's included, is never removed.
     @discardableResult
-    func reclaimStagedBundles() -> Task<Void, Never> {
+    package func reclaimStagedBundles() -> Task<Void, Never> {
         let root = stagingRoot
         return Task.detached { root.reclaimAbandonedRoots() }
     }
@@ -141,7 +141,7 @@ struct VMStorageService: Sendable {
     // MARK: - CRUD
 
     /// Lists the bundle directories under `vmsDirectory` that hold a config file.
-    func listVMBundles() throws -> [URL] {
+    package func listVMBundles() throws -> [URL] {
         let dir = try vmsDirectory
         let contents = try FileManager.default.contentsOfDirectory(
             at: dir,
@@ -158,7 +158,7 @@ struct VMStorageService: Sendable {
     /// ``makeStagedBundleURL()`` minted, through ``stagingRoot`` so the root
     /// is never there without its lock. The collision guard is the rename in
     /// ``publishBundle(from:to:)``.
-    func createVMBundle(at bundleURL: URL) throws {
+    package func createVMBundle(at bundleURL: URL) throws {
         try stagingRoot.createDirectory(at: bundleURL)
         #log(
             Self.logger, .notice,
@@ -169,7 +169,7 @@ struct VMStorageService: Sendable {
     /// as ``createVMBundle(at:)`` does, and copies each file or directory
     /// `relativePaths` names into it from the source bundle, skipping any the
     /// source lacks; the clone writes its own configuration.
-    func cloneVMBundle(
+    package func cloneVMBundle(
         from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String]
     ) throws {
         try stagingRoot.createDirectory(at: destinationBundleURL)
@@ -184,7 +184,7 @@ struct VMStorageService: Sendable {
     }
 
     /// Moves a VM bundle and everything in it to the Trash.
-    func deleteVMBundle(at bundleURL: URL) throws {
+    package func deleteVMBundle(at bundleURL: URL) throws {
         guard FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
@@ -193,7 +193,7 @@ struct VMStorageService: Sendable {
     }
 
     /// Permanently deletes a VM bundle directory and all its contents, bypassing the Trash.
-    func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
+    package func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
         guard FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
             throw VMStorageError.bundleNotFound(bundleURL)
         }

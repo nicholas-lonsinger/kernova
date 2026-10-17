@@ -19,11 +19,11 @@ import KernovaLogging
 /// authoritative check runs at VM start; this only backs a warning affordance.
 @MainActor
 @Observable
-final class AttachmentFileMonitor {
+package final class AttachmentFileMonitor {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AttachmentFileMonitor")
 
     /// Latest known existence flag for each watched path.
-    private(set) var existsByPath: [String: Bool] = [:]
+    package private(set) var existsByPath: [String: Bool] = [:]
 
     /// Parent directory -> live watcher.
     ///
@@ -73,7 +73,7 @@ final class AttachmentFileMonitor {
     ///
     /// `bookmarks` carries the security bookmark for each path that has one, so
     /// the existence syscall can run under a momentary scope.
-    typealias Probe =
+    package typealias Probe =
         @Sendable (
             _ paths: Set<String>, _ bookmarks: [String: Data], _ parents: Set<String>
         ) async -> ProbeResult
@@ -90,7 +90,7 @@ final class AttachmentFileMonitor {
 
     /// Re-probes on `hostNotifications`' volume mounts and unmounts and app
     /// activation.
-    init(
+    package init(
         probe: @escaping Probe = AttachmentFileMonitor.defaultProbe,
         hostNotifications: HostNotifications
     ) {
@@ -113,7 +113,7 @@ final class AttachmentFileMonitor {
     ///
     /// Optimistically `true` for paths not yet determined, so the UI does not
     /// flash a missing-file indicator while the first probe settles.
-    func exists(_ path: String) -> Bool {
+    package func exists(_ path: String) -> Bool {
         existsByPath[path] ?? true
     }
 
@@ -124,7 +124,7 @@ final class AttachmentFileMonitor {
     /// on a detached utility-priority Task so a stale network mount cannot freeze
     /// the UI. Concurrent calls coalesce — the last call wins for *desired state*,
     /// and an in-flight probe whose paths were since un-desired is discarded.
-    func setPaths(_ refs: [String: Data?]) async {
+    package func setPaths(_ refs: [String: Data?]) async {
         let next = Set(refs.keys.filter { !$0.isEmpty })
         desiredPaths = next
         bookmarkByPath = refs.reduce(into: [:]) { partial, entry in
@@ -302,7 +302,7 @@ final class AttachmentFileMonitor {
     }
 
     /// Result of one off-main probe batch.
-    struct ProbeResult: Sendable {
+    package struct ProbeResult: Sendable {
         /// Existence flag for each path passed in `paths`.
         let existence: [String: Bool]
         /// Open `O_EVTONLY` fd for each parent in `parents` that was reachable.
@@ -365,7 +365,7 @@ final class AttachmentFileMonitor {
     ///
     /// Coalesced: a pass already running only re-arms, so a burst of callers
     /// costs one extra sweep at most. Returns as soon as the sweep is scheduled.
-    func revalidate() {
+    package func revalidate() {
         refreshAllPending = true
         guard !refreshAllInFlight else { return }
         refreshAllInFlight = true

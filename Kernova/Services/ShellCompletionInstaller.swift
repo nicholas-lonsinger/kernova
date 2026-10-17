@@ -8,16 +8,16 @@ import KernovaLogging
 /// whichever tool is on the `PATH` at the time, so a release that adds a verb
 /// needs nothing reinstalled. A file holding the generated script instead would
 /// be a snapshot of one version's grammar.
-enum ShellCompletionInstaller {
+package enum ShellCompletionInstaller {
     /// A shell Kernova can write a loader for.
-    enum Shell: String, CaseIterable {
+    package enum Shell: String, CaseIterable {
         case zsh
         case bash
         case fish
 
         /// What this shell calls the file it loads `kernova`'s completions
         /// from.
-        var fileName: String {
+        package var fileName: String {
             switch self {
             case .zsh: "_kernova"
             case .bash: "kernova"
@@ -34,7 +34,7 @@ enum ShellCompletionInstaller {
         /// user's own is preferred and `~/.zsh/completions` is the answer when
         /// there is none. That last one is on nobody's `fpath` until they add
         /// it, which the pane says.
-        var defaultDirectory: URL {
+        package var defaultDirectory: URL {
             switch self {
             case .zsh:
                 ShellCompletionInstaller.siteFunctions
@@ -127,7 +127,7 @@ enum ShellCompletionInstaller {
     /// A save panel silently ignores a `directoryURL` that does not exist and
     /// opens wherever it was last, so it is pointed at the closest real
     /// ancestor and told the rest of the path in its message.
-    static func existingAncestor(of directory: URL) -> URL {
+    package static func existingAncestor(of directory: URL) -> URL {
         var candidate = directory
         while candidate.pathComponents.count > 1 {
             var isDirectory: ObjCBool = false
@@ -150,7 +150,7 @@ enum ShellCompletionInstaller {
     /// atomic one, so the only path touched is the one the panel returned.
     ///
     /// - Throws: ``InstallFailure``.
-    static func install(_ shell: Shell, at destination: URL) throws {
+    package static func install(_ shell: Shell, at destination: URL) throws {
         let path = destination.path(percentEncoded: false)
         do {
             try Data(shell.loaderScript.utf8).write(to: destination)
@@ -172,7 +172,7 @@ enum ShellCompletionInstaller {
     /// One line, because it is meant to be selected and pasted: `printf` takes
     /// the loader a line at a time rather than a here-document, which a
     /// single-line callout cannot hold.
-    static func manualCommand(for shell: Shell, at destination: URL) -> String {
+    package static func manualCommand(for shell: Shell, at destination: URL) -> String {
         let lines = shell.loaderScript
             .split(separator: "\n", omittingEmptySubsequences: false)
             .dropLast()  // the trailing newline's empty tail

@@ -3,7 +3,7 @@ import Foundation
 /// Metadata for a USB mass storage device attached at runtime via XHCI.
 ///
 /// Runtime-only — not persisted; devices detach when the VM stops.
-struct RemovableMediaDeviceInfo: Sendable, Equatable {
+package struct RemovableMediaDeviceInfo: Sendable, Equatable {
     let id: UUID
     let path: String
     let readOnly: Bool
@@ -13,7 +13,7 @@ struct RemovableMediaDeviceInfo: Sendable, Equatable {
         URL(fileURLWithPath: path).lastPathComponent
     }
 
-    init(id: UUID = UUID(), path: String, readOnly: Bool, attachedAt: Date = Date()) {
+    package init(id: UUID = UUID(), path: String, readOnly: Bool, attachedAt: Date = Date()) {
         self.id = id
         self.path = path
         self.readOnly = readOnly

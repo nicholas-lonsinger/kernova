@@ -4,7 +4,7 @@ import KernovaKit
 import UniformTypeIdentifiers
 
 /// Pure string derivation for the clipboard window's content-type indicator and summary rows.
-enum ClipboardContentDescriber {
+package enum ClipboardContentDescriber {
     /// Maximum per-representation rows in the summary view before the rest
     /// collapse into an "and N more" line.
     static let maxSummaryRows = 5
@@ -12,7 +12,7 @@ enum ClipboardContentDescriber {
     /// One-line content-type indicator for the command bar, e.g.
     /// `"Empty"`, `"Plain text · 1.2 KB"`, `"PNG image · 1920 × 1080 · 3.4 MB"`,
     /// `"Rich Text Format + 2 more · 120 KB"`.
-    static func indicatorText(for content: ClipboardContent) -> String {
+    package static func indicatorText(for content: ClipboardContent) -> String {
         let primary: String
         switch ClipboardPreviewPolicy.mode(for: content) {
         case .empty:
@@ -66,14 +66,14 @@ enum ClipboardContentDescriber {
     /// The per-keystroke path uses this so the indicator never has to build a
     /// `ClipboardContent` (and SHA-256 the whole buffer) on the main actor to
     /// render a label.
-    static func indicatorText(forPlainText text: String) -> String {
+    package static func indicatorText(forPlainText text: String) -> String {
         if text.isEmpty { return "Empty" }
         return "Plain text · \(DataFormatters.formatBytes(UInt64(text.utf8.count)))"
     }
 
     /// Per-representation lines for the summary view, capped at
     /// `maxSummaryRows` plus an "and N more" tail.
-    static func summaryRows(for representations: [ClipboardContent.Representation]) -> [String] {
+    package static func summaryRows(for representations: [ClipboardContent.Representation]) -> [String] {
         var rows = representations.prefix(maxSummaryRows).map { representation in
             "\(displayName(forUTI: representation.uti)) — \(DataFormatters.formatBytes(UInt64(representation.byteCount)))"
         }
@@ -91,7 +91,7 @@ enum ClipboardContentDescriber {
     }
 
     /// A file chip's "type · size" subtitle, e.g. `"PNG image · 3.4 MB"`.
-    static func fileDetail(uti: String, byteCount: Int) -> String {
+    package static func fileDetail(uti: String, byteCount: Int) -> String {
         "\(displayName(forUTI: uti)) · \(DataFormatters.formatBytes(UInt64(byteCount)))"
     }
 

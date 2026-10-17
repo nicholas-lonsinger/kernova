@@ -8,7 +8,7 @@ import KernovaKit
 ///
 /// Thrown by every read of a library file the strict decode refuses, so no
 /// reader can take an unreadable file for an empty one.
-struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
+package struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
     /// Whose settings the file holds, as the check names it.
     enum Owner: Sendable, Equatable {
         /// A VM, by the name its configuration gives it — or, where that
@@ -133,7 +133,7 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
     /// The first problem, in one clause.
     var summary: String { problems[0].summary(fileName: fileName) }
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         "\u{201C}\(fileName)\u{201D} could not be read: \(summary)."
     }
 
@@ -154,7 +154,7 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
 
     /// What a VM whose bundle holds `files` says about them, `nil` when it
     /// holds none: the first by name, and how many more.
-    static func notice(for files: [UnreadableConfigFile]) -> String? {
+    package static func notice(for files: [UnreadableConfigFile]) -> String? {
         guard let first = files.first else { return nil }
         let more = files.count - 1
         let named =

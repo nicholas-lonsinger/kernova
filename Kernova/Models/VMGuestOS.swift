@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 extension VMGuestOS {
-    var iconName: String {
+    package var iconName: String {
         switch self {
         case .macOS: "apple.logo"
         case .linux: "terminal.fill"
@@ -30,10 +30,10 @@ extension VMGuestOS {
     }
 
     /// Default size used when creating a new disk image; one of `allDiskSizes`.
-    static let defaultDiskSizeInGB = 100
+    package static let defaultDiskSizeInGB = 100
 
     /// Every disk size offered, in GB, matching the bundled ASIF templates.
-    static let allDiskSizes = [
+    package static let allDiskSizes = [
         10, 15, 20, 25, 50, 75, 100, 150, 200, 250,
         500, 750, 1000, 1500, 2000, 2500, 5000, 7500, 10000,
     ]
@@ -44,7 +44,7 @@ extension VMGuestOS {
     /// A virtio scanout has no density channel, so a Linux guest renders 2×
     /// pixels at half the size with nothing to compensate: its resolution must
     /// never be rewritten for HiDPI, and it is offered no HiDPI control.
-    var supportsDisplayDensity: Bool {
+    package var supportsDisplayDensity: Bool {
         switch self {
         case .macOS: true
         case .linux: false
@@ -55,7 +55,7 @@ extension VMGuestOS {
     /// machine is built with — a Linux guest's SPICE console port — rather
     /// than over the guest agent's channel, so turning it on or off changes
     /// the machine.
-    var sharesClipboardThroughDevice: Bool {
+    package var sharesClipboardThroughDevice: Bool {
         switch self {
         case .macOS: false
         case .linux: true
@@ -66,7 +66,7 @@ extension VMGuestOS {
     /// macOS guest's automount device — rather than a device each, so the
     /// shares can change while at least one remains without changing the
     /// machine's devices.
-    var sharesDirectoriesThroughOneDevice: Bool {
+    package var sharesDirectoriesThroughOneDevice: Bool {
         switch self {
         case .macOS: true
         case .linux: false

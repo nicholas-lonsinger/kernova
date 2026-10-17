@@ -10,7 +10,7 @@ import Foundation
 /// guest, 2026-08-12/13). A 13+ guest binds the Mac devices and an earlier
 /// guest recognizes only the USB pair (`VZMacTrackpadConfiguration.h`,
 /// `VZMacKeyboardConfiguration.h`).
-enum GuestInputDevices: Equatable, Sendable {
+package enum GuestInputDevices: Equatable, Sendable {
     /// The Mac trackpad and keyboard, for a guest running macOS 13+.
     case mac
     /// The USB pointer and keyboard, for an earlier guest.
@@ -26,7 +26,7 @@ enum GuestInputDevices: Equatable, Sendable {
     /// resolves from the guest's effective macOS version, and a guest with no
     /// version signal takes the Mac pair — pre-13 guests are the exception,
     /// and the explicit setting covers one arriving with no version record.
-    static func resolve(for config: VMConfiguration) -> GuestInputDevices {
+    package static func resolve(for config: VMConfiguration) -> GuestInputDevices {
         switch config.inputDeviceMode {
         case .mac: return .mac
         case .usb: return .usb

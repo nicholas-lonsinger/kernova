@@ -18,7 +18,7 @@ import KernovaLogging
 /// It presents nothing: a refusal leaves as the ``CommandError`` the core threw,
 /// which each intent renders in the framework's idiom.
 @MainActor
-final class VMIntentGateway {
+package final class VMIntentGateway {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     private let commands: VMCommandCore
@@ -40,7 +40,7 @@ final class VMIntentGateway {
     /// VMs a refused write left in the index, re-attempted on the next batch.
     private var pendingRemove: Set<UUID> = []
 
-    init(
+    package init(
         commands: VMCommandCore,
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),

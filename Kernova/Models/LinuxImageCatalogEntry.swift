@@ -6,23 +6,23 @@ import Foundation
 /// image is stable: a point release renames the ISO in place, so the entry
 /// names the directory the images live in plus a glob and a checksum manifest,
 /// and the exact file is resolved at download time.
-struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
+package struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// Stable slug, unique across the catalog (`"ubuntu-desktop-26.04"`).
-    var id: String
+    package var id: String
     /// Distribution and edition as shown to the user (`"Ubuntu Desktop"`).
-    var distribution: String
+    package var distribution: String
     /// Version as shown to the user (`"26.04 LTS"`), not necessarily numeric.
-    var version: String
+    package var version: String
     /// Directory the ISO is fetched from, written with a trailing slash.
     ///
     /// Pointed at whichever address the distribution publishes for downloads,
     /// redirector included: the digest ``checksumManifest`` states is what binds
     /// the bytes, so the ISO can come off any mirror in the network.
-    var directoryURL: URL
+    package var directoryURL: URL
     /// Glob matching the ISO's filename inside ``directoryURL``, anchored at
     /// both ends, where each `*` matches a run of characters within the one
     /// filename (`"ubuntu-26.04*-desktop-arm64.iso"`).
-    var isoPattern: String
+    package var isoPattern: String
     /// Directory the checksum manifest is fetched from, present only where the
     /// distribution serves it somewhere other than ``directoryURL``.
     ///
@@ -38,7 +38,7 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     ///
     /// The file resolved at download time is a near neighbour of it, never the
     /// same byte count twice.
-    var approxSizeBytes: UInt64
+    package var approxSizeBytes: UInt64
 
     /// Directory ``checksumManifest`` is read from.
     var manifestDirectory: URL { manifestDirectoryURL ?? directoryURL }
@@ -47,7 +47,7 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     var manifestURL: URL { manifestDirectory.appendingPathComponent(checksumManifest) }
 
     /// What the resolved image's digest comes from.
-    var digestSource: DigestSource { .checksumList(manifestURL) }
+    package var digestSource: DigestSource { .checksumList(manifestURL) }
 
     /// The order distributions are offered in, which is neither alphabetical
     /// nor derivable from the entries.
@@ -79,7 +79,7 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// version first within each.
     ///
     /// Equal versions fall back to `id` so the order is total.
-    static func isOrderedBefore(_ lhs: Self, _ rhs: Self) -> Bool {
+    package static func isOrderedBefore(_ lhs: Self, _ rhs: Self) -> Bool {
         if lhs.distributionRank != rhs.distributionRank {
             return lhs.distributionRank < rhs.distributionRank
         }
@@ -95,7 +95,7 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
 
     /// Whether the entry matches a picker search term, over distribution and
     /// version.
-    func matches(searchTerm: String) -> Bool {
+    package func matches(searchTerm: String) -> Bool {
         let term = searchTerm.trimmingCharacters(in: .whitespaces)
         guard !term.isEmpty else { return true }
         return distribution.localizedCaseInsensitiveContains(term)

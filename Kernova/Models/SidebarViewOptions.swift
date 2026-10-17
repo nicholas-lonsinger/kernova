@@ -6,15 +6,15 @@ import KernovaKit
 /// A projection only: the library's own order — ``VMLibrary/entries``, the
 /// status menu, `kernova list` — stays the manual one whatever these say.
 /// Persisted as ``AppPreferences/sidebarViewOptions``.
-struct SidebarViewOptions: Codable, Hashable, Sendable {
-    var filter = VMLibraryFilter()
-    var sort: VMLibrarySort = .manual
-    var grouping: SidebarGrouping = .none
+package struct SidebarViewOptions: Codable, Hashable, Sendable {
+    package var filter = VMLibraryFilter()
+    package var sort: VMLibrarySort = .manual
+    package var grouping: SidebarGrouping = .none
     /// Whether each row carries a second line stating its sort key's value.
-    var showsDetails = false
+    package var showsDetails = false
 
     /// One option set to a value, every other option left as it stands.
-    enum Edit: Equatable, Sendable {
+    package enum Edit: Equatable, Sendable {
         case filter(VMLibraryFilter)
         case sort(VMLibrarySort)
         case grouping(SidebarGrouping)
@@ -39,7 +39,7 @@ extension SidebarViewOptions {
         case filter, sort, grouping, showsDetails
     }
 
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = SidebarViewOptions()
         self.init(
@@ -94,7 +94,7 @@ extension VMLibrarySort {
     /// or its status where the order is by name or by hand. Only a line stated
     /// relative to the present reads `now`, counting days in `calendar`.
     @MainActor
-    func detail(
+    package func detail(
         for entry: LibraryEntry, at now: @autoclosure () -> Date, calendar: Calendar = .current
     ) -> String {
         switch self {
@@ -156,14 +156,14 @@ extension VMLibrarySort {
 }
 
 /// The headers the library section lists its rows under.
-enum SidebarGrouping: String, Codable, CaseIterable, Sendable {
+package enum SidebarGrouping: String, Codable, CaseIterable, Sendable {
     case none
     case guestOS
     case state
     case network
     case tag
 
-    var title: String {
+    package var title: String {
         switch self {
         case .none: "None"
         case .guestOS: "Guest OS"

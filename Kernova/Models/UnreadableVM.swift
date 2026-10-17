@@ -7,11 +7,11 @@ import Foundation
 /// address it: what it offers is the config check, Show in Finder, and a move
 /// of the whole bundle to the Trash.
 @MainActor
-final class UnreadableVM {
+package final class UnreadableVM {
     /// Fixed by where the bundle is, so a re-read keeps the row's place and
     /// selection.
     let id: UUID
-    let bundleURL: URL
+    package let bundleURL: URL
     /// The file that kept the bundle out, as the read found it.
     let file: UnreadableConfigFile
 
@@ -28,13 +28,13 @@ final class UnreadableVM {
 
     /// The VM's name where its configuration gives one, else its bundle's
     /// folder name.
-    var name: String { file.owner.title }
+    package var name: String { file.owner.title }
 
     /// What the row reads as where a VM's row states its status.
     static let statusText = "Can\u{2019}t Be Read"
 
     /// Why the row is unreadable, and where to go about it.
-    var toolTip: String {
+    package var toolTip: String {
         "Kernova can\u{2019}t read this virtual machine\u{2019}s settings: \(file.summary). "
             + "Choose File > Check Config Files\u{2026} to review it."
     }

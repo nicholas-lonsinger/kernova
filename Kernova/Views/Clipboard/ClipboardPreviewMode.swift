@@ -5,14 +5,14 @@ import KernovaKit
 ///
 /// A named `Equatable` type rather than a tuple so `ClipboardPreviewMode` can
 /// synthesize `Equatable` (tuples don't conform).
-struct ClipboardFileEntry: Equatable {
+package struct ClipboardFileEntry: Equatable {
     let filename: String
     let uti: String
     let byteCount: Int
 }
 
 /// What the clipboard window's content area shows for a given buffer.
-enum ClipboardPreviewMode: Equatable {
+package enum ClipboardPreviewMode: Equatable {
     /// No content — an empty, editable text view (typing must keep working).
     case empty
     /// Editable text editor.
@@ -40,7 +40,7 @@ enum ClipboardPreviewMode: Equatable {
 }
 
 /// Pure decision logic for which preview a `ClipboardContent` gets.
-enum ClipboardPreviewPolicy {
+package enum ClipboardPreviewPolicy {
     /// Text larger than this renders as `.summary` instead of the editor —
     /// `NSTextView` freezes the UI laying out multi-megabyte strings.
     static let maxEditableTextBytes = 2_000_000
@@ -57,7 +57,7 @@ enum ClipboardPreviewPolicy {
     /// Then several file payloads; then a single file payload (an image file as
     /// its image, anything else as a chip) ahead of any inline-content rule, so a
     /// copied `.rtf` file attaches as a file rather than rendering as rich text.
-    static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
+    package static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
         if content.isEmpty {
             return .empty
         }

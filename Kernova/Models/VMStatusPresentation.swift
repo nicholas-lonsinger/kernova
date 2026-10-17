@@ -7,7 +7,7 @@ extension VMStatus {
     ///
     /// AppKit-surface copy rather than wire vocabulary, so it stays with the
     /// overlays that render it.
-    var transitionLabel: String? {
+    package var transitionLabel: String? {
         switch self {
         case .saving: "Suspending\u{2026}"
         case .snapshotting: "Taking Snapshot\u{2026}"

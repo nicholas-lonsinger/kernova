@@ -9,7 +9,7 @@ import KernovaLogging
 /// both ends, which is what keeps a neighbouring variant out — Ubuntu's
 /// `ubuntu-24.04.4-live-server-arm64+largemem.iso` cannot match a pattern
 /// ending `-live-server-arm64.iso`.
-struct ISOFilenameGlob: Sendable {
+package struct ISOFilenameGlob: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ISOFilenameGlob")
 
     private let regex: NSRegularExpression
@@ -18,7 +18,7 @@ struct ISOFilenameGlob: Sendable {
     ///
     /// Every literal run is escaped, so a pattern that fails to compile is a
     /// mistake in this translation rather than in the catalog.
-    init?(_ pattern: String) {
+    package init?(_ pattern: String) {
         let translated =
             pattern
             .components(separatedBy: "*")
@@ -36,7 +36,7 @@ struct ISOFilenameGlob: Sendable {
     }
 
     /// Whether `filename` matches, wholly, with nothing before or after.
-    func matches(_ filename: String) -> Bool {
+    package func matches(_ filename: String) -> Bool {
         wildcardText(in: filename) != nil
     }
 

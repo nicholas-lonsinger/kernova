@@ -9,7 +9,7 @@ import KernovaKit
 /// installs the registrar on the concrete type, so reading or writing through the
 /// protocol witness still fires observation.
 @MainActor
-protocol ClipboardServicing: AnyObject {
+package protocol ClipboardServicing: AnyObject {
     /// Bidirectional clipboard buffer: the ordered UTI-tagged representations
     /// of one logical pasteboard item. Set by the user (via the clipboard
     /// window) to seed an outbound grab; updated by the implementation when
@@ -87,7 +87,7 @@ protocol ClipboardServicing: AnyObject {
 /// the same content offered again on a live connection would go out — from
 /// every outcome that is final for this content, whether it was announced, the
 /// guest already held it, or it carried nothing this transport can send.
-enum ClipboardGrabOutcome: Equatable, Sendable {
+package enum ClipboardGrabOutcome: Equatable, Sendable {
     case settled
     case undelivered
 }
@@ -95,7 +95,7 @@ enum ClipboardGrabOutcome: Equatable, Sendable {
 /// A representation promised on the host pasteboard by its offer coordinates,
 /// carrying the metadata the publisher needs to plan its pasteboard item and
 /// route each flavor's paste-time pull.
-struct CopyToMacPromise: Sendable, Equatable {
+package struct CopyToMacPromise: Sendable, Equatable {
     let generation: UInt64
     let repIndex: Int
     let uti: String
@@ -122,7 +122,7 @@ struct CopyToMacPromise: Sendable, Equatable {
 }
 
 /// One item "Copy to Mac" places on the host pasteboard.
-enum CopyToMacItem: Sendable {
+package enum CopyToMacItem: Sendable {
     /// A representation whose bytes are already local — the buffer's own content
     /// when no guest promise is live.
     case resolved(ClipboardContent.Representation)
@@ -135,7 +135,7 @@ enum CopyToMacItem: Sendable {
 }
 
 /// Why a "Copy to Mac" file payload couldn't be placed on the host pasteboard.
-enum CopyToMacDropReason: Sendable, Equatable {
+package enum CopyToMacDropReason: Sendable, Equatable {
     /// The offer's `public.file-url`-serving reps total over the user's paste
     /// ceiling (`ClipboardPasteLimit`), so no paste could pull them inside the OS
     /// pasteboard-promise deadline. All-or-nothing: the whole set is refused

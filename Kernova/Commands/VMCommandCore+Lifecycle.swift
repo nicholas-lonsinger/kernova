@@ -31,7 +31,7 @@ extension VMCommandCore {
     /// Another active VM using the VM's MAC address on the network it would
     /// join refuses it with ``CommandError/stepRequired(_:)``, routing through
     /// the changes to the VM's network it can take first.
-    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
+    package func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
             try await startNow(
@@ -653,7 +653,7 @@ extension VMCommandCore {
     /// running now: a download's progress resumes, an install restarts from
     /// the beginning (the image stays cached), a verify or checksum is simply
     /// redone.
-    static func cancelGuestSetupPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+    package static func cancelGuestSetupPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         let title: String
         let message: String
         let confirmTitle: String
@@ -711,7 +711,7 @@ extension VMCommandCore {
     /// supplies one — the `kernova` tool's `--timeout`, a script's `giving up
     /// after`: a user watching a window can see the guest is taking its time
     /// and stop it themselves.
-    func stop(
+    package func stop(
         _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval? = nil
     ) async throws {
@@ -851,7 +851,7 @@ extension VMCommandCore {
         "The suspended session, and everything changed inside the guest during it, are discarded."
 
     /// The refusal a force stop raises, worded for what it actually discards.
-    static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+    package static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
         // of here ends in a power-off, and `onPoweredOff` runs the baseline
         // revert for a termination exactly as it does for a guest that shut
@@ -932,7 +932,7 @@ extension VMCommandCore {
 
     // MARK: - Pause / Resume / Suspend
 
-    func pause(_ selector: VMSelector) async throws {
+    package func pause(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
         do {
             try await lifecycle.pause(instance)
@@ -950,7 +950,7 @@ extension VMCommandCore {
     ///
     /// Presents nothing, and refuses a shared machine identity and a MAC
     /// address, as ``start(_:recovery:consent:)`` does.
-    func resume(_ selector: VMSelector, consent: Consent) async throws {
+    package func resume(_ selector: VMSelector, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
             try await resume(instance, policy: .command(VMIdentityOverride(consent)))
@@ -1005,7 +1005,7 @@ extension VMCommandCore {
     }
 
     /// Save-suspends the VM to its bundle's suspend slot.
-    func suspend(_ selector: VMSelector) async throws {
+    package func suspend(_ selector: VMSelector) async throws {
         try await suspend(try resolve(selector))
     }
 
@@ -1057,7 +1057,7 @@ extension VMCommandCore {
     /// before the stop for the same reason; `consent` answers it, and the boot
     /// carries that answer. A MAC address another active VM uses on the
     /// network is refused there too.
-    func restart(
+    package func restart(
         _ selector: VMSelector, timeout: TimeInterval?, consent: Consent
     ) async throws {
         try Self.requireUsable(timeout)
@@ -1167,7 +1167,7 @@ extension VMCommandCore {
     /// of its own, so a VM whose display is not the right thing to surface
     /// lands on its library row instead, by the same predicate that refuses it
     /// an ``open(_:)``. An arrival has no display, so it always lands there.
-    func reveal(_ selector: VMSelector) throws {
+    package func reveal(_ selector: VMSelector) throws {
         let instance: VMInstance
         switch try resolveEntry(selector) {
         case .arriving(let arrival):

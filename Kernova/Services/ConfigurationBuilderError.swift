@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Errors
 
-enum ConfigurationBuilderError: LocalizedError {
+package enum ConfigurationBuilderError: LocalizedError {
     case invalidHardwareModel
     case invalidMachineIdentifier
     /// An EFI boot found no variable store in the bundle.
@@ -40,7 +40,7 @@ enum ConfigurationBuilderError: LocalizedError {
     case sharedDirectoryNotReadable(id: UUID, path: String, label: String)
     case sharedDirectoryNotWritable(id: UUID, path: String, label: String)
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .invalidHardwareModel:
             "The stored hardware model data is invalid."

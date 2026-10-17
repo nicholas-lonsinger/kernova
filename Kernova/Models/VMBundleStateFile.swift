@@ -611,7 +611,7 @@ struct VMStagedBundle: Sendable {
 /// a repair, and a ``VMStagedBundle``'s writes — replaces a bundle's state
 /// file: the initializer is `fileprivate`, which `@testable import` does not
 /// open, and the key is passed `borrowing`, so no conformer can keep one.
-struct VMBundleFileWriteKey: ~Copyable {
+package struct VMBundleFileWriteKey: ~Copyable {
     fileprivate init() {}
 }
 

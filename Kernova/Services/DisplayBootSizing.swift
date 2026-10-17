@@ -2,11 +2,16 @@ import CoreGraphics
 import Foundation
 
 /// The on-screen area a VM's display is about to occupy.
-struct DisplayBootSurface: Equatable, Sendable {
+package struct DisplayBootSurface: Equatable, Sendable {
     /// Size of the area in points.
     var pointSize: CGSize
     /// Backing scale of the screen hosting it.
     var backingScaleFactor: CGFloat
+
+    package init(pointSize: CGSize, backingScaleFactor: CGFloat) {
+        self.pointSize = pointSize
+        self.backingScaleFactor = backingScaleFactor
+    }
 }
 
 /// Pixel math for a VM's boot resolution: fitting a display to an on-screen

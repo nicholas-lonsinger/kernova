@@ -11,7 +11,7 @@ import KernovaKit
 /// Declaration order is the order ``VMCommandCore/allowedVerbs(for:)`` reports,
 /// which a refusal reads out to the user as "What it accepts now" — so moving a
 /// case rewrites a sentence.
-enum VMCapability: CaseIterable, Hashable {
+package enum VMCapability: CaseIterable, Hashable {
     case info
     case ipAddress
     case snapshots
@@ -218,7 +218,7 @@ enum VMCapability: CaseIterable, Hashable {
 
 /// One edit of a VM's shared-directory list, by what it does to the list —
 /// and the compiled-in rule for which capability it has to pass.
-enum SharedDirectoryListEdit: Hashable, Sendable, CaseIterable {
+package enum SharedDirectoryListEdit: Hashable, Sendable, CaseIterable {
     /// Shares a folder beside the ones the list holds.
     case add
     /// Drops one share.
@@ -256,7 +256,7 @@ enum SharedDirectoryListEdit: Hashable, Sendable, CaseIterable {
 /// Headless: it imports no AppKit and holds no titles. What a command is called
 /// belongs to `VMInstance+Display`, and a menu's structure to the menu.
 @MainActor
-struct VMCapabilityCatalog {
+package struct VMCapabilityCatalog {
     let library: VMLibrary
 
     /// How admission decides `capability` on `instance` right now, in
@@ -280,7 +280,7 @@ struct VMCapabilityCatalog {
     /// snapshotted still shows Take Snapshot while another operation runs,
     /// dimmed. Nor is the app's termination, another copy of Kernova
     /// holding the VM, or a rule that takes the VM stopped.
-    func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
+    package func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
         case .admit, .join, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
             .refuse(.takesStoppedVM):
@@ -291,14 +291,14 @@ struct VMCapabilityCatalog {
 
     /// Whether `capability` can be invoked right now — the level every
     /// `isEnabled` and every menu- or toolbar-validation reads.
-    func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
+    package func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         decision(capability, on: instance, posture: .offer) == .admit
     }
 
     /// Whether writing `value` to `key` on `instance` can be invoked right now:
     /// the capability the configuration verb gates it on, and the key's own
     /// refusals — what a control writing one key reads for its `isEnabled`.
-    func isAvailable(
+    package func isAvailable(
         _ key: VMConfigurationKey, writing value: String, on instance: VMInstance
     ) -> Bool {
         isAvailable(
@@ -310,7 +310,7 @@ struct VMCapabilityCatalog {
     }
 
     /// How turning Ephemeral Mode on is taken.
-    enum EphemeralModeEnable: Equatable {
+    package enum EphemeralModeEnable: Equatable {
         /// The `ephemeral` key takes the write: a snapshot stands as the baseline.
         case writing
         /// The VM has no snapshot, so the enable captures one to stand as the
@@ -322,7 +322,7 @@ struct VMCapabilityCatalog {
     /// mode is on or the VM can neither name a baseline nor capture one — the
     /// level the no-snapshot caption reads, which an operation holding the VM
     /// does not move.
-    func ephemeralModeEnable(on instance: VMInstance) -> EphemeralModeEnable? {
+    package func ephemeralModeEnable(on instance: VMInstance) -> EphemeralModeEnable? {
         guard !instance.hostState.ephemeralModeEnabled else { return nil }
         // The baseline an enable defaults to, the same answer the key reads.
         if instance.snapshotManifest.defaultEphemeralBaseline(preferring: nil) != nil {
@@ -334,7 +334,7 @@ struct VMCapabilityCatalog {
     /// Whether turning Ephemeral Mode on for `instance` can be invoked right
     /// now — what every Ephemeral Mode switch reads for its `isEnabled` while
     /// off.
-    func isEphemeralModeEnableAvailable(on instance: VMInstance) -> Bool {
+    package func isEphemeralModeEnableAvailable(on instance: VMInstance) -> Bool {
         let key = VMConfigurationKeyRegistry.ephemeral
         switch ephemeralModeEnable(on: instance) {
         case .writing:
@@ -349,7 +349,7 @@ struct VMCapabilityCatalog {
     }
 
     /// What one edit of a VM's shared-directory list is offered as.
-    enum SharedDirectoriesOffer: Equatable {
+    package enum SharedDirectoriesOffer: Equatable {
         /// The edit is taken now, as a write this capability admits.
         case offered(VMCapability)
         /// The VM takes a live share swap, and this edit is none: it adds the
@@ -359,7 +359,7 @@ struct VMCapabilityCatalog {
         case unavailable(VMCapability)
 
         /// Whether the edit is taken now.
-        var isOffered: Bool {
+        package var isOffered: Bool {
             if case .offered = self { return true }
             return false
         }
@@ -369,7 +369,7 @@ struct VMCapabilityCatalog {
     /// now, in `posture`: the capability ``SharedDirectoryListEdit`` names
     /// for it, as admission decides that capability — what the share verbs
     /// commit by and every control offering one of their edits renders from.
-    func sharedDirectoriesOffer(
+    package func sharedDirectoriesOffer(
         _ edit: SharedDirectoryListEdit, on instance: VMInstance,
         posture: VMAdmission.Posture = .offer
     ) -> SharedDirectoriesOffer {
@@ -387,7 +387,7 @@ struct VMCapabilityCatalog {
     }
 
     /// Where bringing one VM in front of the user lands.
-    enum RevealSurface: Equatable {
+    package enum RevealSurface: Equatable {
         /// The VM's own display window — the pop-out or fullscreen host.
         case displayWindow
         /// The library window, selected on the VM — which is also where an
@@ -404,7 +404,7 @@ struct VMCapabilityCatalog {
     /// row. The display preference decides where that display lives: an inline
     /// one *is* part of the library window, so the library is what comes
     /// forward for it.
-    func revealSurface(for instance: VMInstance) -> RevealSurface {
+    package func revealSurface(for instance: VMInstance) -> RevealSurface {
         guard accepts(.open, on: instance),
             instance.hostState.displayPreference != .inline
         else { return .library }
@@ -417,7 +417,7 @@ struct VMCapabilityCatalog {
     /// An Ephemeral VM's discard is routed to a baseline revert, so the slot
     /// names that outcome; the plain discard is what a VM without a baseline
     /// gets.
-    func stopAction(for instance: VMInstance) -> VMInstance.StopAction {
+    package func stopAction(for instance: VMInstance) -> VMInstance.StopAction {
         guard isApplicable(.discardSavedState, to: instance) else { return .stop }
         return instance.ephemeralBaselineSnapshot == nil ? .discardSavedState : .revertToBaseline
     }
@@ -551,7 +551,7 @@ struct VMCapabilityCatalog {
     /// over them: a VM already resting on its baseline's saved state has nothing
     /// to revert, and a revert that would restore what is already there is an
     /// action with no outcome to offer.
-    func isStopActionAvailable(on instance: VMInstance) -> Bool {
+    package func isStopActionAvailable(on instance: VMInstance) -> Bool {
         guard !instance.isRestingAtEphemeralBaseline else { return false }
         return isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)
     }
@@ -576,7 +576,7 @@ struct VMCapabilityCatalog {
     /// Wider than ``isAvailable(_:on:)`` only where the commit posture is: a
     /// Start of a VM holding a saved state restores it, and a Start or Resume
     /// during the bring-up it asks for joins it.
-    func accepts(_ capability: VMCapability, on instance: VMInstance) -> Bool {
+    package func accepts(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .commit) {
         case .admit, .join: true
         case .refuse, nil: false

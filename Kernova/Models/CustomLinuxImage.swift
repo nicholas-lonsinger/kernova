@@ -6,14 +6,14 @@ import Foundation
 /// ``sha256`` is what the download is verified against, exactly as a catalog
 /// pick is verified against its mirror's manifest. It says nothing about where
 /// the user got the digest — only that the bytes on disk match it.
-struct CustomLinuxImage: Codable, Sendable, Equatable {
+package struct CustomLinuxImage: Codable, Sendable, Equatable {
     /// Where the ISO is served from.
-    var url: URL
+    package var url: URL
 
     /// The digest to check the download against, as 64 lowercase hex
     /// characters, or `nil` when the user supplied none and the download is not
     /// verified.
-    var sha256: String?
+    package var sha256: String?
 
     /// ``sha256`` as what the download is checked against.
     var expectedDigest: ExpectedDigest? {
@@ -21,7 +21,7 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
     }
 
     /// Where ``expectedDigest`` comes from, or `nil` when there is none.
-    var digestSource: DigestSource? { expectedDigest?.source }
+    package var digestSource: DigestSource? { expectedDigest?.source }
 
     /// ``url`` reduced to scheme, host, port and path — what outlives the
     /// download in the VM's install record.
@@ -47,7 +47,7 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
     ///
     /// Shown, never written: nothing on disk is named from this, so it does not
     /// have to be safe to append to a directory and does not throw.
-    var displayName: String {
+    package var displayName: String {
         SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") ?? "the installer image"
     }
 
@@ -93,7 +93,7 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
     ///
     /// Both arrive as typed, whitespace included. An empty `checksumText` is a
     /// deliberate "don't verify this", not a malformed digest.
-    static func make(urlText: String, checksumText: String) throws -> CustomLinuxImage {
+    package static func make(urlText: String, checksumText: String) throws -> CustomLinuxImage {
         let sha256 = try normalizedChecksum(checksumText)
         guard let url = URL(string: urlText.trimmingCharacters(in: .whitespacesAndNewlines))
         else { throw LinuxImageURLError.malformedURL }

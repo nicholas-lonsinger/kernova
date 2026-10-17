@@ -8,7 +8,7 @@ extension SnapshotSize {
     ///
     /// Private bytes are read only where the volume clones files, and are
     /// `nil` when any file's can't be read.
-    static func measure(directory: URL) -> SnapshotSize? {
+    package static func measure(directory: URL) -> SnapshotSize? {
         guard FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) else {
             return SnapshotSize(bytes: 0, privateBytes: nil)
         }

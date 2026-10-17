@@ -3,7 +3,7 @@ import KernovaKit
 
 /// Why the guest-agent installer disk was attached, so the post-mount alert can
 /// point the user at the right next step.
-enum GuestAgentInstallerPurpose: Equatable {
+package enum GuestAgentInstallerPurpose: Equatable {
     /// The agent is absent or behind the bundled version — a fresh install,
     /// update, or reinstall. The user runs `install.command`.
     case install
@@ -13,7 +13,7 @@ enum GuestAgentInstallerPurpose: Equatable {
 }
 
 /// What a snapshot taken from the Take Snapshot sheet is for.
-enum TakeSnapshotPurpose: Equatable, Sendable {
+package enum TakeSnapshotPurpose: Equatable, Sendable {
     /// A restore point and nothing more.
     case restorePoint
     /// Turning Ephemeral Mode on for a VM with no snapshot: the capture becomes
@@ -31,8 +31,8 @@ enum TakeSnapshotPurpose: Equatable, Sendable {
 /// paths and ``VMCommandCore/createStorageDisk(_:sizeInGB:)`` writes a new file
 /// under a new identity — so removing one cannot be undone, whatever the user
 /// does with the file afterwards.
-struct StartFailedAttachment: Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
+package struct StartFailedAttachment: Equatable, Sendable {
+    package enum Kind: Equatable, Sendable {
         case storageDisk
         case removableMedia
         case sharedDirectory
@@ -49,7 +49,7 @@ struct StartFailedAttachment: Equatable, Sendable {
     /// false for a permission the item lacks, a read-only volume or a locked
     /// item (writing), and an access the sandbox denies. Copy about any of them
     /// names a condition the user can check instead.
-    enum Reason: Equatable, Sendable {
+    package enum Reason: Equatable, Sendable {
         case notFound
         /// A disk image's path names a folder.
         case pathIsDirectory
@@ -67,15 +67,15 @@ struct StartFailedAttachment: Equatable, Sendable {
     /// — which is what the alert heads itself with. The recovery itself always
     /// ends in a start: it discards the saved state a resume would have
     /// restored.
-    let verb: VMVerb
-    let kind: Kind
-    let reason: Reason
+    package let verb: VMVerb
+    package let kind: Kind
+    package let reason: Reason
     /// The failing item's ID in the VM's configuration, so the removal targets
     /// exactly the entry that failed even if the list changed since.
     let id: UUID
-    let label: String
+    package let label: String
     /// The builder error's own description — what was found, and where.
-    let message: String
+    package let message: String
 }
 
 /// What the user decided about the account their macOS guest still owes a
@@ -84,7 +84,7 @@ struct StartFailedAttachment: Equatable, Sendable {
 /// The two answers a verb takes, plus the one only a sheet has: walking away.
 /// Cancelling is not a third thing to tell the core — it is the absence of a
 /// re-issued start.
-enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
+package enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
     /// Create the account, with this password.
     case password(String)
     /// Create no account, leaving macOS to ask for one in Setup Assistant.
@@ -94,7 +94,7 @@ enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
 
     /// Redacts the password, so interpolating an answer into a log line or a
     /// debugger dump cannot spill it.
-    var description: String {
+    package var description: String {
         switch self {
         case .password: "password(<redacted>)"
         case .skip: "skip"
@@ -104,7 +104,7 @@ enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
 }
 
 /// How a question the view model puts to the presenter comes back.
-enum PresenterAnswer<Answer> {
+package enum PresenterAnswer<Answer> {
     /// The user answered.
     case answered(Answer)
     /// The question was never answered — there was nowhere to show it, or the
@@ -120,15 +120,15 @@ extension PresenterAnswer: Sendable where Answer: Sendable {}
 ///
 /// The answer writes nothing itself — the door hands it to the verb that holds
 /// it, and starts again.
-struct GuestAccountPasswordRequest {
+package struct GuestAccountPasswordRequest {
     /// What the core is asking about: the VM, the account, and the words.
-    let prompt: GuestAccountPrompt
+    package let prompt: GuestAccountPrompt
     /// Answers the prompt: a password, a boot without the account, or no start.
-    let answer: @MainActor (PresenterAnswer<GuestAccountPasswordAnswer>) -> Void
+    package let answer: @MainActor (PresenterAnswer<GuestAccountPasswordAnswer>) -> Void
 }
 
 /// What an alert is about.
-enum AlertSubject {
+package enum AlertSubject {
     /// One VM.
     case vm(VMInstance)
     /// The library as a whole — an arrival, a bundle on disk, or several VMs.
@@ -137,28 +137,28 @@ enum AlertSubject {
 
 /// A confirmation a verb the user started refused without, put to the user
 /// while that verb waits for the answer.
-struct ConfirmationRequest {
+package struct ConfirmationRequest {
     /// The VM the verb that raised the prompt acts on.
-    let instance: VMInstance
+    package let instance: VMInstance
     /// What the core is asking, in its own words.
-    let prompt: ConfirmationPrompt
+    package let prompt: ConfirmationPrompt
     /// Answers the prompt: `true` to go ahead, `false` to walk away.
-    let answer: @MainActor (PresenterAnswer<Bool>) -> Void
+    package let answer: @MainActor (PresenterAnswer<Bool>) -> Void
 }
 
 /// The routes a refusal a verb the user started raised names, put to the
 /// user while that verb waits for the answer.
-struct StepRouteRequest {
+package struct StepRouteRequest {
     /// The VM the verb that raised the refusal acts on.
-    let instance: VMInstance
+    package let instance: VMInstance
     /// What the core refused with, in its own words.
-    let requirement: StepRequirement
+    package let requirement: StepRequirement
     /// The verb a route ending in ``StepRoute/Ending/refusedVerb`` asks
     /// again, as its button names it after the route's title; `nil` names the
     /// route alone. A route ending in a start names the start.
-    let verbTitle: String?
+    package let verbTitle: String?
     /// Answers the request: the route chosen, or `nil` to walk away.
-    let answer: @MainActor (PresenterAnswer<StepRoute?>) -> Void
+    package let answer: @MainActor (PresenterAnswer<StepRoute?>) -> Void
 }
 
 /// The alerts and sheets the view model raises, each shown on the window the
@@ -167,7 +167,7 @@ struct StepRouteRequest {
 /// A request with nowhere to show yet waits; a question a suspended verb
 /// waits on is answered unasked instead, as each method says.
 @MainActor
-protocol VMLibraryPresenting: AnyObject {
+package protocol VMLibraryPresenting: AnyObject {
     /// Show an error alert about `subject`, headed `title` with `message` —
     /// as one about no VM when `subject` names a VM the library no longer
     /// lists, such as the one a delete just removed.
@@ -238,7 +238,7 @@ protocol VMLibraryPresenting: AnyObject {
 /// What the library window does for the view model beyond alerts: the
 /// creation wizard and its inline guest display.
 @MainActor
-protocol LibraryWindowPresenting: AnyObject {
+package protocol LibraryWindowPresenting: AnyObject {
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

@@ -3,14 +3,14 @@ import KernovaKit
 
 /// A mirrored boolean: a setting a panel row writes, which an overview card may
 /// carry as a switch of its own.
-enum VMOverviewToggle: String, Sendable {
+package enum VMOverviewToggle: String, Sendable {
     case autoStart
     case ephemeralMode
     case clipboardSharing
     case clipboardPassthrough
     case dropFiles
 
-    var title: String {
+    package var title: String {
         switch self {
         case .autoStart: "Start when Kernova opens"
         case .ephemeralMode: "Ephemeral Mode"
@@ -34,7 +34,7 @@ enum VMOverviewToggle: String, Sendable {
     /// Whether a switch showing `isOn` takes a flip on `instance` right now —
     /// what every surface carrying this switch reads for its `isEnabled`.
     @MainActor
-    func isFlippable(
+    package func isFlippable(
         from isOn: Bool, on instance: VMInstance, capabilities: VMCapabilityCatalog
     ) -> Bool {
         if self == .ephemeralMode, !isOn {
@@ -46,10 +46,10 @@ enum VMOverviewToggle: String, Sendable {
 
 /// A command a card offers at its foot, run through the same view-model gate the
 /// category's panel runs it through.
-enum VMOverviewAction: String, Sendable {
+package enum VMOverviewAction: String, Sendable {
     case takeSnapshot
 
-    var title: String {
+    package var title: String {
         switch self {
         case .takeSnapshot: "Take Snapshot\u{2026}"
         }
@@ -61,26 +61,26 @@ enum VMOverviewAction: String, Sendable {
 ///
 /// Produced by ``VMOverviewResolver`` and read by every surface stating one of
 /// them — the overview's cards and the panel rows showing the same figure.
-struct VMOverviewResolved: Sendable {
+package struct VMOverviewResolved: Sendable {
     /// How the network the VM joins names itself; the Mode picker's closed
     /// title and the Network card read its ``NetworkChoiceLabel/text``.
     var networkModeLabel: NetworkChoiceLabel?
     /// What the guest's address resolves to for the mode it is on.
-    var ipAddress: GuestIPAddress = .unavailable
+    package var ipAddress: GuestIPAddress = .unavailable
     /// The boot disk's capacity, once its off-main read lands.
-    var bootDiskBytes: UInt64?
+    package var bootDiskBytes: UInt64?
     /// Each snapshot's size, once the off-main size read
     /// lands; a snapshot whose size can't be read has no entry.
-    var snapshotSizes: [UUID: SnapshotSize] = [:]
+    package var snapshotSizes: [UUID: SnapshotSize] = [:]
     /// Whether a capture is offered right now — the view model's own gate.
     var canTakeSnapshot = false
     /// What the Audio section shows beneath its input toggle.
-    var micWarning: MicWarningState = .none
+    package var micWarning: MicWarningState = .none
     /// The banner message a category's panel shows, by category.
-    var warnings: [VMSettingsCategory: String] = [:]
+    package var warnings: [VMSettingsCategory: String] = [:]
     /// The note naming the other VMs holding this one's machine ID: the
     /// Machine ID row's note, and the General card's closing line.
-    var sharedMachineIDNote: String?
+    package var sharedMachineIDNote: String?
 }
 
 /// What each overview card states about a VM: the facts answering "what is this
@@ -88,21 +88,21 @@ struct VMOverviewResolved: Sendable {
 ///
 /// Status, guest OS version, cores, memory and disk capacity are the header's
 /// facts line, so no card repeats them.
-enum VMOverviewSummary {
+package enum VMOverviewSummary {
     /// A trailing copy button on a row.
-    struct RowCopy: Equatable, Sendable {
+    package struct RowCopy: Equatable, Sendable {
         /// What the button writes to the pasteboard.
-        let value: String
+        package let value: String
         /// How the button names itself, in a tooltip and to accessibility.
-        let name: String
+        package let name: String
     }
 
     /// One key-value line on a card.
-    struct Row: Equatable, Sendable {
-        let label: String
-        let value: String
+    package struct Row: Equatable, Sendable {
+        package let label: String
+        package let value: String
         /// The copy affordance trailing the value, `nil` on a row offering none.
-        let copy: RowCopy?
+        package let copy: RowCopy?
 
         init(label: String, value: String, copy: RowCopy? = nil) {
             self.label = label
@@ -113,20 +113,20 @@ enum VMOverviewSummary {
 
     /// A card switch and the state it renders in — `isEnabled` false dims it
     /// where the panel's own row would be dimmed too.
-    struct ToggleState: Equatable, Sendable {
-        let toggle: VMOverviewToggle
-        let isOn: Bool
-        let isEnabled: Bool
+    package struct ToggleState: Equatable, Sendable {
+        package let toggle: VMOverviewToggle
+        package let isOn: Bool
+        package let isEnabled: Bool
     }
 
     /// A card's foot command and whether it can be run right now.
-    struct ActionState: Equatable, Sendable {
-        let action: VMOverviewAction
-        let isEnabled: Bool
+    package struct ActionState: Equatable, Sendable {
+        package let action: VMOverviewAction
+        package let isEnabled: Bool
     }
 
     @MainActor
-    static func rows(
+    package static func rows(
         for category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
     ) -> [Row] {
         let config = instance.configuration
@@ -194,7 +194,7 @@ enum VMOverviewSummary {
     /// The small secondary line beside `category`'s title, `nil` where the
     /// category states none.
     @MainActor
-    static func headerSummary(for category: VMSettingsCategory, instance: VMInstance) -> String? {
+    package static func headerSummary(for category: VMSettingsCategory, instance: VMInstance) -> String? {
         guard category == .snapshots else { return nil }
         let count = instance.snapshotManifest.ordered.count
         return count > 0 ? "\(count)" : nil
@@ -202,7 +202,7 @@ enum VMOverviewSummary {
 
     /// The live switches `category`'s card carries for a `guestOS` guest, in
     /// card order.
-    static func toggleKinds(
+    package static func toggleKinds(
         for category: VMSettingsCategory, guestOS: VMGuestOS
     ) -> [VMOverviewToggle] {
         switch category {
@@ -220,7 +220,7 @@ enum VMOverviewSummary {
     /// The live switches `category`'s card carries, in card order, each enabled
     /// exactly when `capabilities` takes its flip.
     @MainActor
-    static func toggles(
+    package static func toggles(
         for category: VMSettingsCategory, instance: VMInstance,
         capabilities: VMCapabilityCatalog
     ) -> [ToggleState] {
@@ -234,7 +234,7 @@ enum VMOverviewSummary {
 
     /// The command `category`'s card closes with, `nil` where it offers none.
     @MainActor
-    static func action(
+    package static func action(
         for category: VMSettingsCategory, resolved: VMOverviewResolved
     ) -> ActionState? {
         // A capture works on a running VM, so the card offers it whatever the
@@ -247,7 +247,7 @@ enum VMOverviewSummary {
     /// full-width sentence rather than a key and a value, `nil` where the
     /// category states none.
     @MainActor
-    static func note(
+    package static func note(
         for category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
     ) -> String? {
         switch category {

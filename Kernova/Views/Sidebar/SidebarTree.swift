@@ -6,22 +6,22 @@ import Foundation
 /// `NSOutlineView` keys items on object identity, so ``SidebarTree`` keeps one
 /// node per key for as long as its layouts list that key.
 @MainActor
-class SidebarNode {
+package class SidebarNode {
     /// The nodes listed under this one, in display order.
-    fileprivate(set) var children: [SidebarNode] = []
+    package fileprivate(set) var children: [SidebarNode] = []
 
     /// The node this one is listed under; `nil` for a section.
-    fileprivate(set) weak var parent: SidebarNode?
+    package fileprivate(set) weak var parent: SidebarNode?
 
     fileprivate init() {}
 }
 
 /// A top-level, collapsible group of the sidebar (e.g. "Virtual Machines").
-final class SidebarSection: SidebarNode {
-    let id: SidebarSectionID
-    fileprivate(set) var title: String
+package final class SidebarSection: SidebarNode {
+    package let id: SidebarSectionID
+    package fileprivate(set) var title: String
     /// ``SidebarLayout/Section/notice``.
-    fileprivate(set) var notice: String?
+    package fileprivate(set) var notice: String?
 
     fileprivate init(id: SidebarSectionID, title: String, notice: String?) {
         self.id = id
@@ -31,9 +31,9 @@ final class SidebarSection: SidebarNode {
 }
 
 /// A group header within a section, listed just before its group's rows.
-final class SidebarGroupHeader: SidebarNode {
+package final class SidebarGroupHeader: SidebarNode {
     let id: SidebarGroupID
-    fileprivate(set) var title: String
+    package fileprivate(set) var title: String
 
     fileprivate init(id: SidebarGroupID, title: String) {
         self.id = id
@@ -42,8 +42,8 @@ final class SidebarGroupHeader: SidebarNode {
 }
 
 /// The line a section lists in place of rows when it has none.
-final class SidebarPlaceholder: SidebarNode {
-    fileprivate(set) var text: String
+package final class SidebarPlaceholder: SidebarNode {
+    package fileprivate(set) var text: String
 
     fileprivate init(text: String) {
         self.text = text
@@ -51,12 +51,12 @@ final class SidebarPlaceholder: SidebarNode {
 }
 
 /// A library entry's row in one section, under one group header or none.
-final class SidebarRow: SidebarNode {
-    let key: SidebarRowKey
+package final class SidebarRow: SidebarNode {
+    package let key: SidebarRowKey
 
     /// The entry the row shows — replaced in place when an arrival becomes its
     /// VM under the same identifier.
-    fileprivate(set) var entry: LibraryEntry
+    package fileprivate(set) var entry: LibraryEntry
 
     fileprivate init(key: SidebarRowKey, entry: LibraryEntry) {
         self.key = key
@@ -67,30 +67,30 @@ final class SidebarRow: SidebarNode {
 /// The sidebar's outline items for the latest ``SidebarLayout``, and what
 /// changed from the previous one.
 @MainActor
-final class SidebarTree {
+package final class SidebarTree {
     /// What the outline view has to apply to go from the previous layout to the
     /// current one.
     @MainActor
-    struct Changes {
+    package struct Changes {
         /// One parent's child-list change, applied in order: the removals, then
         /// the moves, then the insertions.
-        struct Children {
+        package struct Children {
             /// One child moving within its parent.
-            struct Move: Equatable {
-                let from: Int
-                let to: Int
+            package struct Move: Equatable {
+                package let from: Int
+                package let to: Int
             }
 
             /// `nil` for the root, whose children are the sections.
-            let parent: SidebarNode?
+            package let parent: SidebarNode?
             /// Offsets into the parent's previous children.
-            let removed: IndexSet
+            package let removed: IndexSet
             /// Each child the parent keeps but in another order, as offsets
             /// into its children as they stand when that move applies — after
             /// the removals and the moves before it.
-            let moves: [Move]
+            package let moves: [Move]
             /// Offsets into the parent's current children.
-            let inserted: IndexSet
+            package let inserted: IndexSet
             /// The children the moves move.
             fileprivate let moved: [ObjectIdentifier]
         }
@@ -98,24 +98,24 @@ final class SidebarTree {
         /// The change to every parent present in both layouts whose children
         /// differ. A child that moved within its parent moves, so the outline
         /// keeps the node's expansion.
-        fileprivate(set) var children: [Children] = []
+        package fileprivate(set) var children: [Children] = []
 
         /// Nodes present in both layouts whose content changed: a row's entry,
         /// or a section's or header's title.
-        fileprivate(set) var reloaded: [SidebarNode] = []
+        package fileprivate(set) var reloaded: [SidebarNode] = []
 
         /// Sections and group headers the current layout added.
-        fileprivate(set) var created: [SidebarNode] = []
+        package fileprivate(set) var created: [SidebarNode] = []
 
         /// Nodes the change takes down or moves: removed from their parent,
         /// moved within it, or rows reloaded.
         fileprivate var detached: Set<ObjectIdentifier> = []
 
-        var isEmpty: Bool { children.isEmpty && reloaded.isEmpty }
+        package var isEmpty: Bool { children.isEmpty && reloaded.isEmpty }
 
         /// Whether applying the change takes down or moves `node`'s view, directly or
         /// through an ancestor.
-        func detaches(_ node: SidebarNode) -> Bool {
+        package func detaches(_ node: SidebarNode) -> Bool {
             var candidate: SidebarNode? = node
             while let current = candidate {
                 if detached.contains(ObjectIdentifier(current)) { return true }
@@ -131,28 +131,30 @@ final class SidebarTree {
     }
 
     /// The root's children.
-    private(set) var sections: [SidebarSection] = []
+    package private(set) var sections: [SidebarSection] = []
 
     /// The layout the tree lists.
-    private(set) var layout = SidebarLayout(sections: [])
+    package private(set) var layout = SidebarLayout(sections: [])
     private var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
     private var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]
     private var rowsByKey: [SidebarRowKey: SidebarRow] = [:]
     private var placeholdersBySection: [SidebarSectionID: SidebarPlaceholder] = [:]
 
+    package init() {}
+
     /// The row listed under `key`.
-    func row(for key: SidebarRowKey) -> SidebarRow? {
+    package func row(for key: SidebarRowKey) -> SidebarRow? {
         rowsByKey[key]
     }
 
     /// The row `selection` lands on, by ``SidebarLayout/resolve(_:)``.
-    func row(resolving selection: SidebarRowKey) -> SidebarRow? {
+    package func row(resolving selection: SidebarRowKey) -> SidebarRow? {
         layout.resolve(selection).flatMap { rowsByKey[$0] }
     }
 
     /// Makes the tree list `layout`, keeping the node of every key both layouts
     /// list, and answers what changed.
-    func update(to layout: SidebarLayout) -> Changes {
+    package func update(to layout: SidebarLayout) -> Changes {
         var changes = Changes()
         var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
         var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]

@@ -29,7 +29,7 @@ struct EthernetAddress: Hashable, Sendable {
 
 /// One entry of the host's IPv4 ARP table that binds an address to a link-layer
 /// address.
-struct ARPEntry: Equatable, Sendable {
+package struct ARPEntry: Equatable, Sendable {
     /// The neighbor's IPv4 address, in host byte order.
     let ipv4: UInt32
     /// The link-layer address the entry binds it to.
@@ -39,7 +39,7 @@ struct ARPEntry: Equatable, Sendable {
 }
 
 /// Reads the host's IPv4 ARP table, abstracted so tests script it.
-protocol ARPTableReading: Sendable {
+package protocol ARPTableReading: Sendable {
     /// Every entry carrying a six-byte link-layer address. Blocks for one
     /// sysctl — never call on the main actor. Throws when the table cannot be
     /// read at all.
@@ -58,13 +58,15 @@ struct ARPTableReadError: Error, LocalizedError {
 
 /// The real `ARPTableReading`, over the routing sysctl
 /// `{CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_LLINFO}`.
-struct HostARPTableReader: ARPTableReading {
+package struct HostARPTableReader: ARPTableReading {
+    package init() {}
+
     /// Room past the size the first call reports, for entries added before the
     /// copy runs; a table that outgrows it fails with `ENOMEM` and the next
     /// read tries again.
     private static let headroom = 4096
 
-    func entries() throws -> [ARPEntry] {
+    package func entries() throws -> [ARPEntry] {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_LLINFO]
         var size = 0
         guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0 else {

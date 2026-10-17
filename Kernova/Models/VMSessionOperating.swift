@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Session Events
 
 /// A lifecycle event VZ delivered on a session's queue.
-enum VMSessionEvent: Sendable {
+package enum VMSessionEvent: Sendable {
     case guestDidStop
     case didStopWithError(any Error)
     case networkAttachmentDisconnected(any Error)
@@ -16,15 +16,15 @@ enum VMSessionEvent: Sendable {
 ///
 /// Called on the session's queue with the session's `id`, so the receiver can
 /// hop to the main actor and drop events from a session it no longer holds.
-struct VMSessionEvents: Sendable {
-    let handle: @Sendable (UUID, VMSessionEvent) -> Void
+package struct VMSessionEvents: Sendable {
+    package let handle: @Sendable (UUID, VMSessionEvent) -> Void
 }
 
 // MARK: - Session Errors
 
 /// Failures a session's device operations report; the calling service maps
 /// them onto its user-facing error type.
-enum VMSessionError: Error {
+package enum VMSessionError: Error {
     case usbControllerUnavailable
     case usbDeviceNotFound
 }
@@ -37,7 +37,7 @@ enum VMSessionError: Error {
 /// The engine makes each session and hands it to ``VMActivity`` to hold; an
 /// operation whose arguments are Virtualization objects is the engine's own,
 /// on the concrete session.
-protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, VsockListenerInstalling {
+package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, VsockListenerInstalling {
     /// Session identity, carried by every delivered event so the owner can
     /// drop events from a session it has already replaced.
     var id: UUID { get }

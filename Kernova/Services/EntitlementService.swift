@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 import Security
 
@@ -10,13 +11,13 @@ import Security
 /// `Config/Local.xcconfig` can opt into the restricted keys the default signing
 /// omits. An answer read from the process makes a test's outcome depend on
 /// where it runs.
-struct EntitlementService: Sendable {
+package struct EntitlementService: Sendable {
     /// Whether VZ networking beyond NAT — bridged, host-only, and app-managed
     /// vmnet networks — is authorized (`com.apple.vm.networking`).
     ///
     /// Resolved once: the answer is a property of the running process's
     /// signature, which cannot change under it.
-    let hasVMNetworking: Bool
+    package let hasVMNetworking: Bool
 
     /// Whether claiming a USB accessory for passthrough to a guest is
     /// authorized (`com.apple.developer.accessory-access.usb`).
@@ -29,7 +30,7 @@ struct EntitlementService: Sendable {
     ///
     /// The single value every accessory surface reads, so the capability
     /// appears and disappears in one place rather than per surface.
-    var supportsUSBAccessories: Bool {
+    package var supportsUSBAccessories: Bool {
         if #available(macOS 27.0, *) { hasAccessoryAccess } else { false }
     }
 
@@ -56,7 +57,7 @@ struct EntitlementService: Sendable {
     /// Without `com.apple.vm.networking` the only attachment is system NAT,
     /// which every NAT guest joins, so it realizes NAT's common
     /// network and nothing else.
-    func realization(of network: VMJoinedNetwork) -> VMNetworkRealization? {
+    package func realization(of network: VMJoinedNetwork) -> VMNetworkRealization? {
         switch network {
         case .bridged:
             return hasVMNetworking ? .bridged : nil
@@ -69,7 +70,7 @@ struct EntitlementService: Sendable {
     }
 
     /// Whether this build can attach a guest to `network`.
-    func canAttach(_ network: VMJoinedNetwork) -> Bool {
+    package func canAttach(_ network: VMJoinedNetwork) -> Bool {
         realization(of: network) != nil
     }
 }
@@ -80,7 +81,7 @@ extension EntitlementService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "EntitlementService")
 
     /// What this process's own signature authorizes.
-    static func readFromProcess() -> EntitlementService {
+    package static func readFromProcess() -> EntitlementService {
         EntitlementService(
             hasVMNetworking: processClaims("com.apple.vm.networking"),
             hasAccessoryAccess: processClaims("com.apple.developer.accessory-access.usb"),
@@ -112,7 +113,7 @@ extension EntitlementService {
 }
 
 /// How a build attaches a guest to the network it joins.
-enum VMNetworkRealization: Equatable, Sendable {
+package enum VMNetworkRealization: Equatable, Sendable {
     /// The system NAT attachment.
     case systemNAT
     /// A host interface, chosen when the attachment is made.

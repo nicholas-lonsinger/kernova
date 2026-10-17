@@ -11,10 +11,10 @@ import KernovaKit
 /// entries — keeps the first of any repeated identifier: a repeat would be a
 /// second outline item under one key.
 @MainActor
-struct SidebarLayout {
+package struct SidebarLayout {
     @MainActor
-    struct Section {
-        let id: SidebarSectionID
+    package struct Section {
+        package let id: SidebarSectionID
         let title: String
         let content: Content
         /// What the section lists in place of rows when it has none; `nil` to
@@ -22,7 +22,7 @@ struct SidebarLayout {
         var emptyText: String? = nil
         /// The count its header shows: always for a smart group or a folder,
         /// and for the library while a filter or the search narrows it.
-        var count: Count? = nil
+        package var count: Count? = nil
         /// Why the section lists nothing and can't, shown on hover; the
         /// sidebar shows a section with a notice disabled, and it never opens.
         var notice: String? = nil
@@ -70,7 +70,7 @@ struct SidebarLayout {
 
     /// What the projection reads besides the entries and the options.
     @MainActor
-    struct Context {
+    package struct Context {
         /// The guest-agent version this build bundles, `nil` when unknown.
         let bundledAgentVersion: String?
         /// The library's named networks: a VM naming any other is on
@@ -87,7 +87,7 @@ struct SidebarLayout {
 
         /// What a filter reads of `entry`, `nil` for a bundle Kernova can't
         /// read.
-        func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject? {
+        package func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject? {
             entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
         }
 
@@ -101,7 +101,7 @@ struct SidebarLayout {
     }
 
     /// What a section's header counts.
-    enum Count: Equatable {
+    package enum Count: Equatable {
         /// How many VMs a smart group or a folder holds, while no search
         /// narrows it.
         case members(Int)
@@ -111,7 +111,7 @@ struct SidebarLayout {
         case narrowed(shown: Int, of: Int)
 
         /// The header's text for it: "3", or "2 of 7".
-        var text: String {
+        package var text: String {
             switch self {
             case .members(let count): "\(count)"
             case .narrowed(let shown, let total): "\(shown) of \(total)"
@@ -130,7 +130,7 @@ struct SidebarLayout {
             content: .rows(Rows([])), notice: VMOrganizationDirectory.unreadableMessage)
 
     /// The sections in display order, each identifier at most once.
-    let sections: [Section]
+    package let sections: [Section]
 
     init(sections: [Section]) {
         self.sections = Self.firstOfEach(sections, by: \.id)
@@ -338,7 +338,7 @@ struct SidebarLayout {
 
     /// What `network` reads as, given a VM on it whose configuration is
     /// `configuration`.
-    static func networkTitle(
+    package static func networkTitle(
         _ network: VMLibraryFilter.Network, of configuration: VMConfiguration, context: Context
     ) -> String {
         network == .unlisted ? NetworkModeChoice.unlistedNetworkTitle : context.networkTitle(configuration)
@@ -349,7 +349,9 @@ struct SidebarLayout {
     /// A named network the library no longer lists — deleted since the filter
     /// was saved — reads apart from ``VMLibraryFilter/Network/unlisted``: the
     /// filter still holds it, and it admits no VM.
-    static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
+    package static func heldNetworkTitle(
+        _ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State
+    ) -> String {
         if network == .anyBridged { return anyBridgedTitle }
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
         if case .vmnet(let kind, .network(let id)) = choice,
@@ -371,7 +373,7 @@ struct SidebarLayout {
     /// vmnet networks and ``VMLibraryFilter/Network/anyBridged`` before
     /// Automatic. A named network a filter holds sorts with its mode's named
     /// networks, listed or not.
-    static func networkRank(_ network: VMLibraryFilter.Network) -> Int {
+    package static func networkRank(_ network: VMLibraryFilter.Network) -> Int {
         let slot: NetworkRankSlot =
             switch network.choice {
             case .vmnet(.nat, .common)?: .natCommon
@@ -449,7 +451,7 @@ struct SidebarLayout {
     /// neighbor now at that index, or just after the last visible row when the
     /// index is past it. `nil` for a drop into the row's own gap, or one that
     /// leaves it where it is.
-    static func manualOrderOffset(
+    package static func manualOrderOffset(
         moving moved: UUID, toVisibleIndex visibleIndex: Int, amongVisible visible: [UUID],
         in order: [UUID]
     ) -> Int? {

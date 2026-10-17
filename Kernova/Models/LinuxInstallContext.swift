@@ -5,10 +5,10 @@ import Foundation
 ///
 /// Consulted by `VMLifecycleCoordinator.downloadLinuxImage(on:context:)` on
 /// every Start while non-nil.
-struct LinuxInstallContext: Codable, Sendable, Equatable {
+package struct LinuxInstallContext: Codable, Sendable, Equatable {
     /// Where the installer image comes from, together with what that source
     /// needs to fetch it.
-    enum Source: Sendable, Equatable {
+    package enum Source: Sendable, Equatable {
         /// A distribution from the bundled catalog, embedded rather than
         /// referenced by id: the catalog is rewritten whenever the mirrors move,
         /// and a VM whose download is still pending must keep fetching the
@@ -21,7 +21,7 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         /// nothing is — the Verify step the progress indicator draws exists
         /// only when this does, and ``resolve(using:)`` credits every digest it
         /// builds to this.
-        var digestSource: DigestSource? {
+        package var digestSource: DigestSource? {
             switch self {
             case .catalogEntry(let entry): entry.digestSource
             case .customURL(let image): image.digestSource
@@ -48,7 +48,7 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         }
     }
 
-    var source: Source
+    package var source: Source
 
     /// Where to write the downloaded ISO, `nil` until a resolution names the
     /// file — which for a catalog entry is only at download time, the mirror
@@ -66,7 +66,7 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
     }
 
     /// What the setup UI calls the image being fetched.
-    var imageDisplayName: String {
+    package var imageDisplayName: String {
         switch source {
         case .catalogEntry(let entry): "\(entry.distribution) \(entry.version)"
         // The name in the link, not the name on disk: the destination carries a
@@ -97,7 +97,7 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         case downloadDestinationPath
     }
 
-    func encode(to encoder: any Encoder) throws {
+    package func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch source {
         case .catalogEntry(let entry):
@@ -111,7 +111,7 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         try c.encodeIfPresent(downloadDestinationPath, forKey: .downloadDestinationPath)
     }
 
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(SourceKind.self, forKey: .source) {
         case .catalogEntry:

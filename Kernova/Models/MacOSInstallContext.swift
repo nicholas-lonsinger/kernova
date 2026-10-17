@@ -6,8 +6,8 @@ import KernovaKit
 ///
 /// Consulted by `VMLifecycleCoordinator.installMacOS(on:_:context:)` on every
 /// Start while non-nil.
-struct MacOSInstallContext: Codable, Sendable, Equatable {
-    enum Source: String, Codable, Sendable, Equatable {
+package struct MacOSInstallContext: Codable, Sendable, Equatable {
+    package enum Source: String, Codable, Sendable, Equatable {
         case downloadLatest
         case catalogVersion
         case customURL
@@ -31,7 +31,7 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         }
     }
 
-    var source: Source
+    package var source: Source
 
     /// Where to write the downloaded IPSW (for `.downloadLatest` and
     /// `.catalogVersion`).
@@ -49,7 +49,7 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
 
     /// Marketing version and build of the pinned image, for display while the
     /// install runs.
-    var version: String?
+    package var version: String?
     var build: String?
 
     /// Path to an existing IPSW file on disk (for `.localFile`).
@@ -75,7 +75,7 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         downloadDestinationPath.map { URL(fileURLWithPath: $0) }
     }
 
-    var localIPSWURL: URL? {
+    package var localIPSWURL: URL? {
         localIPSWPath.map { URL(fileURLWithPath: $0) }
     }
 
@@ -102,7 +102,7 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
     // Custom `init(from:)` for `requestedFreshDownload`, a fact about the
     // install: a context with no value there states no fresh download was
     // asked for, where synthesized `Codable` would fail the whole decode.
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.source = try c.decode(Source.self, forKey: .source)
         self.downloadDestinationPath = try c.decodeIfPresent(

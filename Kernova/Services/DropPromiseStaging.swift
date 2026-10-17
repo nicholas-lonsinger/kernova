@@ -13,11 +13,11 @@ import KernovaLogging
 /// once that drop settles — the drop's own end is the only thing that can tell a
 /// queued drop from a stale one. An exited process's drops are reclaimed with its
 /// whole ``ProcessStagingRoot`` by the next launch.
-struct DropPromiseStaging {
+package struct DropPromiseStaging {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DropPromiseStaging")
 
     /// This process's root for promise drops.
-    static let processRoot = ProcessStagingRoot(
+    package static let processRoot = ProcessStagingRoot(
         parent: FileManager.default.temporaryDirectory.appendingPathComponent(
             "DisplayDropPromises", isDirectory: true))
 
@@ -25,7 +25,7 @@ struct DropPromiseStaging {
     let root: ProcessStagingRoot
 
     /// - Parameter root: ``processRoot`` in production.
-    init(root: ProcessStagingRoot) {
+    package init(root: ProcessStagingRoot) {
         self.root = root
     }
 
@@ -37,7 +37,7 @@ struct DropPromiseStaging {
     /// Idempotent, and silent about a directory that is already gone: the drag
     /// that never reached an offer and the drop the guest finished both end
     /// here, and either can have removed it first.
-    static func release(_ directory: URL) {
+    package static func release(_ directory: URL) {
         do {
             try FileManager.default.removeItem(at: directory)
         } catch CocoaError.fileNoSuchFile {
@@ -54,7 +54,7 @@ struct DropPromiseStaging {
     ///
     /// `nil` when it cannot be created, which leaves the drop with nowhere to put
     /// the promised files and is reported as a drop that produced nothing.
-    func makeDropDirectory() -> URL? {
+    package func makeDropDirectory() -> URL? {
         let directory = root.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try root.createDirectory(at: directory)

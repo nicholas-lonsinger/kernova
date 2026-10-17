@@ -16,7 +16,7 @@ import KernovaLogging
 /// as data, which the write that raised it renders
 /// (``VMCommandCore/macAddressRefusal(_:on:)``).
 @MainActor
-final class VMMACAddressRegistry {
+package final class VMMACAddressRegistry {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMMACAddressRegistry")
 
@@ -36,7 +36,7 @@ final class VMMACAddressRegistry {
     // MARK: - Refusals
 
     /// Why a configuration change is refused, and which VM it collides with.
-    struct MACAddressConflict {
+    package struct MACAddressConflict {
         /// The VM already holding what the change asked for — the first, in
         /// library order, when several do.
         let other: VMInstance

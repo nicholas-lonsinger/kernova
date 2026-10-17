@@ -1,13 +1,13 @@
 import Foundation
 
 /// Snapshot of a download's progress, delivered to a progress handler.
-struct DownloadProgress: Sendable, Equatable {
-    let bytesWritten: Int64
-    let totalBytes: Int64
+package struct DownloadProgress: Sendable, Equatable {
+    package let bytesWritten: Int64
+    package let totalBytes: Int64
     /// EWMA-smoothed download speed; zero before the first progress report.
-    let bytesPerSecond: Double
+    package let bytesPerSecond: Double
 
-    var fraction: Double {
+    package var fraction: Double {
         totalBytes > 0 ? Double(bytesWritten) / Double(totalBytes) : 0
     }
 

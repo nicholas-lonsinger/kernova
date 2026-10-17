@@ -187,7 +187,7 @@ struct CoordinatedJSONFile<Payload: Codable & Equatable & Sendable>: Sendable {
 /// A file that cannot be read is its own state, never an empty list: a change
 /// reads the file again first and refuses while it stays this way, so an
 /// unread file is never overwritten.
-enum ConfigFileState<Listed: Equatable & Sendable>: Equatable, Sendable {
+package enum ConfigFileState<Listed: Equatable & Sendable>: Equatable, Sendable {
     /// What the file holds — its empty payload when there is no file yet.
     case listed(Listed)
     /// The file is there and cannot be read.

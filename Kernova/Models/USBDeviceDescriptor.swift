@@ -6,7 +6,7 @@ import Foundation
 /// `IOUSBDeviceDescriptor` mirrors. `iManufacturer`/`iProduct`/`iSerialNumber`
 /// are absent: they are string *indices*, and the strings they index are read
 /// off the IORegistry node instead — see ``USBAccessoryNodeProperties``.
-struct USBDeviceDescriptor: Sendable, Equatable {
+package struct USBDeviceDescriptor: Sendable, Equatable {
     /// The USB revision the device reports, BCD-encoded (`0x0200` is USB 2.0).
     let usbVersion: UInt16
     let deviceClass: UInt8
@@ -31,7 +31,7 @@ struct USBDeviceDescriptor: Sendable, Equatable {
     /// Rejects anything whose length or `bDescriptorType` disagrees with the
     /// spec rather than reading past it, so a truncated or mistyped buffer
     /// cannot surface as a plausible-looking VID:PID.
-    static func parse(_ data: Data) -> USBDeviceDescriptor? {
+    package static func parse(_ data: Data) -> USBDeviceDescriptor? {
         guard data.count >= encodedLength else { return nil }
         let bytes = [UInt8](data)
         guard bytes[0] == UInt8(encodedLength), bytes[1] == deviceDescriptorType else { return nil }

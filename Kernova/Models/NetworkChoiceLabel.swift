@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 extension NetworkModeChoice {
-    init(_ configuration: VMConfiguration) {
+    package init(_ configuration: VMConfiguration) {
         switch configuration.effectiveNetworkMode {
         case nil: self = .none
         case .nat: self = .vmnet(.nat, configuration.networkMembership)
@@ -26,7 +26,7 @@ extension NetworkModeChoice {
     /// A network this build cannot attach (`attachable` false) still names
     /// itself, marked unavailable: the picker offers no entry for it, so this
     /// is what shows a VM already on it what it is set to.
-    func label(
+    package func label(
         attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
     ) -> NetworkChoiceLabel {
         let entry: String
@@ -77,9 +77,9 @@ extension NetworkModeChoice {
     }
 
     /// The entry naming a mode's common network.
-    static let commonTitle = "Common"
+    package static let commonTitle = "Common"
     /// The entry naming a network of the VM's own in its mode.
-    static let isolatedTitle = "Isolated"
+    package static let isolatedTitle = "Isolated"
     /// How a VM naming a network the library does not list names it.
     static let unlistedNetworkTitle = "Network Not in This Library"
 
@@ -97,10 +97,10 @@ extension NetworkModeChoice {
 /// Mode menu's section header — and its entry within that group.
 ///
 /// A menu entry reads ``entry`` alone; every one-line surface reads ``text``.
-struct NetworkChoiceLabel: Equatable, Sendable {
+package struct NetworkChoiceLabel: Equatable, Sendable {
     /// The group's title, `nil` for the choice no mode groups (None).
-    let group: String?
-    let entry: String
+    package let group: String?
+    package let entry: String
 
     init(mode: VMNetworkMode?, entry: String) {
         self.init(group: mode?.title, entry: entry)
@@ -112,11 +112,11 @@ struct NetworkChoiceLabel: Equatable, Sendable {
     }
 
     /// The label of the choice that gives the VM no network device.
-    static let noNetwork = NetworkChoiceLabel(mode: nil, entry: "None")
+    package static let noNetwork = NetworkChoiceLabel(mode: nil, entry: "None")
 
     /// The label as one line of plain text: `NAT – Isolated`, or the entry
     /// alone when no group holds it.
-    var text: String {
+    package var text: String {
         group.map { "\($0) \u{2013} \(entry)" } ?? entry
     }
 
@@ -128,7 +128,7 @@ struct NetworkChoiceLabel: Equatable, Sendable {
 
 extension GuestIPAddress {
     /// The address as a surface states it, `nil` where there is nothing to say.
-    var displayText: String? {
+    package var displayText: String? {
         switch self {
         case .unavailable: nil
         case .externallyAssigned: "Assigned by your network"

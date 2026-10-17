@@ -88,7 +88,7 @@ final class VMLiveIdentities {
 /// sharing its machine identity, and whether anyone is there to be asked. A
 /// boot chained after the call that asked carries the first and never the
 /// second, so it asks nothing.
-struct VMIdentityOverride: Sendable, Equatable {
+package struct VMIdentityOverride: Sendable, Equatable {
     /// The user confirmed starting beside a VM sharing its machine identity.
     let confirmed: Bool
     /// Someone is there to answer a question, so a shared machine identity's
@@ -123,7 +123,7 @@ struct VMIdentityOverride: Sendable, Equatable {
 
 /// A bring-up refused because another VM already claims the identity it would
 /// put in front of VZ (``VMInstance/claimsIdentity``).
-struct VMIdentityConflict: LocalizedError {
+package struct VMIdentityConflict: LocalizedError {
     /// The VM already claiming the identity.
     let other: VMInstance
     /// What the two would share.
@@ -138,7 +138,7 @@ struct VMIdentityConflict: LocalizedError {
     /// The sentence every surface words this refusal in, fixed at the refusal
     /// because the names it carries — and whether the claim is another copy of
     /// Kernova's hold — are read on the main actor.
-    let errorDescription: String?
+    package let errorDescription: String?
 
     @MainActor
     init(

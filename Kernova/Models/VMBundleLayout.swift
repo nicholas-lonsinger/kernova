@@ -8,8 +8,12 @@ import Foundation
 /// Every file a VM needs is under its bundle root, so the VM moves, copies and
 /// imports as one Finder item. User-picked external attachments are the
 /// exception, and carry security-scoped bookmarks instead.
-struct VMBundleLayout: Sendable {
-    let bundleURL: URL
+package struct VMBundleLayout: Sendable {
+    package let bundleURL: URL
+
+    package init(bundleURL: URL) {
+        self.bundleURL = bundleURL
+    }
 
     // MARK: - State files
 
@@ -30,7 +34,7 @@ struct VMBundleLayout: Sendable {
     }
 
     /// The serialized `VMConfiguration`.
-    var configURL: URL {
+    package var configURL: URL {
         bundleURL.appendingPathComponent(Self.configRelativePath)
     }
 
@@ -39,7 +43,7 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent(Self.hostStateRelativePath)
     }
 
-    var diskImageURL: URL {
+    package var diskImageURL: URL {
         bundleURL.appendingPathComponent("Disk.asif")
     }
 
@@ -51,25 +55,25 @@ struct VMBundleLayout: Sendable {
     static let machineIdentifierRelativePath = "MachineIdentifier"
     static let efiVariableStoreRelativePath = "EFIVariableStore"
 
-    var auxiliaryStorageURL: URL {
+    package var auxiliaryStorageURL: URL {
         bundleURL.appendingPathComponent(Self.auxiliaryStorageRelativePath)
     }
 
-    var hardwareModelURL: URL {
+    package var hardwareModelURL: URL {
         bundleURL.appendingPathComponent(Self.hardwareModelRelativePath)
     }
 
-    var machineIdentifierURL: URL {
+    package var machineIdentifierURL: URL {
         bundleURL.appendingPathComponent(Self.machineIdentifierRelativePath)
     }
 
-    var efiVariableStoreURL: URL {
+    package var efiVariableStoreURL: URL {
         bundleURL.appendingPathComponent(Self.efiVariableStoreRelativePath)
     }
 
     static let saveFileRelativePath = "SaveFile.vzvmsave"
 
-    var saveFileURL: URL {
+    package var saveFileURL: URL {
         bundleURL.appendingPathComponent(Self.saveFileRelativePath)
     }
 
@@ -99,7 +103,7 @@ struct VMBundleLayout: Sendable {
     /// The in-bundle disk `id` names, relative to the bundle root — the path
     /// its ``StorageDisk`` entry carries, so the entry travels with the bundle
     /// on clone or move.
-    static func additionalDiskRelativePath(id: UUID) -> String {
+    package static func additionalDiskRelativePath(id: UUID) -> String {
         "\(additionalDisksRelativePath)/\(id.uuidString).asif"
     }
 
@@ -127,18 +131,18 @@ struct VMBundleLayout: Sendable {
     /// Inside `Snapshots/` so the clones land on the bundle's own volume and
     /// APFS keeps them copy-on-write, and dot-prefixed so hidden-skipping
     /// enumerations pass over it.
-    var restoreStagingURL: URL {
+    package var restoreStagingURL: URL {
         snapshotsDirectoryURL.appendingPathComponent(".RestoreStaging", isDirectory: true)
     }
 
     /// The directory holding one snapshot's saved state and disk copies.
-    func snapshotDirectoryURL(id: UUID) -> URL {
+    package func snapshotDirectoryURL(id: UUID) -> URL {
         snapshotsDirectoryURL.appendingPathComponent(id.uuidString, isDirectory: true)
     }
 
     /// A layout rooted at one snapshot's directory, so the captured copies
     /// resolve through the same names as the bundle's own files.
-    func snapshotLayout(id: UUID) -> VMBundleLayout {
+    package func snapshotLayout(id: UUID) -> VMBundleLayout {
         VMBundleLayout(bundleURL: snapshotDirectoryURL(id: id))
     }
 
@@ -167,17 +171,17 @@ struct VMBundleLayout: Sendable {
 
     /// Absolute URL backing a disk: bundle-relative `path`s resolve against
     /// `bundleURL`, absolute paths are used as-is.
-    func diskURL(forRelativePath path: String, isInternal: Bool) -> URL {
+    package func diskURL(forRelativePath path: String, isInternal: Bool) -> URL {
         isInternal ? bundleURL.appendingPathComponent(path) : URL(fileURLWithPath: path)
     }
 
     /// On-disk footprint and virtual capacity of a disk image.
-    struct DiskSizes: Sendable {
+    package struct DiskSizes: Sendable {
         /// Actual bytes consumed on disk (`st_blocks * 512`), or `nil` if the
         /// file doesn't resolve.
-        var onDiskBytes: UInt64?
+        package var onDiskBytes: UInt64?
         /// Virtual capacity in bytes, or `nil` when it can't be read.
-        var capacityBytes: UInt64?
+        package var capacityBytes: UInt64?
     }
 
     /// Runs `body` on the disk image's URL, inside the image's bookmark scope
@@ -187,7 +191,7 @@ struct VMBundleLayout: Sendable {
     ///
     /// Advisory: the readouts this feeds are never worth mounting a volume or
     /// showing system UI for.
-    func withDiskImage<T>(_ image: DiskImageReference, _ body: (URL) -> T) -> T {
+    package func withDiskImage<T>(_ image: DiskImageReference, _ body: (URL) -> T) -> T {
         SecurityScopedBookmark.withResolvedURL(
             bookmark: image.bookmark,
             fallback: diskURL(forRelativePath: image.path, isInternal: image.isInternal),
@@ -207,7 +211,7 @@ struct VMBundleLayout: Sendable {
     /// **ASIF** image records it in its header — a 100 GB disk holding 27 GB has
     /// a ~27 GB apparent size — and any other format's apparent size *is* its
     /// capacity. A file that cannot be opened has no capacity reading at all.
-    static func diskSizes(at url: URL) -> DiskSizes {
+    package static func diskSizes(at url: URL) -> DiskSizes {
         let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
         return DiskSizes(
             onDiskBytes: values?.totalFileAllocatedSize.map(UInt64.init),
@@ -246,21 +250,21 @@ struct VMBundleLayout: Sendable {
 
 /// A disk image file a VM references: where it is, and the bookmark that
 /// grants access to it when it lives outside the bundle.
-struct DiskImageReference: Sendable, Equatable {
+package struct DiskImageReference: Sendable, Equatable {
     /// Bundle-relative when `isInternal`, absolute otherwise.
-    var path: String
-    var isInternal: Bool
+    package var path: String
+    package var isInternal: Bool
     var bookmark: Data?
 }
 
 extension StorageDisk {
-    var imageReference: DiskImageReference {
+    package var imageReference: DiskImageReference {
         DiskImageReference(path: path, isInternal: isInternal, bookmark: bookmark)
     }
 }
 
 extension RemovableMediaItem {
-    var imageReference: DiskImageReference {
+    package var imageReference: DiskImageReference {
         DiskImageReference(path: path, isInternal: false, bookmark: bookmark)
     }
 }

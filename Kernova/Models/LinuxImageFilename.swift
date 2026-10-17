@@ -5,7 +5,7 @@ import Foundation
 /// Every source — a catalog entry resolved against its mirror's manifest, a URL
 /// the user pasted — names its destination here, so no name a mirror or a
 /// hand-edited `config.json` chose reaches the filesystem.
-enum LinuxImageFilename {
+package enum LinuxImageFilename {
     /// The download destination's filename for the ISO at `url`.
     ///
     /// Always unique to `url`, never the name the source gave the file.
@@ -14,7 +14,7 @@ enum LinuxImageFilename {
     /// source-chosen name can land on a file the user already has — installed in
     /// place of the image chosen when nothing is verified, and trashed for
     /// failing a digest that was never its own when something is.
-    static func destination(for url: URL) -> String {
+    package static func destination(for url: URL) -> String {
         UniqueDownloadFilename.make(
             for: url, fileExtension: "iso", defaultStem: defaultStem)
     }
@@ -25,7 +25,7 @@ enum LinuxImageFilename {
     /// What a file in Downloads answers about where it came from: only a name
     /// carrying a discriminator is one of this app's downloads, and only such a
     /// file is what a later download would find and adopt.
-    static func sourceFilename(of filename: String) -> String? {
+    package static func sourceFilename(of filename: String) -> String? {
         UniqueDownloadFilename.sourceFilename(of: filename, fileExtension: "iso")
     }
 

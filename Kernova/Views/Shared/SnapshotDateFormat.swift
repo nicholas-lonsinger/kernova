@@ -2,7 +2,7 @@ import Foundation
 
 /// The one rendering of a snapshot's capture date — the settings row, the
 /// revert submenu, the revert confirmation, and Get Info all read it.
-enum SnapshotDateFormat {
+package enum SnapshotDateFormat {
     private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -13,7 +13,7 @@ enum SnapshotDateFormat {
         return formatter
     }()
 
-    static func string(from date: Date) -> String {
+    package static func string(from date: Date) -> String {
         formatter.string(from: date)
     }
 }

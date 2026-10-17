@@ -8,11 +8,11 @@ import KernovaKit
 /// per-VM value, so nothing has to be registered or unregistered as services
 /// come and go.
 @MainActor
-enum AppClipboardReadout {
+package enum AppClipboardReadout {
     /// The report the single app-level bar shows for `instances`: the
     /// top-ranked running transfer, else the most recent finished report that
     /// still has a bar to dwell on, else nothing.
-    static func report(for instances: [VMInstance]) -> ClipboardTransferReport {
+    package static func report(for instances: [VMInstance]) -> ClipboardTransferReport {
         if let top = topRunning(in: instances) {
             return .running(top.snapshot, since: top.since)
         }
@@ -25,7 +25,7 @@ enum AppClipboardReadout {
     /// The identity comes off that readout, so the click reaches it through
     /// whichever VM owns it — never whatever happens to be newest by the time
     /// it lands.
-    static func cancel(_ id: ClipboardTransferOperationID, in instances: [VMInstance]) -> Bool {
+    package static func cancel(_ id: ClipboardTransferOperationID, in instances: [VMInstance]) -> Bool {
         for instance in instances where instance.clipboardTransfers.cancel(id) { return true }
         return false
     }

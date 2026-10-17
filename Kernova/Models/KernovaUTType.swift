@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 extension UTType {
     /// The document type for Kernova VM bundles (`.kernova` packages).
-    static let kernovaVM: UTType = {
+    package static let kernovaVM: UTType = {
         let identifier = "app.kernova.vm"
         guard let type = UTType(identifier) else {
             let logger = KernovaLogger(subsystem: "app.kernova", category: "UTType")
@@ -14,11 +14,11 @@ extension UTType {
         return type
     }()
 
-    static let iso: UTType = resolvedFilenameExtension("iso")
+    package static let iso: UTType = resolvedFilenameExtension("iso")
 
-    static let ipsw: UTType = resolvedFilenameExtension("ipsw")
+    package static let ipsw: UTType = resolvedFilenameExtension("ipsw")
 
-    static let asif: UTType = resolvedFilenameExtension("asif")
+    package static let asif: UTType = resolvedFilenameExtension("asif")
 
     private static func resolvedFilenameExtension(_ ext: String, fallback: UTType = .data) -> UTType {
         guard let type = UTType(filenameExtension: ext) else {
@@ -34,7 +34,7 @@ extension UTType {
     ///
     /// `.raw` maps to `.data` because `UTType(filenameExtension: "raw")` resolves to
     /// `public.camera-raw-image` (digital camera photos), not raw disk images.
-    static let diskImageTypes: [UTType] = {
+    package static let diskImageTypes: [UTType] = {
         let logger = KernovaLogger(subsystem: "app.kernova", category: "UTType")
         let resolvedExtensions: [(ext: String, fallback: UTType)] = [
             ("iso", .diskImage), ("img", .data), ("asif", .data),

@@ -1,5 +1,8 @@
 import Foundation
-import os
+
+// A `#log` expansion calls `os` members at its call site, so a module built
+// with MemberImportVisibility resolves them only if `os` comes in with this one.
+@_exported import os
 
 /// An `os.Logger` plus the labels a forwarded copy of each message carries.
 ///

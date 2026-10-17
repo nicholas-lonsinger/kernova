@@ -4,13 +4,13 @@ import KernovaLogging
 /// The path validation a configuration's attachments pass on their way into a
 /// build: each user-supplied path resolved (symlinks followed) and checked,
 /// with a failure mapped to the ``ConfigurationBuilderError`` naming it.
-enum ConfigurationPaths {
+package enum ConfigurationPaths {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigurationBuilder")
 
     /// Validates one shared directory at `path` — by default its own — and
     /// returns the resolved URL (symlinks followed); a failure names
     /// `directory`'s entry, as the Sharing pane lists it.
-    static func resolveSharedDirectory(
+    package static func resolveSharedDirectory(
         _ directory: SharedDirectory, at path: String? = nil
     ) throws -> URL {
         let path = path ?? directory.path
@@ -26,7 +26,7 @@ enum ConfigurationPaths {
     }
 
     /// Resolves and validates a file path, mapping `PathValidation.Failure` to `ConfigurationBuilderError`.
-    static func resolveFile(
+    package static func resolveFile(
         at path: String,
         context: String,
         requireWritable: Bool = false,

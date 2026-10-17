@@ -10,17 +10,17 @@ import KernovaLogging
 /// can retarget or delete while the VM runs. Under the App Sandbox the
 /// container's `Downloads` is itself a symlink to the user's, so every path
 /// picked there carries one.
-enum PathValidation {
+package enum PathValidation {
     /// The result of resolving a path through symlinks.
-    struct ResolvedPath: Sendable {
-        let url: URL
+    package struct ResolvedPath: Sendable {
+        package let url: URL
         let resolvedPath: String
         let originalPath: String
 
         var wasSymlink: Bool { resolvedPath != originalPath }
 
         /// Logs an info message when the path was a symlink, using the given context label.
-        func logResolution(logger: KernovaLogger, context: String) {
+        package func logResolution(logger: KernovaLogger, context: String) {
             guard wasSymlink else { return }
             #log(
                 logger, .info,
@@ -30,7 +30,7 @@ enum PathValidation {
     }
 
     /// Reasons a path validation can fail.
-    enum Failure: Error, Sendable {
+    package enum Failure: Error, Sendable {
         case notFound
         case unexpectedType
         case notReadable
@@ -42,7 +42,7 @@ enum PathValidation {
     /// Never throws `.notReadable`: readability is established only when
     /// Virtualization.framework opens the file, and any earlier check races that
     /// open.
-    static func resolveFile(at path: String, requireWritable: Bool = false) throws(Failure) -> ResolvedPath {
+    package static func resolveFile(at path: String, requireWritable: Bool = false) throws(Failure) -> ResolvedPath {
         let resolved = resolve(path)
         let fm = FileManager.default
 

@@ -6,19 +6,19 @@ import KernovaLogging
 /// and tags — and the one writer of the file that holds it.
 @MainActor
 @Observable
-final class VMOrganizationDirectory {
+package final class VMOrganizationDirectory {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMOrganizationDirectory")
 
     /// Where the library every copy of the app shares keeps its organization,
     /// beside the folder its VMs live in.
-    nonisolated static let productionFileURL = URL.applicationSupportDirectory
+    package nonisolated static let productionFileURL = URL.applicationSupportDirectory
         .appendingPathComponent("Kernova", isDirectory: true)
         .appendingPathComponent("Organization.json", isDirectory: false)
 
     /// What every surface that cannot list the smart groups, folders or tags
     /// tells the user.
-    nonisolated static let unreadableMessage =
+    package nonisolated static let unreadableMessage =
         "Kernova can\u{2019}t read its smart groups, folders and tags. Choose File > Check Config Files\u{2026} to review them."
 
     /// The file's payload: every sidebar section — each smart group, each
@@ -204,7 +204,7 @@ final class VMOrganizationDirectory {
     }
 
     /// What the organization holds that a name selects.
-    enum Element: Equatable, Sendable {
+    package enum Element: Equatable, Sendable {
         case smartGroup, folder, tag
 
         init(_ kind: VMGroupKind) {
@@ -279,7 +279,7 @@ final class VMOrganizationDirectory {
     @ObservationIgnored nonisolated let file: CoordinatedJSONFile<File>?
 
     /// The organization `fileURL` holds — none when there is no file yet.
-    init(fileURL: URL?) {
+    package init(fileURL: URL?) {
         self.file = fileURL.map(Self.file(at:))
         reload()
     }
@@ -308,19 +308,19 @@ final class VMOrganizationDirectory {
     // MARK: - Reads
 
     /// The smart group `id` identifies, `nil` when the library lists none.
-    func smartGroup(withID id: UUID) -> VMSmartGroup? {
+    package func smartGroup(withID id: UUID) -> VMSmartGroup? {
         smartGroups?.first { $0.id == id }
     }
 
     /// The folder `id` identifies, `nil` when the library lists none.
-    func folder(withID id: UUID) -> VMFolder? {
+    package func folder(withID id: UUID) -> VMFolder? {
         folders?.first { $0.id == id }
     }
 
     /// `base`, or the first of "`base` 2", "`base` 3", … no `element` is
     /// named — what a new one's name field starts from. `base` itself while
     /// the file cannot be read, where creating one is refused anyway.
-    func unusedName(from base: String, for element: Element) -> String {
+    package func unusedName(from base: String, for element: Element) -> String {
         guard let listed = state.listed else { return base }
         let names =
             switch element {

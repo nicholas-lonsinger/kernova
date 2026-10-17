@@ -5,21 +5,21 @@ import Foundation
 /// Runtime-only, never persisted. ``registryID`` is the in-session handle —
 /// what VZ is given and what every verb names this accessory by — and
 /// ``identity`` is what survives the re-enumeration a detach causes.
-struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
+package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     /// `AAUSBAccessory.registryID`.
-    let registryID: UInt64
+    package let registryID: UInt64
     let descriptor: USBDeviceDescriptor
     /// What names this unit across a re-enumeration, or `nil` when the
     /// IORegistry node answered nothing durable — in which case an accessory
     /// that goes away cannot be recognised when it comes back.
-    let identity: USBAccessoryIdentity?
+    package let identity: USBAccessoryIdentity?
     /// What the menu, the overview and `kernova usb list` call this accessory.
-    let displayName: String
+    package let displayName: String
     /// The receptacle in the words the hardware uses for it, for the one job
     /// the name cannot do alone: telling two identical devices apart.
     let receptacleLabel: String?
 
-    var id: UInt64 { registryID }
+    package var id: UInt64 { registryID }
 
     /// Describes the accessory `registryID` names.
     ///
@@ -28,7 +28,7 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     /// assigned to Kernova, or captured by a guest — and decides which keys are
     /// still free for this one, see
     /// ``USBAccessoryIdentity/make(descriptor:node:claimedBy:)``.
-    static func make(
+    package static func make(
         registryID: UInt64,
         descriptor: USBDeviceDescriptor,
         configurationDescriptor: Data?,
@@ -123,16 +123,16 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
 ///
 /// Runtime-only: the attachment lives no longer than the session, and nothing
 /// re-creates it on restore.
-struct AttachedUSBAccessory: Sendable, Equatable, Identifiable {
+package struct AttachedUSBAccessory: Sendable, Equatable, Identifiable {
     /// The `VZUSBDevice.uuid` VZ minted for the attachment, and what a detach
     /// names.
-    let deviceID: UUID
-    let accessory: USBAccessoryInfo
+    package let deviceID: UUID
+    package let accessory: USBAccessoryInfo
     let attachedAt: Date
 
-    var id: UUID { deviceID }
+    package var id: UUID { deviceID }
 
-    init(deviceID: UUID, accessory: USBAccessoryInfo, attachedAt: Date = Date()) {
+    package init(deviceID: UUID, accessory: USBAccessoryInfo, attachedAt: Date = Date()) {
         self.deviceID = deviceID
         self.accessory = accessory
         self.attachedAt = attachedAt

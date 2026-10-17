@@ -3,7 +3,7 @@ import KernovaKit
 import KernovaLogging
 
 /// Result of reading a pasteboard into the clipboard buffer.
-enum ClipboardIntakeResult: Equatable, Sendable {
+package enum ClipboardIntakeResult: Equatable, Sendable {
     /// Usable content. `note` carries a user-visible caveat when some
     /// representations were skipped (e.g. an oversized TIFF dropped while
     /// its PNG sibling survived).
@@ -32,14 +32,16 @@ enum ClipboardIntakeResult: Equatable, Sendable {
 /// Every rule about what may cross lives in the reader, shared with the guest
 /// agent and the drop service; this layer only says what the window shows.
 @MainActor
-enum ClipboardPasteboardIntake {
+package enum ClipboardPasteboardIntake {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardPasteboardIntake")
 
-    nonisolated static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
+    package nonisolated static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
 
     /// Reads `pasteboard` into clipboard content.
-    static func read(from pasteboard: any ClipboardReadPasteboard, allowsBinary: Bool) -> ClipboardIntakeResult {
+    package static func read(
+        from pasteboard: any ClipboardReadPasteboard, allowsBinary: Bool
+    ) -> ClipboardIntakeResult {
         switch ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: allowsBinary) {
         case .empty:
             return .rejected(message: "The Mac clipboard is empty", unreadable: false)
@@ -69,7 +71,7 @@ enum ClipboardPasteboardIntake {
     /// `unresolved` is the count `read(from:)` already dropped for having no
     /// file left on disk, folded into the same note so one report covers every
     /// item the copy lost on either side of the actor hop.
-    nonisolated static func read(
+    package nonisolated static func read(
         filesAt urls: [URL], unresolved: Int = 0, allowsBinary: Bool
     ) async -> ClipboardIntakeResult {
         guard allowsBinary else {

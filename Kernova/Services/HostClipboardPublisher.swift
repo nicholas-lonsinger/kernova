@@ -11,7 +11,7 @@ import KernovaLogging
 /// handed to the app-scoped provider registry on a successful write — a paste
 /// can land long after the window, or the VM, is gone.
 @MainActor
-final class HostClipboardPublisher {
+package final class HostClipboardPublisher {
     /// Label for the host-side clipboard staging root.
     ///
     /// Never swept on window/VM teardown — that would invalidate a just-copied
@@ -21,7 +21,7 @@ final class HostClipboardPublisher {
 
     /// The pasteboard every publication lands on, which a passthrough
     /// coordinator polls through this publisher so both name the same one.
-    let pasteboard: any ClipboardPasteboard
+    package let pasteboard: any ClipboardPasteboard
 
     /// The shared write choke point every publication goes through.
     private let publisher: ClipboardPasteboardPublisher
@@ -78,7 +78,7 @@ final class HostClipboardPublisher {
     /// Cooperatively cancellable: a task cancelled before the write throws
     /// `CancellationError` with the pasteboard untouched and its staging
     /// discarded, so a publish the caller no longer wants never lands.
-    func publish(from service: any ClipboardServicing) async throws(CancellationError)
+    package func publish(from service: any ClipboardServicing) async throws(CancellationError)
         -> HostPublishOutcome
     {
         guard !Task.isCancelled else { throw CancellationError() }
@@ -311,7 +311,7 @@ final class HostClipboardPublisher {
 }
 
 /// The terminal state of a `HostClipboardPublisher.publish(from:)`.
-enum HostPublishOutcome {
+package enum HostPublishOutcome {
     /// No representation could be served — every file payload was dropped and
     /// there was no inline/lazy content. `reasons` is most-actionable first.
     case nothingServed(reasons: [CopyToMacDropReason])

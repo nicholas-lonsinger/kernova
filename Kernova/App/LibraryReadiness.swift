@@ -8,21 +8,21 @@ import Foundation
 /// One instance is shared by every door, so a burst of requests — however many
 /// doors they arrive through — parks on a single task.
 @MainActor
-final class LibraryReadiness {
+package final class LibraryReadiness {
     /// The single await, started with the instance so the landing is on record
     /// whether or not a door has asked yet.
     private let landing: Task<Void, Never>
 
     /// Whether the read has landed — what a door that cannot suspend reads.
-    private(set) var hasLanded = false
+    package private(set) var hasLanded = false
 
-    init(awaitReady: @escaping @Sendable () async -> Void) {
+    package init(awaitReady: @escaping @Sendable () async -> Void) {
         landing = Task { await awaitReady() }
         Task { [weak self] in await self?.ready() }
     }
 
     /// Returns once the app's first library read has landed.
-    func ready() async {
+    package func ready() async {
         await landing.value
         hasLanded = true
     }

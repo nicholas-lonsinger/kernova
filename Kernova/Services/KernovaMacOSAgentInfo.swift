@@ -3,7 +3,7 @@ import KernovaLogging
 
 /// Static accessors for the Kernova guest agent that the host bundles in its
 /// Resources directory.
-enum KernovaMacOSAgentInfo {
+package enum KernovaMacOSAgentInfo {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "KernovaMacOSAgentInfo")
 
     /// Filename of the version sidecar in `Kernova.app/Contents/Resources/`.
@@ -18,7 +18,7 @@ enum KernovaMacOSAgentInfo {
     /// volume name the "Package Guest Agent DMG" build phase gives it — so the
     /// name Kernova shows for the attachment is the name the guest shows for
     /// the mounted volume.
-    static let diskLabel = "Kernova Guest Agent"
+    package static let diskLabel = "Kernova Guest Agent"
 
     /// The version of the guest agent embedded in this build of the host.
     ///
@@ -56,7 +56,7 @@ enum KernovaMacOSAgentInfo {
     }()
 
     /// Filesystem URL of the guest agent installer DMG, or `nil` if missing.
-    static var installerDiskImageURL: URL? {
+    package static var installerDiskImageURL: URL? {
         Bundle.main.url(
             forResource: dmgResourceName,
             withExtension: dmgResourceExtension

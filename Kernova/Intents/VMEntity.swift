@@ -9,14 +9,14 @@ import KernovaKit
 /// never drift from what the command core reads. Every field but the
 /// identifier is an entity property, which is what lets a Shortcut read a VM's
 /// configuration as variables and filter the library on it.
-struct VMEntity: IndexedEntity {
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Virtual Machine")
+package struct VMEntity: IndexedEntity {
+    package static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Virtual Machine")
 
-    static let defaultQuery = VMEntityQuery()
+    package static let defaultQuery = VMEntityQuery()
 
     /// The VM's stable identifier — what every verb this surface runs addresses
     /// it by, so a name shared by two VMs can never resolve ambiguously here.
-    let id: UUID
+    package let id: UUID
 
     /// The VM's display name, which is not unique, and what the Spotlight
     /// record is matched on.
@@ -118,7 +118,7 @@ struct VMEntity: IndexedEntity {
         self.bundlePath = info.bundlePath
     }
 
-    var displayRepresentation: DisplayRepresentation {
+    package var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
             title: "\(name)",
             subtitle: "\(VMStatus.displayName(forWireName: status, heldByAnotherCopy: heldByAnotherCopy))")
@@ -129,7 +129,7 @@ struct VMEntity: IndexedEntity {
     ///
     /// Carries nothing that moves while the VM is in the library — a status
     /// that changed would otherwise cost a re-index on every transition.
-    var attributeSet: CSSearchableItemAttributeSet {
+    package var attributeSet: CSSearchableItemAttributeSet {
         let attributes = defaultAttributeSet
         attributes.displayName = name
         attributes.contentDescription = "\(Self.guestOSDisplayName(guestOS)) virtual machine"
@@ -152,34 +152,36 @@ struct VMEntity: IndexedEntity {
 /// The property query filters and sorts in memory over that same enumeration,
 /// because the core answers the whole library in one main-actor read — there is
 /// no narrower query to push a predicate down into.
-struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, EntityPropertyQuery {
+package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, EntityPropertyQuery {
     /// A comparator becomes the predicate that answers it, so `entities(matching:)`
     /// is the same filtering the enumeration already supports.
-    typealias ComparatorMappingType = @Sendable (VMEntity) -> Bool
+    package typealias ComparatorMappingType = @Sendable (VMEntity) -> Bool
 
     /// Describes the Find action Shortcuts generates from this query. Both
     /// query protocols this conforms to carry a default, which is ambiguous
     /// where a type takes them both, so it is stated here.
-    static let findIntentDescription: IntentDescription? = IntentDescription(
+    package static let findIntentDescription: IntentDescription? = IntentDescription(
         "Finds virtual machines in the library, filtered and sorted by their properties.",
         categoryName: "Virtual Machines",
         resultValueName: "Virtual Machines")
 
     @Dependency private var gateway: VMIntentGateway
 
-    func entities(for identifiers: [UUID]) async throws -> [VMEntity] {
+    package init() {}
+
+    package func entities(for identifiers: [UUID]) async throws -> [VMEntity] {
         await gateway.vms(withIDs: identifiers)
     }
 
-    func entities(matching string: String) async throws -> [VMEntity] {
+    package func entities(matching string: String) async throws -> [VMEntity] {
         await gateway.vms(matching: string)
     }
 
-    func allEntities() async throws -> [VMEntity] {
+    package func allEntities() async throws -> [VMEntity] {
         await gateway.vms()
     }
 
-    func entities(
+    package func entities(
         matching comparators: [ComparatorMappingType],
         mode: ComparatorMode,
         sortedBy: [EntityQuerySort<VMEntity>],
@@ -224,7 +226,7 @@ struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, Ent
     // and that leaves the filters and sorts silently absent from Shortcuts.
     // `nonisolated(unsafe)` because AppIntents' builder results are not marked
     // `Sendable`: each is built once from constant closures and never mutated.
-    nonisolated(unsafe) static let properties = QueryProperties {
+    package nonisolated(unsafe) static let properties = QueryProperties {
         Property(\VMEntity.$name) {
             EqualToComparator { value in { @Sendable in $0.name == value } }
             NotEqualToComparator { value in { @Sendable in $0.name != value } }
@@ -272,7 +274,7 @@ struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, Ent
         }
     }
 
-    nonisolated(unsafe) static let sortingOptions = SortingOptions {
+    package nonisolated(unsafe) static let sortingOptions = SortingOptions {
         SortableBy(\VMEntity.$name)
         SortableBy(\VMEntity.$status)
         SortableBy(\VMEntity.$snapshotCount)

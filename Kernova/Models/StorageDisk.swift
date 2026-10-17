@@ -5,7 +5,7 @@ import KernovaKit
 ///
 /// Both virtio-block and USB mass storage are valid boot media on EFI, but the
 /// guest sees them in different namespaces (`/dev/vd*` vs `/dev/sd*` on Linux).
-enum StorageDiskKind: String, Codable, Sendable, Equatable {
+package enum StorageDiskKind: String, Codable, Sendable, Equatable {
     case virtio
     case usbMassStorage
 }
@@ -14,20 +14,20 @@ enum StorageDiskKind: String, Codable, Sendable, Equatable {
 ///
 /// Covers the bundle's primary disk (`Disk.asif`) and any user-added internal
 /// or external disks and installer images.
-struct StorageDisk: Codable, Sendable, Equatable {
-    var id: UUID
+package struct StorageDisk: Codable, Sendable, Equatable {
+    package var id: UUID
     /// Bundle-relative for internal disks (e.g. `"Disk.asif"`,
     /// `"AdditionalDisks/<id>.asif"`); absolute for external disks.
-    var path: String
-    var readOnly: Bool
-    var label: String
+    package var path: String
+    package var readOnly: Bool
+    package var label: String
     /// When `true`, `path` is bundle-relative and the file is owned by the bundle.
-    var isInternal: Bool
+    package var isInternal: Bool
     /// Bus class for this disk.
     ///
     /// Set at add-time from the file extension and persisted, so renaming the
     /// file on disk doesn't silently change guest-side device naming.
-    var kind: StorageDiskKind
+    package var kind: StorageDiskKind
 
     /// App-scoped security bookmark for `path`, minted from the user's
     /// open-panel grant so the sandboxed app can reopen the file across
@@ -36,12 +36,12 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// Only meaningful for external disks; `nil` for internal (bundle-relative)
     /// disks and when bookmark creation failed — resolution then falls back to
     /// the raw path, surfacing the missing-file UX if the sandbox denies it.
-    var bookmark: Data?
+    package var bookmark: Data?
 
     /// Free-form user note, empty when none was entered.
-    var notes: String
+    package var notes: String
 
-    init(
+    package init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = false,
@@ -64,7 +64,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
     // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
     // fails the whole `VMConfiguration` decode when the key is absent, which a
     // config written before this field existed always is.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
         let path = try c.decode(String.self, forKey: .path)
@@ -117,7 +117,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
     }
 
     /// Display string used in the UI subtitle.
-    var displayPath: String {
+    package var displayPath: String {
         isInternal ? "In-bundle disk image" : path
     }
 
@@ -125,7 +125,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
     ///
     /// Truncated to 20 ASCII characters per VZ's limit; unused for USB mass
     /// storage entries.
-    var blockDeviceIdentifier: String {
+    package var blockDeviceIdentifier: String {
         String(id.uuidString.prefix(20))
     }
 }
@@ -137,18 +137,18 @@ struct StorageDisk: Codable, Sendable, Equatable {
 /// `StorageDisk` with `kind == .usbMassStorage` for bootable removable media.
 /// Each item's `id` becomes the `VZUSBMassStorageDeviceConfiguration.uuid` for
 /// save-state matching.
-struct RemovableMediaItem: Codable, Sendable, Equatable {
-    var id: UUID
-    var path: String
-    var readOnly: Bool
-    var label: String
+package struct RemovableMediaItem: Codable, Sendable, Equatable {
+    package var id: UUID
+    package var path: String
+    package var readOnly: Bool
+    package var label: String
 
     /// App-scoped security bookmark for `path` (always an external,
     /// user-picked file); see ``StorageDisk/bookmark`` for the nil semantics.
-    var bookmark: Data?
+    package var bookmark: Data?
 
     /// Free-form user note, empty when none was entered.
-    var notes: String
+    package var notes: String
 
     init(
         id: UUID = UUID(),
@@ -169,7 +169,7 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
     // fails the whole `VMConfiguration` decode when the key is absent, which a
     // config written before this field existed always is.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
         let path = try c.decode(String.self, forKey: .path)
@@ -186,7 +186,7 @@ extension RemovableMediaItem {
     ///
     /// The installer lives *inside the app bundle*, so a "remove" of it must
     /// only detach the entry and never trash the file.
-    var isBundledGuestAgentInstaller: Bool {
+    package var isBundledGuestAgentInstaller: Bool {
         guard let agentPath = KernovaMacOSAgentInfo.installerPath else { return false }
         return path == agentPath
     }
@@ -210,22 +210,22 @@ extension RemovableMediaItem {
 /// files to Trash alongside the VM. `sharedWithVMNames` is non-empty when other
 /// VMs reference the same path, so the UI can warn before trashing a shared
 /// file.
-struct ExternalAttachment: Sendable, Equatable {
+package struct ExternalAttachment: Sendable, Equatable {
     /// The projected reference this attachment annotates.
     let reference: ExternalFileReference
-    let sharedWithVMNames: [String]
+    package let sharedWithVMNames: [String]
     /// `true` when `path` no longer resolves to a file on disk.
-    let isMissing: Bool
+    package let isMissing: Bool
 
-    var id: UUID { reference.id }
-    var kind: ExternalFileReference.Kind { reference.kind }
-    var label: String { reference.label }
-    var path: String { reference.path }
+    package var id: UUID { reference.id }
+    package var kind: ExternalFileReference.Kind { reference.kind }
+    package var label: String { reference.label }
+    package var path: String { reference.path }
 
-    var isShared: Bool { !sharedWithVMNames.isEmpty }
+    package var isShared: Bool { !sharedWithVMNames.isEmpty }
 
     /// `true` when this external can be individually selected for trashing —
     /// i.e. it is exclusively owned (not shared with another VM) and present on
     /// disk.
-    var isSelectable: Bool { !isShared && !isMissing }
+    package var isSelectable: Bool { !isShared && !isMissing }
 }

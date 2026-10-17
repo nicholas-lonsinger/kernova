@@ -10,14 +10,14 @@ import IOKit.usb
 /// already in the registry by the time macOS assigns the accessory. Opening it
 /// to ask the same questions would take it exclusively and reset it on close,
 /// which is why nothing here does.
-enum USBAccessoryRegistry {
+package enum USBAccessoryRegistry {
     /// What the node `registryID` names reports, or `nil` when no node answers
     /// to it.
     ///
     /// `registryID` resolves to the `IOUSBHostDevice` node itself, so one
     /// `IORegistryEntryCreateCFProperties` answers every question but the
     /// receptacle, which lives on the port node above it.
-    static func properties(ofAccessory registryID: UInt64) -> USBAccessoryNodeProperties? {
+    package static func properties(ofAccessory registryID: UInt64) -> USBAccessoryNodeProperties? {
         let node = IOServiceGetMatchingService(
             kIOMainPortDefault, IORegistryEntryIDMatching(registryID))
         guard node != IO_OBJECT_NULL else { return nil }

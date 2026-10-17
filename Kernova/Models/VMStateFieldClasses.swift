@@ -68,7 +68,7 @@ struct VMStateFieldClasses<Root: Sendable>: Sendable {
 
 /// A write refused because it moved fields its permit's authority may not
 /// write; the file is left as it was.
-struct VMStateFieldRefusal: Error, Equatable {
+package struct VMStateFieldRefusal: Error, Equatable {
     let fields: [String]
 }
 

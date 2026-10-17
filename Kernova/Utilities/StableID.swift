@@ -3,9 +3,9 @@ import Foundation
 
 /// UUIDs fixed by a seed string, for entries that are re-derived rather than
 /// persisted and still need identity that survives the re-derivation.
-enum StableID {
+package enum StableID {
     /// A UUID fixed by `seed`.
-    static func uuid(seed: String) -> UUID {
+    package static func uuid(seed: String) -> UUID {
         let digest = SHA256.hash(data: Data(seed.utf8))
         let bytes = Array(digest.prefix(16))
         return UUID(

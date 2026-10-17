@@ -76,7 +76,7 @@ extension VMCommandCore {
     /// `network.mode` minting a MAC address — sees the batch in the order
     /// given.
     @discardableResult
-    func setConfiguration(
+    package func setConfiguration(
         _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)

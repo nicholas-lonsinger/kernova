@@ -79,7 +79,7 @@ struct ObservedAgentInfo: Equatable, Sendable {
 /// a reconnect is served by a fresh instance.
 @MainActor
 @Observable
-final class VsockControlService: VsockFeatureService {
+package final class VsockControlService: VsockFeatureService {
     // MARK: - Observable state
 
     /// `true` once the guest agent has sent its `Hello`; reset when the
@@ -94,7 +94,7 @@ final class VsockControlService: VsockFeatureService {
     private(set) var isUnresponsive: Bool = false
 
     /// Whether the guest agent is missing, current, outdated, or unresponsive relative to the bundled binary.
-    var agentStatus: AgentStatus {
+    package var agentStatus: AgentStatus {
         guard let installed = agentVersion else { return .waiting }
         if isUnresponsive { return .unresponsive(version: installed) }
         guard let bundled = bundledAgentVersion else {
@@ -186,7 +186,7 @@ final class VsockControlService: VsockFeatureService {
     private var guestSupportsDropFilesStorage = false
 
     /// Whether the guest can receive files dropped onto the VM display.
-    var guestSupportsDropFiles: Bool { guestSupportsDropFilesStorage }
+    package var guestSupportsDropFiles: Bool { guestSupportsDropFilesStorage }
 
     // MARK: - Settle contract
 

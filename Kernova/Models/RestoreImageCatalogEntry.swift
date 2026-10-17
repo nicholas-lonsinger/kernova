@@ -5,28 +5,28 @@ import Foundation
 /// Identity is ``build``, not ``version``: Apple ships hardware-specific spins
 /// under one version number (15.4 exists as both `24E246` and `24E248`), so a
 /// version is not unique and cannot address an image.
-struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
+package struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// Marketing version, two or three dot-separated components (`"26.6"`, `"12.0.1"`).
-    var version: String
+    package var version: String
     /// Apple build identifier, unique across the catalog.
-    var build: String
+    package var build: String
     var url: URL
-    var sizeBytes: UInt64
+    package var sizeBytes: UInt64
     /// The `Last-Modified` Apple's CDN reports for ``url``, in RFC 1123 form,
     /// or `nil` when it reported none — the generator omits the key then.
     var lastModified: String?
     /// Which pass of `Tools/regen-restore-image-catalog.swift` found this image.
     var source: String
 
-    var id: String { build }
+    package var id: String { build }
 
     /// Apple's own filename for the image, e.g. `UniversalMac_15.6.1_24G90_Restore.ipsw`.
-    var suggestedFilename: String {
+    package var suggestedFilename: String {
         RestoreImageFilename.destination(for: url)
     }
 
     /// ``lastModified`` parsed for display, or `nil` if it is absent or did not parse.
-    var releaseDate: Date? {
+    package var releaseDate: Date? {
         lastModified.flatMap { Self.rfc1123Formatter.date(from: $0) }
     }
 
@@ -42,7 +42,7 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     ///
     /// An unparseable version answers `false`: the catalog service drops such
     /// entries at decode time, so no pickable entry reaches this.
-    func isSupported(onHost host: OperatingSystemVersion) -> Bool {
+    package func isSupported(onHost host: OperatingSystemVersion) -> Bool {
         MacOSVersion(version)?.isSupported(onHost: host) ?? false
     }
 
@@ -61,7 +61,7 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     }
 
     /// Whether the entry matches a picker search term, over version and build.
-    func matches(searchTerm: String) -> Bool {
+    package func matches(searchTerm: String) -> Bool {
         let term = searchTerm.trimmingCharacters(in: .whitespaces)
         guard !term.isEmpty else { return true }
         return version.localizedCaseInsensitiveContains(term)

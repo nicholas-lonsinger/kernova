@@ -140,7 +140,7 @@ extension VMCommandCore {
     }
 
     /// The refusal a revert raises, and the copy every surface renders it with.
-    static func revertPrompt(_ snapshot: VMSnapshot, on instance: VMInstance) -> ConfirmationPrompt {
+    package static func revertPrompt(_ snapshot: VMSnapshot, on instance: VMInstance) -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .revertToSnapshot,
             title: "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
@@ -367,7 +367,7 @@ extension VMCommandCore {
     }
 
     /// The refusal a snapshot delete raises.
-    static func deleteSnapshotPrompt(
+    package static func deleteSnapshotPrompt(
         _ snapshot: VMSnapshot, on instance: VMInstance
     ) -> ConfirmationPrompt {
         ConfirmationPrompt(

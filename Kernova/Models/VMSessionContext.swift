@@ -13,7 +13,7 @@ import KernovaLogging
 /// owning them.
 @MainActor
 @Observable
-final class VMSessionContext {
+package final class VMSessionContext {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSessionContext")
 
     /// The VM name, for log records.
@@ -126,11 +126,11 @@ final class VMSessionContext {
     /// Keeps the live network attachment realizing the configured mode;
     /// created with the `VZVirtualMachine` for network-enabled VMs, activated
     /// once the session reaches `.running`, torn down with the session.
-    @ObservationIgnored var networkAttachmentCoordinator: NetworkAttachmentCoordinator?
+    @ObservationIgnored package var networkAttachmentCoordinator: NetworkAttachmentCoordinator?
 
     /// `true` while a live session's network device is detached and recovery
     /// is waiting for a usable host interface.
-    var networkAttachmentPending = false
+    package var networkAttachmentPending = false
 
     // MARK: - Runtime Removable Media
 

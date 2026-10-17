@@ -1,15 +1,15 @@
 import Foundation
 
 /// A sidebar section's identity, which is also its expansion-state key.
-struct SidebarSectionID: RawRepresentable, Hashable, Sendable, Codable {
-    let rawValue: String
+package struct SidebarSectionID: RawRepresentable, Hashable, Sendable, Codable {
+    package let rawValue: String
 
-    init(rawValue: String) {
+    package init(rawValue: String) {
         self.rawValue = rawValue
     }
 
     /// The section listing every library entry.
-    static let library = SidebarSectionID(rawValue: "virtualMachines")
+    package static let library = SidebarSectionID(rawValue: "virtualMachines")
 
     /// The section listed where the smart groups and folders go while they
     /// can't be read.
@@ -17,10 +17,10 @@ struct SidebarSectionID: RawRepresentable, Hashable, Sendable, Codable {
 }
 
 /// A group header's identity within its section.
-struct SidebarGroupID: RawRepresentable, Hashable, Sendable, Codable {
-    let rawValue: String
+package struct SidebarGroupID: RawRepresentable, Hashable, Sendable, Codable {
+    package let rawValue: String
 
-    init(rawValue: String) {
+    package init(rawValue: String) {
         self.rawValue = rawValue
     }
 }
@@ -30,10 +30,10 @@ struct SidebarGroupID: RawRepresentable, Hashable, Sendable, Codable {
 ///
 /// A VM can be listed in several sections, and under several groups of one
 /// section, so its identifier alone does not name a row.
-struct SidebarRowKey: Hashable, Sendable, Codable {
-    let section: SidebarSectionID
-    let group: SidebarGroupID?
-    let entryID: UUID
+package struct SidebarRowKey: Hashable, Sendable, Codable {
+    package let section: SidebarSectionID
+    package let group: SidebarGroupID?
+    package let entryID: UUID
 
     /// The entry's row in the library section, outside any group.
     static func library(_ entryID: UUID) -> SidebarRowKey {

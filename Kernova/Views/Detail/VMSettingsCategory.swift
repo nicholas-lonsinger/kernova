@@ -3,7 +3,7 @@ import Foundation
 /// The categories the VM details pane is organized into: the overview shows one
 /// card per category, and each card drills into the panel holding that
 /// category's full form.
-enum VMSettingsCategory: String, CaseIterable, Sendable {
+package enum VMSettingsCategory: String, CaseIterable, Sendable {
     case general
     case system
     case storage
@@ -11,7 +11,7 @@ enum VMSettingsCategory: String, CaseIterable, Sendable {
     case sharing
     case snapshots
 
-    var title: String {
+    package var title: String {
         switch self {
         case .general: "General"
         case .system: "System"
@@ -23,7 +23,7 @@ enum VMSettingsCategory: String, CaseIterable, Sendable {
     }
 
     /// SF Symbol for the card's leading glyph.
-    var symbolName: String {
+    package var symbolName: String {
         switch self {
         case .general: "info.circle"
         case .system: "cpu"

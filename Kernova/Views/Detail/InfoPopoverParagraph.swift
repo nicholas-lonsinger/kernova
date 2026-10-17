@@ -1,7 +1,7 @@
 import Foundation
 
 /// One paragraph rendered inside an ``InfoPopoverContentViewController``.
-enum InfoPopoverParagraph: Equatable {
+package enum InfoPopoverParagraph: Equatable {
     /// Wrapping body text in the shared `.callout` style, in which a
     /// backtick-delimited span renders in ``CalloutStyle/codeFont`` without
     /// its backticks.

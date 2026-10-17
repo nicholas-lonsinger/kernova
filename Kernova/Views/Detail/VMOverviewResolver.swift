@@ -13,7 +13,7 @@ import KernovaKit
 /// sizes. Each is keyed to the VM it was issued for and reported through
 /// ``onCategoryResolved`` so one card, or one row, repaints.
 @MainActor
-final class VMOverviewResolver {
+package final class VMOverviewResolver {
     /// How many macOS guests macOS itself will run at the same time.
     ///
     /// The cap is the platform's, enforced by VZ — a start past it fails, which
@@ -23,11 +23,11 @@ final class VMOverviewResolver {
 
     /// What the Audio banner — and the System card's warning glyph — say about a
     /// refused microphone.
-    static let micPermissionDeniedWarning = "Microphone permission is denied."
+    package static let micPermissionDeniedWarning = "Microphone permission is denied."
 
     /// Every resolved value, the network's label as the configuration names
     /// it now among them.
-    var resolved: VMOverviewResolved {
+    package var resolved: VMOverviewResolved {
         var resolved = values
         resolved.networkModeLabel = networkModeLabel
         return resolved
@@ -40,10 +40,10 @@ final class VMOverviewResolver {
     /// named again whenever ``refresh()`` follows a configuration or network
     /// list change, and whenever the Mode picker enumerates the host's
     /// interfaces (``resolveNetworkModeLabel(enumerated:)``).
-    private(set) var networkModeLabel: NetworkChoiceLabel
+    package private(set) var networkModeLabel: NetworkChoiceLabel
 
     /// Fires when an async read lands, naming the category whose value moved.
-    var onCategoryResolved: ((VMSettingsCategory) -> Void)?
+    package var onCategoryResolved: ((VMSettingsCategory) -> Void)?
 
     private let bridgedInterfaces: any BridgedInterfaceProviding
     private let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
@@ -85,7 +85,7 @@ final class VMOverviewResolver {
         let image: DiskImageReference
     }
 
-    init(
+    package init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
         bridgedInterfaces: any BridgedInterfaceProviding,
@@ -105,7 +105,7 @@ final class VMOverviewResolver {
 
     /// Rebinds to a (possibly different) VM; a different one drops every stored
     /// value and in-flight read, which described the outgoing one.
-    func bind(instance: VMInstance, viewModel: VMLibraryViewModel) {
+    package func bind(instance: VMInstance, viewModel: VMLibraryViewModel) {
         let instanceChanged = instance.id != self.instance.id
         self.instance = instance
         self.viewModel = viewModel
@@ -123,7 +123,7 @@ final class VMOverviewResolver {
     }
 
     /// The pane is going away: drop the reads that would paint it unseen.
-    func prepareForDisappearance() {
+    package func prepareForDisappearance() {
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
         snapshotMeasureGeneration += 1
@@ -132,13 +132,13 @@ final class VMOverviewResolver {
 
     /// Measures the snapshot sizes again on the next pass, whatever changed
     /// since the last measurement — for a surface stating them coming into view.
-    func remeasureSnapshotSizes() {
+    package func remeasureSnapshotSizes() {
         snapshotMeasureKey = nil
     }
 
     /// Re-reads the microphone permission, which System Settings — or macOS's
     /// own prompt — may have changed since the last pass.
-    func rereadMicPermission() {
+    package func rereadMicPermission() {
         micPermission = micPermissionStatus()
     }
 
@@ -146,7 +146,7 @@ final class VMOverviewResolver {
 
     /// Re-resolves every value from the model. Idempotent; the off-main reads
     /// re-issue only when what they answer for changed.
-    func refresh() {
+    package func refresh() {
         let config = instance.configuration
         values.warnings[.general] = Self.autoStartCapacityWarning(
             isMacOSGuest: config.guestOS == .macOS,
@@ -204,7 +204,7 @@ final class VMOverviewResolver {
     /// interfaces as an enumeration just found them — the Mode picker's, as
     /// it opens — so every surface names a bridged interface as the host
     /// offers it now.
-    func resolveNetworkModeLabel(enumerated interfaces: [BridgedInterface]) {
+    package func resolveNetworkModeLabel(enumerated interfaces: [BridgedInterface]) {
         interfaceEnumeration = InterfaceEnumeration(
             choice: NetworkModeChoice(instance.configuration), interfaces: interfaces)
         resolveNetworkModeLabel()

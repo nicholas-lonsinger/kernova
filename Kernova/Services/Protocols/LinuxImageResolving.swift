@@ -58,7 +58,7 @@ enum LinuxImageResolveError: LocalizedError, Equatable {
 /// Separate from ``LinuxImageResolveError`` because every case there states
 /// something about a mirror and its manifest, and none of that exists here: a
 /// pasted URL is refused on what the user typed and what the server answered.
-enum LinuxImageURLError: LocalizedError, Equatable {
+package enum LinuxImageURLError: LocalizedError, Equatable {
     /// The text is not a URL naming a host.
     case malformedURL
     /// The URL's scheme is not `https`.
@@ -74,7 +74,7 @@ enum LinuxImageURLError: LocalizedError, Equatable {
     /// The request did not complete.
     case transportFailed(description: String)
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .malformedURL:
             "That isn't a valid URL. Paste the full link, starting with https://"
@@ -110,7 +110,7 @@ extension LinuxImageURLError {
 
 /// Abstraction for turning a Linux installer image source into the image to
 /// download.
-protocol LinuxImageResolving: Sendable {
+package protocol LinuxImageResolving: Sendable {
     /// The ISO `entry` names right now, with the SHA-256 its manifest lists.
     ///
     /// Nothing about the answer is cached — see ``LinuxImageCatalogEntry``.

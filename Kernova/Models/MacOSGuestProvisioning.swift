@@ -12,11 +12,11 @@ import Foundation
 /// Persisted as ``VMConfiguration/pendingGuestAccount`` rather than inside the
 /// install context: the install is over when the image lands, while the account
 /// is owed until a boot has spent the one window macOS reads it in.
-struct GuestAccountIntent: Codable, Sendable, Equatable {
-    var fullName: String
-    var username: String
-    var logsInAutomatically: Bool
-    var enablesRemoteLogin: Bool
+package struct GuestAccountIntent: Codable, Sendable, Equatable {
+    package var fullName: String
+    package var username: String
+    package var logsInAutomatically: Bool
+    package var enablesRemoteLogin: Bool
 }
 
 /// The account Virtualization creates inside a macOS guest, complete with the
@@ -26,12 +26,12 @@ struct GuestAccountIntent: Codable, Sendable, Equatable {
 /// bundle's `config.json`. The other four values persist as
 /// ``GuestAccountIntent``, and the password is rejoined with them for the boot
 /// that carries it.
-struct GuestProvisioningCredentials: Sendable, CustomStringConvertible {
-    var fullName: String
-    var username: String
-    var password: String
-    var logsInAutomatically: Bool
-    var enablesRemoteLogin: Bool
+package struct GuestProvisioningCredentials: Sendable, CustomStringConvertible {
+    package var fullName: String
+    package var username: String
+    package var password: String
+    package var logsInAutomatically: Bool
+    package var enablesRemoteLogin: Bool
 
     init(
         fullName: String, username: String, password: String, logsInAutomatically: Bool,
@@ -54,7 +54,7 @@ struct GuestProvisioningCredentials: Sendable, CustomStringConvertible {
 
     /// Redacts the password, so interpolating these into a log line or a
     /// debugger dump cannot spill it.
-    var description: String {
+    package var description: String {
         "GuestProvisioningCredentials(fullName: \(fullName), username: \(username), "
             + "password: <redacted>, logsInAutomatically: \(logsInAutomatically), "
             + "enablesRemoteLogin: \(enablesRemoteLogin))"
@@ -62,9 +62,9 @@ struct GuestProvisioningCredentials: Sendable, CustomStringConvertible {
 }
 
 /// A set of credentials Virtualization refused, as the framework described it.
-struct GuestProvisioningRefusal: Sendable, Equatable {
+package struct GuestProvisioningRefusal: Sendable, Equatable {
     /// The control the refusal belongs to.
-    enum Field: Sendable, Equatable {
+    package enum Field: Sendable, Equatable {
         case fullName
         case username
         case password
@@ -82,6 +82,11 @@ struct GuestProvisioningRefusal: Sendable, Equatable {
     /// Virtualization accepts. Whichever it is, it names no API — see
     /// ``MacOSGuestProvisioning/refusal(from:)``.
     let message: String
+
+    package init(field: GuestProvisioningRefusal.Field, message: String) {
+        self.field = field
+        self.message = message
+    }
 }
 
 /// The account fields a surface has controls for, and so may refuse as blank.
@@ -102,7 +107,7 @@ struct GatheredAccountFields: OptionSet, Sendable {
 /// Where the macOS guest-account capability is decided, once: whether to offer
 /// it, whether a boot can deliver it, what Virtualization makes of a given
 /// account, and the start options that carry it.
-enum MacOSGuestProvisioning {
+package enum MacOSGuestProvisioning {
     /// The guest release that runs Virtualization's provisioning protocol.
     ///
     /// An older guest ignores the options and stops at Setup Assistant, with no
@@ -184,7 +189,7 @@ enum MacOSGuestProvisioning {
     /// The account's two login flags take any value Virtualization validates,
     /// so this passes the ones a fresh account would get; what comes back is
     /// about the password and nothing else.
-    static func passwordRefusal(
+    package static func passwordRefusal(
         fullName: String, username: String, password: String, verifiedBy verification: String,
         host: any VirtualizationHostProviding
     ) -> String? {
@@ -198,7 +203,7 @@ enum MacOSGuestProvisioning {
 
     /// What a refusal that named no reason says, in the words the wizard's own
     /// labels use.
-    static func refusalMessage(for field: GuestProvisioningRefusal.Field) -> String {
+    package static func refusalMessage(for field: GuestProvisioningRefusal.Field) -> String {
         switch field {
         case .fullName: "macOS didn\u{2019}t accept this full name."
         case .username: "macOS didn\u{2019}t accept this account name."

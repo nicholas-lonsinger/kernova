@@ -8,7 +8,7 @@ import Foundation
 /// Models only the status→control mapping: the hard gates that withhold the
 /// menu item regardless of status (no live VM for USB hot-plug, missing bundled
 /// DMG) stay in `MainMenuController.validate`.
-enum GuestAgentDiskControl {
+package enum GuestAgentDiskControl {
     /// What clicking the control does in its current mode.
     enum Action: Equatable {
         /// The installer disk is attached — detach it.
@@ -19,9 +19,9 @@ enum GuestAgentDiskControl {
     }
 
     /// The control's resolved title, enabled state, and action.
-    struct Model: Equatable {
-        let title: String
-        let isEnabled: Bool
+    package struct Model: Equatable {
+        package let title: String
+        package let isEnabled: Bool
         let action: Action
     }
 
@@ -32,11 +32,11 @@ enum GuestAgentDiskControl {
     /// on it, so the reject path has to retitle too: switching from a macOS
     /// guest with the disk attached to a Linux guest would otherwise strand
     /// "Eject Guest Agent Media" on a VM that can never have it.
-    static let unavailableTitle = "Install Guest Agent…"
+    package static let unavailableTitle = "Install Guest Agent…"
 
     /// Resolves the control for `instance`'s current state.
     @MainActor
-    static func model(for instance: VMInstance) -> Model {
+    package static func model(for instance: VMInstance) -> Model {
         model(
             status: instance.agentStatus,
             isInstallerMounted: instance.hasGuestAgentInstallerMounted)
@@ -50,7 +50,7 @@ enum GuestAgentDiskControl {
     /// disables, uninstalls or kills the agent in the guest, exactly when
     /// re-mounting is wanted — so only the genuinely-transient `.connecting`
     /// leaves the control disabled.
-    static func model(status: AgentStatus, isInstallerMounted: Bool) -> Model {
+    package static func model(status: AgentStatus, isInstallerMounted: Bool) -> Model {
         if isInstallerMounted {
             return Model(title: "Eject Guest Agent Media", isEnabled: true, action: .eject)
         }

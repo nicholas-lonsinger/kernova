@@ -1,7 +1,7 @@
 import Foundation
 
 /// One tab of the Settings window, in toolbar order.
-enum SettingsPane: String, CaseIterable {
+package enum SettingsPane: String, CaseIterable {
     /// App-lifecycle toggles.
     case general
     /// Turning suppressed reminders back on.
@@ -14,7 +14,7 @@ enum SettingsPane: String, CaseIterable {
     case tags
     case advanced
 
-    var label: String {
+    package var label: String {
         switch self {
         case .general: "General"
         case .reminders: "Reminders"
@@ -25,7 +25,7 @@ enum SettingsPane: String, CaseIterable {
         }
     }
 
-    var symbolName: String {
+    package var symbolName: String {
         switch self {
         case .general: "gearshape"
         case .reminders: "bell"
@@ -38,13 +38,13 @@ enum SettingsPane: String, CaseIterable {
 }
 
 /// Where a request to show the Settings window lands.
-enum SettingsDestination: Equatable {
+package enum SettingsDestination: Equatable {
     case pane(SettingsPane)
     /// The Networks pane, with the row of the network `id` identifies selected
     /// when the library lists it.
     case network(UUID)
 
-    var pane: SettingsPane {
+    package var pane: SettingsPane {
         switch self {
         case .pane(let pane): pane
         case .network: .networks

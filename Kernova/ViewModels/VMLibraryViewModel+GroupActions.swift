@@ -6,7 +6,7 @@ import KernovaLogging
 extension VMLibraryViewModel {
     /// How many of the VMs in `group` each action acts on now, `nil` when the
     /// library's groups cannot be read.
-    func groupActionCounts(for group: VMGroupReference) -> [VMGroupAction: Int]? {
+    package func groupActionCounts(for group: VMGroupReference) -> [VMGroupAction: Int]? {
         do {
             return try commands.concernedCounts(in: group)
         } catch {
@@ -24,7 +24,7 @@ extension VMLibraryViewModel {
     /// Through ``VMCommandCore`` rather than the in-app ``start(_:bootIntoRecovery:)``:
     /// a group action selects and focuses nothing, and raises no question
     /// per VM — the VMs whose own verb would ask are in that one account.
-    func performGroupAction(_ action: VMGroupAction, on group: VMGroupReference) async {
+    package func performGroupAction(_ action: VMGroupAction, on group: VMGroupReference) async {
         let report: VMGroupActionReport
         do {
             report = try await commands.groupAction(action, on: group)

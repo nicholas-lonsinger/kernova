@@ -4,7 +4,7 @@ import KernovaLogging
 
 extension VmnetNetworkKind {
     /// The network mode a VM on a network of this kind has.
-    var mode: VMNetworkMode {
+    package var mode: VMNetworkMode {
         switch self {
         case .nat: .nat
         case .hostOnly: .hostOnly
@@ -13,7 +13,7 @@ extension VmnetNetworkKind {
 
     /// The kind backing `mode`, `nil` for a mode no app-managed network
     /// realizes (Bridged — external DHCP owns addressing there).
-    init?(mode: VMNetworkMode) {
+    package init?(mode: VMNetworkMode) {
         switch mode {
         case .nat: self = .nat
         case .hostOnly: self = .hostOnly
@@ -25,9 +25,9 @@ extension VmnetNetworkKind {
 /// One app-managed vmnet network. Membership is what expresses guest↔guest
 /// reachability (docs/NETWORKING.md): separate networks do not reach each
 /// other (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md).
-struct VmnetNetworkID: Hashable, Sendable {
+package struct VmnetNetworkID: Hashable, Sendable {
     /// Which of a kind's networks this is.
-    enum Scope: Hashable, Sendable {
+    package enum Scope: Hashable, Sendable {
         /// The one network every VM of the kind with common membership joins.
         case common
         /// The network of its own the VM with this identifier joins.
@@ -40,18 +40,23 @@ struct VmnetNetworkID: Hashable, Sendable {
     let kind: VmnetNetworkKind
     let scope: Scope
 
+    package init(kind: VmnetNetworkKind, scope: VmnetNetworkID.Scope) {
+        self.kind = kind
+        self.scope = scope
+    }
+
     /// The network every VM of `kind` with common membership joins.
     static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, scope: .common) }
 }
 
 /// A network as one VM's session names it: `kind`'s network the VM's
 /// membership names, where ``VMNetworkMembership/isolated`` is the VM's own.
-struct VmnetNetworkSelection: Hashable, Sendable {
+package struct VmnetNetworkSelection: Hashable, Sendable {
     let kind: VmnetNetworkKind
     let membership: VMNetworkMembership
 
     /// How a log line names this network.
-    var logDescription: String {
+    package var logDescription: String {
         switch membership {
         case .common: "common \(kind.rawValue)"
         case .isolated: "own \(kind.rawValue)"
@@ -61,12 +66,12 @@ struct VmnetNetworkSelection: Hashable, Sendable {
 }
 
 /// The IPv4 block a network hands its guests, in host byte order.
-struct IPv4Subnet: Equatable, Sendable {
-    let network: UInt32
-    let mask: UInt32
+package struct IPv4Subnet: Equatable, Sendable {
+    package let network: UInt32
+    package let mask: UInt32
 
     /// The block any `address` inside it under `mask` belongs to.
-    init(containing address: UInt32, mask: UInt32) {
+    package init(containing address: UInt32, mask: UInt32) {
         self.network = address & mask
         self.mask = mask
     }
@@ -77,8 +82,8 @@ struct IPv4Subnet: Equatable, Sendable {
 }
 
 /// Dotted-quad IPv4 presentation of host-byte-order values.
-enum IPv4Value {
-    static func string(_ value: UInt32) -> String {
+package enum IPv4Value {
+    package static func string(_ value: UInt32) -> String {
         var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
         var address = in_addr(s_addr: value.bigEndian)
         return buffer.withUnsafeMutableBufferPointer { buffer in
@@ -95,13 +100,13 @@ enum IPv4Value {
 // pointer in a class reference compiles correctly
 // (docs/research/2026-09-30-swift-6-4-onone-optional-chain-through-a-pointer-payload.md).
 /// A materialized app-managed vmnet network.
-final class VmnetNetworkHandle: @unchecked Sendable {
+package final class VmnetNetworkHandle: @unchecked Sendable {
     /// The `vmnet_network_ref` — vmnet's opaque network object — to feed to
     /// `VZVmnetNetworkDeviceAttachment(network:)`. Safe to cross isolation
     /// domains: the ref is an immutable reservation handle.
-    let network: OpaquePointer
+    package let network: OpaquePointer
 
-    init(network: OpaquePointer) {
+    package init(network: OpaquePointer) {
         self.network = network
     }
 }
@@ -109,7 +114,7 @@ final class VmnetNetworkHandle: @unchecked Sendable {
 /// The vmnet calls `VmnetNetworkService` makes, abstracted so tests run without
 /// `com.apple.vm.networking` — the real call is an XPC round-trip to the
 /// NetworkSharing daemon that fails unentitled.
-protocol VmnetNetworkOperating: Sendable {
+package protocol VmnetNetworkOperating: Sendable {
     /// Creates a network of `kind` on the subnet the system picks, returning
     /// the handle and that subnet.
     func createNetwork(_ kind: VmnetNetworkKind) throws -> (
@@ -142,7 +147,7 @@ protocol VmnetNetworkOperating: Sendable {
 /// Lock-guarded `Sendable` rather than `@MainActor`: it never touches
 /// `VZVirtualMachine`, and the configuration build consumes it during off-main
 /// assembly while the live-switch path consumes it on the main actor.
-final class VmnetNetworkService: @unchecked Sendable {
+package final class VmnetNetworkService: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetNetworkService")
 
     /// A materialized network: the handle callers attach to, and the subnet it
@@ -171,7 +176,7 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// Serializes materialization, so concurrent callers produce one network.
     private let materializeLock = NSLock()
 
-    init(operations: any VmnetNetworkOperating) {
+    package init(operations: any VmnetNetworkOperating) {
         self.operations = operations
     }
 
@@ -290,7 +295,7 @@ extension VmnetNetworkService {
     /// The view one session of the VM `owner` attaches through. A network
     /// other than a common one exists only while a view opened for a VM that
     /// joined it lives.
-    func sessionNetworks(ownedBy owner: UUID) -> VmnetSessionNetworks {
+    package func sessionNetworks(ownedBy owner: UUID) -> VmnetSessionNetworks {
         VmnetSessionNetworks(service: self, owner: owner)
     }
 
@@ -318,7 +323,7 @@ extension VmnetNetworkSelection {
 ///
 /// The session context holds it for the session's whole life, and anything
 /// still materializing through it holds it until that finishes.
-final class VmnetSessionNetworks: Sendable {
+package final class VmnetSessionNetworks: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetSessionNetworks")
 
     private let service: VmnetNetworkService
@@ -348,13 +353,13 @@ final class VmnetSessionNetworks: Sendable {
     /// not — what an attachment joining it is built over. Blocks for the vmnet
     /// XPC round-trip — never call on the main actor; config assembly runs
     /// off-main. Throws when the network cannot be materialized.
-    func joinedNetwork(for network: VmnetNetworkSelection) throws -> VmnetNetworkHandle {
+    package func joinedNetwork(for network: VmnetNetworkSelection) throws -> VmnetNetworkHandle {
         try service.network(for: id(network), member: owner)
     }
 
     /// The non-blocking variant for the main-actor live-attach path: the
     /// network, joined, when it is already materialized, `nil` otherwise.
-    func joinedNetworkIfMaterialized(for network: VmnetNetworkSelection) -> VmnetNetworkHandle? {
+    package func joinedNetworkIfMaterialized(for network: VmnetNetworkSelection) -> VmnetNetworkHandle? {
         service.cachedHandle(for: id(network), member: owner)
     }
 
@@ -378,7 +383,7 @@ final class VmnetSessionNetworks: Sendable {
 
     /// The selection `network` is for this session, `nil` for a network it
     /// cannot attach to — one the service does not hold, or another VM's own.
-    func selection(ofNetwork network: OpaquePointer) -> VmnetNetworkSelection? {
+    package func selection(ofNetwork network: OpaquePointer) -> VmnetNetworkSelection? {
         guard let id = service.id(ofNetwork: network) else { return nil }
         if case .vm(let networkOwner) = id.scope, networkOwner != owner { return nil }
         return VmnetNetworkSelection(id)

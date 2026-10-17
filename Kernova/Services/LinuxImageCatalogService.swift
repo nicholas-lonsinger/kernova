@@ -7,7 +7,7 @@ import KernovaLogging
 /// generation-time snapshot, so the picker opens instantly and offline. Only
 /// the chosen distribution's checksum manifest and ISO come off the network,
 /// from the distribution's own mirror.
-struct LinuxImageCatalogService {
+package struct LinuxImageCatalogService {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "LinuxImageCatalogService")
 
@@ -19,9 +19,9 @@ struct LinuxImageCatalogService {
     /// Empty when the catalog resource is missing or unreadable — the wizard
     /// then offers no distributions, and the bring-your-own-ISO source still
     /// works.
-    let entries: [LinuxImageCatalogEntry]
+    package let entries: [LinuxImageCatalogEntry]
     /// `yyyy-MM-dd` the catalog was generated, or `nil` when it did not load.
-    let generatedAt: String?
+    package let generatedAt: String?
 
     init() {
         guard

@@ -7,7 +7,7 @@ import Foundation
 /// default case-insensitive APFS volume — are one bundle. A destination that
 /// does not exist yet has no file identity, so it is matched by
 /// ``nameKey(_:)`` instead, folded the way that volume folds names.
-struct VMBundleIdentity: Hashable {
+package struct VMBundleIdentity: Hashable {
     typealias Identifier = any NSCopying & NSSecureCoding & NSObjectProtocol
 
     /// The directory's `URLResourceKey.fileResourceIdentifierKey` value — an
@@ -33,11 +33,11 @@ struct VMBundleIdentity: Hashable {
         self.fileResourceIdentifier = identifier
     }
 
-    static func == (lhs: VMBundleIdentity, rhs: VMBundleIdentity) -> Bool {
+    package static func == (lhs: VMBundleIdentity, rhs: VMBundleIdentity) -> Bool {
         lhs.fileResourceIdentifier.isEqual(rhs.fileResourceIdentifier)
     }
 
-    func hash(into hasher: inout Hasher) {
+    package func hash(into hasher: inout Hasher) {
         hasher.combine(fileResourceIdentifier.hash)
     }
 

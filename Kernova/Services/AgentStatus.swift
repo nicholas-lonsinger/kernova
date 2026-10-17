@@ -3,7 +3,7 @@ import KernovaKit
 
 /// Whether the guest agent is installed and current relative to what the host
 /// bundles, and whether it's actively responding.
-enum AgentStatus: Equatable, Sendable {
+package enum AgentStatus: Equatable, Sendable {
     /// No version handshake has been received yet — the agent may not be
     /// installed, or the VM may still be booting.
     case waiting
@@ -41,7 +41,7 @@ enum AgentStatus: Equatable, Sendable {
     /// at `VMInstance.agentStatus`; `VsockControlService` never returns it.
     case connecting(expected: String)
 
-    var isConnecting: Bool {
+    package var isConnecting: Bool {
         if case .connecting = self { return true }
         return false
     }

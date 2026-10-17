@@ -23,7 +23,7 @@ import KernovaLogging
 /// wires them all.
 @MainActor
 @Observable
-final class VMLibrary: VMAdmissionPeers {
+package final class VMLibrary: VMAdmissionPeers {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
@@ -49,15 +49,15 @@ final class VMLibrary: VMAdmissionPeers {
 
     /// What Virtualization answers about this Mac — the resources a guest may
     /// be given, fresh machine identities, its verdict on a guest account.
-    let virtualizationHost: any VirtualizationHostProviding
+    package let virtualizationHost: any VirtualizationHostProviding
 
     /// The named networks VMs join together.
     let networks: VMNetworkDirectory
 
     /// The host interfaces a network naming one is titled from.
-    @ObservationIgnored let bridgedInterfaces: any BridgedInterfaceProviding
+    @ObservationIgnored package let bridgedInterfaces: any BridgedInterfaceProviding
     /// The library's smart groups, folders and tags.
-    let organization: VMOrganizationDirectory
+    package let organization: VMOrganizationDirectory
 
     // MARK: - Collaborators
 
@@ -122,10 +122,10 @@ final class VMLibrary: VMAdmissionPeers {
     ///
     /// Written only in this file, where ``adopt(_:)`` is the one path a `.vm`
     /// entry enters by.
-    private(set) var entries: [LibraryEntry] = []
+    package private(set) var entries: [LibraryEntry] = []
 
     /// The VMs, in manual order.
-    var instances: [VMInstance] { entries.compactMap(\.vm) }
+    package var instances: [VMInstance] { entries.compactMap(\.vm) }
 
     /// The creates, clones and imports still writing their bundles.
     var arrivals: [VMArrival] { entries.compactMap(\.arrival) }
@@ -232,7 +232,7 @@ final class VMLibrary: VMAdmissionPeers {
     /// Beside ``selection`` because every rule that moves the selection reads
     /// what the sidebar shows: a filter edit that hides the selected VM clears
     /// the selection, and a sort, grouping or details edit keeps it.
-    var sidebarOptions: SidebarViewOptions {
+    package var sidebarOptions: SidebarViewOptions {
         didSet {
             guard sidebarOptions != oldValue else { return }
             preferences.sidebarViewOptions = sidebarOptions
@@ -249,7 +249,7 @@ final class VMLibrary: VMAdmissionPeers {
     /// Held beside ``sidebarOptions`` rather than in it, so nothing that
     /// reads or keeps the options — a saved smart group, Clear Filters — takes
     /// the search along. An edit moves the selection as a filter edit does.
-    var sidebarSearch = SidebarNameSearch() {
+    package var sidebarSearch = SidebarNameSearch() {
         didSet {
             guard sidebarSearch != oldValue else { return }
             renarrow()
@@ -268,7 +268,7 @@ final class VMLibrary: VMAdmissionPeers {
     /// Fills the search with `term` and selects the VM it most likely names,
     /// by ``SidebarNameSearch/bestMatch(in:name:)`` over the library's order —
     /// what a search from outside the app shows.
-    func showSearchResults(for term: String) {
+    package func showSearchResults(for term: String) {
         sidebarSearch = SidebarNameSearch(text: term)
         if let best = sidebarSearch.bestMatch(in: entries, name: \.name) {
             selectRevealing(best.id)
@@ -277,7 +277,7 @@ final class VMLibrary: VMAdmissionPeers {
 
     /// Makes `edit` to ``sidebarOptions``, leaving the other options as they
     /// stand.
-    func editSidebarOptions(_ edit: SidebarViewOptions.Edit) {
+    package func editSidebarOptions(_ edit: SidebarViewOptions.Edit) {
         sidebarOptions = sidebarOptions.applying(edit)
     }
 
@@ -304,7 +304,7 @@ final class VMLibrary: VMAdmissionPeers {
     /// Moves the section `id` identifies — a smart group, a folder or the
     /// library — to just before the one `successor` identifies, or after every
     /// other when `successor` is `nil`.
-    func moveSection(_ id: SidebarSectionID, before successor: SidebarSectionID?) throws {
+    package func moveSection(_ id: SidebarSectionID, before successor: SidebarSectionID?) throws {
         try organization.moveSection(id, before: successor)
     }
 
@@ -351,7 +351,7 @@ final class VMLibrary: VMAdmissionPeers {
     /// one is named, else the selected row when it is the entry's, else its
     /// library row — where a reveal starts (``SidebarLayout/revealTarget(_:)``)
     /// and what a sidebar rename resolves (``SidebarLayout/resolve(_:)``).
-    func preferredRow(of id: UUID, in section: SidebarSectionID? = nil) -> SidebarRowKey {
+    package func preferredRow(of id: UUID, in section: SidebarSectionID? = nil) -> SidebarRowKey {
         if let section { return SidebarRowKey(section: section, group: nil, entryID: id) }
         if let selection, selection.entryID == id { return selection }
         return .library(id)
@@ -764,7 +764,7 @@ final class VMLibrary: VMAdmissionPeers {
 
     /// Moves rows in the sidebar list and persists the new order.
     func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
-        entries.move(fromOffsets: source, toOffset: destination)
+        entries.moveSubranges(RangeSet(source.rangeView), to: destination)
         persistOrder()
         #log(Self.logger, .notice, "Reordered VMs in sidebar")
     }
@@ -881,7 +881,7 @@ final class VMLibrary: VMAdmissionPeers {
     }
 
     /// How a settings write ended.
-    enum SettingsWrite {
+    package enum SettingsWrite {
         /// The change is committed to the bundle — or it changed nothing.
         case saved
         /// Nothing changed.
@@ -892,7 +892,7 @@ final class VMLibrary: VMAdmissionPeers {
 
         /// Throws whatever kept the write from landing, for a write that is a
         /// step of a larger operation.
-        func get() throws {
+        package func get() throws {
             switch self {
             case .saved: return
             case .refused(let refusal): throw refusal
@@ -903,7 +903,7 @@ final class VMLibrary: VMAdmissionPeers {
 
     /// A settings write that did not land whole: the VM it was for, the file
     /// whose write failed, and the files the same write had already committed.
-    struct SettingsWriteFailure: LocalizedError {
+    package struct SettingsWriteFailure: LocalizedError {
         enum File: Sendable, Equatable {
             case configuration
             case hostState
@@ -914,7 +914,7 @@ final class VMLibrary: VMAdmissionPeers {
         let landed: [File]
         let underlying: any Error
 
-        var errorDescription: String? {
+        package var errorDescription: String? {
             guard !landed.isEmpty else {
                 return "The change to \u{201C}\(vmName)\u{201D} wasn\u{2019}t saved: \(underlying.localizedDescription)"
             }
@@ -924,7 +924,7 @@ final class VMLibrary: VMAdmissionPeers {
     }
 
     /// Why the library turned a settings write away.
-    enum SettingsRefusal: LocalizedError {
+    package enum SettingsRefusal: LocalizedError {
         /// The change puts the VM on a MAC address another VM holds, or — for
         /// a running VM — onto the network another active VM uses it on.
         case macAddressInUse(VMMACAddressRegistry.MACAddressConflict)
@@ -936,7 +936,7 @@ final class VMLibrary: VMAdmissionPeers {
         /// Another copy of Kernova holds the VM's bundle.
         case heldByAnotherCopy
 
-        var errorDescription: String? {
+        package var errorDescription: String? {
             switch self {
             case .macAddressInUse: "Another virtual machine holds that MAC address."
             case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."

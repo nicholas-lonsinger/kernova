@@ -15,18 +15,18 @@ import KernovaLogging
 /// controller holding a view model still sees one surface.
 @MainActor
 @Observable
-final class VMLibraryViewModel {
+package final class VMLibraryViewModel {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibraryViewModel")
 
     // MARK: - Services
 
     /// Which VMs exist, and everything that keeps that set in step with disk.
-    let library: VMLibrary
+    package let library: VMLibrary
 
     /// Every VM verb, headless. The one path from this adapter to a VM.
-    let commands: VMCommandCore
+    package let commands: VMCommandCore
 
-    let storageService: any VMStorageProviding
+    package let storageService: any VMStorageProviding
     let lifecycle: VMLifecycleCoordinator
 
     /// Pauses running VMs for system sleep and resumes them on wake.
@@ -42,13 +42,13 @@ final class VMLibraryViewModel {
     private let usbAccessories: USBAccessoryCoordinator?
 
     /// The preferences store this library session reads and writes.
-    let preferences: AppPreferences
+    package let preferences: AppPreferences
 
     /// What this build's signature authorizes, as every surface that degrades
     /// without an entitlement reads it.
-    var entitlements: EntitlementService { library.entitlements }
+    package var entitlements: EntitlementService { library.entitlements }
     /// The named networks VMs join together.
-    var networks: VMNetworkDirectory { library.networks }
+    package var networks: VMNetworkDirectory { library.networks }
 
     // MARK: - Library Forwarding
 
@@ -57,82 +57,82 @@ final class VMLibraryViewModel {
     // computed accessors, which read the library's own stored properties.
     // Nothing here is a VM verb; each is documented on ``VMLibrary``.
 
-    var instances: [VMInstance] { library.instances }
+    package var instances: [VMInstance] { library.instances }
 
-    var entries: [LibraryEntry] { library.entries }
+    package var entries: [LibraryEntry] { library.entries }
 
-    var arrivals: [VMArrival] { library.arrivals }
+    package var arrivals: [VMArrival] { library.arrivals }
 
-    var selectedID: UUID? { library.selectedID }
+    package var selectedID: UUID? { library.selectedID }
 
-    var selection: SidebarRowKey? {
+    package var selection: SidebarRowKey? {
         get { library.selection }
         set { library.selection = newValue }
     }
 
-    var sidebarOptions: SidebarViewOptions {
+    package var sidebarOptions: SidebarViewOptions {
         get { library.sidebarOptions }
         set { library.sidebarOptions = newValue }
     }
 
-    var sidebarLayout: SidebarLayout { library.sidebarLayout }
+    package var sidebarLayout: SidebarLayout { library.sidebarLayout }
 
-    var sidebarContext: SidebarLayout.Context { library.sidebarContext }
+    package var sidebarContext: SidebarLayout.Context { library.sidebarContext }
 
-    func reconcileSelection(with layout: SidebarLayout) { library.reconcileSelection(with: layout) }
+    package func reconcileSelection(with layout: SidebarLayout) { library.reconcileSelection(with: layout) }
 
-    func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
+    package func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
-    var isRevealPending: Bool { library.isRevealPending }
+    package var isRevealPending: Bool { library.isRevealPending }
 
-    func takePendingReveal() -> Bool { library.takePendingReveal() }
+    package func takePendingReveal() -> Bool { library.takePendingReveal() }
 
-    var selectedInstance: VMInstance? { library.selectedInstance }
+    package var selectedInstance: VMInstance? { library.selectedInstance }
 
-    var selectedEntry: LibraryEntry? { library.selectedEntry }
+    package var selectedEntry: LibraryEntry? { library.selectedEntry }
 
-    var hasLoadedLibrary: Bool { library.hasLoadedLibrary }
+    package var hasLoadedLibrary: Bool { library.hasLoadedLibrary }
 
-    var hasUninterruptibleWork: Bool { library.hasUninterruptibleWork }
+    package var hasUninterruptibleWork: Bool { library.hasUninterruptibleWork }
 
-    var quitMustWaitOut: Bool { library.quitMustWaitOut }
+    package var quitMustWaitOut: Bool { library.quitMustWaitOut }
 
-    func beginTermination() { library.beginTermination() }
+    package func beginTermination() { library.beginTermination() }
 
     /// ``VMLibrary/startLibrary()``, answering the VMs its read found marked
     /// to start automatically.
     @discardableResult
-    func startLibrary() async -> Set<UUID> { await library.startLibrary() }
+    package func startLibrary() async -> Set<UUID> { await library.startLibrary() }
 
     @discardableResult
     func loadVMs() async -> Set<UUID> { await library.loadVMs() }
 
     func reconcileWithDisk() { library.reconcileWithDisk() }
 
-    func abandonArrivalsForTermination() { library.abandonArrivalsForTermination() }
+    package func abandonArrivalsForTermination() { library.abandonArrivalsForTermination() }
 
-    func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
+    package func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
         library.moveEntries(fromOffsets: source, toOffset: destination)
     }
 
-    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
+    package func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
         library.macAddresses.vmNamesSharingMACAddress(with: instance)
     }
 
     /// The other VMs holding `instance`'s machine identity, in library order —
     /// whatever their MAC addresses.
-    func vmNamesSharingMachineIdentity(with instance: VMInstance) -> [String] {
+    package func vmNamesSharingMachineIdentity(with instance: VMInstance) -> [String] {
         instances.filter { $0 !== instance && instance.sharesMachineIdentity(with: $0) }.map(\.name)
     }
 
-    func guestAddress(for instance: VMInstance) -> GuestIPAddress {
+    package func guestAddress(for instance: VMInstance) -> GuestIPAddress {
         library.guestAddresses.address(for: instance)
     }
 
     // MARK: - Configuration Forwarding
 
     /// How an edit a surface asked for came out.
-    enum EditOutcome: Equatable {
+    package enum EditOutcome: Equatable {
         case applied
         /// Refused or unsaved; nothing changed, and the user has been told
         /// why.
@@ -146,7 +146,7 @@ final class VMLibraryViewModel {
     /// Applies `assignments` to `instance` through the configuration verb — the
     /// one path a surface's settings edit takes.
     @discardableResult
-    func setConfiguration(
+    package func setConfiguration(
         _ assignments: [ConfigurationEntry], on instance: VMInstance, consent: Consent = .none
     ) -> EditOutcome {
         do {
@@ -196,7 +196,7 @@ final class VMLibraryViewModel {
     /// gates, and the moves and the delete run in one main-actor turn, so
     /// every VM moves and the network goes, or nothing changes; only a failed
     /// save can leave a move made.
-    func deleteNetwork(_ id: UUID) throws {
+    package func deleteNetwork(_ id: UUID) throws {
         do {
             try commands.deleteNetwork(id.uuidString)
         } catch let error as CommandError {
@@ -219,7 +219,7 @@ final class VMLibraryViewModel {
     /// Kernova's own bookkeeping rather than a user's edit, so it takes no key:
     /// a ``VMEditClasses/hostPresentation`` edit, which a VM whose state admits
     /// none leaves unrecorded.
-    func recordLastFullscreenDisplay(_ displayID: UInt32, for instance: VMInstance) {
+    package func recordLastFullscreenDisplay(_ displayID: UInt32, for instance: VMInstance) {
         do {
             try instance.activity.edit(.hostPresentation) {
                 library.updateHostState($0) { $0.lastFullscreenDisplayID = displayID }
@@ -243,13 +243,13 @@ final class VMLibraryViewModel {
     // on, so it reads as empty and is logged.
 
     /// Every per-VM capability predicate the AppKit surfaces read.
-    var capabilities: VMCapabilityCatalog { library.capabilities }
+    package var capabilities: VMCapabilityCatalog { library.capabilities }
 
     /// Whether this build can pass a host USB accessory through to a guest —
     /// what decides whether the USB Device menu exists at all.
-    var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
+    package var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
 
-    func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
+    package func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {
             return try await commands.snapshotSizes(of: .id(instance.id))
         } catch {
@@ -261,7 +261,7 @@ final class VMLibraryViewModel {
         }
     }
 
-    func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
+    package func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
         do {
             return try await commands.externalAttachments(of: .id(instance.id))
         } catch {
@@ -273,7 +273,7 @@ final class VMLibraryViewModel {
         }
     }
 
-    func sharingVMNames(
+    package func sharingVMNames(
         forPath path: String, bookmark: Data?, excluding instance: VMInstance
     ) async -> [String] {
         do {
@@ -295,17 +295,17 @@ final class VMLibraryViewModel {
     // a trashing removal asks for, so the storage and removable-media removals
     // arrive pre-confirmed; a share removal destroys nothing and asks none.
 
-    func attachStorageDisks(_ files: [PickedFile], to instance: VMInstance) {
+    package func attachStorageDisks(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) { try self.commands.attachStorageDisks(.id(instance.id), paths: files) }
     }
 
-    func createStorageDisk(for instance: VMInstance, sizeInGB: Int) async {
+    package func createStorageDisk(for instance: VMInstance, sizeInGB: Int) async {
         await run(on: instance) {
             try await self.commands.createStorageDisk(.id(instance.id), sizeInGB: sizeInGB)
         }
     }
 
-    func removeStorageDisk(_ disk: UUID, from instance: VMInstance, trashFile: Bool) async {
+    package func removeStorageDisk(_ disk: UUID, from instance: VMInstance, trashFile: Bool) async {
         await runEdit(on: instance) {
             try await self.commands.removeStorageDisk(
                 .id(instance.id), disk: disk, trashFile: trashFile,
@@ -313,38 +313,38 @@ final class VMLibraryViewModel {
         }
     }
 
-    func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) {
+    package func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.renameStorageDisk(.id(instance.id), disk: disk, to: newLabel)
         }
     }
 
-    func setStorageDiskNotes(_ disk: UUID, notes: String, on instance: VMInstance) {
+    package func setStorageDiskNotes(_ disk: UUID, notes: String, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.setStorageDiskNotes(.id(instance.id), disk: disk, notes: notes)
         }
     }
 
-    func setStorageDiskReadOnly(_ disk: UUID, readOnly: Bool, on instance: VMInstance) {
+    package func setStorageDiskReadOnly(_ disk: UUID, readOnly: Bool, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.setStorageDiskReadOnly(
                 .id(instance.id), disk: disk, readOnly: readOnly)
         }
     }
 
-    func reorderStorageDisks(_ order: [UUID], on instance: VMInstance) {
+    package func reorderStorageDisks(_ order: [UUID], on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.reorderStorageDisks(.id(instance.id), order: order)
         }
     }
 
-    func attachRemovableMedia(_ files: [PickedFile], to instance: VMInstance) {
+    package func attachRemovableMedia(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.attachRemovableMedia(.id(instance.id), paths: files)
         }
     }
 
-    func createRemovableMedia(
+    package func createRemovableMedia(
         for instance: VMInstance, sizeInGB: Int, destinationURL: URL
     ) async {
         await run(on: instance) {
@@ -353,7 +353,7 @@ final class VMLibraryViewModel {
         }
     }
 
-    func removeRemovableMedia(_ item: UUID, from instance: VMInstance, trashFile: Bool) async {
+    package func removeRemovableMedia(_ item: UUID, from instance: VMInstance, trashFile: Bool) async {
         await runEdit(on: instance) {
             try await self.commands.removeRemovableMedia(
                 .id(instance.id), item: item, trashFile: trashFile,
@@ -361,23 +361,23 @@ final class VMLibraryViewModel {
         }
     }
 
-    func ejectRemovableMedia(_ item: UUID, from instance: VMInstance) {
+    package func ejectRemovableMedia(_ item: UUID, from instance: VMInstance) {
         runEdit(on: instance) { try self.commands.ejectRemovableMedia(.id(instance.id), item: item) }
     }
 
-    func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) {
+    package func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.renameRemovableMedia(.id(instance.id), item: item, to: newLabel)
         }
     }
 
-    func setRemovableMediaNotes(_ item: UUID, notes: String, on instance: VMInstance) {
+    package func setRemovableMediaNotes(_ item: UUID, notes: String, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.setRemovableMediaNotes(.id(instance.id), item: item, notes: notes)
         }
     }
 
-    func setRemovableMediaReadOnly(_ item: UUID, readOnly: Bool, on instance: VMInstance) {
+    package func setRemovableMediaReadOnly(_ item: UUID, readOnly: Bool, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.setRemovableMediaReadOnly(
                 .id(instance.id), item: item, readOnly: readOnly)
@@ -389,23 +389,23 @@ final class VMLibraryViewModel {
     ///
     /// Set rather than injected: the panel behind it has to bring the app
     /// forward, which only the residency controller can do.
-    func attachSourceAuthority(_ authority: any SandboxSourceAuthorizing) {
+    package func attachSourceAuthority(_ authority: any SandboxSourceAuthorizing) {
         commands.sourceAuthority = authority
     }
 
-    func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
+    package func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.addSharedDirectories(.id(instance.id), paths: files)
         }
     }
 
-    func removeSharedDirectory(_ directory: UUID, from instance: VMInstance) {
+    package func removeSharedDirectory(_ directory: UUID, from instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.removeSharedDirectory(.id(instance.id), directory: directory)
         }
     }
 
-    func setSharedDirectoryReadOnly(_ directory: UUID, readOnly: Bool, on instance: VMInstance) {
+    package func setSharedDirectoryReadOnly(_ directory: UUID, readOnly: Bool, on instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.setSharedDirectoryReadOnly(
                 .id(instance.id), directory: directory, readOnly: readOnly)
@@ -414,7 +414,7 @@ final class VMLibraryViewModel {
 
     /// Cancels a guest setup from the confirmation `GuestSetupProgressViewController`
     /// already gathered, so this always calls the core pre-confirmed.
-    func cancelGuestSetup(_ instance: VMInstance) {
+    package func cancelGuestSetup(_ instance: VMInstance) {
         do {
             try commands.cancelGuestSetup(.id(instance.id), consent: Consent([.cancelGuestSetup]))
         } catch let error as CommandError {
@@ -438,7 +438,7 @@ final class VMLibraryViewModel {
     /// The single write path for `AppPreferences.agentInstallPromptDisabled`,
     /// mirrored here because the sidebar and the VM Settings pane refresh from
     /// `withObservationTracking`, which a bare `UserDefaults` read never wakes.
-    var agentInstallPromptDisabled: Bool {
+    package var agentInstallPromptDisabled: Bool {
         didSet {
             guard agentInstallPromptDisabled != oldValue else { return }
             #log(
@@ -456,7 +456,7 @@ final class VMLibraryViewModel {
     /// here because `AppDelegate` reconciles the status item and the activation
     /// policy from `withObservationTracking`, which a bare `UserDefaults` read
     /// never wakes.
-    var keepInMenuBarOnQuit: Bool {
+    package var keepInMenuBarOnQuit: Bool {
         didSet {
             guard keepInMenuBarOnQuit != oldValue else { return }
             #log(
@@ -472,7 +472,7 @@ final class VMLibraryViewModel {
     /// Set by the composition root before the library's first read starts, so
     /// nothing raised by a launch goes unpresented; a request with no window to
     /// show on waits in the presenter.
-    @ObservationIgnored weak var presenter: (any VMLibraryPresenting)?
+    @ObservationIgnored package weak var presenter: (any VMLibraryPresenting)?
 
     /// The library window's own surfaces — the creation wizard and the inline
     /// guest display — attached by that window's detail pane.
@@ -480,7 +480,7 @@ final class VMLibraryViewModel {
     /// A config check or an inline focus asked for before one is attached — the
     /// library read starts in `applicationWillFinishLaunching`, ahead of any
     /// window — is held and delivered when one is.
-    @ObservationIgnored weak var libraryWindowPresenter: (any LibraryWindowPresenting)? {
+    @ObservationIgnored package weak var libraryWindowPresenter: (any LibraryWindowPresenting)? {
         didSet {
             guard libraryWindowPresenter != nil else { return }
             if owesConfigCheck {
@@ -503,7 +503,7 @@ final class VMLibraryViewModel {
     /// The one rename open: in a sidebar row — held by the library
     /// (``VMLibrary/sidebarRenameID``), which ends it once no row lists the
     /// VM — or in the detail pane.
-    var activeRename: RenameTarget? {
+    package var activeRename: RenameTarget? {
         get { library.sidebarRenameID.map(RenameTarget.sidebar) ?? detailRenameID.map(RenameTarget.detail) }
         set {
             switch newValue {
@@ -525,7 +525,7 @@ final class VMLibraryViewModel {
 
     /// Asks for a VM's display window, for a verb that puts the display in
     /// front of the user.
-    @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
+    @ObservationIgnored package var onOpenDisplayWindow: ((VMInstance) -> Void)?
 
     /// Reports that a VM is coming up, and whether anyone asked for it in
     /// particular, so its display can be readied.
@@ -533,26 +533,26 @@ final class VMLibraryViewModel {
     /// What that costs on screen is the delegate's decision, taken from the
     /// app's own posture and that presence — a bring-up is not a request to
     /// look at the guest.
-    @ObservationIgnored var onReadyDisplay: ((VMInstance, VMBringUpPresence) -> Void)?
+    @ObservationIgnored package var onReadyDisplay: ((VMInstance, VMBringUpPresence) -> Void)?
 
     /// Asks for the library window, for an inline surface with nowhere to land.
     ///
     /// The inline display lives inside the main window, so a verb surfacing one
     /// on a process that has never opened a window — an intent on the headless
     /// launch path — has to bring that window up first or do nothing at all.
-    @ObservationIgnored var onSurfaceLibrary: (() -> Void)?
+    @ObservationIgnored package var onSurfaceLibrary: (() -> Void)?
 
     /// Asks for the app to be taken down, for the quit verb an automation door
     /// carries. The app delegate answers it with the same full quit the status
     /// item's Quit performs.
-    @ObservationIgnored var onRequestQuit: (() -> Void)?
+    @ObservationIgnored package var onRequestQuit: (() -> Void)?
 
     /// Asks for a VM's bundle to be selected in the Finder, for the verb that
     /// puts it there. The app delegate answers it with the Workspace call.
-    @ObservationIgnored var onRevealInFinder: ((VMInstance) -> Void)?
+    @ObservationIgnored package var onRevealInFinder: ((VMInstance) -> Void)?
 
     /// Who asked for the config check window.
-    enum ConfigCheckRequest {
+    package enum ConfigCheckRequest {
         /// The user — a menu, a context menu, a button — so Kernova comes
         /// forward with the window.
         case user
@@ -563,13 +563,13 @@ final class VMLibraryViewModel {
 
     /// Asks for the config check window, which reads every config file afresh
     /// as it comes up.
-    @ObservationIgnored var onShowConfigCheck: ((ConfigCheckRequest) -> Void)?
+    @ObservationIgnored package var onShowConfigCheck: ((ConfigCheckRequest) -> Void)?
 
     /// Asks for Kernova's Settings window on a destination.
-    @ObservationIgnored var onShowSettings: ((SettingsDestination) -> Void)?
+    @ObservationIgnored package var onShowSettings: ((SettingsDestination) -> Void)?
 
     /// Puts Kernova's Settings window in front of the user on `destination`.
-    func showSettings(at destination: SettingsDestination) {
+    package func showSettings(at destination: SettingsDestination) {
         onShowSettings?(destination)
     }
 
@@ -579,28 +579,28 @@ final class VMLibraryViewModel {
 
     /// Puts the config check in front of the user — File > Check Config
     /// Files…, and every surface that offers the same.
-    func showConfigCheck() {
+    package func showConfigCheck() {
         onShowConfigCheck?(.user)
     }
 
-    func checkConfigFiles() async throws -> [UnreadableConfigFile] {
+    package func checkConfigFiles() async throws -> [UnreadableConfigFile] {
         try await library.checkConfigFiles()
     }
 
-    func useDefaults(in files: [UnreadableConfigFile]) async -> [VMLibrary.ConfigFileRepairFailure] {
+    package func useDefaults(in files: [UnreadableConfigFile]) async -> [VMLibrary.ConfigFileRepairFailure] {
         await library.useDefaults(in: files)
     }
 
     /// The folder the library's config files sit under — the VMs folder and
     /// `Networks.json` both — which the check writes their paths relative to;
     /// `nil` when it cannot be resolved.
-    var libraryDirectory: URL? {
+    package var libraryDirectory: URL? {
         try? storageService.vmsDirectory.deletingLastPathComponent()
     }
 
     /// Moves the bundle `bundle` was read from to the Trash, whole, telling
     /// the user when the Trash turns it down.
-    func moveToTrash(_ bundle: UnreadableVM) async {
+    package func moveToTrash(_ bundle: UnreadableVM) async {
         do {
             try await library.moveToTrash(bundle)
         } catch {
@@ -617,17 +617,17 @@ final class VMLibraryViewModel {
     /// `displaySizesToWindow` — `nil` when it can't be measured, and the VM
     /// then boots at its persisted resolution. The window layer sets it: only
     /// it knows which window or screen a VM's `displayPreference` resolves to.
-    @ObservationIgnored var displayBootSurface: ((VMInstance) -> DisplayBootSurface?)?
+    @ObservationIgnored package var displayBootSurface: ((VMInstance) -> DisplayBootSurface?)?
 
     /// The host notifications the library and its surfaces observe.
-    @ObservationIgnored let hostNotifications: HostNotifications
+    @ObservationIgnored package let hostNotifications: HostNotifications
 
     /// Reads a restore image already on disk, for the creation wizard.
     @ObservationIgnored private let localImageInspector: any LocalRestoreImageInspecting
 
     /// A creation wizard over this library's Virtualization host and
     /// restore-image lookups.
-    func makeCreationViewModel() -> VMCreationViewModel {
+    package func makeCreationViewModel() -> VMCreationViewModel {
         VMCreationViewModel(
             host: library.virtualizationHost, localImageInspector: localImageInspector,
             ipswService: lifecycle.ipswService)
@@ -645,7 +645,7 @@ final class VMLibraryViewModel {
     /// files, the restore-image lookups, the removable-media devices, the
     /// bridged interfaces — which the core cannot build. ``AppDelegate``
     /// supplies each.
-    init(
+    package init(
         storageService: any VMStorageProviding,
         diskImageService: any DiskImageProviding = DiskImageService(),
         machineFiles: any VMBundleMachineFileWorking,
@@ -811,7 +811,7 @@ final class VMLibraryViewModel {
     /// wrong here. A write that did not reach the bundle takes the row off the
     /// list while the rule stays on disk, so the accessory goes back to this VM
     /// at the next launch — the user has to be told, or the list is lying.
-    func forgetUSBAccessory(key: String, on instance: VMInstance) {
+    package func forgetUSBAccessory(key: String, on instance: VMInstance) {
         do {
             try commands.forgetUSBPairing(.id(instance.id), key: key)
         } catch {
@@ -829,7 +829,7 @@ final class VMLibraryViewModel {
     /// sheets on one window contend, and the sheet is still up at this point. A
     /// failure of the write itself arrives after the sheet is gone, and reaches
     /// the user through ``VMCommandCore/onFailure``.
-    func createVM(from wizard: VMCreationViewModel) throws {
+    package func createVM(from wizard: VMCreationViewModel) throws {
         try commands.create(
             configuration: wizard.buildConfiguration(),
             startAfterCreate: wizard.startAfterCreate,
@@ -896,7 +896,7 @@ final class VMLibraryViewModel {
     /// the VM becomes the selected one and the keyboard lands in its display,
     /// ahead of the boot rather than at the end of it. A start arriving from
     /// anywhere else goes through ``VMCommandCore`` and moves nothing.
-    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
+    package func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
         await runAsking(on: instance, then: "Start") { consent in
             try await self.commands.start(
@@ -912,7 +912,7 @@ final class VMLibraryViewModel {
     ///
     /// Alerts are serialized, so this click can land long after the VM was
     /// deleted. Neither half runs then, and nothing is put on screen about it.
-    func removeStartFailedAttachmentAndStart(
+    package func removeStartFailedAttachmentAndStart(
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
         guard instances.contains(where: { $0 === instance }) else {
@@ -1068,7 +1068,7 @@ final class VMLibraryViewModel {
     ///
     /// The pause is read in the same main-actor turn the core reads it in
     /// before refusing, so the two cannot disagree.
-    func stop(_ instance: VMInstance) async {
+    package func stop(_ instance: VMInstance) async {
         guard !instance.isLivePaused else {
             presenter?.presentStopPaused(for: instance)
             return
@@ -1082,7 +1082,7 @@ final class VMLibraryViewModel {
     /// Resumes a paused VM, then requests a graceful shutdown — the stop-paused
     /// sheet's default action, as two verbs. The resume asks what any resume
     /// asks, and a resume that does not happen stops nothing.
-    func resumeAndStop(_ instance: VMInstance) async {
+    package func resumeAndStop(_ instance: VMInstance) async {
         let resumed = await runAsking(on: instance, then: "Resume") { consent in
             try await self.commands.resume(.id(instance.id), consent: consent)
         }
@@ -1093,7 +1093,7 @@ final class VMLibraryViewModel {
         }
     }
 
-    func forceStop(_ instance: VMInstance) async {
+    package func forceStop(_ instance: VMInstance) async {
         await run(on: instance) {
             try await self.commands.stop(
                 .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
@@ -1101,41 +1101,41 @@ final class VMLibraryViewModel {
     }
 
     /// Opens the Force Stop / Discard Saved State confirmation.
-    func requestForceStop(_ instance: VMInstance) {
+    package func requestForceStop(_ instance: VMInstance) {
         presenter?.presentForceStop(for: instance)
     }
 
     /// Opens the confirmation for booting a stopped macOS guest into macOS
     /// Recovery.
-    func requestStartInRecovery(_ instance: VMInstance) {
+    package func requestStartInRecovery(_ instance: VMInstance) {
         presenter?.presentRecoveryBoot(for: instance)
     }
 
-    func pause(_ instance: VMInstance) async {
+    package func pause(_ instance: VMInstance) async {
         await run(on: instance) { try await self.commands.pause(.id(instance.id)) }
     }
 
     /// The resume half of the in-app door, surfacing what ``start(_:bootIntoRecovery:)``
     /// surfaces for the same reason.
-    func resume(_ instance: VMInstance) async {
+    package func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
         await runAsking(on: instance, then: "Resume") { consent in
             try await self.commands.resume(.id(instance.id), consent: consent)
         }
     }
 
-    func save(_ instance: VMInstance) async {
+    package func save(_ instance: VMInstance) async {
         await run(on: instance) { try await self.commands.suspend(.id(instance.id)) }
     }
 
     /// Suspends a VM for the termination save pass, throwing on failure.
-    func saveForTermination(_ instance: VMInstance) async throws {
+    package func saveForTermination(_ instance: VMInstance) async throws {
         try await commands.suspend(instance, origin: .terminationSave)
     }
 
     /// Force-stops a VM, throwing on failure — the termination save pass's
     /// fallback for a save that failed and left the guest live.
-    func tryForceStop(_ instance: VMInstance) async throws {
+    package func tryForceStop(_ instance: VMInstance) async throws {
         try await commands.stop(
             .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
     }
@@ -1143,7 +1143,7 @@ final class VMLibraryViewModel {
     // MARK: - Snapshots
 
     /// Opens the Take Snapshot sheet.
-    func requestTakeSnapshot(_ instance: VMInstance, for purpose: TakeSnapshotPurpose = .restorePoint) {
+    package func requestTakeSnapshot(_ instance: VMInstance, for purpose: TakeSnapshotPurpose = .restorePoint) {
         guard capabilities.isAvailable(.takeSnapshot, on: instance) else { return }
         presenter?.presentTakeSnapshotSheet(for: instance, purpose: purpose)
     }
@@ -1153,7 +1153,7 @@ final class VMLibraryViewModel {
     ///
     /// The returned Task lets tests await the capture.
     @discardableResult
-    func takeSnapshot(
+    package func takeSnapshot(
         _ instance: VMInstance, name: String, notes: String = "",
         for purpose: TakeSnapshotPurpose = .restorePoint
     ) -> Task<Void, Never> {
@@ -1168,7 +1168,7 @@ final class VMLibraryViewModel {
     }
 
     /// Opens the revert confirmation.
-    func requestRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
+    package func requestRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
         guard capabilities.isAvailable(.revertToSnapshot, on: instance) else { return }
         presenter?.presentRevertSnapshot(snapshot, for: instance)
     }
@@ -1178,7 +1178,7 @@ final class VMLibraryViewModel {
     /// No confirmation: the user already consented to Kernova holding this
     /// accessory in Apple's *Virtual Machine Accessories* menu, and a detach is
     /// one action away.
-    func attachUSBAccessory(_ registryID: UInt64, to instance: VMInstance) {
+    package func attachUSBAccessory(_ registryID: UInt64, to instance: VMInstance) {
         guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
         Task {
             await run(on: instance) {
@@ -1189,7 +1189,7 @@ final class VMLibraryViewModel {
     }
 
     /// Takes a passed-through accessory back off `instance`'s guest.
-    func detachUSBAccessory(deviceID: UUID, from instance: VMInstance) {
+    package func detachUSBAccessory(deviceID: UUID, from instance: VMInstance) {
         guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
         Task {
             await run(on: instance) {
@@ -1205,7 +1205,7 @@ final class VMLibraryViewModel {
     /// Two verbs: a capture that fails reverts nothing, and the capture sits
     /// outside the revert's own questions, so a revert asked again never
     /// captures twice.
-    func revert(
+    package func revert(
         _ instance: VMInstance, to snapshot: VMSnapshot, takingSnapshotFirst: Bool = false
     ) async {
         if takingSnapshotFirst {
@@ -1225,7 +1225,7 @@ final class VMLibraryViewModel {
     }
 
     /// Opens the delete-snapshot confirmation.
-    func requestDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
+    package func requestDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
         guard capabilities.isAvailable(.deleteSnapshot, on: instance) else {
             #log(
                 Self.logger, .notice,
@@ -1249,7 +1249,7 @@ final class VMLibraryViewModel {
     ///
     /// The returned Task lets tests await the trash.
     @discardableResult
-    func deleteSnapshot(
+    package func deleteSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, turningOffEphemeralMode: Bool
     ) -> Task<Void, Never> {
         Task { [weak self] in
@@ -1273,7 +1273,7 @@ final class VMLibraryViewModel {
     }
 
     /// Renames a snapshot; an empty or unchanged name is a no-op.
-    func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
+    package func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
         runSync(on: instance) {
             try self.commands.renameSnapshot(
                 .id(instance.id), snapshot: snapshot.id, to: newName)
@@ -1281,7 +1281,7 @@ final class VMLibraryViewModel {
     }
 
     /// Replaces a snapshot's note; an unchanged value is a no-op.
-    func setSnapshotNotes(_ snapshot: VMSnapshot, notes: String, on instance: VMInstance) {
+    package func setSnapshotNotes(_ snapshot: VMSnapshot, notes: String, on instance: VMInstance) {
         runSync(on: instance) {
             try self.commands.setSnapshotNotes(
                 .id(instance.id), snapshot: snapshot.id, notes: notes)
@@ -1295,13 +1295,13 @@ final class VMLibraryViewModel {
     /// `permanently` selects the destructive variant: `false` (the default) moves
     /// the bundle and the chosen externals to Trash, `true` deletes them
     /// immediately, bypassing it.
-    func requestDelete(_ instance: VMInstance, permanently: Bool = false) {
+    package func requestDelete(_ instance: VMInstance, permanently: Bool = false) {
         presenter?.presentDeleteSheet(for: instance, permanently: permanently)
     }
 
     /// Deletes the VM bundle and the chosen external files, either to the
     /// Trash or immediately (bypassing it).
-    func delete(
+    package func delete(
         _ instance: VMInstance, deletingExternalIDs: Set<UUID> = [], permanently: Bool = false
     ) async {
         do {
@@ -1341,7 +1341,7 @@ final class VMLibraryViewModel {
     /// Returns whether any bundle was handed to an import — `true` means at
     /// least one import was started, not that every one will succeed.
     @discardableResult
-    func importVMs(fromDroppedURLs urls: [URL], intoFolder folder: UUID? = nil) -> Bool {
+    package func importVMs(fromDroppedURLs urls: [URL], intoFolder folder: UUID? = nil) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
@@ -1357,7 +1357,7 @@ final class VMLibraryViewModel {
     // MARK: - Show in Finder
 
     /// Selects the VM's bundle in the Finder.
-    func showVMInFinder(_ instance: VMInstance) {
+    package func showVMInFinder(_ instance: VMInstance) {
         runSync(on: instance) { try self.commands.showInFinder(.id(instance.id)) }
     }
 
@@ -1366,14 +1366,14 @@ final class VMLibraryViewModel {
     /// The alternate Clone menu item: clones `instance` as the outcome the
     /// primary item does not make (``AppPreferences/cloneMenuItems(for:)``),
     /// and does nothing where only one is offered.
-    func cloneVMAsAlternate(_ instance: VMInstance) {
+    package func cloneVMAsAlternate(_ instance: VMInstance) {
         guard let alternate = preferences.cloneMenuItems(for: instance.configuration).alternate
         else { return }
         cloneVM(instance, as: alternate.outcome)
     }
 
     /// Clones `instance` as `outcome`; `nil` follows the clone preference.
-    func cloneVM(_ instance: VMInstance, as outcome: CloneOutcome? = nil) {
+    package func cloneVM(_ instance: VMInstance, as outcome: CloneOutcome? = nil) {
         do {
             try commands.beginClone(.id(instance.id), outcome: outcome)
         } catch let error as CommandError {
@@ -1393,12 +1393,12 @@ final class VMLibraryViewModel {
     // MARK: - Cancel Preparing
 
     /// Opens the cancel-create/clone/import confirmation.
-    func requestCancelPreparing(_ arrival: VMArrival) {
+    package func requestCancelPreparing(_ arrival: VMArrival) {
         presenter?.presentCancelPreparing(for: arrival)
     }
 
     /// Cancels an in-flight create, clone or import from that confirmation's confirm.
-    func cancelArrival(_ arrival: VMArrival) {
+    package func cancelArrival(_ arrival: VMArrival) {
         do {
             try commands.cancelPreparing(.id(arrival.id), consent: Consent([.cancelPreparing]))
         } catch let error as CommandError {
@@ -1415,7 +1415,7 @@ final class VMLibraryViewModel {
 
     // MARK: - Rename
 
-    enum RenameTarget: Equatable {
+    package enum RenameTarget: Equatable {
         case sidebar(UUID)
         case detail(UUID)
     }
@@ -1424,7 +1424,7 @@ final class VMLibraryViewModel {
     ///
     /// Commit/cancel call sites pass the surface and the instance separately so an
     /// instance/target id mismatch is unrepresentable.
-    enum RenameSurface {
+    package enum RenameSurface {
         case sidebar
         case detail
 
@@ -1439,7 +1439,7 @@ final class VMLibraryViewModel {
     /// Opens a rename of `instance` in its sidebar row, revealing the row
     /// first (``VMLibrary/selectRevealing(_:in:)``); a VM no row can list is
     /// asked for no rename.
-    func renameVMInSidebar(_ instance: VMInstance) {
+    package func renameVMInSidebar(_ instance: VMInstance) {
         guard library.selectRevealing(instance.id) != nil else {
             #log(Self.logger, .notice, "No sidebar row lists '\(instance.name, privacy: .public)' — no rename opened")
             return
@@ -1448,7 +1448,7 @@ final class VMLibraryViewModel {
         activeRename = .sidebar(instance.id)
     }
 
-    func renameVMInDetail(_ instance: VMInstance) {
+    package func renameVMInDetail(_ instance: VMInstance) {
         #log(Self.logger, .debug, "Starting detail rename for '\(instance.name, privacy: .public)'")
         activeRename = .detail(instance.id)
     }
@@ -1460,7 +1460,7 @@ final class VMLibraryViewModel {
     /// just started on the other surface (its `makeFirstResponder` synchronously ends
     /// the pending session), and clearing unconditionally would wipe the newer
     /// rename's marker before its UI ever opened.
-    func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
+    package func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
         do {
             try commands.rename(.id(instance.id), to: newName)
         } catch let error as CommandError where error.isOperationFailure {
@@ -1479,7 +1479,7 @@ final class VMLibraryViewModel {
 
     /// Cancels the rename that `surface` has open on `instance`, leaving a rename
     /// that has since moved to the other surface untouched.
-    func cancelRename(for instance: VMInstance, from surface: RenameSurface) {
+    package func cancelRename(for instance: VMInstance, from surface: RenameSurface) {
         clearRename(ifOwnedBy: surface.target(for: instance))
     }
 
@@ -1498,7 +1498,7 @@ final class VMLibraryViewModel {
     /// enforces host→guest pastes against its own copy, and any passthrough
     /// session holding an offer the old ceiling refused. Instances with neither
     /// no-op.
-    func applyClipboardPasteLimitChange() {
+    package func applyClipboardPasteLimitChange() {
         for instance in instances {
             instance.resendAgentPolicy()
             instance.republishPassthroughIfCeilingRaised()
@@ -1516,7 +1516,7 @@ final class VMLibraryViewModel {
     /// shows the next-step alert on every outcome: the alert is the whole action
     /// on two of the verb's three paths — an image already mounted, and a guest
     /// that takes it on virtio for the whole session.
-    func toggleGuestAgentDisk(on instance: VMInstance) {
+    package func toggleGuestAgentDisk(on instance: VMInstance) {
         switch GuestAgentDiskControl.model(for: instance).action {
         case .eject:
             runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
@@ -1533,7 +1533,7 @@ final class VMLibraryViewModel {
     ///
     /// `.outdated`, `.unresponsive`, and `.expectedMissing` still surface — those imply
     /// something more urgent than "you could install this".
-    func dismissAgentInstallNudge(for instance: VMInstance) {
+    package func dismissAgentInstallNudge(for instance: VMInstance) {
         setAgentInstallNudgeDismissed(true, for: instance)
     }
 
@@ -1543,7 +1543,7 @@ final class VMLibraryViewModel {
     /// `true` silences the `.waiting` nudge, `false` re-arms it. A surface
     /// showing the flag repaints from the model unless the edit was applied.
     @discardableResult
-    func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance)
+    package func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance)
         -> EditOutcome
     {
         setConfiguration(
@@ -1556,7 +1556,7 @@ final class VMLibraryViewModel {
     ///
     /// Each VM's flag lives in its own bundle and is persisted individually;
     /// VMs already armed make no edit.
-    func resetAllAgentInstallNudges() {
+    package func resetAllAgentInstallNudges() {
         agentInstallPromptDisabled = false
         let key = VMConfigurationKeyRegistry.agentInstallReminder
         for instance in instances where key.applies(instance.configuration) {
@@ -1571,7 +1571,7 @@ final class VMLibraryViewModel {
     ///
     /// Feeds the Startup section's capacity warning: macOS caps how many macOS
     /// guests run at once, so a longer list than that cap cannot come up whole.
-    var macOSVMNamesMarkedForAutoStart: [String] {
+    package var macOSVMNamesMarkedForAutoStart: [String] {
         instances
             .filter {
                 $0.configuration.guestOS == .macOS
@@ -1588,7 +1588,7 @@ final class VMLibraryViewModel {
     /// Nobody is at the machine for this, so it selects and focuses nothing: it
     /// goes through the core rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
-    func startAutomaticVMsForLaunch(_ marked: Set<UUID>) async {
+    package func startAutomaticVMsForLaunch(_ marked: Set<UUID>) async {
         let results = await commands.startVMsMarkedToStartAutomatically(marked)
         guard !results.undone.isEmpty else { return }
         presenter?.presentStartSummary(title: Self.autoStartUndoneTitle, undone: results.undone)
@@ -1672,7 +1672,7 @@ final class VMLibraryViewModel {
     /// A `kernova:` link has no caller to answer to, so the app is where its
     /// refusal lands — through the same routing every in-app refusal takes, so
     /// a refusal raised before any window can show it waits for one.
-    func surfaceUnawaitedFailure(_ failure: CommandError) {
+    package func surfaceUnawaitedFailure(_ failure: CommandError) {
         present(failure, about: .library)
     }
 

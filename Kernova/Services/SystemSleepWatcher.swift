@@ -18,7 +18,7 @@ import KernovaLogging
 /// One per process, made by the composition root. Untested by construction
 /// rather than by omission: a test process cannot put the machine to sleep.
 @MainActor
-final class SystemSleepWatcher {
+package final class SystemSleepWatcher {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SystemSleepWatcher")
 
     /// Runs in the turn the system announces sleep; the system sleeps once it
@@ -51,7 +51,7 @@ final class SystemSleepWatcher {
     private let systemWillSleep: HostNotification
     private let systemDidWake: HostNotification
 
-    init(systemWillSleep: HostNotification, systemDidWake: HostNotification) {
+    package init(systemWillSleep: HostNotification, systemDidWake: HostNotification) {
         self.systemWillSleep = systemWillSleep
         self.systemDidWake = systemDidWake
     }

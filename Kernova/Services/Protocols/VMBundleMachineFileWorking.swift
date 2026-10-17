@@ -5,14 +5,19 @@ import KernovaKit
 /// files copied beside it.
 ///
 /// `saveFileURL` goes unused by a cold capture, which writes no saved state.
-struct VMSnapshotCapturePlan: Sendable {
-    let saveFileURL: URL
-    let relativePaths: [String]
+package struct VMSnapshotCapturePlan: Sendable {
+    package let saveFileURL: URL
+    package let relativePaths: [String]
+
+    package init(saveFileURL: URL, relativePaths: [String]) {
+        self.saveFileURL = saveFileURL
+        self.relativePaths = relativePaths
+    }
 }
 
 /// What one snapshot holds, checked complete: the configuration it was captured
 /// under and the bundle-relative files it copied.
-struct VMSnapshotRestorePlan: Sendable {
+package struct VMSnapshotRestorePlan: Sendable {
     /// The configuration the saved state was written under.
     ///
     /// A revert commits this over the VM's current one, keeping the VM's
@@ -22,11 +27,17 @@ struct VMSnapshotRestorePlan: Sendable {
     /// The files to write back, derived from ``configuration`` rather than the
     /// VM's current one — a disk the VM gained or lost since the capture is
     /// neither restored nor able to block the revert.
-    let relativePaths: [String]
+    package let relativePaths: [String]
 
     /// What the snapshot captured, which decides whether the revert installs a
     /// saved state or drops the bundle's.
-    let kind: VMSnapshotKind
+    package let kind: VMSnapshotKind
+
+    package init(configuration: VMConfiguration, relativePaths: [String], kind: VMSnapshotKind) {
+        self.configuration = configuration
+        self.relativePaths = relativePaths
+        self.kind = kind
+    }
 }
 
 /// The file work behind ``VMBundle``'s machine files, which a
@@ -34,7 +45,7 @@ struct VMSnapshotRestorePlan: Sendable {
 ///
 /// Every method blocks on the filesystem, so ``VMBundle`` calls them off the
 /// main actor.
-protocol VMBundleMachineFileWorking: Sendable {
+package protocol VMBundleMachineFileWorking: Sendable {
     // MARK: Snapshots
 
     /// Creates the snapshot's directory and writes the configuration the
@@ -133,7 +144,7 @@ protocol VMBundleMachineFileWorking: Sendable {
 
 // MARK: - Errors
 
-enum VMSnapshotError: LocalizedError, TitledError {
+package enum VMSnapshotError: LocalizedError, TitledError {
     /// A file the snapshot should capture is not in the bundle.
     case captureSourceMissing(String)
     /// The snapshot holds no saved state to restore from.
@@ -147,7 +158,7 @@ enum VMSnapshotError: LocalizedError, TitledError {
     /// The snapshot holds no copy of a file its own configuration names.
     case snapshotMissingFile(String)
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .captureSourceMissing(let path):
             "The snapshot could not be taken: \u{201C}\(path)\u{201D} is missing from the virtual machine's bundle."

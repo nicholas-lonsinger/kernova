@@ -6,13 +6,13 @@ import KernovaLogging
 ///
 /// The core never opens a panel, so a caller that can picks first and hands the
 /// grant across as data.
-struct PickedFile: Sendable, Hashable {
+package struct PickedFile: Sendable, Hashable {
     let path: String
     let bookmark: Data?
 
     /// One open-panel URL as the core takes it — path plus the app-scoped
     /// bookmark minted from this pick's grant.
-    init(picking url: URL) {
+    package init(picking url: URL) {
         (path, bookmark) = SecurityScopedBookmark.capture(url)
     }
 
@@ -907,7 +907,7 @@ extension VMCommandCore {
     /// The Guest Agent installer and files shared with another VM can only be
     /// detached, never trashed, so their confirm keeps the file and destroys
     /// nothing.
-    static func attachmentDeletePrompt(
+    package static func attachmentDeletePrompt(
         label: String,
         isInternal: Bool,
         isGuestAgent: Bool,

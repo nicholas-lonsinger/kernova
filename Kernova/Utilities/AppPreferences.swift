@@ -6,9 +6,9 @@ import KernovaLogging
 ///
 /// Distinct from per-VM `VMConfiguration`: this holds settings that apply to the
 /// whole app and live in the standard defaults domain.
-struct AppPreferences {
+package struct AppPreferences {
     /// Shared production instance over the standard defaults domain.
-    @MainActor static let shared = AppPreferences(defaults: .standard)
+    @MainActor package static let shared = AppPreferences(defaults: .standard)
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppPreferences")
 
@@ -60,14 +60,14 @@ struct AppPreferences {
     ///
     /// When `false` (the default), they are revealed only while holding the
     /// Option (⌥) key, as Option-alternate menu items.
-    var alwaysShowAdvancedOptions: Bool {
+    package var alwaysShowAdvancedOptions: Bool {
         get { defaults.bool(forKey: Keys.alwaysShowAdvancedOptions) }
         nonmutating set { defaults.set(newValue, forKey: Keys.alwaysShowAdvancedOptions) }
     }
 
     /// Identifiers of the sidebar sections the user has collapsed; every other
     /// section is expanded.
-    var collapsedSidebarSections: [String] {
+    package var collapsedSidebarSections: [String] {
         get { defaults.array(forKey: Keys.collapsedSidebarSections) as? [String] ?? [] }
         nonmutating set { defaults.set(newValue, forKey: Keys.collapsedSidebarSections) }
     }
@@ -139,7 +139,7 @@ struct AppPreferences {
 
     /// Whether the user dismissed the "still running in the menu bar" reminder
     /// popover shown on a soft quit.
-    var menuBarQuitReminderDismissed: Bool {
+    package var menuBarQuitReminderDismissed: Bool {
         get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }
@@ -162,21 +162,21 @@ struct AppPreferences {
     /// Mirroring the removal here is what lets the next launch tell it apart from
     /// a deliberate customization removal, and put the item back in the slot it
     /// came from.
-    var mainToolbarNewVMCollapseIndex: Int? {
+    package var mainToolbarNewVMCollapseIndex: Int? {
         get { defaults.object(forKey: Keys.mainToolbarNewVMCollapseIndex) as? Int }
         nonmutating set { defaults.set(newValue, forKey: Keys.mainToolbarNewVMCollapseIndex) }
     }
 
     /// Whether a start refused because another active VM has the same machine
     /// identifier asks the user whether to start anyway, defaulting to `false`.
-    var allowsDuplicateMachineIDOverride: Bool {
+    package var allowsDuplicateMachineIDOverride: Bool {
         get { defaults.bool(forKey: Keys.allowDuplicateMachineIDBoot) }
         nonmutating set { defaults.set(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
     }
 
     /// What Clone makes of a VM that offers both outcomes, defaulting to New
     /// Machine.
-    var cloneOutcome: CloneOutcome {
+    package var cloneOutcome: CloneOutcome {
         get { defaults.bool(forKey: Keys.cloneKeepsMachineID) ? .exactCopy : .newMachine }
         nonmutating set { defaults.set(newValue == .exactCopy, forKey: Keys.cloneKeepsMachineID) }
     }
@@ -194,7 +194,7 @@ struct AppPreferences {
     /// Always one of `ClipboardPasteLimit.choices`: an unset key and any value
     /// off the ladder both resolve to the nearest offered stop, so no
     /// enforcement point ever sees a ceiling with no derivation behind it.
-    var clipboardMaxPasteBytes: Int {
+    package var clipboardMaxPasteBytes: Int {
         get {
             ClipboardPasteLimit.resolve(
                 defaults.object(forKey: Keys.clipboardMaxPasteBytes) as? Int)
@@ -205,7 +205,7 @@ struct AppPreferences {
     /// The Clone menu items for the VM `configuration` describes: `primary`
     /// makes what ``cloneOutcome(for:)`` resolves to, and `alternate` the
     /// other outcome — `nil` where only one is offered.
-    func cloneMenuItems(
+    package func cloneMenuItems(
         for configuration: VMConfiguration?
     ) -> (primary: CloneMenuItem, alternate: CloneMenuItem?) {
         let primary = cloneOutcome(for: configuration)
@@ -220,21 +220,21 @@ struct AppPreferences {
     /// Covers only the menu-bar quit reminder. The guest-agent install nudge —
     /// app-wide here, per-VM in each bundle configuration — is re-armed as one
     /// by `VMLibraryViewModel.resetAllAgentInstallNudges()`.
-    func resetHostReminders() {
+    package func resetHostReminders() {
         menuBarQuitReminderDismissed = false
     }
 }
 
 /// One Clone menu item: the outcome it makes, and its title.
-struct CloneMenuItem: Equatable {
+package struct CloneMenuItem: Equatable {
     let outcome: CloneOutcome
 
-    var title: String { "Clone as \(outcome.displayName)" }
+    package var title: String { "Clone as \(outcome.displayName)" }
 }
 
 extension CloneOutcome {
     /// How every app surface names the outcome.
-    var displayName: String {
+    package var displayName: String {
         switch self {
         case .newMachine: "New Machine"
         case .exactCopy: "Exact Copy"

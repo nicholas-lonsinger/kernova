@@ -2,13 +2,13 @@ import Foundation
 import KernovaKit
 
 /// How an enabled network device attaches to the world.
-enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
+package enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
     case nat
     case bridged
     case hostOnly
 
     /// How every surface the user reads names this mode.
-    var title: String {
+    package var title: String {
         switch self {
         case .nat: "NAT"
         case .bridged: "Bridged"
@@ -33,7 +33,7 @@ enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 /// The user's choice of pointing/keyboard device pair for a macOS guest.
-enum VMInputDeviceMode: String, Codable, Sendable, Equatable, CaseIterable {
+package enum VMInputDeviceMode: String, Codable, Sendable, Equatable, CaseIterable {
     /// Resolve the pair from the guest's effective macOS version.
     case automatic
     /// The Mac trackpad and keyboard, which only macOS 13+ guests recognize.
@@ -45,7 +45,7 @@ enum VMInputDeviceMode: String, Codable, Sendable, Equatable, CaseIterable {
 
 /// When the VM display sends system hot keys to the guest instead of letting
 /// the host act on them.
-enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
+package enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
     /// The host keeps every system hot key.
     case never
     /// The guest takes them only while its display fills a screen of its own.
@@ -55,7 +55,7 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 /// A network a VM's device can join.
-enum VMJoinedNetwork: Hashable, Sendable {
+package enum VMJoinedNetwork: Hashable, Sendable {
     /// The host's LAN through a bridged interface — any interface, since
     /// Automatic resolves at start and which link two VMs land on is not
     /// knowable in advance.
@@ -94,32 +94,32 @@ enum VMJoinedNetwork: Hashable, Sendable {
 ///
 /// > Important: **Any new property must be added to the custom `init(from:)`
 /// > as well.**
-struct VMConfiguration: Codable, Sendable, Equatable {
+package struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Identity
 
-    var id: UUID
-    var name: String
-    var guestOS: VMGuestOS
-    var bootMode: VMBootMode
+    package var id: UUID
+    package var name: String
+    package var guestOS: VMGuestOS
+    package var bootMode: VMBootMode
 
     // MARK: - Resources
 
-    var cpuCount: Int
+    package var cpuCount: Int
     /// Persisted under this key as a number of gibibytes.
-    var memorySizeInGB: VMMemorySize
+    package var memorySizeInGB: VMMemorySize
     var diskSizeInGB: Int
 
     // MARK: - Display
 
-    var displayWidth: Int
-    var displayHeight: Int
-    var displayPPI: Int
+    package var displayWidth: Int
+    package var displayHeight: Int
+    package var displayPPI: Int
 
     /// When `true`, a cold boot rewrites `displayWidth`/`displayHeight`/`displayPPI`
     /// to fit the window or screen the display is about to appear in.
     ///
     /// Ignored when a save file exists.
-    var displaySizesToWindow: Bool
+    package var displaySizesToWindow: Bool
 
     /// The user's intent for guest display density: `true` boots Retina-sharp
     /// (double the pixels at `DisplayBootSizing.hiDPIPixelsPerInch`), `false` at 1×.
@@ -128,38 +128,38 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// with `displaySizesToWindow` on they are the previous boot's computed
     /// artifact and only this flag survives to the next one. Linux guests ignore
     /// it — a virtio scanout carries no density.
-    var displayHiDPI: Bool
+    package var displayHiDPI: Bool
 
     /// Backs `VZVirtualMachineView.automaticallyReconfiguresDisplay`, letting the
     /// guest reconfigure its display to follow the window as it is resized.
     ///
     /// A macOS guest honors it from macOS 14 on; earlier ones scale instead.
-    var displayAutoResizes: Bool
+    package var displayAutoResizes: Bool
 
     // MARK: - Network
 
     /// When `false`, the VM has no network device at all — the "None" mode.
-    var networkEnabled: Bool
+    package var networkEnabled: Bool
 
     /// How an enabled device attaches; ignored while `networkEnabled` is `false`.
-    var networkMode: VMNetworkMode
+    package var networkMode: VMNetworkMode
 
     /// BSD name of the host interface a bridged VM attaches to (e.g. `en0`), or
     /// `nil` for Automatic — resolved against the host's default route at start.
-    var bridgedInterfaceIdentifier: String?
+    package var bridgedInterfaceIdentifier: String?
 
     /// Which network of its mode a NAT or Host Only VM joins. Bridged
     /// ignores it. A named network's kind is the mode a VM on it has
     /// (``VMNamedNetwork/kind``).
-    var networkMembership: VMNetworkMembership
+    package var networkMembership: VMNetworkMembership
 
-    var macAddress: String?
+    package var macAddress: String?
 
     // MARK: - Clipboard Sharing
 
     /// When `true`, a SPICE agent console port is configured to enable clipboard
     /// exchange between host and guest via the clipboard panel window.
-    var clipboardSharingEnabled: Bool
+    package var clipboardSharingEnabled: Bool
 
     /// When `true`, the host clipboard is polled and forwarded to the guest
     /// automatically, and inbound guest clipboard content is written straight to
@@ -169,7 +169,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// Gated on `clipboardSharingEnabled`; because the guest gains continuous
     /// read of whatever is copied on the host, enabling it requires explicit
     /// confirmation. Off by default.
-    var clipboardPassthroughEnabled: Bool
+    package var clipboardPassthroughEnabled: Bool
 
     // MARK: - Drag and Drop
 
@@ -180,13 +180,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// pasteboard — and honored at runtime, so the display stops being a drag
     /// destination the moment it is switched off. Linux guests have no Kernova
     /// agent and ignore this flag.
-    var dropFilesEnabled: Bool
+    package var dropFilesEnabled: Bool
 
     // MARK: - Serial Console
 
     /// When `true`, the running VM exposes its serial port over a host-side
     /// AF_UNIX socket so an external terminal (e.g. `socat`/`nc -U`) can attach.
-    var serialSocketRelayEnabled: Bool
+    package var serialSocketRelayEnabled: Bool
 
     // MARK: - Audio
 
@@ -194,14 +194,14 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// virtio sound input stream.
     ///
     /// Defaults to `false` so guests cannot silently listen to the host.
-    var audioInputEnabled: Bool
+    package var audioInputEnabled: Bool
 
     /// When `true`, guest audio is routed to the host's audio output as a virtio
     /// sound output stream.
     ///
     /// When both this and `audioInputEnabled` are `false`, no virtio sound
     /// device is configured at all.
-    var audioOutputEnabled: Bool
+    package var audioOutputEnabled: Bool
 
     // MARK: - Input Devices
 
@@ -210,7 +210,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     ///
     /// `.automatic` resolves through ``GuestInputDevices``. Applied at the
     /// next boot, like the rest of the device configuration.
-    var inputDeviceMode: VMInputDeviceMode
+    package var inputDeviceMode: VMInputDeviceMode
 
     /// When the display hands system hot keys to the guest, backing
     /// `VZVirtualMachineView.capturesSystemKeys`.
@@ -219,7 +219,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// it is asked to take them. Read on every observation pass rather than at
     /// boot, so both a change here and a fullscreen transition under
     /// ``VMSystemKeyForwarding/fullscreenOnly`` reach a running VM.
-    var systemKeyForwarding: VMSystemKeyForwarding
+    package var systemKeyForwarding: VMSystemKeyForwarding
 
     // MARK: - Guest Agent
 
@@ -227,7 +227,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// host over vsock so they appear in Console.app under `app.kernova.guest`.
     ///
     /// Opt-in. Linux guests have no Kernova agent and ignore this flag.
-    var agentLogForwardingEnabled: Bool
+    package var agentLogForwardingEnabled: Bool
 
     /// The most recent guest-reported agent version observed on this VM's
     /// control channel (`Hello.agent_info.agent_version`), or `nil` until the
@@ -246,21 +246,21 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - macOS-specific
 
     /// Serialized `VZMacHardwareModel.dataRepresentation`.
-    var hardwareModelData: Data?
+    package var hardwareModelData: Data?
 
     /// Serialized `VZMacMachineIdentifier.dataRepresentation`.
-    var machineIdentifierData: Data?
+    package var machineIdentifierData: Data?
 
     // MARK: - EFI / Linux generic platform
 
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
-    var genericMachineIdentifierData: Data?
+    package var genericMachineIdentifierData: Data?
 
     // MARK: - Linux kernel boot
 
-    var kernelPath: String?
-    var initrdPath: String?
-    var kernelCommandLine: String?
+    package var kernelPath: String?
+    package var initrdPath: String?
+    package var kernelCommandLine: String?
 
     /// App-scoped security bookmarks for `kernelPath` / `initrdPath`
     /// (user-picked files re-read on every boot); see
@@ -280,7 +280,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// The disks this VM actually attaches: the configured list when non-empty,
     /// otherwise the synthesized main disk at the bundle's `Disk.asif`.
-    func effectiveStorageDisks(layout: VMBundleLayout) -> [StorageDisk] {
+    package func effectiveStorageDisks(layout: VMBundleLayout) -> [StorageDisk] {
         if let configured = storageDisks, !configured.isEmpty { return configured }
         return [StorageDisk.mainDisk(layout: layout)]
     }
@@ -298,11 +298,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// Each item's `id` is used as the `VZUSBMassStorageDeviceConfiguration.uuid`
     /// so save-state restore can match the configured item against the
     /// saved-state device list.
-    var removableMedia: [RemovableMediaItem]?
+    package var removableMedia: [RemovableMediaItem]?
 
     // MARK: - Shared Directories
 
-    var sharedDirectories: [SharedDirectory]?
+    package var sharedDirectories: [SharedDirectory]?
 
     // MARK: - Install Intent
 
@@ -321,7 +321,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// Non-nil ⇔ this VM has never completed its initial boot: its presence
     /// routes `start(_:)` through the install pipeline. Cleared exactly once,
     /// after a successful install. Always `nil` for Linux guests.
-    var installContext: MacOSInstallContext?
+    package var installContext: MacOSInstallContext?
 
     /// The macOS account this VM still owes its guest, minus the password.
     ///
@@ -339,16 +339,16 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// routes `start(_:)` through the download pipeline. Cleared exactly once,
     /// after the verified ISO is attached. Always `nil` for macOS guests, and
     /// for a Linux guest whose ISO the user picked off their own disk.
-    var linuxInstallContext: LinuxInstallContext?
+    package var linuxInstallContext: LinuxInstallContext?
 
     // MARK: - Metadata
 
-    var createdAt: Date
+    package var createdAt: Date
 
     /// The installer image this VM was set up from, or `nil` when Kernova has
     /// no record of one — a VM it did not install, or a Linux ISO the user
     /// picked off their own disk.
-    var installedImage: InstalledImage?
+    package var installedImage: InstalledImage?
 
     // MARK: - Defaults
 
@@ -473,7 +473,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     // Custom `init(from:)` so a key absent from the file takes the value a new
     // VM gets, where synthesized `Codable` would fail the whole decode on any
     // missing non-optional field.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let id = try c.decode(UUID.self, forKey: .id)
         let name = try c.decode(String.self, forKey: .name)
@@ -561,7 +561,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Encoder configured for `config.json` (ISO-8601 dates, pretty-printed,
     /// stable key order).
-    static func makeJSONEncoder() -> JSONEncoder {
+    package static func makeJSONEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -569,7 +569,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     }
 
     /// Reads and decodes `config.json` from a VM bundle directory.
-    static func load(fromBundle bundleURL: URL) throws -> VMConfiguration {
+    package static func load(fromBundle bundleURL: URL) throws -> VMConfiguration {
         let data = try Data(contentsOf: VMBundleLayout(bundleURL: bundleURL).configURL)
         return try makeJSONDecoder().decode(VMConfiguration.self, from: data)
     }
@@ -580,7 +580,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     ///
     /// The pair of fields behind it read as one choice, which is how every
     /// surface offers it.
-    var effectiveNetworkMode: VMNetworkMode? {
+    package var effectiveNetworkMode: VMNetworkMode? {
         networkEnabled ? networkMode : nil
     }
 
@@ -594,7 +594,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     ///
     /// A no-op when the VM is already on `mode`, so nothing is minted for a
     /// write that changes nothing.
-    mutating func applyNetworkMode(_ mode: VMNetworkMode?) {
+    package mutating func applyNetworkMode(_ mode: VMNetworkMode?) {
         guard mode != effectiveNetworkMode else { return }
         guard let mode else {
             networkEnabled = false
@@ -607,7 +607,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// The network this VM's device joins, `nil` when it carries none: two
     /// devices share a link exactly when they join equal networks.
-    var joinedNetwork: VMJoinedNetwork? {
+    package var joinedNetwork: VMJoinedNetwork? {
         guard networkEnabled else { return nil }
         guard let kind = VmnetNetworkKind(mode: networkMode) else { return .bridged }
         let scope: VmnetNetworkID.Scope =
@@ -699,7 +699,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Computed
 
-    var memorySizeInBytes: UInt64 {
+    package var memorySizeInBytes: UInt64 {
         memorySizeInGB.bytes
     }
 
@@ -736,7 +736,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// The "looks like" size the UI states — half the stored pixel count while
     /// the stored resolution is HiDPI.
-    var displayBaseSize: (width: Int, height: Int) {
+    package var displayBaseSize: (width: Int, height: Int) {
         guard displayResolutionIsHiDPI else { return (displayWidth, displayHeight) }
         return (displayWidth / 2, displayHeight / 2)
     }
@@ -749,7 +749,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// The "looks like" size `width` × `height` settles at once fitted to what
     /// this VM takes — the size ``setDisplayBaseSize(width:height:)`` stores.
-    func fittedDisplayBaseSize(width: Int, height: Int) -> (width: Int, height: Int) {
+    package func fittedDisplayBaseSize(width: Int, height: Int) -> (width: Int, height: Int) {
         var fitted = self
         fitted.displayResolution = displayResolution(base: width, height: height)
         return fitted.displayBaseSize
@@ -790,7 +790,7 @@ extension VMConfiguration {
     /// ``ExternalFileReference/Kind`` instead of re-deriving their own subset.
     /// Internal disks are absent — they live inside the bundle, are addressed
     /// bundle-relative, and carry no bookmark.
-    var externalFileReferences: [ExternalFileReference] {
+    package var externalFileReferences: [ExternalFileReference] {
         var references: [ExternalFileReference] = []
         if let kernelPath {
             references.append(
@@ -913,7 +913,7 @@ extension VMConfiguration {
     /// become unreadable in the guest after a resume until the guest restarts:
     /// observed on 13.7.8 with one and with two shares, and not on 14.8.9 or
     /// 27.0.0, in #1440.
-    var sharedDirectoriesBreakOnResume: Bool {
+    package var sharedDirectoriesBreakOnResume: Bool {
         guard guestOS == .macOS, let version = effectiveGuestMacOSVersion else { return false }
         return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
             && !version.isAtLeast(MacOSVersion(major: 14, minor: 0))
@@ -931,10 +931,10 @@ extension VMConfiguration {
 // MARK: - SharedDirectory
 
 /// A host directory shared with the guest VM via VirtioFS.
-struct SharedDirectory: Codable, Sendable, Equatable {
-    var id: UUID
-    var path: String
-    var readOnly: Bool
+package struct SharedDirectory: Codable, Sendable, Equatable {
+    package var id: UUID
+    package var path: String
+    package var readOnly: Bool
 
     /// App-scoped security bookmark for `path` (a user-picked directory);
     /// see ``StorageDisk/bookmark`` for the nil semantics.
@@ -973,7 +973,7 @@ struct SharedDirectory: Codable, Sendable, Equatable {
             mountName: candidates.first { !taken.contains($0) } ?? candidates[2])
     }
 
-    init(from decoder: any Decoder) throws {
+    package init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let path = try c.decode(String.self, forKey: .path)
         self.init(
@@ -984,7 +984,7 @@ struct SharedDirectory: Codable, Sendable, Equatable {
     }
 
     /// The last path component, which names the share in the UI.
-    var displayName: String {
+    package var displayName: String {
         URL(fileURLWithPath: path).lastPathComponent
     }
 }

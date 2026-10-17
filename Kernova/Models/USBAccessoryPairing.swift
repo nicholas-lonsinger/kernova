@@ -8,20 +8,20 @@ import KernovaKit
 /// A preference about what to attach, never part of the VM's configuration: no
 /// configuration names a passthrough device, and the guest takes the accessory
 /// by a fresh attach once it runs.
-struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
+package struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
     /// ``USBAccessoryIdentity/key``.
-    let key: String
+    package let key: String
     /// Which claim ``key`` makes — about one unit, or about one port.
     let form: USBAccessoryIdentity.Form
     /// What a list calls this accessory while nothing is plugged in to ask.
-    let displayName: String
+    package let displayName: String
     /// The receptacle in the hardware's own words, for the one job the name
     /// cannot do alone: telling two identical units apart. `nil` when the node
     /// named none.
     let receptacleLabel: String?
-    let pairedAt: Date
+    package let pairedAt: Date
 
-    var id: String { key }
+    package var id: String { key }
 
     /// The port this rule names, or `nil` when it names the unit instead.
     ///
@@ -29,7 +29,7 @@ struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
     /// naming the port it happened to be in would be a claim the rule does not
     /// make. A rule keyed on a receptacle *is* that claim, and reads as
     /// ambiguous without it when two units of a model are around.
-    var namedReceptacleLabel: String? {
+    package var namedReceptacleLabel: String? {
         form == .receptacle ? receptacleLabel : nil
     }
 
@@ -55,9 +55,9 @@ struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// The `usb-accessories.json` payload: every accessory one VM takes back.
-struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
+package struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
     /// Storage order is the order the pairings were made.
-    var pairings: [USBAccessoryPairing]
+    package var pairings: [USBAccessoryPairing]
 
     init(pairings: [USBAccessoryPairing] = []) {
         self.pairings = pairings
@@ -66,13 +66,13 @@ struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
     // Custom `init(from:)` so a file holding an object with no `pairings` key
     // reads as "this VM takes nothing back" rather than failing the whole
     // decode, the way a `decode` of a non-optional field would.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.pairings = try container.decode(
             [USBAccessoryPairing].self, forKey: .pairings, default: Self().pairings, in: decoder)
     }
 
-    var isEmpty: Bool { pairings.isEmpty }
+    package var isEmpty: Bool { pairings.isEmpty }
 
     /// The pairing `identity` answers to, or `nil` when this VM claims it not.
     ///

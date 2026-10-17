@@ -6,7 +6,7 @@ import Foundation
 /// Everything here survives a re-enumeration; nothing here is in the device
 /// descriptor AccessoryAccess hands over, which carries the string *indices*
 /// rather than the strings.
-struct USBAccessoryNodeProperties: Sendable, Equatable {
+package struct USBAccessoryNodeProperties: Sendable, Equatable {
     /// `kUSBVendorString` — what the device calls its maker.
     var vendorName: String?
     /// `kUSBProductString` — what the device calls itself.
@@ -14,7 +14,7 @@ struct USBAccessoryNodeProperties: Sendable, Equatable {
     /// `kUSBSerialNumberString`, absent both when the device carries no serial
     /// and when the string did not come back. ``declaresSerialNumber``
     /// separates those.
-    var serialNumber: String?
+    package var serialNumber: String?
     /// `iSerialNumber` — the descriptor index, `0` when the device declares no
     /// serial at all.
     var serialNumberIndex: UInt8 = 0
@@ -40,11 +40,11 @@ struct USBAccessoryNodeProperties: Sendable, Equatable {
     /// True with no ``serialNumber`` is the one case worth a log line: the
     /// device claims a serial Kernova could not read, so the identity falls
     /// back to the port for a reason the registry does not explain.
-    var declaresSerialNumber: Bool { serialNumberIndex != 0 }
+    package var declaresSerialNumber: Bool { serialNumberIndex != 0 }
 
     /// The receptacle as a key names it — the whole `UsbIOPort` path, or the
     /// `locationID` when the port node carries none.
-    var receptacleKey: String? {
+    package var receptacleKey: String? {
         if let ioPortPath, !ioPortPath.isEmpty { return ioPortPath }
         return locationID.map { String(format: "%08x", $0) }
     }

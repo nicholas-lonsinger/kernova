@@ -6,7 +6,7 @@ import Foundation
 ///
 /// The engine answers it (`VirtualizationHost`); ``AppDelegate`` hands that to
 /// everything that asks.
-protocol VirtualizationHostProviding: Sendable {
+package protocol VirtualizationHostProviding: Sendable {
     /// The CPU and memory bounds every guest on this Mac is held to.
     var resourceLimits: VMResourceLimits { get }
 
