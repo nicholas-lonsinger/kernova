@@ -145,7 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             networks: VMNetworkDirectory(fileURL: VMNetworkDirectory.productionFileURL),
             organization: VMOrganizationDirectory(fileURL: VMOrganizationDirectory.productionFileURL),
             hostNotifications: hostNotifications,
-            hostPasteboard: NSPasteboard.general)
+            hostPasteboard: NSPasteboard.general,
+            guestAgent: .inMainBundle)
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,

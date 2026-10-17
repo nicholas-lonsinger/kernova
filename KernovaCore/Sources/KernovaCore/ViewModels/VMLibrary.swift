@@ -139,7 +139,7 @@ package final class VMLibrary: VMAdmissionPeers {
     ) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard)
+            hostPasteboard: hostPasteboard, guestAgent: guestAgent)
         entries.append(.vm(instance))
         return instance
     }
@@ -318,7 +318,7 @@ package final class VMLibrary: VMAdmissionPeers {
         let entitlements = entitlements
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
-            bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
+            bundledAgentVersion: guestAgent.version, networks: named,
             tags: organization.tags,
             networkTitle: { config in
                 NetworkModeChoice.label(
@@ -468,7 +468,7 @@ package final class VMLibrary: VMAdmissionPeers {
 
     /// Whether this build can pass a host USB accessory through to a guest at
     /// all — the OS and the signature together, answered once by
-    /// ``USBAccessorySupport/makeService(entitlements:)``.
+    /// `USBAccessorySupport.makeService(entitlements:)`.
     var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
 
     /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
@@ -507,6 +507,10 @@ package final class VMLibrary: VMAdmissionPeers {
     /// The host pasteboard every VM's clipboard publishes to and polls.
     let hostPasteboard: any ClipboardPasteboard
 
+    /// The guest agent this host bundles, which every VM the library builds
+    /// is handed.
+    package let guestAgent: BundledGuestAgent
+
     // MARK: - Initialization
 
     init(
@@ -524,8 +528,10 @@ package final class VMLibrary: VMAdmissionPeers {
         virtualizationHost: any VirtualizationHostProviding,
         bridgedInterfaces: any BridgedInterfaceProviding,
         appActivation: HostNotification,
-        hostPasteboard: any ClipboardPasteboard
+        hostPasteboard: any ClipboardPasteboard,
+        guestAgent: BundledGuestAgent
     ) {
+        self.guestAgent = guestAgent
         self.storageService = storageService
         self.virtualizationHost = virtualizationHost
         self.bridgedInterfaces = bridgedInterfaces
@@ -706,7 +712,7 @@ package final class VMLibrary: VMAdmissionPeers {
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences,
-            hostPasteboard: hostPasteboard)
+            hostPasteboard: hostPasteboard, guestAgent: guestAgent)
         wireHooks(for: instance)
         recordUnreadable(of: scanned.read)
         return instance

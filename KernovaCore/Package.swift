@@ -34,6 +34,10 @@ let package = Package(
                 .product(name: "KernovaKit", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
             ],
+            resources: [
+                .copy("Resources/LinuxImageCatalog.json"),
+                .copy("Resources/RestoreImageCatalog.json"),
+            ],
             swiftSettings: sharedSwiftSettings
         ),
         // The AppKit layer. Its tests need a running NSApplication, which no

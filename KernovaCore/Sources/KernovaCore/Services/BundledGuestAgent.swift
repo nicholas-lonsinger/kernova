@@ -1,9 +1,14 @@
 import Foundation
 import KernovaLogging
 
-/// Static accessors for the Kernova guest agent that the host bundles in its
-/// Resources directory.
-package enum KernovaMacOSAgentInfo {
+/// The Kernova guest agent a host bundles: its version and its installer
+/// image, both build products the "Package Guest Agent DMG" build phase writes
+/// into the app's Resources.
+///
+/// The composition root reads the app's (``inMainBundle``) and hands it to the
+/// library, which hands it to each VM; everything else reads the value it was
+/// given.
+package struct BundledGuestAgent: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "KernovaMacOSAgentInfo")
 
     /// Filename of the version sidecar in `Kernova.app/Contents/Resources/`.
@@ -20,14 +25,43 @@ package enum KernovaMacOSAgentInfo {
     /// the mounted volume.
     package static let diskLabel = "Kernova Guest Agent"
 
-    /// The version of the guest agent embedded in this build of the host.
+    /// The agent the running app bundles.
+    package static let inMainBundle = BundledGuestAgent(bundle: .main)
+
+    /// The version of the guest agent embedded in this build of the host;
+    /// `nil` means the build phase didn't run or its output is missing.
+    package let version: String?
+
+    private let locateInstaller: @Sendable () -> URL?
+
+    package init(version: String?, installerDiskImageURL: URL?) {
+        self.version = version
+        self.locateInstaller = { installerDiskImageURL }
+    }
+
+    /// Reads `bundle`'s version sidecar once, and finds its installer image on
+    /// every ask.
+    private init(bundle: Bundle) {
+        self.version = Self.version(in: bundle)
+        self.locateInstaller = {
+            bundle.url(forResource: Self.dmgResourceName, withExtension: Self.dmgResourceExtension)
+        }
+    }
+
+    /// Filesystem URL of the guest agent installer DMG, or `nil` if missing.
     ///
-    /// Read from `KernovaMacOSAgentVersion.txt`, written by the "Package Guest
-    /// Agent DMG" build phase. `nil` means that phase didn't run or its output
-    /// is missing from the bundle.
-    static let bundledVersion: String? = {
+    /// Resolved on every read, so it always reflects the running app bundle's
+    /// location.
+    package var installerDiskImageURL: URL? { locateInstaller() }
+
+    /// Filesystem path of the guest agent installer DMG, if present.
+    var installerPath: String? {
+        installerDiskImageURL?.path(percentEncoded: false)
+    }
+
+    private static func version(in bundle: Bundle) -> String? {
         guard
-            let url = Bundle.main.url(
+            let url = bundle.url(
                 forResource: versionResourceName,
                 withExtension: versionResourceExtension
             )
@@ -53,21 +87,5 @@ package enum KernovaMacOSAgentInfo {
             assertionFailure("Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription)")
             return nil
         }
-    }()
-
-    /// Filesystem URL of the guest agent installer DMG, or `nil` if missing.
-    package static var installerDiskImageURL: URL? {
-        Bundle.main.url(
-            forResource: dmgResourceName,
-            withExtension: dmgResourceExtension
-        )
-    }
-
-    /// Filesystem path of the guest agent installer DMG, if present.
-    ///
-    /// Resolved at the call site (not cached) so it always reflects the running
-    /// app bundle's location.
-    static var installerPath: String? {
-        installerDiskImageURL?.path(percentEncoded: false)
     }
 }

@@ -98,7 +98,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     init(
         viewModel: VMLibraryViewModel,
         windows: AppWindowRegistry,
-        hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
+        hasBundledGuestAgentDisk: Bool = BundledGuestAgent.inMainBundle.installerDiskImageURL != nil
     ) {
         self.viewModel = viewModel
         self.windows = windows

@@ -70,7 +70,7 @@ package final class VMInstance {
 
     /// Where this VM's display currently lives.
     ///
-    /// ``VMDisplayPlacementController`` owns every transition; the model writes
+    /// `VMDisplayPlacementController` owns every transition; the model writes
     /// this only once the session ends (``sessionDidEnd(afterRunning:)``), to the sole mode a
     /// sessionless VM can rest in.
     package var displayMode: VMDisplayMode = .inline
@@ -286,14 +286,19 @@ package final class VMInstance {
     /// drive it without writing the real defaults domain.
     let preferences: AppPreferences
 
+    /// The guest agent this host bundles: the version a Hello is current
+    /// against, and the installer image the VM can be handed.
+    package let guestAgent: BundledGuestAgent
+
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk, whose clipboard publishes to and polls
     /// `hostPasteboard`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
-        hostPasteboard: any ClipboardPasteboard
+        hostPasteboard: any ClipboardPasteboard, guestAgent: BundledGuestAgent
     ) {
+        self.guestAgent = guestAgent
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
         self.activity = VMActivity(phase: phase)
@@ -338,7 +343,7 @@ package final class VMInstance {
     /// `true` when the bundled Guest Agent installer DMG is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        guard let path = KernovaMacOSAgentInfo.installerPath else { return false }
+        guard let path = guestAgent.installerPath else { return false }
         return (configuration.removableMedia ?? []).contains { $0.path == path }
     }
 
@@ -354,7 +359,7 @@ package final class VMInstance {
     /// The macOS machine identifier this VM boots with — the configuration field
     /// when set, otherwise the bundle's identifier file.
     ///
-    /// The fallback mirrors ``ConfigurationBuilder``, which reads the file when
+    /// The fallback mirrors `ConfigurationBuilder`, which reads the file when
     /// the configuration carries no identifier, so a bundle holding its identity
     /// only on disk compares equal to one holding it in the configuration.
     var effectiveMachineIdentifierData: Data? {
@@ -964,6 +969,7 @@ package final class VMInstance {
         VsockControlService(
             channel: channel,
             label: name,
+            bundledAgentVersion: guestAgent.version,
             policyProvider: { [weak self] in
                 self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
             },
@@ -1107,7 +1113,7 @@ package final class VMInstance {
         // the disk is mounted to run uninstall.command) must not yank the
         // installer disk out from under the user.
         guard agentVersionChanged else { return }
-        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: KernovaMacOSAgentInfo.bundledVersion) {
+        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: guestAgent.version) {
             onAgentBecameCurrent?()
         }
     }

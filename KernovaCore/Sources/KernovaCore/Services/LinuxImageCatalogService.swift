@@ -25,7 +25,7 @@ package struct LinuxImageCatalogService {
 
     init() {
         guard
-            let url = Bundle.main.url(
+            let url = Bundle.module.url(
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {

@@ -815,7 +815,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         Task { [weak self] in
             guard let self, let item = currentRemovableMedia.first(where: { $0.id == id })
             else { return }
-            let isAgent = item.isBundledGuestAgentInstaller
+            let isAgent = item.isInstaller(of: instance.guestAgent)
             var shared: [String] = []
             if !isAgent {
                 shared = await viewModel.sharingVMNames(

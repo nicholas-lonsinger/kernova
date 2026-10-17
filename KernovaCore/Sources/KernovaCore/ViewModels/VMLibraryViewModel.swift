@@ -643,7 +643,7 @@ package final class VMLibraryViewModel {
     /// would hand that state to every test that left it out. Nor does one the
     /// Virtualization engine makes — the host's answers, the bundle machine
     /// files, the restore-image lookups, the removable-media devices, the
-    /// bridged interfaces — which the core cannot build. ``AppDelegate``
+    /// bridged interfaces — which the core cannot build. `AppDelegate`
     /// supplies each.
     package init(
         storageService: any VMStorageProviding,
@@ -675,7 +675,8 @@ package final class VMLibraryViewModel {
         networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
         hostNotifications: HostNotifications,
-        hostPasteboard: any ClipboardPasteboard
+        hostPasteboard: any ClipboardPasteboard,
+        guestAgent: BundledGuestAgent
     ) {
         self.storageService = storageService
         self.localImageInspector = localImageInspector
@@ -708,7 +709,8 @@ package final class VMLibraryViewModel {
             virtualizationHost: virtualizationHost,
             bridgedInterfaces: bridgedInterfaces,
             appActivation: hostNotifications.appDidBecomeActive,
-            hostPasteboard: hostPasteboard
+            hostPasteboard: hostPasteboard,
+            guestAgent: guestAgent
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(

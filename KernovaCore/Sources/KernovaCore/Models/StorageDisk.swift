@@ -182,12 +182,12 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
 }
 
 extension RemovableMediaItem {
-    /// `true` when this is the bundled Guest Agent installer DMG.
+    /// `true` when this is `agent`'s installer DMG.
     ///
     /// The installer lives *inside the app bundle*, so a "remove" of it must
     /// only detach the entry and never trash the file.
-    package var isBundledGuestAgentInstaller: Bool {
-        guard let agentPath = KernovaMacOSAgentInfo.installerPath else { return false }
+    package func isInstaller(of agent: BundledGuestAgent) -> Bool {
+        guard let agentPath = agent.installerPath else { return false }
         return path == agentPath
     }
 

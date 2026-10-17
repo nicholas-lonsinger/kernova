@@ -30,7 +30,7 @@ struct ConfigurationBuilder: Sendable {
 
     /// The guest-agent installer image to attach to a guest that takes it over
     /// virtio, `nil` when this build carries none.
-    var guestAgentDiskURL: URL? = KernovaMacOSAgentInfo.installerDiskImageURL
+    var guestAgentDiskURL: URL? = BundledGuestAgent.inMainBundle.installerDiskImageURL
 
     /// Host state behind a bridged attachment's interface choice.
     var bridgedInterfaces: any BridgedInterfaceProviding
@@ -533,7 +533,7 @@ struct ConfigurationBuilder: Sendable {
             id: stableGuestAgentDiskID(forBundleAt: bundleURL),
             path: installerPath,
             readOnly: true,
-            label: KernovaMacOSAgentInfo.diskLabel,
+            label: BundledGuestAgent.diskLabel,
             // The path is absolute and outside the bundle, and `.dmg` would
             // otherwise default to the USB bus this delivery exists to avoid.
             isInternal: false,

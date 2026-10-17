@@ -839,7 +839,7 @@ extension VMCommandCore {
     /// The DMG's path points *inside the app bundle*, so trashing it would
     /// corrupt the app for every VM.
     private func offeredExternalReferences(for instance: VMInstance) -> [ExternalFileReference] {
-        let agentPath = KernovaMacOSAgentInfo.installerPath
+        let agentPath = instance.guestAgent.installerPath
         return instance.configuration.externalFileReferences
             .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
     }

@@ -201,7 +201,7 @@ package final class VsockControlService: VsockFeatureService {
     init(
         channel: VsockChannel,
         label: String,
-        bundledAgentVersion: String? = KernovaMacOSAgentInfo.bundledVersion,
+        bundledAgentVersion: String?,
         clock: any EngineClock = makePlatformEngineClock(),
         cadence: ControlChannelCadence = .production,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,

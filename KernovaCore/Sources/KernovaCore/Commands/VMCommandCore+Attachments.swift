@@ -374,7 +374,7 @@ extension VMCommandCore {
         guard let item = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
-        let isAgentInstaller = item.isBundledGuestAgentInstaller
+        let isAgentInstaller = item.isInstaller(of: instance.guestAgent)
         var shared: [String] = []
         if trashFile, !isAgentInstaller {
             shared = await sharingVMNames(
@@ -655,7 +655,7 @@ extension VMCommandCore {
     func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome {
         let instance = try resolve(selector)
         try require(.toggleGuestAgentDisk, on: instance)
-        guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else {
+        guard let url = instance.guestAgent.installerDiskImageURL else {
             #log(Self.logger, .fault, "Guest agent installer DMG missing from app bundle")
             assertionFailure(
                 "KernovaMacOSAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs"
@@ -687,7 +687,7 @@ extension VMCommandCore {
                 + [
                     RemovableMediaItem(
                         path: url.path(percentEncoded: false), readOnly: true,
-                        label: KernovaMacOSAgentInfo.diskLabel)
+                        label: BundledGuestAgent.diskLabel)
                 ]
         }
         return .attached(delivery)
@@ -708,7 +708,7 @@ extension VMCommandCore {
     /// eject finishes an install the user already asked for, so a state gate
     /// between the two could only strand the disk.
     func detachGuestAgentDisk(from instance: VMInstance) {
-        guard let url = KernovaMacOSAgentInfo.installerDiskImageURL,
+        guard let url = instance.guestAgent.installerDiskImageURL,
             instance.hasGuestAgentInstallerMounted
         else { return }
         let path = url.path(percentEncoded: false)
