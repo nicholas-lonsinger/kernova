@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Covers `MainMenuController.validate(_:)` — the one decision behind every menu

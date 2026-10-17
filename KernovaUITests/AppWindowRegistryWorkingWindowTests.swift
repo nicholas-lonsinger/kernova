@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Covers `AppWindowRegistry.workingInstance(keyWindow:mainWindow:)` — the VM
