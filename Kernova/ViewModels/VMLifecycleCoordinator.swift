@@ -38,7 +38,7 @@ final class VMLifecycleCoordinator {
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
-        removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        removableMediaDeviceService: any RemovableMediaAttaching,
         // No default that builds one: ``USBAccessorySupport/makeService(entitlements:)``
         // is called in exactly one place, the composition root, and a
         // collaborator that mints its own would register a second
@@ -573,7 +573,7 @@ final class VMLifecycleCoordinator {
             let nsError = error as NSError
             #log(
                 Self.logger, .error,
-                "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationService.underlyingChainDescription(nsError), privacy: .public)]"
+                "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationFailure.underlyingChainDescription(nsError), privacy: .public)]"
             )
             throw error
         }

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -21,7 +22,9 @@ struct ExternalFileReferenceTests {
     /// install context — which is the point: one pass exercises every field,
     /// and ``fixtureCoversEveryKind()`` holds this to every kind.
     private func makeFullyPopulatedConfig() -> VMConfiguration {
-        var config = VMConfiguration(name: "Externals", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Externals", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = "/Users/me/vmlinuz"
         config.kernelBookmark = Self.kernelBookmark
         config.initrdPath = "/Users/me/initrd.img"
@@ -117,7 +120,9 @@ struct ExternalFileReferenceTests {
 
     @Test("A configuration with no external fields projects nothing")
     func emptyConfigurationProjectsNothing() {
-        let config = VMConfiguration(name: "Bare", guestOS: .macOS, bootMode: .macOS)
+        let config = VMConfiguration(
+            name: "Bare", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         #expect(config.externalFileReferences.isEmpty)
     }
 
@@ -177,7 +182,9 @@ struct ExternalFileReferenceTests {
 
     @Test("bookmarksByPath maps each external path to its bookmark")
     func bookmarksByPathMapsEachPath() {
-        var config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let diskBookmark = Data([0xAA])
         config.storageDisks = [
             StorageDisk(path: "Disk.asif", isInternal: true),
@@ -196,7 +203,9 @@ struct ExternalFileReferenceTests {
 
     @Test("A non-nil bookmark wins when the same path appears twice")
     func bookmarksByPathPrefersNonNilBookmark() {
-        var config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bookmark = Data([0xBB])
         config.storageDisks = [
             StorageDisk(path: "/Users/me/shared.iso", isInternal: false)
@@ -210,7 +219,9 @@ struct ExternalFileReferenceTests {
 
     @Test("bookmarksByPath is empty when there are no external references")
     func bookmarksByPathEmpty() {
-        let config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Test", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         #expect(config.externalFileReferences.bookmarksByPath.isEmpty)
     }
 

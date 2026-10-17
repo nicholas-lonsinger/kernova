@@ -7,7 +7,8 @@ import Virtualization
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
-        vmnetNetworks: VmnetNetworkService.scripted(), entitlements: .unentitled,
+        vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetNetworkOperator(),
+        bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled,
         isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 
@@ -976,35 +977,46 @@ struct VirtualizationServiceTests {
 
     // MARK: - Transient Start Error Classification
 
+    @Test("The classifier's framework constants are Virtualization's own")
+    func frameworkConstantsAreVirtualizations() {
+        typealias Code = VirtualizationFailure.Framework.Code
+        #expect(VirtualizationFailure.Framework.errorDomain == VZError.errorDomain)
+        #expect(
+            Code.invalidVirtualMachineConfiguration.rawValue
+                == VZError.Code.invalidVirtualMachineConfiguration.rawValue)
+        #expect(Code.virtualMachineLimitExceeded.rawValue == VZError.Code.virtualMachineLimitExceeded.rawValue)
+        #expect(Code.operationCancelled.rawValue == VZError.Code.operationCancelled.rawValue)
+    }
+
     @Test("VM limit exceeded error is transient")
     func vmLimitExceededIsTransient() {
         let error = makeVMLimitExceededError()
-        #expect(VirtualizationService.isVirtualMachineLimitExceeded(error))
-        #expect(VirtualizationService.isTransientStartError(error))
+        #expect(VirtualizationFailure.isVirtualMachineLimitExceeded(error))
+        #expect(VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("VM limit exceeded is found anywhere within the bounded chain")
     func deeplyNestedVMLimitExceededIsFound() {
         for depth in 2...4 {
             let error = makeVZErrorChain(depth: depth, around: makeVMLimitExceededError())
-            #expect(VirtualizationService.isVirtualMachineLimitExceeded(error))
-            #expect(VirtualizationService.isTransientStartError(error))
+            #expect(VirtualizationFailure.isVirtualMachineLimitExceeded(error))
+            #expect(VirtualizationFailure.isTransientStartError(error))
         }
     }
 
     @Test("VM limit exceeded past the chain bound is not recognized")
     func vmLimitExceededBeyondBoundIsPermanent() {
         let error = makeVZErrorChain(depth: 5, around: makeVMLimitExceededError())
-        #expect(!VirtualizationService.isVirtualMachineLimitExceeded(error))
-        #expect(!VirtualizationService.isTransientStartError(error))
+        #expect(!VirtualizationFailure.isVirtualMachineLimitExceeded(error))
+        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("An installation failure carrying no underlying error is permanent")
     func installationFailedAloneIsPermanent() {
         let error = NSError(
             domain: VZError.errorDomain, code: VZError.Code.installationFailed.rawValue)
-        #expect(!VirtualizationService.isVirtualMachineLimitExceeded(error))
-        #expect(!VirtualizationService.isTransientStartError(error))
+        #expect(!VirtualizationFailure.isVirtualMachineLimitExceeded(error))
+        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("A builder error wrapping the VM limit stays permanent")
@@ -1012,7 +1024,7 @@ struct VirtualizationServiceTests {
         let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
             id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
             underlying: makeVMLimitExceededError())
-        #expect(!VirtualizationService.isTransientStartError(wrapped))
+        #expect(!VirtualizationFailure.isTransientStartError(wrapped))
     }
 
     @Test("A nested operation cancelled is not transient")
@@ -1021,38 +1033,38 @@ struct VirtualizationServiceTests {
             depth: 1,
             around: NSError(
                 domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue))
-        #expect(!VirtualizationService.isTransientStartError(error))
+        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("The underlying chain description names every link, bounded")
     func underlyingChainDescriptionNamesEveryLink() {
         #expect(
-            VirtualizationService.underlyingChainDescription(makeInstallVMLimitExceededError())
+            VirtualizationFailure.underlyingChainDescription(makeInstallVMLimitExceededError())
                 == "\(VZError.errorDomain) \(VZError.Code.virtualMachineLimitExceeded.rawValue)")
         #expect(
-            VirtualizationService.underlyingChainDescription(makeVMLimitExceededError()) == "none")
+            VirtualizationFailure.underlyingChainDescription(makeVMLimitExceededError()) == "none")
         let deep = makeVZErrorChain(depth: 6, around: makeVMLimitExceededError())
         #expect(
-            VirtualizationService.underlyingChainDescription(deep)
+            VirtualizationFailure.underlyingChainDescription(deep)
                 .components(separatedBy: " → ").count == 4)
     }
 
     @Test("operation cancelled error is transient")
     func operationCancelledIsTransient() {
         let error = NSError(domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue)
-        #expect(VirtualizationService.isTransientStartError(error))
+        #expect(VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("configuration builder error is permanent")
     func configBuilderErrorIsPermanent() {
         let error = ConfigurationBuilderError.missingKernelPath
-        #expect(!VirtualizationService.isTransientStartError(error))
+        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("unknown domain error is permanent")
     func unknownDomainIsPermanent() {
         let error = NSError(domain: "SomeOtherDomain", code: 42)
-        #expect(!VirtualizationService.isTransientStartError(error))
+        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     // MARK: - File-Lock Contention Classification
@@ -1072,7 +1084,7 @@ struct VirtualizationServiceTests {
 
     @Test("invalid configuration with underlying EAGAIN is lock contention")
     func eagainUnderInvalidConfigurationIsLockContention() {
-        #expect(VirtualizationService.isFileLockContention(makeFileLockContentionError()))
+        #expect(VirtualizationFailure.isFileLockContention(makeFileLockContentionError()))
     }
 
     @Test("lock contention wrapped in a disk attach failure is still lock contention")
@@ -1084,8 +1096,8 @@ struct VirtualizationServiceTests {
         let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
             id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
             underlying: makeFileLockContentionError())
-        #expect(VirtualizationService.isFileLockContention(wrapped))
-        #expect(VirtualizationService.isTransientStartError(wrapped))
+        #expect(VirtualizationFailure.isFileLockContention(wrapped))
+        #expect(VirtualizationFailure.isTransientStartError(wrapped))
     }
 
     @Test("a non-contention attach failure stays permanent")
@@ -1095,8 +1107,8 @@ struct VirtualizationServiceTests {
         let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
             id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
             underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
-        #expect(!VirtualizationService.isFileLockContention(wrapped))
-        #expect(!VirtualizationService.isTransientStartError(wrapped))
+        #expect(!VirtualizationFailure.isFileLockContention(wrapped))
+        #expect(!VirtualizationFailure.isTransientStartError(wrapped))
     }
 
     @Test("invalid configuration without underlying error is not lock contention")
@@ -1104,7 +1116,7 @@ struct VirtualizationServiceTests {
         let error = NSError(
             domain: VZError.errorDomain,
             code: VZError.Code.invalidVirtualMachineConfiguration.rawValue)
-        #expect(!VirtualizationService.isFileLockContention(error))
+        #expect(!VirtualizationFailure.isFileLockContention(error))
     }
 
     @Test("invalid configuration with non-EAGAIN underlying error is not lock contention")
@@ -1115,8 +1127,8 @@ struct VirtualizationServiceTests {
             userInfo: [
                 NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))
             ])
-        #expect(!VirtualizationService.isFileLockContention(error))
-        #expect(!VirtualizationService.isTransientStartError(error))
+        #expect(!VirtualizationFailure.isFileLockContention(error))
+        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("EAGAIN under a different VZ code is not lock contention")
@@ -1127,13 +1139,13 @@ struct VirtualizationServiceTests {
             userInfo: [
                 NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
             ])
-        #expect(!VirtualizationService.isFileLockContention(error))
+        #expect(!VirtualizationFailure.isFileLockContention(error))
     }
 
     @Test("top-level POSIX EAGAIN is not lock contention")
     func topLevelEAGAINIsNotLockContention() {
         let error = NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
-        #expect(!VirtualizationService.isFileLockContention(error))
+        #expect(!VirtualizationFailure.isFileLockContention(error))
     }
 
     @Test("file-lock retry delays escalate then exhaust")
@@ -1297,7 +1309,7 @@ struct VirtualizationServiceTests {
         let limit = NSError(
             domain: VZError.errorDomain, code: VZError.Code.virtualMachineLimitExceeded.rawValue)
         #expect(
-            VirtualizationService.isVirtualMachineLimitExceeded(
+            VirtualizationFailure.isVirtualMachineLimitExceeded(
                 VirtualizationError.restoreFailed(underlying: limit)))
 
         let contention = NSError(
@@ -1306,15 +1318,15 @@ struct VirtualizationServiceTests {
             userInfo: [
                 NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
             ])
-        let unwrapped = VirtualizationService.unwrappedRestoreFailure(
+        let unwrapped = VirtualizationFailure.unwrappedRestoreFailure(
             VirtualizationError.restoreFailed(underlying: contention))
-        #expect(VirtualizationService.isFileLockContention(unwrapped))
+        #expect(VirtualizationFailure.isFileLockContention(unwrapped))
 
         // A non-wrapper error passes through unchanged.
-        let passthrough = VirtualizationService.unwrappedRestoreFailure(
+        let passthrough = VirtualizationFailure.unwrappedRestoreFailure(
             VirtualizationError.noSaveFile)
         #expect(passthrough is VirtualizationError)
-        #expect(!VirtualizationService.isRestoreFailure(passthrough))
+        #expect(!VirtualizationFailure.isRestoreFailure(passthrough))
 
         // The CustomNSError bridge leaves the other cases' descriptions alone.
         #expect(VirtualizationError.noSaveFile.localizedDescription == "No saved state file found.")
@@ -1325,10 +1337,10 @@ struct VirtualizationServiceTests {
         let restoreFailed = VirtualizationError.restoreFailed(
             underlying: NSError(
                 domain: VZError.errorDomain, code: VZError.Code.internalError.rawValue))
-        #expect(VirtualizationService.isRestoreFailure(restoreFailed))
-        #expect(!VirtualizationService.isRestoreFailure(VirtualizationError.noSaveFile))
+        #expect(VirtualizationFailure.isRestoreFailure(restoreFailed))
+        #expect(!VirtualizationFailure.isRestoreFailure(VirtualizationError.noSaveFile))
         #expect(
-            !VirtualizationService.isRestoreFailure(
+            !VirtualizationFailure.isRestoreFailure(
                 NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))))
     }
 

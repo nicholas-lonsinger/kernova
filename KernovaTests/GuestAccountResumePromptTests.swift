@@ -19,15 +19,22 @@ struct GuestAccountResumePromptTests {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         return (viewModel, virtualization)

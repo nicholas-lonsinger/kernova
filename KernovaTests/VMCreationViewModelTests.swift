@@ -21,7 +21,7 @@ struct VMCreationViewModelTests {
 
     @Test("goNext advances through all steps in order")
     func goNextAdvancesThroughSteps() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         #expect(vm.currentStep == .osSelection)
 
         vm.goNext()
@@ -36,7 +36,7 @@ struct VMCreationViewModelTests {
 
     @Test("goNext at review step is a no-op")
     func goNextAtReviewIsNoOp() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
 
         vm.goNext()
@@ -45,7 +45,7 @@ struct VMCreationViewModelTests {
 
     @Test("goBack retreats through steps in order")
     func goBackRetreatsThroughSteps() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
 
         vm.goBack()
@@ -60,7 +60,7 @@ struct VMCreationViewModelTests {
 
     @Test("goBack at osSelection step is a no-op")
     func goBackAtOSSelectionIsNoOp() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         #expect(vm.currentStep == .osSelection)
 
         vm.goBack()
@@ -71,14 +71,14 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance is always true at osSelection step")
     func canAdvanceOSSelection() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .osSelection
         #expect(vm.canAdvance == true)
     }
 
     @Test("canAdvance at bootConfig depends on OS and mode selections")
     func canAdvanceBootConfig() async {
-        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
+        let vm = VMCreationViewModel.overEngine(localImageInspector: MockLocalRestoreImageInspector())
         vm.currentStep = .bootConfig
 
         // macOS with downloadLatest is valid (the destination is always the
@@ -97,13 +97,13 @@ struct VMCreationViewModelTests {
 
     @Test("ipswDownloadPath defaults to ~/Downloads/RestoreImage.ipsw")
     func ipswDownloadPathHasDefault() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
     }
 
     @Test("canAdvance at bootConfig for Linux EFI requires an image selection")
     func canAdvanceBootConfigLinuxEFI() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
@@ -117,7 +117,7 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance at bootConfig for Linux EFI accepts a catalog pick, nothing on disk")
     func canAdvanceBootConfigLinuxCatalogPick() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
@@ -128,7 +128,7 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance at bootConfig for Linux kernel requires kernel path")
     func canAdvanceBootConfigLinuxKernel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
@@ -142,7 +142,7 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance at resources requires non-empty trimmed name")
     func canAdvanceResources() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .resources
 
         vm.vmName = "My VM"
@@ -157,7 +157,7 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance is always true at review step")
     func canAdvanceReview() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
         #expect(vm.canAdvance == true)
     }
@@ -166,7 +166,7 @@ struct VMCreationViewModelTests {
 
     @Test("canCreate requires non-empty trimmed name")
     func canCreate() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
 
         vm.vmName = "Test VM"
         #expect(vm.canCreate == true)
@@ -185,7 +185,7 @@ struct VMCreationViewModelTests {
 
     @Test("effectiveBootMode returns macOS for macOS guest regardless of selectedBootMode")
     func effectiveBootModeMacOS() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .macOS
         vm.selectedBootMode = .efi  // should be overridden
 
@@ -194,7 +194,7 @@ struct VMCreationViewModelTests {
 
     @Test("effectiveBootMode returns selectedBootMode for Linux guest")
     func effectiveBootModeLinux() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
 
         vm.selectedBootMode = .efi
@@ -208,17 +208,17 @@ struct VMCreationViewModelTests {
 
     @Test("Resources start at the selected guest's defaults", arguments: VMGuestOS.allCases)
     func resourceDefaultsFollowTheGuest(os: VMGuestOS) {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = os
 
-        #expect(vm.cpuCount == os.defaultCPUCount)
-        #expect(vm.memorySize == os.defaultMemorySize)
+        #expect(vm.cpuCount == os.defaultCPUCount(within: VirtualizationHost.frameworkResourceLimits))
+        #expect(vm.memorySize == os.defaultMemorySize(within: VirtualizationHost.frameworkResourceLimits))
         #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
     @Test("Switching guest resets the resources to the new guest's defaults; reselecting it keeps them")
     func switchingGuestResetsResources() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.cpuCount = 3
         vm.memorySize = VMMemorySize(mebibytes: 1536)
 
@@ -227,15 +227,15 @@ struct VMCreationViewModelTests {
         #expect(vm.memorySize.mebibytes == 1536)
 
         vm.selectedOS = .linux
-        #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount)
-        #expect(vm.memorySize == VMGuestOS.linux.defaultMemorySize)
+        #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount(within: VirtualizationHost.frameworkResourceLimits))
+        #expect(vm.memorySize == VMGuestOS.linux.defaultMemorySize(within: VirtualizationHost.frameworkResourceLimits))
     }
 
     // MARK: - buildConfiguration
 
     @Test("buildConfiguration produces configuration with correct fields for Linux EFI")
     func buildConfigurationLinuxEFI() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.vmName = "  Test Linux  "
@@ -272,7 +272,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildConfiguration produces configuration with correct fields for Linux kernel")
     func buildConfigurationLinuxKernel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
         vm.vmName = "Kernel VM"
@@ -300,7 +300,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildConfiguration only installs an installer ISO for EFI boot mode")
     func buildConfigurationInstallerISOOnlyForEFI() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
         vm.vmName = "Test"
@@ -315,7 +315,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildConfiguration sets kernel fields only for linuxKernel boot mode")
     func buildConfigurationKernelFieldsOnlyForLinuxKernel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.vmName = "Test"
@@ -332,7 +332,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildConfiguration does not set genericMachineIdentifierData for macOS boot mode")
     func buildConfigurationNoGenericMachineIdentifierForMacOS() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .macOS
         vm.vmName = "macOS Test"
 
@@ -344,7 +344,7 @@ struct VMCreationViewModelTests {
 
     @Test("Each Linux source replaces the last, so only one pick is ever current")
     func linuxSourcesReplaceEachOther() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let entry = makeLinuxCatalogEntry(id: "debian-13")
 
         vm.selectLinuxCatalogEntry(entry)
@@ -359,7 +359,7 @@ struct VMCreationViewModelTests {
 
     @Test("A local ISO carries the grant minted for it into the installer disk")
     func localISOCarriesItsBookmark() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.vmName = "Test"
@@ -376,7 +376,7 @@ struct VMCreationViewModelTests {
 
     @Test("A catalog pick attaches nothing: its ISO does not exist yet")
     func catalogPickLeavesStorageDisksNil() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.vmName = "Test"
@@ -394,7 +394,7 @@ struct VMCreationViewModelTests {
 
     @Test("shouldShowOverwriteWarning is false when source is localFile")
     func overwriteWarningFalseForLocalFile() {
-        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
+        let vm = VMCreationViewModel.overEngine(localImageInspector: MockLocalRestoreImageInspector())
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
 
@@ -403,7 +403,7 @@ struct VMCreationViewModelTests {
 
     @Test("shouldShowOverwriteWarning is false when file does not exist at path")
     func overwriteWarningFalseWhenFileDoesNotExist() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/nonexistent/path/RestoreImage.ipsw"
 
         #expect(vm.shouldShowOverwriteWarning == false)
@@ -411,7 +411,7 @@ struct VMCreationViewModelTests {
 
     @Test("confirmOverwrite suppresses warning for current path")
     func confirmOverwriteSuppressesWarning() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/usr/bin/true"
         #expect(vm.shouldShowOverwriteWarning == true)
 
@@ -421,7 +421,7 @@ struct VMCreationViewModelTests {
 
     @Test("changing path after confirmOverwrite resets warning")
     func changingPathResetsConfirmation() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/usr/bin/true"
         vm.confirmOverwrite()
         #expect(vm.shouldShowOverwriteWarning == false)
@@ -433,7 +433,7 @@ struct VMCreationViewModelTests {
 
     @Test("useExistingDownloadFile switches source to localFile and copies path")
     func useExistingDownloadFileSwitchesSource() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/usr/bin/true"
         let inspected = InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 1_000)
@@ -449,7 +449,7 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance is true after confirming overwrite")
     func canAdvanceTrueAfterConfirmingOverwrite() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
@@ -464,7 +464,7 @@ struct VMCreationViewModelTests {
 
     @Test("validationMessage is nil when canAdvance is true")
     func validationMessageNilWhenCanAdvance() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
 
         // osSelection — always advanceable
         vm.currentStep = .osSelection
@@ -489,7 +489,7 @@ struct VMCreationViewModelTests {
 
     @Test("validationMessage names both EFI image sources when neither is picked")
     func validationMessageLinuxEFINoImage() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
@@ -499,7 +499,7 @@ struct VMCreationViewModelTests {
 
     @Test("validationMessage returns kernel hint for Linux kernel with no kernelPath")
     func validationMessageLinuxKernelNoKernel() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
@@ -510,7 +510,7 @@ struct VMCreationViewModelTests {
 
     @Test("validationMessage returns conflict hint when overwrite warning is showing")
     func validationMessageOverwriteConflict() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
@@ -521,7 +521,7 @@ struct VMCreationViewModelTests {
 
     @Test("validationMessage returns name hint for resources step with empty name")
     func validationMessageResourcesEmptyName() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .resources
 
         vm.vmName = ""
@@ -535,7 +535,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildLinuxInstallContext snapshots a catalog pick with nothing downloaded yet")
     func buildLinuxInstallContextCatalogPick() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let entry = makeLinuxCatalogEntry(
             id: "ubuntu-desktop-26.04", distribution: "Ubuntu Desktop", version: "26.04 LTS")
         vm.selectLinuxCatalogEntry(entry)
@@ -550,7 +550,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildLinuxInstallContext snapshots a URL pick with its checksum and destination")
     func buildLinuxInstallContextURLPick() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let digest = String(repeating: "a", count: 64)
         let image = makeCustomLinuxImage(sha256: digest)
         vm.selectLinuxCustomURL(image, sizeBytes: 1_073_741_824)
@@ -574,7 +574,7 @@ struct VMCreationViewModelTests {
 
     @Test("A URL pick with no checksum carries none, and has nothing to verify")
     func buildLinuxInstallContextUnverifiedURLPick() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
 
         let context = try #require(vm.buildLinuxInstallContext())
@@ -585,7 +585,7 @@ struct VMCreationViewModelTests {
 
     @Test("An EFI image pick does not follow a switch to Linux-kernel boot")
     func buildLinuxInstallContextGatedOnEFI() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
@@ -607,7 +607,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildLinuxInstallContext is nil for a local ISO and for no selection at all")
     func buildLinuxInstallContextWithoutCatalogPick() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         // Nothing chosen yet.
         #expect(vm.buildLinuxInstallContext() == nil)
 
@@ -626,7 +626,7 @@ struct VMCreationViewModelTests {
 
     @Test("A catalog pick leaves storageDisks to the pipeline, a local ISO fills them in")
     func buildLinuxInstallContextMatchesBuildConfiguration() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
@@ -644,7 +644,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildInstallContext snapshots downloadLatest with chosen path")
     func buildInstallContextDownloadLatest() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
 
         let context = vm.buildInstallContext()
@@ -657,7 +657,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildInstallContext snapshots localFile with chosen path")
     func buildInstallContextLocalFile() {
-        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
+        let vm = VMCreationViewModel.overEngine(localImageInspector: MockLocalRestoreImageInspector())
         let bookmark = Data([0x01, 0x02, 0x03])
         vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: bookmark)
 
@@ -671,7 +671,7 @@ struct VMCreationViewModelTests {
 
     @Test("each selection maps to its persisted install-context source")
     func installContextSourceCoversEverySelection() {
-        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
+        let vm = VMCreationViewModel.overEngine(localImageInspector: MockLocalRestoreImageInspector())
         #expect(vm.buildInstallContext().source == .downloadLatest)
 
         vm.selectCatalogEntry(makeCatalogEntry())
@@ -686,7 +686,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildInstallContext sets requestedFreshDownload when overwrite confirmed")
     func buildInstallContextSetsFreshOnConfirmedOverwrite() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
         vm.confirmOverwrite()
 
@@ -700,7 +700,7 @@ struct VMCreationViewModelTests {
         // `confirmOverwrite` records the path that was confirmed; if the user
         // then picks a different destination, the confirmation no longer
         // applies and the wizard should treat the new path as not-yet-confirmed.
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = "/Users/me/Downloads/A.ipsw"
         vm.confirmOverwrite()
         vm.ipswDownloadPath = "/Users/me/Downloads/B.ipsw"
@@ -714,7 +714,7 @@ struct VMCreationViewModelTests {
 
     @Test("startAfterCreate defaults to true")
     func startAfterCreateDefaultsTrue() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         #expect(vm.startAfterCreate == true)
     }
 
@@ -722,7 +722,7 @@ struct VMCreationViewModelTests {
 
     @Test("Choosing a catalog version moves the destination to Apple's filename")
     func catalogPickUsesPerBuildDestination() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
 
@@ -736,7 +736,7 @@ struct VMCreationViewModelTests {
 
     @Test("Two different picks never resolve to the same destination")
     func distinctPicksGetDistinctDestinations() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
         let first = vm.ipswDownloadPath
         vm.selectCatalogEntry(makeCatalogEntry(version: "26.6", build: "25G72"))
@@ -746,7 +746,7 @@ struct VMCreationViewModelTests {
 
     @Test("Two spins of one version get distinct destinations")
     func sameVersionDifferentBuildsGetDistinctDestinations() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(
             makeCatalogEntry(
                 version: "15.4", build: "24E246",
@@ -764,7 +764,7 @@ struct VMCreationViewModelTests {
 
     @Test("Returning to Download Latest takes the fixed destination until the lookup answers")
     func downloadLatestRestoresDefaultDestination() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.selectDownloadLatest()
 
@@ -774,7 +774,7 @@ struct VMCreationViewModelTests {
 
     @Test("The looked-up image names Download Latest's destination")
     func downloadLatestUsesTheLookedUpFilename() async {
-        let vm = VMCreationViewModel(
+        let vm = VMCreationViewModel.overEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
 
         await vm.loadLatestImageDetails()?.value
@@ -794,7 +794,7 @@ struct VMCreationViewModelTests {
 
     @Test("A lookup landing after another source was picked leaves that pick's destination")
     func lateLookupLeavesAnotherSourcesDestination() async {
-        let vm = VMCreationViewModel(
+        let vm = VMCreationViewModel.overEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
 
         // The pick happens while the lookup is in flight: nothing has awaited,
@@ -814,8 +814,7 @@ struct VMCreationViewModelTests {
     func failedLookupKeepsTheFallbackDestination() async {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         await vm.loadLatestImageDetails()?.value
 
@@ -824,7 +823,7 @@ struct VMCreationViewModelTests {
 
     @Test("The overwrite warning and resume check cover the catalog source")
     func catalogSourceSharesDownloadWarnings() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
@@ -838,7 +837,7 @@ struct VMCreationViewModelTests {
 
     @Test("A catalog install context pins the URL, version, and build")
     func catalogInstallContextPinsTheImage() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
 
@@ -854,7 +853,7 @@ struct VMCreationViewModelTests {
 
     @Test("Download & Replace carries into the catalog install context")
     func catalogInstallContextCarriesFreshDownload() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.confirmOverwrite()
 
@@ -863,7 +862,7 @@ struct VMCreationViewModelTests {
 
     @Test("Use Existing File adopts the per-build download as a local file")
     func useExistingAdoptsPerBuildPath() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
         let destination = vm.ipswDownloadPath
         let inspected = InspectedRestoreImage(
@@ -879,7 +878,7 @@ struct VMCreationViewModelTests {
 
     @Test("Use Existing File keeps the pick that named the file, for the sheet")
     func useExistingKeepsTheSeed() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
         vm.useExistingDownloadFile(
@@ -903,7 +902,7 @@ struct VMCreationViewModelTests {
 
     @Test("A checked URL moves the destination to that image's filename")
     func pastedImageUsesPerImageDestination() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let image = makeProbedImage()
         vm.selectPastedImage(image)
 
@@ -917,7 +916,7 @@ struct VMCreationViewModelTests {
 
     @Test("An off-convention URL lands on its own filename, not the shared default")
     func pastedImageWithoutIPSWNameGetsItsOwnDestination() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectPastedImage(
             makeProbedImage(urlString: "https://example.com/d/", version: nil, build: nil))
 
@@ -930,7 +929,7 @@ struct VMCreationViewModelTests {
 
     @Test("Two off-convention URLs sharing a basename get different destinations")
     func pastedImagesWithOneBasenameGetDistinctDestinations() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectPastedImage(
             makeProbedImage(
                 urlString: "https://a.example.com/restore.ipsw", version: nil, build: nil))
@@ -944,7 +943,7 @@ struct VMCreationViewModelTests {
 
     @Test("A URL whose filename walks out of Downloads cannot move the destination")
     func pastedImageWithTraversalStaysInDownloads() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         // Decodes to `a/../../evil.ipsw`, which appended verbatim would
         // standardize to a path two directories above Downloads.
         vm.selectPastedImage(
@@ -956,7 +955,7 @@ struct VMCreationViewModelTests {
 
     @Test("The URL source shares the overwrite warning")
     func customURLSourceSharesDownloadWarnings() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .bootConfig
         vm.selectPastedImage(makeProbedImage())
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
@@ -970,7 +969,7 @@ struct VMCreationViewModelTests {
 
     @Test("A URL install context pins the checked URL, version, and build")
     func customURLInstallContextPinsTheImage() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let image = makeProbedImage()
         vm.selectPastedImage(image)
 
@@ -991,7 +990,7 @@ struct VMCreationViewModelTests {
         inspector.inspectResult = InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true,
             sizeBytes: 5_000_000_000)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
 
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         #expect(
@@ -1012,7 +1011,7 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
 
@@ -1032,7 +1031,7 @@ struct VMCreationViewModelTests {
     func selectLocalFileInspectionErrorLeavesUnusable() async {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
 
@@ -1051,7 +1050,7 @@ struct VMCreationViewModelTests {
     @Test("While the inspection is pending, advance is blocked")
     func selectLocalFilePendingBlocksAdvance() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
 
@@ -1073,7 +1072,7 @@ struct VMCreationViewModelTests {
     @Test("An inspection landing after the source switched away leaves that source current")
     func selectLocalFileInspectionLandingAfterSourceSwitchIsDropped() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
 
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         let inspection = try #require(vm.localFileInspectionTask)
@@ -1090,7 +1089,7 @@ struct VMCreationViewModelTests {
     @Test("A superseded inspection finishing after a newer one leaves the newer task current")
     func outOfOrderInspectionsLeaveTheNewerTaskCurrent() async throws {
         let inspector = OrderedSuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
 
         vm.selectLocalFile(path: "/tmp/first.ipsw", bookmark: nil)
         let firstTask = try #require(vm.localFileInspectionTask)
@@ -1124,7 +1123,7 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
         let destination = vm.ipswDownloadPath
 
@@ -1145,7 +1144,7 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
 
@@ -1160,7 +1159,7 @@ struct VMCreationViewModelTests {
     func refusesUnreadableExistingFile() async {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectCatalogEntry(makeCatalogEntry())
 
         let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
@@ -1177,7 +1176,7 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: false)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
 
         let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
@@ -1194,7 +1193,7 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectDownloadLatest()
 
         #expect(vm.expectedBuild == nil)
@@ -1209,10 +1208,9 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(),
-            localImageInspector: inspector,
-            ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), localImageInspector: inspector, ipswService: MockIPSWService()
+        )
         await vm.loadLatestImageDetails()?.value
 
         let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
@@ -1228,10 +1226,9 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "26.5.2", build: "25F84", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(),
-            localImageInspector: inspector,
-            ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), localImageInspector: inspector, ipswService: MockIPSWService()
+        )
         await vm.loadLatestImageDetails()?.value
         let destination = vm.ipswDownloadPath
 
@@ -1249,7 +1246,7 @@ struct VMCreationViewModelTests {
     @Test("An inspection cancelled mid-flight adopts nothing")
     func cancelledInspectionAdoptsNothing() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         // The build matches, so only the cancellation keeps this from adopting.
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
@@ -1267,7 +1264,7 @@ struct VMCreationViewModelTests {
     @Test("Adoption inspects and commits the path it was handed, not the live destination")
     func adoptUsesTheCallersPath() async {
         let inspector = MockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         // The destination as the caller showed it to the user.
         let snapshot = "/tmp/kernova-snapshot-\(UUID().uuidString).ipsw"
         #expect(snapshot != vm.ipswDownloadPath)
@@ -1287,10 +1284,9 @@ struct VMCreationViewModelTests {
     @Test("A destination that moves mid-inspection changes neither the file adopted nor the build")
     func adoptIgnoresADestinationThatMovesMidInspection() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(),
-            localImageInspector: inspector,
-            ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), localImageInspector: inspector, ipswService: MockIPSWService()
+        )
         let destination = vm.ipswDownloadPath
 
         let adopt = Task { await vm.adoptExistingDownloadFile(at: destination) }
@@ -1317,7 +1313,7 @@ struct VMCreationViewModelTests {
 
     @Test("expectedBuild names the build each source is promising")
     func expectedBuildTracksTheSource() async {
-        let vm = VMCreationViewModel(
+        let vm = VMCreationViewModel.overEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
         #expect(vm.expectedBuild == nil)
 
@@ -1337,7 +1333,7 @@ struct VMCreationViewModelTests {
 
     @Test("Switching between pinned sources keeps both picks; Download Latest clears them")
     func downloadLatestClearsBothPinnedPicks() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.selectPastedImage(makeProbedImage())
         #expect(vm.lastCatalogPick != nil)
@@ -1351,7 +1347,7 @@ struct VMCreationViewModelTests {
 
     @Test("A pinned payload leaves with its source, while the sheet seed stays")
     func switchingSourcesDropsThePayloadButKeepsTheSeed() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         let image = makeProbedImage(build: "25G72")
         vm.selectCatalogEntry(entry)
@@ -1372,7 +1368,7 @@ struct VMCreationViewModelTests {
         let ipswService = MockIPSWService()
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
-        let vm = VMCreationViewModel(probeService: probeService, ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: ipswService)
 
         await vm.loadLatestImageDetails()?.value
 
@@ -1387,8 +1383,7 @@ struct VMCreationViewModelTests {
     @Test("A second lookup joins the first instead of re-fetching")
     func latestImageLookupRunsOnce() async {
         let ipswService = MockIPSWService()
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         let first = vm.loadLatestImageDetails()
         #expect(vm.loadLatestImageDetails() == first)
@@ -1403,8 +1398,7 @@ struct VMCreationViewModelTests {
     func latestImageLookupFailureRetries() async {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         await vm.loadLatestImageDetails()?.value
         #expect(vm.latestImage == nil)
@@ -1421,7 +1415,7 @@ struct VMCreationViewModelTests {
     func latestImageLookupSurvivesAnUnknownSize() async {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeError = RestoreImageProbeError.unknownSize
-        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
 
         await vm.loadLatestImageDetails()?.value
 
@@ -1439,7 +1433,7 @@ struct VMCreationViewModelTests {
         password: String = "analytical-engine",
         verify: String? = nil
     ) -> VMCreationViewModel {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
         vm.unattendedSetupEnabled = true
         vm.guestAccountFullName = fullName
@@ -1530,8 +1524,7 @@ struct VMCreationViewModelTests {
     func downloadLatestVersionFollowsTheLookup() async {
         let ipswService = MockIPSWService()
         ipswService.fetchResult = makeLatestImage(version: "27.0", build: "27A100")
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         #expect(vm.selectedImageVersion == nil)
 
@@ -1541,7 +1534,7 @@ struct VMCreationViewModelTests {
 
     @Test("A catalog pick names the version the catalog recorded")
     func catalogPickNamesItsVersion() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "27.1", build: "27B100"))
 
         #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 1))
@@ -1549,7 +1542,7 @@ struct VMCreationViewModelTests {
 
     @Test("A pasted URL names a version only when its filename carried one")
     func pastedURLNamesItsVersionWhenTheFilenameHasOne() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectPastedImage(makeProbedImage(version: "27.0", build: "27A100"))
         #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 0))
 
@@ -1564,7 +1557,7 @@ struct VMCreationViewModelTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "27.0", build: "27A100", isSupportedOnThisHost: true, sizeBytes: nil)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
 
         vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
         #expect(vm.selectedImageVersion == nil)

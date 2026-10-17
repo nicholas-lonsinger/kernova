@@ -9,27 +9,20 @@ import Virtualization
 struct ConfigurationBuilder: Sendable {
     struct BuildResult: @unchecked Sendable {
         let configuration: VZVirtualMachineConfiguration
-        let serialInputPipe: Pipe
-        let serialOutputPipe: Pipe
-        let clipboardInputPipe: Pipe?
-        let clipboardOutputPipe: Pipe?
-        /// `RemovableMediaDeviceInfo` for each item in `config.removableMedia`, attached on
-        /// the XHCI controller at config-build time.
-        ///
-        /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so
-        /// `instance.liveRemovableMedia` can locate the devices for hot-detach.
-        let coldRemovableMedia: [RemovableMediaDeviceInfo]
-        /// The share a one-device guest's automount device carries, `nil` when
-        /// the configuration builds none.
-        let directoryShare: MacOSDirectoryShare?
-        /// The session's view of the vmnet networks an attachment in
-        /// `configuration` joins — the one the session's attachment recovery
-        /// must classify and re-materialize through, and whose life holds the
-        /// VM's own networks.
-        let vmnetNetworks: VmnetSessionNetworks
+        /// What the session context adopts. The cold-attached media carry the
+        /// UUIDs `configuration`'s `VZUSBMassStorageDeviceConfiguration`s were
+        /// given, and the vmnet view is the one an attachment in
+        /// `configuration` joins.
+        let products: VMSessionBuildProducts
         /// The answer `configuration`'s network attachment was chosen by — the
         /// one the session's attachment recovery must realize NAT by.
         let entitlements: EntitlementService
+        /// What `configuration`'s vmnet attachment was built by — the one the
+        /// session's attachment recovery must attach by.
+        let vmnetAttachments: any VmnetAttachmentMaking
+        /// The host state `configuration`'s bridged interface was chosen from —
+        /// the one the session's attachment recovery must choose from.
+        let bridgedInterfaces: any BridgedInterfaceProviding
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigurationBuilder")
@@ -39,10 +32,13 @@ struct ConfigurationBuilder: Sendable {
     var guestAgentDiskURL: URL? = KernovaMacOSAgentInfo.installerDiskImageURL
 
     /// Host state behind a bridged attachment's interface choice.
-    var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
+    var bridgedInterfaces: any BridgedInterfaceProviding
 
     /// The app-managed vmnet networks behind a Host Only or NAT attachment.
     let vmnetNetworks: VmnetNetworkService
+
+    /// What builds the attachment joining one of `vmnetNetworks`.
+    let vmnetAttachments: any VmnetAttachmentMaking
 
     let entitlements: EntitlementService
 
@@ -112,14 +108,17 @@ struct ConfigurationBuilder: Sendable {
         )
         return BuildResult(
             configuration: vzConfig,
-            serialInputPipe: inputPipe,
-            serialOutputPipe: outputPipe,
-            clipboardInputPipe: clipboardPipes?.input,
-            clipboardOutputPipe: clipboardPipes?.output,
-            coldRemovableMedia: coldRemovableMedia,
-            directoryShare: directoryShare,
-            vmnetNetworks: sessionNetworks,
-            entitlements: entitlements
+            products: VMSessionBuildProducts(
+                serialInputPipe: inputPipe,
+                serialOutputPipe: outputPipe,
+                clipboardInputPipe: clipboardPipes?.input,
+                clipboardOutputPipe: clipboardPipes?.output,
+                coldRemovableMedia: coldRemovableMedia,
+                directoryShare: directoryShare,
+                vmnetNetworks: sessionNetworks),
+            entitlements: entitlements,
+            vmnetAttachments: vmnetAttachments,
+            bridgedInterfaces: bridgedInterfaces
         )
     }
 
@@ -248,14 +247,14 @@ struct ConfigurationBuilder: Sendable {
             throw ConfigurationBuilderError.missingKernelPath
         }
 
-        let kernel = try Self.resolveFile(
+        let kernel = try ConfigurationPaths.resolveFile(
             at: kernelPath, context: "Kernel",
             notFound: .kernelNotFound(kernelPath),
             isDirectory: .kernelPathIsDirectory(kernelPath))
 
         let bootLoader = VZLinuxBootLoader(kernelURL: kernel.url)
         if let initrdPath = config.initrdPath {
-            let initrd = try Self.resolveFile(
+            let initrd = try ConfigurationPaths.resolveFile(
                 at: initrdPath, context: "Initrd",
                 notFound: .initrdNotFound(initrdPath),
                 isDirectory: .initrdPathIsDirectory(initrdPath))
@@ -339,7 +338,7 @@ struct ConfigurationBuilder: Sendable {
                         id: disk.id, path: disk.path, label: disk.label)
                 }
             } else {
-                let resolved = try Self.resolveFile(
+                let resolved = try ConfigurationPaths.resolveFile(
                     at: disk.path, context: "Storage disk '\(disk.label)'",
                     requireWritable: !disk.readOnly,
                     notFound: .storageDiskNotFound(
@@ -418,7 +417,7 @@ struct ConfigurationBuilder: Sendable {
         let disk = Self.guestAgentDisk(
             installerPath: installerURL.path(percentEncoded: false), bundleURL: bundleURL)
         do {
-            let resolved = try Self.resolveFile(
+            let resolved = try ConfigurationPaths.resolveFile(
                 at: disk.path, context: "Guest agent disk",
                 notFound: .storageDiskNotFound(id: disk.id, path: disk.path, label: disk.label),
                 isDirectory: .storageDiskPathIsDirectory(
@@ -482,7 +481,7 @@ struct ConfigurationBuilder: Sendable {
         var infos: [RemovableMediaDeviceInfo] = []
         var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
         for item in items {
-            let resolved = try Self.resolveFile(
+            let resolved = try ConfigurationPaths.resolveFile(
                 at: item.path, context: "Removable media '\(item.label)'",
                 requireWritable: !item.readOnly,
                 notFound: .removableMediaNotFound(
@@ -636,7 +635,7 @@ struct ConfigurationBuilder: Sendable {
         vmnetNetworks: VmnetSessionNetworks
     ) -> VZNetworkDeviceAttachment? {
         do {
-            return try vmnetNetworks.attachment(for: selection)
+            return vmnetAttachments.attachment(joining: try vmnetNetworks.joinedNetwork(for: selection))
         } catch {
             #log(
                 Self.logger, .error,
@@ -771,81 +770,15 @@ struct ConfigurationBuilder: Sendable {
         guard config.guestOS.sharesDirectoriesThroughOneDevice else {
             configureLinuxDirectorySharing(
                 vzConfig, directories: directories,
-                resolvedURLs: try directories.map { try Self.resolveSharedDirectory($0) })
+                resolvedURLs: try directories.map { try ConfigurationPaths.resolveSharedDirectory($0) })
             return nil
         }
-        let share = try Self.macOSDirectoryShare(for: directories)
+        let share = try MacOSDirectoryShare.make(for: directories)
         let device = VZVirtioFileSystemDeviceConfiguration(
             tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
         device.share = share.makeShare()
         vzConfig.directorySharingDevices = [device]
         return share
-    }
-
-    /// The share a macOS guest's one directory-sharing device carries for
-    /// `directories` — what a boot builds the device with, and, given the share
-    /// the running device `serving` carries, what a live swap installs.
-    ///
-    /// An entry `serving` already carries keeps its mount name and host folder
-    /// as the device serves them — re-validated at that folder only when its
-    /// access changed — so a swap moves nothing the edit did not. Every other
-    /// entry is resolved and validated from its path, under its
-    /// ``SharedDirectory/mountName`` unless a name already taken forces the id
-    /// prefix.
-    static func macOSDirectoryShare(
-        for directories: [SharedDirectory], serving: MacOSDirectoryShare? = nil
-    ) throws -> MacOSDirectoryShare {
-        let served = Dictionary(
-            (serving?.entries ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var names = Set(directories.compactMap { served[$0.id]?.name })
-        var entries: [MacOSDirectoryShare.Entry] = []
-        for directory in directories {
-            if let entry = served[directory.id] {
-                guard entry.readOnly != directory.readOnly else {
-                    entries.append(entry)
-                    continue
-                }
-                let servedPath =
-                    (entry.url.path(percentEncoded: false) as NSString)
-                    .standardizingPath
-                entries.append(
-                    MacOSDirectoryShare.Entry(
-                        id: entry.id, name: entry.name,
-                        url: try resolveSharedDirectory(directory, at: servedPath),
-                        readOnly: directory.readOnly))
-                continue
-            }
-            var name = directory.mountName
-            // A list whose stored names collide — a hand-edited config.json —
-            // still needs one key per folder.
-            if names.contains(name) {
-                name = "\(directory.id.uuidString.prefix(8))-\(name)"
-            }
-            names.insert(name)
-            entries.append(
-                MacOSDirectoryShare.Entry(
-                    id: directory.id, name: name, url: try resolveSharedDirectory(directory),
-                    readOnly: directory.readOnly))
-        }
-        return MacOSDirectoryShare(entries: entries)
-    }
-
-    /// Validates one shared directory at `path` — by default its own — and
-    /// returns the resolved URL (symlinks followed); a failure names
-    /// `directory`'s entry, as the Sharing pane lists it.
-    private static func resolveSharedDirectory(
-        _ directory: SharedDirectory, at path: String? = nil
-    ) throws -> URL {
-        let path = path ?? directory.path
-        let (id, label) = (directory.id, directory.displayName)
-        return try Self.resolveDirectory(
-            at: path, context: "Shared directory",
-            requireReadable: true, requireWritable: !directory.readOnly,
-            notFound: .sharedDirectoryNotFound(id: id, path: path, label: label),
-            notADirectory: .sharedDirectoryNotADirectory(id: id, path: path, label: label),
-            notReadable: .sharedDirectoryNotReadable(id: id, path: path, label: label),
-            notWritable: .sharedDirectoryNotWritable(id: id, path: path, label: label)
-        ).url
     }
 
     private func configureLinuxDirectorySharing(
@@ -863,224 +796,5 @@ struct ConfigurationBuilder: Sendable {
             devices.append(device)
         }
         vzConfig.directorySharingDevices = devices
-    }
-
-    // MARK: - Path Validation Helpers
-
-    /// Resolves and validates a file path, mapping `PathValidation.Failure` to `ConfigurationBuilderError`.
-    private static func resolveFile(
-        at path: String,
-        context: String,
-        requireWritable: Bool = false,
-        notFound: ConfigurationBuilderError,
-        isDirectory: ConfigurationBuilderError,
-        notWritable: ConfigurationBuilderError? = nil
-    ) throws -> PathValidation.ResolvedPath {
-        do {
-            let resolved = try PathValidation.resolveFile(at: path, requireWritable: requireWritable)
-            resolved.logResolution(logger: logger, context: context)
-            return resolved
-        } catch {
-            switch error {
-            case .notFound:
-                #log(logger, .error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
-                throw notFound
-            case .unexpectedType:
-                #log(logger, .error, "\(context, privacy: .public) path is a directory: '\(path, privacy: .private)'")
-                throw isDirectory
-            case .notWritable:
-                #log(logger, .error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
-                guard let notWritableError = notWritable else {
-                    #log(
-                        logger, .fault,
-                        "resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
-                    )
-                    assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
-                    throw notFound
-                }
-                throw notWritableError
-            case .notReadable:
-                #log(logger, .fault, "Unexpected .notReadable from resolveFile for '\(path, privacy: .private)'")
-                assertionFailure("resolveFile should never throw .notReadable")
-                throw notFound
-            }
-        }
-    }
-
-    /// Resolves and validates a directory path, mapping `PathValidation.Failure` to `ConfigurationBuilderError`.
-    private static func resolveDirectory(
-        at path: String,
-        context: String,
-        requireReadable: Bool = false,
-        requireWritable: Bool = false,
-        notFound: ConfigurationBuilderError,
-        notADirectory: ConfigurationBuilderError,
-        notReadable: ConfigurationBuilderError? = nil,
-        notWritable: ConfigurationBuilderError? = nil
-    ) throws -> PathValidation.ResolvedPath {
-        do {
-            let resolved = try PathValidation.resolveDirectory(
-                at: path, requireReadable: requireReadable, requireWritable: requireWritable)
-            resolved.logResolution(logger: logger, context: context)
-            return resolved
-        } catch {
-            switch error {
-            case .notFound:
-                #log(logger, .error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
-                throw notFound
-            case .unexpectedType:
-                #log(
-                    logger, .error, "\(context, privacy: .public) path is not a directory: '\(path, privacy: .private)'"
-                )
-                throw notADirectory
-            case .notReadable:
-                #log(logger, .error, "\(context, privacy: .public) is not readable: '\(path, privacy: .private)'")
-                guard let notReadableError = notReadable else {
-                    #log(
-                        logger, .fault,
-                        "resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .private)'"
-                    )
-                    assertionFailure("'notReadable' error must be provided when 'requireReadable' is true")
-                    throw notFound
-                }
-                throw notReadableError
-            case .notWritable:
-                #log(logger, .error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
-                guard let notWritableError = notWritable else {
-                    #log(
-                        logger, .fault,
-                        "resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
-                    )
-                    assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
-                    throw notFound
-                }
-                throw notWritableError
-            }
-        }
-    }
-}
-
-// MARK: - Errors
-
-enum ConfigurationBuilderError: LocalizedError {
-    case invalidHardwareModel
-    case invalidMachineIdentifier
-    /// An EFI boot found no variable store in the bundle.
-    case efiVariableStoreMissing
-    case missingKernelPath
-    case kernelNotFound(String)
-    case kernelPathIsDirectory(String)
-    case initrdNotFound(String)
-    case initrdPathIsDirectory(String)
-    // Every failure naming one attachment carries that entry's `id`, so a
-    // bring-up can offer to remove the entry it named
-    // (``VMCommandCore/bringUpFailedAttachment(from:verb:on:)``) whichever way
-    // the attachment turned out to be unusable.
-    case storageDiskNotFound(id: UUID, path: String, label: String)
-    case storageDiskPathIsDirectory(id: UUID, path: String, label: String)
-    case storageDiskNotWritable(id: UUID, path: String, label: String)
-    /// The disk file exists but `VZDiskImageStorageDeviceAttachment` refused it —
-    /// commonly the sandbox denying `open` on a path the app no longer holds a
-    /// grant for (surfaced as "Operation not supported"), or an invalid image.
-    ///
-    /// `underlying` must be preserved verbatim, not flattened to a string: the
-    /// start path classifies transient file-lock contention off its NSError
-    /// domain/code, so discarding it turns a retryable boot into a hard failure.
-    case storageDiskAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
-    case removableMediaNotFound(id: UUID, path: String, label: String)
-    case removableMediaPathIsDirectory(id: UUID, path: String, label: String)
-    case removableMediaNotWritable(id: UUID, path: String, label: String)
-    /// Removable-media counterpart of `storageDiskAttachFailed`.
-    case removableMediaAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
-    /// The configuration is on a network this build cannot attach
-    /// (``EntitlementService/canAttach(_:)``).
-    case networkNotEntitled(VMJoinedNetwork)
-    case sharedDirectoryNotFound(id: UUID, path: String, label: String)
-    case sharedDirectoryNotADirectory(id: UUID, path: String, label: String)
-    case sharedDirectoryNotReadable(id: UUID, path: String, label: String)
-    case sharedDirectoryNotWritable(id: UUID, path: String, label: String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidHardwareModel:
-            "The stored hardware model data is invalid."
-        case .invalidMachineIdentifier:
-            "The stored machine identifier data is invalid."
-        case .efiVariableStoreMissing:
-            "The virtual machine's EFI variable store is missing."
-        case .missingKernelPath:
-            "A kernel path is required for Linux kernel boot mode."
-        case .kernelNotFound(let path):
-            "Kernel image not found at \(path)."
-        case .kernelPathIsDirectory(let path):
-            "Kernel path is a directory, not a file: \(path)."
-        case .initrdNotFound(let path):
-            "Initial ramdisk not found at \(path)."
-        case .initrdPathIsDirectory(let path):
-            "Initial ramdisk path is a directory, not a file: \(path)."
-        case .storageDiskNotFound(_, let path, let label):
-            "Storage disk '\(label)' not found at \(path)."
-        case .storageDiskPathIsDirectory(_, let path, let label):
-            "Storage disk '\(label)' path is a directory, not a file: \(path)."
-        case .storageDiskNotWritable(_, let path, let label):
-            "Storage disk '\(label)' is not writable: \(path)."
-        case .storageDiskAttachFailed(_, let path, let label, let underlying):
-            "Couldn't open storage disk '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
-        case .removableMediaNotFound(_, let path, let label):
-            "Removable media '\(label)' not found at \(path)."
-        case .removableMediaPathIsDirectory(_, let path, let label):
-            "Removable media '\(label)' path is a directory, not a file: \(path)."
-        case .removableMediaNotWritable(_, let path, let label):
-            "Removable media '\(label)' is not writable: \(path)."
-        case .removableMediaAttachFailed(_, let path, let label, let underlying):
-            "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
-        case .networkNotEntitled(let network):
-            "This build of Kernova does not support \(network.entitledCapability). "
-                + (network.isCommon
-                    ? "Switch the VM's network mode to \(VMNetworkMode.nat.title)."
-                    : "Move the VM to its mode\u{2019}s common network in its Network settings.")
-        case .sharedDirectoryNotFound(_, let path, let label):
-            "Shared folder '\(label)' not found at \(path)."
-        case .sharedDirectoryNotADirectory(_, let path, let label):
-            "Shared item '\(label)' is not a folder: \(path)."
-        case .sharedDirectoryNotReadable(_, let path, let label):
-            "Shared folder '\(label)' is not readable: \(path)."
-        case .sharedDirectoryNotWritable(_, let path, let label):
-            "Shared folder '\(label)' is not writable: \(path)."
-        }
-    }
-
-    /// What was wrong with the one attachment this names, or `nil` for a
-    /// failure that names none.
-    ///
-    /// The whole of the case analysis the bring-up's recovery needs, so a new
-    /// per-attachment case is answered here rather than falling silently
-    /// through to the bare alert.
-    var attachmentReason: StartFailedAttachment.Reason? {
-        switch self {
-        case .storageDiskNotFound, .removableMediaNotFound, .sharedDirectoryNotFound: .notFound
-        case .storageDiskPathIsDirectory, .removableMediaPathIsDirectory: .pathIsDirectory
-        case .sharedDirectoryNotADirectory: .notADirectory
-        case .sharedDirectoryNotReadable: .notReadable
-        case .storageDiskNotWritable, .removableMediaNotWritable, .sharedDirectoryNotWritable:
-            .notWritable
-        case .storageDiskAttachFailed, .removableMediaAttachFailed: .attachRefused
-        case .invalidHardwareModel, .invalidMachineIdentifier, .efiVariableStoreMissing,
-            .missingKernelPath,
-            .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,
-            .networkNotEntitled:
-            nil
-        }
-    }
-
-    /// The framework error behind an attach failure, or `nil` for every other case.
-    var underlyingAttachError: (any Error)? {
-        switch self {
-        case .storageDiskAttachFailed(_, _, _, let underlying),
-            .removableMediaAttachFailed(_, _, _, let underlying):
-            underlying
-        default:
-            nil
-        }
     }
 }

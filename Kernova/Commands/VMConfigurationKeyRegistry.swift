@@ -37,21 +37,30 @@ struct VMConfigurationWriteContext: Sendable {
     /// The library's named networks, which a membership names and whose kind
     /// a VM on one runs in.
     let networks: VMNetworkDirectory.State
+    /// The CPU and memory bounds this Mac holds a guest to.
+    let resourceLimits: VMResourceLimits
 
     init(
-        snapshots: VMSnapshotManifest, entitlements: EntitlementService, networks: VMNetworkDirectory.State
+        snapshots: VMSnapshotManifest, entitlements: EntitlementService, networks: VMNetworkDirectory.State,
+        resourceLimits: VMResourceLimits
     ) {
         self.snapshots = snapshots
         self.entitlements = entitlements
         self.networks = networks
+        self.resourceLimits = resourceLimits
     }
 
     /// What `instance` holds, in a build authorizing `entitlements` whose
-    /// library lists `networks`, for a key's write to read.
+    /// library lists `networks`, on a Mac bounding guests by `resourceLimits`,
+    /// for a key's write to read.
     @MainActor
-    init(_ instance: VMInstance, entitlements: EntitlementService, networks: VMNetworkDirectory.State) {
+    init(
+        _ instance: VMInstance, entitlements: EntitlementService, networks: VMNetworkDirectory.State,
+        resourceLimits: VMResourceLimits
+    ) {
         self.init(
-            snapshots: instance.snapshotManifest, entitlements: entitlements, networks: networks)
+            snapshots: instance.snapshotManifest, entitlements: entitlements, networks: networks,
+            resourceLimits: resourceLimits)
     }
 }
 
@@ -225,16 +234,18 @@ struct VMConfigurationKey: Sendable {
     }
 
     /// ``accepts(_:settings:context:)`` against what `instance` holds, in a
-    /// build authorizing `entitlements` whose library lists `networks`.
+    /// build authorizing `entitlements` whose library lists `networks`, on a
+    /// Mac bounding guests by `resourceLimits`.
     @MainActor
     func accepts(
         _ value: String, for instance: VMInstance, entitlements: EntitlementService,
-        networks: VMNetworkDirectory.State
+        networks: VMNetworkDirectory.State, resourceLimits: VMResourceLimits
     ) -> Bool {
         accepts(
             value, settings: instance.settings,
             context: VMConfigurationWriteContext(
-                instance, entitlements: entitlements, networks: networks))
+                instance, entitlements: entitlements, networks: networks,
+                resourceLimits: resourceLimits))
     }
 
     /// An assignment of `value` to this key.
@@ -324,9 +335,9 @@ enum VMConfigurationKeyRegistry {
         summary: "Virtual CPU cores, within what Virtualization allows on this Mac.",
         gate: .atRest,
         read: { String($0.cpuCount) },
-        write: { value, config, _ in
+        write: { value, config, context in
             config.cpuCount = try ConfigurationValue.integer(
-                value, key: "cpus", in: VMResourceLimits.cpuCount)
+                value, key: "cpus", in: context.resourceLimits.cpuCount)
         })
 
     static let memory = VMConfigurationKey(
@@ -334,9 +345,9 @@ enum VMConfigurationKeyRegistry {
         summary: "Guest memory in gigabytes, to the nearest megabyte: 8, or 1.5 for 1536 MB.",
         gate: .atRest,
         read: { $0.memorySizeInGB.gibibytesText },
-        write: { value, config, _ in
+        write: { value, config, context in
             config.memorySizeInGB = try ConfigurationValue.memorySize(
-                value, key: "memory", in: VMResourceLimits.memorySize)
+                value, key: "memory", in: context.resourceLimits.memorySize)
         })
 
     // MARK: - Display

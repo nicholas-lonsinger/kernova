@@ -1,8 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import Virtualization
-import vmnet
 
 extension VmnetNetworkKind {
     /// The network mode a VM on a network of this kind has.
@@ -98,95 +96,28 @@ enum IPv4Value {
 // (docs/research/2026-09-30-swift-6-4-onone-optional-chain-through-a-pointer-payload.md).
 /// A materialized app-managed vmnet network.
 final class VmnetNetworkHandle: @unchecked Sendable {
-    /// Feed to `VZVmnetNetworkDeviceAttachment(network:)`. Safe to cross
-    /// isolation domains: the ref is an immutable reservation handle.
-    let network: vmnet_network_ref
+    /// The `vmnet_network_ref` — vmnet's opaque network object — to feed to
+    /// `VZVmnetNetworkDeviceAttachment(network:)`. Safe to cross isolation
+    /// domains: the ref is an immutable reservation handle.
+    let network: OpaquePointer
 
-    init(network: vmnet_network_ref) {
+    init(network: OpaquePointer) {
         self.network = network
     }
 }
 
-/// The vmnet calls `VmnetNetworkService` makes, and every use of the refs they
-/// return, abstracted so tests run without `com.apple.vm.networking` — the real
-/// call is an XPC round-trip to the NetworkSharing daemon that fails
-/// unentitled.
+/// The vmnet calls `VmnetNetworkService` makes, abstracted so tests run without
+/// `com.apple.vm.networking` — the real call is an XPC round-trip to the
+/// NetworkSharing daemon that fails unentitled.
 protocol VmnetNetworkOperating: Sendable {
     /// Creates a network of `kind` on the subnet the system picks, returning
     /// the handle and that subnet.
     func createNetwork(_ kind: VmnetNetworkKind) throws -> (
         handle: VmnetNetworkHandle, subnet: IPv4Subnet
     )
-    /// A VZ attachment joining `handle`'s network.
-    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment
     /// Gives up the reference `createNetwork` returned. An attachment built
     /// over the network holds its own.
     func releaseNetwork(_ handle: VmnetNetworkHandle)
-}
-
-/// Releases a vmnet object Swift imports as a bare `OpaquePointer`. The vmnet
-/// header documents these as `CFRelease()`-able; Swift refuses a direct
-/// `CFRelease` on an unmanaged import, so route through `Unmanaged`.
-func releaseVmnetRef(_ ref: OpaquePointer) {
-    Unmanaged<AnyObject>.fromOpaque(UnsafeRawPointer(ref)).release()
-}
-
-/// A vmnet call that failed.
-struct VmnetOperationError: Error, LocalizedError {
-    let operation: String
-    let status: vmnet_return_t?
-
-    var errorDescription: String? {
-        if let status {
-            "\(operation) failed (vmnet status \(status.rawValue))"
-        } else {
-            "\(operation) failed"
-        }
-    }
-}
-
-/// The real `VmnetNetworkOperating`, over the macOS 26 vmnet network APIs.
-struct HostVmnetNetworkOperator: VmnetNetworkOperating {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HostVmnetNetworkOperator")
-
-    func createNetwork(_ kind: VmnetNetworkKind) throws -> (
-        handle: VmnetNetworkHandle, subnet: IPv4Subnet
-    ) {
-        var status = vmnet_return_t.VMNET_SUCCESS
-        guard let configuration = vmnet_network_configuration_create(mode(for: kind), &status) else {
-            throw VmnetOperationError(operation: "vmnet_network_configuration_create", status: status)
-        }
-        defer { releaseVmnetRef(configuration) }
-        guard let network = vmnet_network_create(configuration, &status) else {
-            throw VmnetOperationError(operation: "vmnet_network_create", status: status)
-        }
-
-        var address = in_addr()
-        var mask = in_addr()
-        vmnet_network_get_ipv4_subnet(network, &address, &mask)
-        let subnet = IPv4Subnet(
-            containing: UInt32(bigEndian: address.s_addr), mask: UInt32(bigEndian: mask.s_addr))
-        #log(
-            Self.logger, .notice,
-            "Created a \(kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public) mask \(IPv4Value.string(subnet.mask), privacy: .public)"
-        )
-        return (VmnetNetworkHandle(network: network), subnet)
-    }
-
-    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
-        VZVmnetNetworkDeviceAttachment(network: handle.network)
-    }
-
-    func releaseNetwork(_ handle: VmnetNetworkHandle) {
-        releaseVmnetRef(handle.network)
-    }
-
-    private func mode(for kind: VmnetNetworkKind) -> operating_modes_t {
-        switch kind {
-        case .hostOnly: .VMNET_HOST_MODE
-        case .nat: .VMNET_SHARED_MODE
-        }
-    }
 }
 
 /// Owns the app's managed vmnet networks: the common Host Only and NAT
@@ -209,8 +140,8 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
 /// number of networks; a create past that fails like any other.
 ///
 /// Lock-guarded `Sendable` rather than `@MainActor`: it never touches
-/// `VZVirtualMachine`, and `ConfigurationBuilder` consumes it during off-main
-/// config assembly while the live-switch path consumes it on the main actor.
+/// `VZVirtualMachine`, and the configuration build consumes it during off-main
+/// assembly while the live-switch path consumes it on the main actor.
 final class VmnetNetworkService: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetNetworkService")
 
@@ -223,7 +154,7 @@ final class VmnetNetworkService: @unchecked Sendable {
 
     private let operations: any VmnetNetworkOperating
     /// Guards `networks`, `members`, `joined` and `openViews` — never held across a
-    /// vmnet call, so the main-actor paths (`attachmentIfMaterialized`,
+    /// vmnet call, so the main-actor paths (`joinedNetworkIfMaterialized`,
     /// `ipv4Subnet`) can never block behind a materialization in flight.
     private let stateLock = NSLock()
     /// Every materialized network, present exactly for the ones that exist.
@@ -330,11 +261,7 @@ final class VmnetNetworkService: @unchecked Sendable {
         }
     }
 
-    fileprivate func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
-        operations.attachment(joining: handle)
-    }
-
-    fileprivate func id(ofNetwork network: vmnet_network_ref) -> VmnetNetworkID? {
+    fileprivate func id(ofNetwork network: OpaquePointer) -> VmnetNetworkID? {
         stateLock.withLock { networks.first(where: { $0.value.handle.network == network })?.key }
     }
 
@@ -417,18 +344,18 @@ final class VmnetSessionNetworks: Sendable {
         return VmnetNetworkID(kind: selection.kind, scope: scope)
     }
 
-    /// A VZ attachment joining `network`, materializing it first when it is
-    /// not. Blocks for the vmnet XPC round-trip — never call on the main
-    /// actor; config assembly runs off-main. Throws when the network cannot be
-    /// materialized.
-    func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment {
-        service.attachment(joining: try service.network(for: id(network), member: owner))
+    /// `network`, joined by this view's VM and materialized first when it is
+    /// not — what an attachment joining it is built over. Blocks for the vmnet
+    /// XPC round-trip — never call on the main actor; config assembly runs
+    /// off-main. Throws when the network cannot be materialized.
+    func joinedNetwork(for network: VmnetNetworkSelection) throws -> VmnetNetworkHandle {
+        try service.network(for: id(network), member: owner)
     }
 
-    /// The non-blocking variant for the main-actor live-attach path: an
-    /// attachment when the network is already materialized, `nil` otherwise.
-    func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment? {
-        service.cachedHandle(for: id(network), member: owner).map(service.attachment(joining:))
+    /// The non-blocking variant for the main-actor live-attach path: the
+    /// network, joined, when it is already materialized, `nil` otherwise.
+    func joinedNetworkIfMaterialized(for network: VmnetNetworkSelection) -> VmnetNetworkHandle? {
+        service.cachedHandle(for: id(network), member: owner)
     }
 
     // A nonisolated async method runs off the caller's actor, so the blocking
@@ -451,7 +378,7 @@ final class VmnetSessionNetworks: Sendable {
 
     /// The selection `network` is for this session, `nil` for a network it
     /// cannot attach to — one the service does not hold, or another VM's own.
-    func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection? {
+    func selection(ofNetwork network: OpaquePointer) -> VmnetNetworkSelection? {
         guard let id = service.id(ofNetwork: network) else { return nil }
         if case .vm(let networkOwner) = id.scope, networkOwner != owner { return nil }
         return VmnetNetworkSelection(id)

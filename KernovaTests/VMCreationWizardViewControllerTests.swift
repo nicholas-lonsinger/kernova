@@ -8,7 +8,7 @@ import Testing
 struct VMCreationWizardViewControllerTests {
     @Test("Initial OS-selection step: Back hidden, Next enabled, Create hidden")
     func initialStepChrome() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let wizard = VMCreationWizardViewController(creationVM: vm)
         wizard.loadViewIfNeeded()
 
@@ -24,7 +24,8 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Shell fits the fixed wizard dimensions")
     func fittingSizeMatchesTokens() {
-        let wizard = VMCreationWizardViewController(creationVM: VMCreationViewModel())
+        let wizard = VMCreationWizardViewController(
+            creationVM: VMCreationViewModel.overEngine())
         wizard.loadViewIfNeeded()
         wizard.view.layoutSubtreeIfNeeded()
         #expect(wizard.view.fittingSize.width == WizardStyle.width)
@@ -33,7 +34,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Next advances the model and swaps the mounted step")
     func nextAdvancesAndSwapsChild() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         let wizard = VMCreationWizardViewController(creationVM: vm)
         wizard.loadViewIfNeeded()
 
@@ -47,7 +48,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Back returns to the previous step")
     func backReturnsToPreviousStep() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .resources
         let wizard = VMCreationWizardViewController(creationVM: vm)
         wizard.loadViewIfNeeded()
@@ -61,7 +62,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Review step shows Create and reports the model on click")
     func reviewStepCreate() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
         let wizard = VMCreationWizardViewController(creationVM: vm)
         var createRequests: [VMCreationViewModel] = []
@@ -80,7 +81,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Create is disabled on review when the name is blank")
     func reviewCreateDisabledWhenNameBlank() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
         vm.vmName = "   "
         let wizard = VMCreationWizardViewController(creationVM: vm)
@@ -91,7 +92,8 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Cancel fires onCancel")
     func cancelFiresCallback() {
-        let wizard = VMCreationWizardViewController(creationVM: VMCreationViewModel())
+        let wizard = VMCreationWizardViewController(
+            creationVM: VMCreationViewModel.overEngine())
         var cancelCount = 0
         wizard.onCancel = { cancelCount += 1 }
         wizard.loadViewIfNeeded()
@@ -102,7 +104,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("A second Create activation makes no second request")
     func createIsOneShot() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
         vm.vmName = "Double Clicked"
         let wizard = VMCreationWizardViewController(creationVM: vm)
@@ -124,7 +126,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("A refused create leaves the wizard usable for a retry")
     func refusedCreateLeavesWizardUsable() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .review
         vm.vmName = "Retry VM"
         let wizard = VMCreationWizardViewController(creationVM: vm)
@@ -149,7 +151,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Validation message displays and gates Next when the model is invalid")
     func validationGatesNext() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.currentStep = .resources
         vm.vmName = ""
         let wizard = VMCreationWizardViewController(creationVM: vm)
@@ -165,7 +167,7 @@ struct VMCreationWizardViewControllerTests {
     /// A wizard model on an image that can be provisioned, with the account
     /// toggle on and the form filled.
     private func makeAccountModel() -> VMCreationViewModel {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
         vm.unattendedSetupEnabled = true
         vm.guestAccountFullName = "Ada Lovelace"
@@ -225,7 +227,7 @@ struct VMCreationWizardViewControllerTests {
 
     @Test("Next from Resources mounts Review when no account is being created")
     func nextFromResourcesSkipsTheAccountStep() {
-        let vm = VMCreationViewModel()  // Download Latest, nothing looked up yet
+        let vm = VMCreationViewModel.overEngine()  // Download Latest, nothing looked up yet
         vm.currentStep = .resources
         let wizard = VMCreationWizardViewController(creationVM: vm)
         wizard.loadViewIfNeeded()

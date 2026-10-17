@@ -2,17 +2,17 @@ import KernovaKit
 import Foundation
 import Testing
 import Virtualization
-import vmnet
 
 @testable import Kernova
 
-/// Scripted stand-in for `VmnetNetworkOperating`, so service tests run without
-/// the real vmnet call — an XPC round-trip to the NetworkSharing daemon that
-/// fails in a build without `com.apple.vm.networking`.
+/// Scripted stand-in for `VmnetNetworkOperating` and `VmnetAttachmentMaking`, so
+/// service tests run without the real vmnet call — an XPC round-trip to the
+/// NetworkSharing daemon that fails in a build without
+/// `com.apple.vm.networking`.
 ///
 /// Every handle wraps a fabricated pointer, distinct per call so a test can
 /// tell a cached handle from a freshly materialized one.
-final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable {
+final class MockVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentMaking, @unchecked Sendable {
     /// The subnet every create reports.
     var subnet = IPv4Subnet.scripted("192.168.213.0")
 
@@ -20,8 +20,6 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     var createNetworkError: (any Error)?
 
     private(set) var createdKinds: [VmnetNetworkKind] = []
-    /// The network each attachment was built to join, in call order.
-    private(set) var attachedNetworks: [OpaquePointer] = []
     /// Every attachment built, in call order.
     private(set) var attachments: [VZNetworkDeviceAttachment] = []
     /// Every network given back, in call order.
@@ -44,7 +42,6 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     /// A NAT attachment standing in for the vmnet one, which would retain the
     /// fabricated pointer as a real network.
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
-        attachedNetworks.append(handle.network)
         let attachment = VZNATNetworkDeviceAttachment()
         attachments.append(attachment)
         return attachment
@@ -95,7 +92,7 @@ final class ScriptedVmnetNetworks: @unchecked Sendable {
     ) {
         if let subnet { operations.subnet = .scripted(subnet) }
         do {
-            _ = try view.attachment(for: network)
+            _ = try view.joinedNetwork(for: network)
         } catch {
             Issue.record(error, "The scripted operator refused \(network.logDescription)")
         }

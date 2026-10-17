@@ -58,23 +58,3 @@ protocol USBAccessoryProviding: AnyObject {
     /// Detaches the passthrough device `deviceID` names.
     func detach(deviceID: UUID, from instance: VMInstance) async throws
 }
-
-/// Where the capability's presence is decided, once.
-enum USBAccessorySupport {
-    /// The service when this build can pass accessories through, `nil` when it
-    /// cannot.
-    ///
-    /// `nil` collapses both causes of absence — an OS below macOS 27 and a
-    /// signature without the entitlement — into the one answer every caller
-    /// reads, so no surface has to ask which of them applies.
-    @MainActor
-    static func makeService(entitlements: EntitlementService)
-        -> (any USBAccessoryProviding)?
-    {
-        guard entitlements.supportsUSBAccessories else { return nil }
-        // `supportsUSBAccessories` already answers the OS question; the
-        // compiler needs it spelled here to allow the initializer.
-        guard #available(macOS 27.0, *) else { return nil }
-        return USBAccessoryService()
-    }
-}

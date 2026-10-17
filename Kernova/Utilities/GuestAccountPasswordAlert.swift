@@ -133,10 +133,12 @@ enum GuestAccountPasswordAlert {
     /// Validated on the click rather than on the answer, with `retry` putting
     /// the sheet back up carrying the refusal: a password Virtualization turns
     /// down is worth knowing about while the field that holds it is still on
-    /// screen, not after a boot has run without an account.
+    /// screen, not after a boot has run without an account. `host` gives
+    /// Virtualization's verdict.
     static func configuration(
         prompt: GuestAccountPrompt,
         fields: GuestAccountPasswordFields,
+        host: any VirtualizationHostProviding,
         answer: @escaping (GuestAccountPasswordAnswer) -> Void,
         retry: @escaping (String) -> Void
     ) -> AlertConfiguration {
@@ -149,7 +151,7 @@ enum GuestAccountPasswordAlert {
                     // a password this sheet accepts is one the boot can use.
                     if let refusal = MacOSGuestProvisioning.passwordRefusal(
                         fullName: prompt.fullName, username: prompt.username,
-                        password: fields.password, verifiedBy: fields.verification)
+                        password: fields.password, verifiedBy: fields.verification, host: host)
                     {
                         retry(refusal)
                         return

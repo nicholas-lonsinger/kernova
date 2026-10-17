@@ -20,81 +20,6 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         self.fileSystem = fileSystem
     }
 
-    // MARK: - Captured payload
-
-    /// The bundle-relative paths a snapshot captures alongside the saved state.
-    ///
-    /// Every file the guest writes through that lives in the bundle: the disks
-    /// it boots and stores data on, plus the firmware state VZ mutates
-    /// (`AuxiliaryStorage` on macOS, `EFIVariableStore` on EFI Linux). The
-    /// bundle's identity files (`HardwareModel`, `MachineIdentifier`) are
-    /// absent — they never change, and a revert must not hand the VM a
-    /// different identity.
-    ///
-    /// External disks are not captured: they are user-owned files outside the
-    /// bundle, and copying them would double storage the user placed elsewhere
-    /// on purpose.
-    ///
-    /// `layout` is the directory the firmware files are looked for in — the VM's
-    /// bundle while capturing, the snapshot's own directory while working out
-    /// what it holds.
-    static func capturedRelativePaths(
-        for configuration: VMConfiguration, layout: VMBundleLayout
-    ) -> [String] {
-        let disks = configuration.effectiveStorageDisks(layout: layout)
-        var paths = disks.filter(\.isInternal).map(\.path)
-        for firmware in [
-            VMBundleLayout.auxiliaryStorageRelativePath, VMBundleLayout.efiVariableStoreRelativePath,
-        ] {
-            let url = layout.bundleURL.appendingPathComponent(firmware)
-            if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
-                paths.append(firmware)
-            }
-        }
-        return paths
-    }
-
-    // MARK: - Copying between bundles
-
-    /// What ``copyItems(_:from:to:ifMissing:)`` does about a path the source
-    /// lacks.
-    enum MissingItem {
-        /// Leaves it out of the copy.
-        case skip
-        /// Throws what the closure makes of the relative path.
-        case fail((String) -> any Error)
-        /// Copies without looking first, for a caller that already checked —
-        /// the copy's own error reports a path gone since.
-        case unchecked
-    }
-
-    /// Copies each file or directory `relativePaths` names from the root at
-    /// `source` to the same relative path under `destination`, creating the
-    /// parent directories it needs.
-    static func copyItems(
-        _ relativePaths: [String], from source: URL, to destination: URL, ifMissing: MissingItem
-    ) throws {
-        let manager = FileManager.default
-        for relativePath in relativePaths {
-            let item = source.appendingPathComponent(relativePath)
-            switch ifMissing {
-            case .unchecked:
-                break
-            case .skip, .fail:
-                guard !manager.fileExists(atPath: item.path(percentEncoded: false)) else { break }
-                if case .fail(let error) = ifMissing { throw error(relativePath) }
-                continue
-            }
-            let copy = destination.appendingPathComponent(relativePath)
-            try manager.createDirectory(
-                at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Same volume, so APFS clones each file rather than duplicating its
-            // blocks — the copy shares them with the original until either
-            // side writes.
-            try manager.copyItem(at: item, to: copy)
-        }
-    }
-
     // MARK: - Capture
 
     func prepareSnapshot(
@@ -108,12 +33,12 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         try data.write(to: snapshotLayout.configURL, options: .atomic)
         return VMSnapshotCapturePlan(
             saveFileURL: snapshotLayout.saveFileURL,
-            relativePaths: Self.capturedRelativePaths(for: configuration, layout: layout))
+            relativePaths: VMBundleItems.capturedRelativePaths(for: configuration, layout: layout))
     }
 
     func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        try Self.copyItems(
+        try VMBundleItems.copyItems(
             relativePaths, from: layout.bundleURL,
             to: layout.snapshotDirectoryURL(id: snapshotID),
             ifMissing: .fail { VMSnapshotError.captureSourceMissing($0) })
@@ -163,7 +88,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         } catch {
             throw VMSnapshotError.snapshotConfigurationUnreadable
         }
-        let relativePaths = Self.capturedRelativePaths(
+        let relativePaths = VMBundleItems.capturedRelativePaths(
             for: configuration, layout: sourceLayout)
         for relativePath in relativePaths {
             let source = sourceLayout.bundleURL.appendingPathComponent(relativePath)
@@ -192,7 +117,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         try? manager.removeItem(at: staging)
         do {
             try manager.createDirectory(at: staging, withIntermediateDirectories: true)
-            try Self.copyItems(
+            try VMBundleItems.copyItems(
                 plan.relativePaths, from: sourceLayout.bundleURL, to: staging,
                 ifMissing: .unchecked)
             if plan.kind == .warm {
@@ -399,47 +324,5 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
             sizes[id] = SnapshotSize.measure(directory: layout.snapshotDirectoryURL(id: id))
         }
         return sizes
-    }
-}
-
-// MARK: - Errors
-
-enum VMSnapshotError: LocalizedError, TitledError {
-    /// A file the snapshot should capture is not in the bundle.
-    case captureSourceMissing(String)
-    /// The snapshot holds no saved state to restore from.
-    case snapshotMissingSavedState
-    /// The snapshot holds no record of the configuration it was captured under,
-    /// which VZ requires back before it restores the saved state.
-    case snapshotMissingConfiguration
-    /// The snapshot's record of the configuration it was captured under is
-    /// there and does not read — the config check lists it.
-    case snapshotConfigurationUnreadable
-    /// The snapshot holds no copy of a file its own configuration names.
-    case snapshotMissingFile(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .captureSourceMissing(let path):
-            "The snapshot could not be taken: \u{201C}\(path)\u{201D} is missing from the virtual machine's bundle."
-        case .snapshotMissingSavedState:
-            "This snapshot has no saved state, so it can't be reverted to."
-        case .snapshotMissingConfiguration:
-            "This snapshot has no record of the virtual machine's settings, so it can't be reverted to."
-        case .snapshotConfigurationUnreadable:
-            "Kernova can\u{2019}t read this snapshot\u{2019}s settings. Choose File > Check Config Files\u{2026} to review it."
-        case .snapshotMissingFile(let path):
-            "This snapshot doesn't include \u{201C}\(path)\u{201D}, so it can't be reverted to."
-        }
-    }
-
-    var alertTitle: String? {
-        switch self {
-        case .captureSourceMissing:
-            "Couldn\u{2019}t Take the Snapshot"
-        case .snapshotMissingSavedState, .snapshotMissingConfiguration,
-            .snapshotConfigurationUnreadable, .snapshotMissingFile:
-            "Couldn\u{2019}t Revert to the Snapshot"
-        }
     }
 }

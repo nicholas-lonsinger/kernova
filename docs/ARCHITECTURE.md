@@ -84,17 +84,21 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 
 ## Services (`Kernova/Services/`)
 
-- VZ-facing: `ConfigurationBuilder` (the one `VZVirtualMachineConfiguration`
-  translation), `VirtualizationService`, `MacOSInstallService`,
-  `RemovableMediaDeviceService`, `LiveDirectoryShareService`, and
-  `USBAccessoryService` (macOS 27; optional on `VMLifecycleCoordinator` — `nil`
-  is the capability's absence).
+- VZ-facing, the engine: `ConfigurationBuilder` (the one
+  `VZVirtualMachineConfiguration` translation), `VMSession`,
+  `VirtualizationService`, `MacOSInstallService`, `USBAccessoryService` (macOS
+  27; optional on `VMLifecycleCoordinator` — `nil` is the capability's
+  absence) and `VirtualizationHost`. Code outside the
+  engine and the AppKit layer reaches it only through `VMSessionOperating`,
+  `VirtualizationHostProviding` and the `Services/Protocols/` seams, whose
+  engine implementations `AppDelegate` builds.
 - Network: `VmnetNetworkService` (process-wide) and the `VmnetSessionNetworks`
   view each session attaches through and `NetworkAttachmentCoordinator` (one
   of each per session, held by `VMSessionContext`), and `GuestAddressObserver`
   (over `HostARPTableReader`) and `VMMACAddressRegistry`, sequenced by
   `VMLibrary`.
-- Vsock, macOS guests: `KernovaVsockPort` and `VsockListenerHost`; per VM, a
+- Vsock, macOS guests: `KernovaVsockPort` and `VsockListener`, which the
+  session hosts as a `VsockListenerHost`; per VM, a
   `VsockAdmissionGate` and two `VsockDataConnectionSink`s held by `VMInstance`;
   per session, `VsockFeatureCoordinator` (held by `VMSessionContext`) over
   `VsockFeatureDescriptor.all` — `VsockControlService`, `VsockGuestLogService`,

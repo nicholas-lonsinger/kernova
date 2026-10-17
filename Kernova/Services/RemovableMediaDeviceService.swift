@@ -1,12 +1,10 @@
 import Foundation
 import KernovaLogging
-import Virtualization
 
 /// Manages runtime USB mass storage device attach/detach via XHCI controller.
 @MainActor
 final class RemovableMediaDeviceService: RemovableMediaAttaching {
-    // `nonisolated`: the attach factory logs from the session's queue.
-    private nonisolated static let logger = KernovaLogger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RemovableMediaDeviceService")
 
     func attach(
@@ -55,26 +53,7 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
         let url = resolved.url
         let uuid: UUID
         do {
-            uuid = try await session.attachUSBDevice {
-                let attachment: VZDiskImageStorageDeviceAttachment
-                do {
-                    attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
-                } catch {
-                    #log(
-                        Self.logger, .error,
-                        "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    throw error
-                }
-                let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-                if let desiredUUID {
-                    // Override the framework-generated UUID so the live device
-                    // matches the caller's persisted identity (e.g.
-                    // `RemovableMediaItem.id`) for save-state restore matching.
-                    usbConfig.uuid = desiredUUID
-                }
-                return VZUSBMassStorageDevice(configuration: usbConfig)
-            }
+            uuid = try await session.attachMassStorage(url: url, readOnly: readOnly, uuid: desiredUUID)
         } catch let error as VMSessionError {
             #log(
                 Self.logger, .error,
@@ -137,33 +116,5 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
             Self.logger, .notice,
             "Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'"
         )
-    }
-}
-
-// MARK: - Errors
-
-enum RemovableMediaDeviceError: LocalizedError {
-    case noVirtualMachine
-    case noUSBController
-    case diskImageNotFound(String)
-    case diskImageIsDirectory(String)
-    case diskImageNotWritable(String)
-    case deviceNotFound
-
-    var errorDescription: String? {
-        switch self {
-        case .noVirtualMachine:
-            "No virtual machine is running."
-        case .noUSBController:
-            "No USB controller is available. Restart the VM to enable USB device support."
-        case .diskImageNotFound(let path):
-            "Disk image not found at \(path)."
-        case .diskImageIsDirectory(let path):
-            "Path is a directory, not a file: \(path)."
-        case .diskImageNotWritable(let path):
-            "Disk image is not writable: \(path). Try attaching as read-only."
-        case .deviceNotFound:
-            "The USB device could not be found on the controller."
-        }
     }
 }

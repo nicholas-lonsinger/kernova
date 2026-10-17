@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import Virtualization
 
 /// Where a VM is in its lifecycle, the live session it holds, and the one
 /// place any request on it is admitted and committed.
@@ -44,7 +43,7 @@ final class VMActivity {
 
     /// The live VM's isolation domain — the only type that calls into the
     /// `VZVirtualMachine` and its device objects.
-    var session: VMSession? { sessionContext?.session }
+    var session: (any VMSessionOperating)? { sessionContext?.session }
 
     var status: VMStatus { phase.status }
 
@@ -1184,14 +1183,14 @@ final class VMActivity {
     // periphery:ignore:parameters bringUp - an access token: its type admits the caller
     /// Takes the pipes, cold-attached removable media and directory share a
     /// configuration build produced into the bring-up's open session context.
-    func adoptBuildResult(
-        _ bringUp: borrowing VMBringUpContext, _ result: ConfigurationBuilder.BuildResult
+    func adoptBuildProducts(
+        _ bringUp: borrowing VMBringUpContext, _ result: VMSessionBuildProducts
     ) {
         guard let sessionContext else {
             #log(
                 Self.logger, .fault,
                 "No session context to adopt a build result for '\(self.name, privacy: .public)'")
-            assertionFailure("adoptBuildResult without beginSessionContext for '\(name)'")
+            assertionFailure("adoptBuildProducts without beginSessionContext for '\(name)'")
             return
         }
         sessionContext.serialInputPipe = result.serialInputPipe
@@ -1203,21 +1202,17 @@ final class VMActivity {
         sessionContext.vmnetNetworks = result.vmnetNetworks
     }
 
-    /// Creates the VM on its own queue, stores the session, and binds it to the
-    /// bring-up that holds the VM, answering the session and the context that
-    /// now holds it.
+    /// Stores `session`, which the engine just made delivering into
+    /// ``makeSessionEvents()``, and binds it to the bring-up that holds the VM,
+    /// answering the context that now holds it.
     ///
     /// `nil` when no session context is open — a programming error, since every
-    /// bring-up opens one before building the configuration this takes. The
-    /// just-created `VZVirtualMachine` is released rather than handed back: a
-    /// session this instance does not hold is one nothing can stop.
+    /// bring-up opens one before building the configuration the session was
+    /// made from. The caller then drops the session rather than handing it
+    /// on: a session this instance does not hold is one nothing can stop.
     func beginSession(
-        _ context: borrowing VMBringUpContext, from result: ConfigurationBuilder.BuildResult
-    ) async -> (session: VMSession, context: VMSessionContext)? {
-        // The configuration was assembled off-main and is handed over whole:
-        // nothing touches it after the VM is created from it.
-        nonisolated(unsafe) let vzConfig = result.configuration
-        let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
+        _ context: borrowing VMBringUpContext, _ session: any VMSessionOperating
+    ) -> VMSessionContext? {
         guard let sessionContext, case .operating(var operation) = phase,
             operation.kind == context.operation.kind
         else {
@@ -1231,7 +1226,7 @@ final class VMActivity {
         sessionContext.session = session
         operation.sessionState = .live(VMOperationSession(id: session.id, guest: .running))
         setPhase(.operating(operation))
-        return (session, sessionContext)
+        return sessionContext
     }
 
     #if DEBUG
@@ -1330,7 +1325,7 @@ struct VMOperationContext: ~Copyable, Sendable {
 
     /// The operation's live session, or `nil` once it ended or before a
     /// bring-up created one.
-    @MainActor var session: VMSession? {
+    @MainActor var session: (any VMSessionOperating)? {
         activity.operationSessionID == nil ? nil : activity.session
     }
 
@@ -1406,8 +1401,8 @@ struct AccessoryHoldersKey {
 }
 
 /// The authority a bring-up's body acts with — the only one
-/// ``VMActivity/beginSessionContext(_:_:)``, ``VMActivity/adoptBuildResult(_:_:)``
-/// and ``VMActivity/beginSession(_:from:)`` take, so only a bring-up, admitted
+/// ``VMActivity/beginSessionContext(_:_:)``, ``VMActivity/adoptBuildProducts(_:_:)``
+/// and ``VMActivity/beginSession(_:_:)`` take, so only a bring-up, admitted
 /// past the identity check, can open and fill a session.
 struct VMBringUpContext: ~Copyable, Sendable {
     let operation: VMOperationContext
@@ -1611,7 +1606,7 @@ extension VMOperationKind {
 
     /// Where a body that threw leaves the VM.
     func restAfterFailure(_ error: any Error) -> VMOperationRest {
-        let transient = VirtualizationService.isTransientStartError(error)
+        let transient = VirtualizationFailure.isTransientStartError(error)
         switch self {
         case .bringUp(.guestStart):
             return .atRest(transient ? .stopped : .failed(message: error.localizedDescription))

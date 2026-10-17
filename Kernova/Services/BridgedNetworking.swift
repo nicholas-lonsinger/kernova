@@ -3,19 +3,6 @@ import KernovaLogging
 import SystemConfiguration
 import Virtualization
 
-/// A host interface that supports bridged networking, decoupled from VZ for testability.
-struct BridgedInterface: Equatable, Sendable {
-    let identifier: String
-    let localizedDisplayName: String
-}
-
-protocol BridgedInterfaceProviding: Sendable {
-    /// Host interfaces currently available for bridging.
-    func interfaces() -> [BridgedInterface]
-    /// The identifier of the host's default-route (primary) interface, if known.
-    func primaryInterfaceIdentifier() -> String?
-}
-
 /// Answers from the live host: `VZBridgedNetworkInterface` for the bridgeable
 /// list, the SystemConfiguration dynamic store for the default route.
 struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
@@ -46,16 +33,6 @@ struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
         }
         // A host with no default route (every interface down, or only interfaces
         // the store hasn't published) has no primary — `nil` is a normal answer.
-        return nil
-    }
-}
-
-enum BridgedInterfaceSelection {
-    /// Chooses the interface to bridge over: the persisted identifier when it is
-    /// still available, else the primary interface; nil when neither resolves.
-    static func choose(persisted: String?, available: [String], primary: String?) -> String? {
-        if let persisted, available.contains(persisted) { return persisted }
-        if let primary, available.contains(primary) { return primary }
         return nil
     }
 }

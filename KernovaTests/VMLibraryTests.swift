@@ -1,6 +1,7 @@
 import AppKit
 import Testing
 import Foundation
+import KernovaKit
 
 @testable import Kernova
 
@@ -54,7 +55,9 @@ struct VMLibraryTests {
     @Test("init reads nothing — the library is loaded after launch, not during construction")
     func initDoesNotReadStorage() {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
@@ -80,7 +83,9 @@ struct VMLibraryTests {
     func launchReclaimsRestoreStaging() async throws {
         let storage = MockVMStorageService()
         let (library, _, _, _) = makeLibrary(storageService: storage)
-        let config = VMConfiguration(name: "Interrupted", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
         storage.bundles[bundleURL] = config
         let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
@@ -124,7 +129,9 @@ struct VMLibraryTests {
     @Test("An arrival registered while the read is in flight survives the load")
     func loadVMsKeepsArrivalsAddedDuringTheRead() async {
         let storage = MockVMStorageService()
-        let onDisk = VMConfiguration(name: "On Disk", guestOS: .linux, bootMode: .efi)
+        let onDisk = VMConfiguration(
+            name: "On Disk", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(onDisk.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = onDisk
@@ -156,8 +163,12 @@ struct VMLibraryTests {
     @Test("loadVMs auto-selects the first VM")
     func loadVMsAutoSelectsFirst() async {
         let storage = MockVMStorageService()
-        let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
-        let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -175,8 +186,12 @@ struct VMLibraryTests {
     @Test("loadVMs preserves valid selection on reload")
     func loadVMsPreservesSelection() async {
         let storage = MockVMStorageService()
-        let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
-        let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -220,8 +235,12 @@ struct VMLibraryTests {
     @Test("loadVMs restores selection from UserDefaults when VM still exists")
     func loadVMsRestoresFromUserDefaults() async {
         let storage = MockVMStorageService()
-        let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
-        let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -242,7 +261,9 @@ struct VMLibraryTests {
     func loadVMsSurfacesErrorForFailedBundles() async {
         let storage = MockVMStorageService()
         // Add a good bundle and a bad bundle
-        let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
+        let goodConfig = VMConfiguration(
+            name: "Good VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let goodURL = scratch.url
             .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
         storage.bundles[goodURL] = goodConfig
@@ -250,7 +271,9 @@ struct VMLibraryTests {
         let badURL = scratch.url
             .appendingPathComponent("bad-bundle.kernova", isDirectory: true)
         // Register the URL so listVMBundles returns it, but mark it to fail on load
-        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.loadConfigurationFailURLs = [badURL]
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -267,7 +290,9 @@ struct VMLibraryTests {
     @Test("loadVMs falls back to first VM when stored ID is invalid")
     func loadVMsFallsBackWhenStoredIDInvalid() async {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Only VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
@@ -449,7 +474,9 @@ struct VMLibraryTests {
         onDisk.name = "Renamed Elsewhere"
         onDisk.genericMachineIdentifierData = Data([0x01, 0x02, 0x03])
         storage.files.setConfiguration(onDisk, at: instance.bundleURL)
-        var captured = VMConfiguration(name: "Captured", guestOS: .linux, bootMode: .efi)
+        var captured = VMConfiguration(
+            name: "Captured", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         captured.memorySizeInGB = onDisk.memorySizeInGB.adding(gibibytes: 2)
         captured.genericMachineIdentifierData = Data([0x0A])
 
@@ -500,7 +527,9 @@ struct VMLibraryTests {
     @Test("An arrival becomes a VM holding the configuration its write put in the bundle")
     func arrivalAdoptsTheWrittenConfiguration() async throws {
         let (library, storage, _, _) = makeLibrary()
-        let requested = VMConfiguration(name: "Copy", guestOS: .linux, bootMode: .efi)
+        let requested = VMConfiguration(
+            name: "Copy", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         var written = requested
         written.storageDisks = [
             StorageDisk(
@@ -588,7 +617,9 @@ struct VMLibraryTests {
 
         // Listed only once its configuration lands, which a hand copy writes
         // inside the bundle, where the directory watch sees nothing.
-        let config = VMConfiguration(name: "Hand Copied", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Hand Copied", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.bundles[try storage.bundleURL(for: config)] = config
         activation.post()
 
@@ -730,7 +761,9 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk keeps a bundle it can't read as a row and asks for the check")
     func reconcilePresentsErrorForFailedConfigs() {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Good VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let goodURL = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[goodURL] = config
@@ -741,7 +774,9 @@ struct VMLibraryTests {
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.loadConfigurationFailURLs.insert(badURL)
 
         failures.reset()
@@ -772,7 +807,9 @@ struct VMLibraryTests {
         let storage = MockVMStorageService()
         let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.loadConfigurationFailURLs.insert(badURL)
 
         // The initial load reports the error and seeds unreadableReports
@@ -800,13 +837,17 @@ struct VMLibraryTests {
     @Test("A bundle whose host state cannot be read is reported and kept as an unreadable row")
     func unreadableHostStateKeepsTheBundleOut() async throws {
         let storage = MockVMStorageService()
-        let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
+        let goodConfig = VMConfiguration(
+            name: "Good VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let goodURL = scratch.url
             .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
         storage.bundles[goodURL] = goodConfig
         let badURL = scratch.url
             .appendingPathComponent("unreadable-host-state.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.loadHostStateFailURLs = [badURL]
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -825,7 +866,9 @@ struct VMLibraryTests {
     @Test("A bundle whose pairings cannot be read loads with none, asks for the check once, and keeps the file")
     func unreadablePairingsLoadEmpty() async throws {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Paired VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
         storage.bundles[bundleURL] = config
         let unreadable = Data("{ not json".utf8)
@@ -855,7 +898,11 @@ struct VMLibraryTests {
         let bundleURL = scratch.url
             .appendingPathComponent("unreadable-sidecar.kernova", isDirectory: true)
         storage.bundles[bundleURL] = VMConfiguration(
-            name: "Unreadable VM", guestOS: .linux, bootMode: .efi)
+            name: "Unreadable VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.loadHostStateFailURLs.insert(bundleURL)
 
         failures.reset()
@@ -882,7 +929,9 @@ struct VMLibraryTests {
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let bundleURL = scratch.url
             .appendingPathComponent("recoverable.kernova", isDirectory: true)
-        let config = VMConfiguration(name: "Recoverable VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Recoverable VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.bundles[bundleURL] = config
         storage.loadConfigurationFailURLs.insert(bundleURL)
 
@@ -916,7 +965,9 @@ struct VMLibraryTests {
     @Test("loadVMs assigns .initialBoot when config has installContext")
     func loadVMsAssignsInitialBoot() async {
         let storage = MockVMStorageService()
-        var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Pending VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.installContext = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: "/tmp/restore.ipsw"
@@ -935,7 +986,9 @@ struct VMLibraryTests {
     @Test("loadVMs assigns .stopped when no installContext")
     func loadVMsAssignsStoppedWithoutInstallContext() async {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Installed VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Installed VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
@@ -1019,7 +1072,9 @@ struct VMLibraryTests {
     @Test("A loaded VM mirrors the pairings its bundle holds")
     func loadMirrorsPairings() async throws {
         let (library, storage) = makePairingLibrary()
-        let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Paired VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
         storage.bundles[bundleURL] = config
         storage.files.setPairings(USBAccessoryPairingSet(pairings: [pairing(key: "k")]), at: bundleURL)
@@ -1032,7 +1087,9 @@ struct VMLibraryTests {
     @Test("An arrival's VM takes on its bundle's pairings when it publishes, and not before")
     func publicationMirrorsPairings() async throws {
         let (library, storage) = makePairingLibrary()
-        let written = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
+        let written = VMConfiguration(
+            name: "Fresh VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let pairings = USBAccessoryPairingSet(pairings: [pairing(key: "k")])
         let gate = GatedStep()
 
@@ -1059,7 +1116,9 @@ struct VMLibraryTests {
     @Test("A bundle with no pairings mirrors an empty set")
     func loadMirrorsNoPairingsForAFreshBundle() async throws {
         let (library, storage) = makePairingLibrary()
-        let config = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Fresh VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.bundles[try storage.bundleURL(for: config)] = config
 
         await library.loadVMs()

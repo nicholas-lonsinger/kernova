@@ -50,7 +50,9 @@ struct VMOtherCopyHoldTests {
 
     /// A VM at rest whose bundle files are read and written through `access`.
     private func makeInstance(over access: WriteObservingBundleFiles) -> VMInstance {
-        let config = VMConfiguration(name: "Watched", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Watched", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = VMInstanceFixture.bundleURL(for: config.id)
         access.store.seed(config, at: url)
         return VMInstance(
@@ -286,7 +288,9 @@ struct VMOtherCopyHoldTests {
     func launchLoadMarks() async throws {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let config = VMConfiguration(name: "Held", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Held", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = try storage.bundleURL(for: config)
         storage.bundles[url] = config
         storage.files.holdElsewhere(url)
@@ -301,8 +305,12 @@ struct VMOtherCopyHoldTests {
     func launchLoadReadsOnceAndAnswersMarked() async throws {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let marked = VMConfiguration(name: "Marked", guestOS: .linux, bootMode: .efi)
-        let unmarked = VMConfiguration(name: "Unmarked", guestOS: .linux, bootMode: .efi)
+        let marked = VMConfiguration(
+            name: "Marked", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let unmarked = VMConfiguration(
+            name: "Unmarked", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let markedURL = try storage.bundleURL(for: marked)
         storage.bundles[markedURL] = marked
         storage.bundles[try storage.bundleURL(for: unmarked)] = unmarked

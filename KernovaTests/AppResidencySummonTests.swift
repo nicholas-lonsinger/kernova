@@ -1,3 +1,4 @@
+import KernovaKit
 import AppKit
 import Testing
 
@@ -139,7 +140,9 @@ struct AppResidencySummonTests {
         let (controller, _, viewModel) = makeController(foreground: foreground)
         let arrival = VMArrival.inert(
             .importing,
-            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi))
+            configuration: VMConfiguration(
+                name: "Arriving", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         viewModel.library.register(arrival)
         viewModel.selection = nil
 

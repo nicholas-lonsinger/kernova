@@ -308,7 +308,7 @@ final class DetailContainerViewController: NSViewController {
         }
 
         guard let instance = viewModel.selectedInstance,
-            let display = instance.session?.displayHandle,
+            let display = instance.session?.virtualMachineSession?.displayHandle,
             instance.displayMode == .inline,
             instance.hasActiveDisplay,
             instance.detailPaneMode == .display
@@ -401,7 +401,7 @@ extension DetailContainerViewController: LibraryWindowPresenting {
             return
         }
         pendingWizard = false
-        let creationVM = VMCreationViewModel()
+        let creationVM = viewModel.makeCreationViewModel()
         let wizard = VMCreationWizardViewController(creationVM: creationVM)
         wizard.onCancel = { [weak self] in self?.wizardPresenter.close() }
         wizard.onCreate = { [weak self, weak wizard] creationVM in

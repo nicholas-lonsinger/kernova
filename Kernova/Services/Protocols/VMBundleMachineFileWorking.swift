@@ -130,3 +130,45 @@ protocol VMBundleMachineFileWorking: Sendable {
     /// Moves the in-bundle disk at `relativePath` to the Trash.
     func trashInternalDisk(bundleURL: URL, relativePath: String) throws
 }
+
+// MARK: - Errors
+
+enum VMSnapshotError: LocalizedError, TitledError {
+    /// A file the snapshot should capture is not in the bundle.
+    case captureSourceMissing(String)
+    /// The snapshot holds no saved state to restore from.
+    case snapshotMissingSavedState
+    /// The snapshot holds no record of the configuration it was captured under,
+    /// which VZ requires back before it restores the saved state.
+    case snapshotMissingConfiguration
+    /// The snapshot's record of the configuration it was captured under is
+    /// there and does not read — the config check lists it.
+    case snapshotConfigurationUnreadable
+    /// The snapshot holds no copy of a file its own configuration names.
+    case snapshotMissingFile(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .captureSourceMissing(let path):
+            "The snapshot could not be taken: \u{201C}\(path)\u{201D} is missing from the virtual machine's bundle."
+        case .snapshotMissingSavedState:
+            "This snapshot has no saved state, so it can't be reverted to."
+        case .snapshotMissingConfiguration:
+            "This snapshot has no record of the virtual machine's settings, so it can't be reverted to."
+        case .snapshotConfigurationUnreadable:
+            "Kernova can\u{2019}t read this snapshot\u{2019}s settings. Choose File > Check Config Files\u{2026} to review it."
+        case .snapshotMissingFile(let path):
+            "This snapshot doesn't include \u{201C}\(path)\u{201D}, so it can't be reverted to."
+        }
+    }
+
+    var alertTitle: String? {
+        switch self {
+        case .captureSourceMissing:
+            "Couldn\u{2019}t Take the Snapshot"
+        case .snapshotMissingSavedState, .snapshotMissingConfiguration,
+            .snapshotConfigurationUnreadable, .snapshotMissingFile:
+            "Couldn\u{2019}t Revert to the Snapshot"
+        }
+    }
+}

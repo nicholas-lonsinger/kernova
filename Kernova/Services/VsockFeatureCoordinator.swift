@@ -329,31 +329,27 @@ final class VsockFeatureCoordinator {
         descriptor.current(self)
     }
 
-    // MARK: - Listener hosts
+    // MARK: - Listeners
 
     /// Every listener a session running `configuration` installs.
-    func listenerHosts(for configuration: VMConfiguration, sessionID: UUID)
-        -> [VsockListenerHost]
-    {
+    func listeners(for configuration: VMConfiguration, sessionID: UUID) -> [VsockListener] {
         VsockFeatureDescriptor.all
             .filter { $0.isEnabled(configuration) }
-            .flatMap { makeHosts(for: $0, sessionID: sessionID) }
+            .flatMap { makeListeners(for: $0, sessionID: sessionID) }
     }
 
     /// One channel's listeners: the framed port first, then the data port that
     /// moves with it.
-    func makeHosts(for descriptor: VsockFeatureDescriptor, sessionID: UUID)
-        -> [VsockListenerHost]
-    {
+    func makeListeners(for descriptor: VsockFeatureDescriptor, sessionID: UUID) -> [VsockListener] {
         // Nothing on the accept path may reach this main-actor type, so the
         // admission closure captures the gate itself.
-        var shouldAdmit: VsockListenerHost.ShouldAdmit?
+        var shouldAdmit: VsockListener.ShouldAdmit?
         if let requirement = descriptor.requirement {
             let gate = admissionGate
             shouldAdmit = { gate.admission(for: requirement) }
         }
-        var hosts = [
-            VsockListenerHost(port: descriptor.port, shouldAdmit: shouldAdmit) {
+        var listeners = [
+            VsockListener(port: descriptor.port, shouldAdmit: shouldAdmit) {
                 [weak self] channel in
                 guard let self else {
                     channel.close()
@@ -364,12 +360,12 @@ final class VsockFeatureCoordinator {
         ]
         if let data = descriptor.data {
             let sink = self[keyPath: data.sink]
-            hosts.append(
-                VsockListenerHost(
+            listeners.append(
+                VsockListener(
                     port: data.port, shouldAdmit: shouldAdmit,
                     onAcceptFd: { fd in sink.accept(fd: fd) }))
         }
-        return hosts
+        return listeners
     }
 
     // MARK: - Accept
@@ -450,7 +446,7 @@ final class VsockFeatureCoordinator {
     /// still thinks the feature is on makes it see EOF and pound the host with
     /// reconnects until the policy arrives.
     func applyLivePolicy(
-        oldConfig: VMConfiguration, newConfig: VMConfiguration, on session: VMSession
+        oldConfig: VMConfiguration, newConfig: VMConfiguration, on session: any VMSessionOperating
     ) {
         let changed = VsockFeatureDescriptor.all.filter {
             $0.isEnabled(oldConfig) != $0.isEnabled(newConfig)
@@ -503,7 +499,7 @@ final class VsockFeatureCoordinator {
     /// *successor* session must have neither listeners installed behind it nor
     /// its own services torn down by an edit belonging to a session already
     /// gone.
-    private func isLive(_ session: VMSession) -> Bool {
+    private func isLive(_ session: any VMSessionOperating) -> Bool {
         guard let context = instance?.sessionContext, context.vsock === self else { return false }
         return context.session === session
     }
@@ -520,7 +516,7 @@ final class VsockFeatureCoordinator {
         on installer: any VsockListenerInstalling, sessionID: UUID
     ) async {
         if enabled {
-            await installer.attach(makeHosts(for: descriptor, sessionID: sessionID))
+            await installer.attach(makeListeners(for: descriptor, sessionID: sessionID))
         } else {
             settle(descriptor)
             await installer.detach(ports: descriptor.ports)

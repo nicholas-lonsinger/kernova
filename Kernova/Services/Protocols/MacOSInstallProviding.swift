@@ -15,3 +15,25 @@ protocol MacOSInstallProviding: Sendable {
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage
 }
+
+// MARK: - Errors
+
+enum MacOSInstallError: LocalizedError {
+    case unsupportedRestoreImage
+    case unsupportedHardwareModel
+    case restoreImageNotFound(path: String)
+    case restoreImageNotAFile(path: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedRestoreImage:
+            "The restore image does not contain a supported macOS configuration."
+        case .unsupportedHardwareModel:
+            "The hardware model in the restore image is not supported on this machine."
+        case .restoreImageNotFound(let path):
+            "The restore image could not be found at \(path)."
+        case .restoreImageNotAFile(let path):
+            "The restore image at \(path) is a folder, not a file."
+        }
+    }
+}

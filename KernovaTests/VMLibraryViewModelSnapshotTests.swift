@@ -25,15 +25,21 @@ struct VMLibraryViewModelSnapshotTests {
             storageService: storage,
             diskImageService: MockDiskImageService(),
             machineFiles: snapshots,
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         return Harness(
@@ -59,15 +65,21 @@ struct VMLibraryViewModelSnapshotTests {
             storageService: storage,
             diskImageService: MockDiskImageService(),
             machineFiles: snapshots,
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         return SuspendingHarness(
@@ -108,7 +120,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A loaded VM carries the snapshots its bundle holds")
     func loadSeedsTheManifest() async throws {
         let harness = makeHarness()
-        let config = VMConfiguration(name: "Seeded", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Seeded", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
         harness.storage.bundles[bundleURL] = config
         let snapshot = makeSnapshot()
@@ -124,7 +138,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("Launch reclaims the staging directory an interrupted revert left, and a load alone does not")
     func launchSweepsRevertStaging() async throws {
         let harness = makeHarness()
-        let config = VMConfiguration(name: "Interrupted", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
         harness.storage.bundles[bundleURL] = config
 

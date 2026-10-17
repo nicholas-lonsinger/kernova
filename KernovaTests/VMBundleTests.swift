@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -34,7 +35,11 @@ struct VMBundleTests {
     /// A real bundle directory holding `configuration`'s `config.json`.
     private func withBundle(
         _ configuration: VMConfiguration = VMConfiguration(
-            name: "Bundle VM", guestOS: .linux, bootMode: .efi),
+            name: "Bundle VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize),
         _ body: (URL) throws -> Void
     ) throws {
         let url = scratch.url.appendingPathComponent("kernova-bundle.kernova", isDirectory: true)
@@ -458,7 +463,9 @@ struct VMBundleTests {
     @Test("A read snapshot carries the network device and MAC address of the configuration it was taken under")
     func manifestCarriesEachSnapshotsMACAddress() throws {
         try withBundle { url in
-            var configuration = VMConfiguration(name: "Captured", guestOS: .linux, bootMode: .efi)
+            var configuration = VMConfiguration(
+                name: "Captured", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
             configuration.macAddress = "aa:bb:cc:dd:ee:01"
             // Listed carrying some other address, which the manifest must not keep.
             let captured = VMSnapshot(
@@ -490,7 +497,9 @@ struct VMBundleTests {
         let url = scratch.url.appendingPathComponent("kernova-bundle.kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess()).writeInitial(
-            VMConfiguration(name: "Machine VM", guestOS: .linux, bootMode: .efi))
+            VMConfiguration(
+                name: "Machine VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         try Data("live-disk".utf8).write(to: VMBundleLayout(bundleURL: url).diskImageURL)
         return makeBundle(try onDisk(url))
     }

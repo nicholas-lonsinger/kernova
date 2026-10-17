@@ -3,13 +3,12 @@ import Foundation
 import KernovaKit
 import Synchronization
 import Testing
-import Virtualization
 
 @testable import Kernova
 
 @MainActor
-@Suite("VsockListenerHost", .caseScoped)
-struct VsockListenerHostTests {
+@Suite("VsockListener", .caseScoped)
+struct VsockListenerTests {
     /// `configureAcceptedSocket` must raise `SO_SNDBUF` on the accepted fd.
     ///
     /// This is the host→guest throughput lever (#377). Assert the buffer lands at
@@ -25,7 +24,7 @@ struct VsockListenerHostTests {
             close(b)
         }
 
-        let host = VsockListenerHost(port: 49_152, onConnect: { _ in })
+        let host = VsockListener(port: 49_152, onConnect: { _ in })
 
         host.configureAcceptedSocket(a)
 
@@ -48,7 +47,7 @@ struct VsockListenerHostTests {
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
         let connected = Mutex(false)
-        let host = VsockListenerHost(
+        let host = VsockListener(
             port: 49_153, shouldAdmit: { verdict },
             onConnect: { _ in connected.withLock { $0 = true } })
 
@@ -73,7 +72,7 @@ struct VsockListenerHostTests {
         defer { close(b) }
 
         let received = Mutex<VsockChannel?>(nil)
-        let host = VsockListenerHost(port: 49_153, shouldAdmit: { .admit }) { channel in
+        let host = VsockListener(port: 49_153, shouldAdmit: { .admit }) { channel in
             #expect(Thread.isMainThread)
             received.withLock { $0 = channel }
         }
@@ -91,7 +90,7 @@ struct VsockListenerHostTests {
         defer { close(b) }
 
         let received = Mutex<VsockChannel?>(nil)
-        let host = VsockListenerHost(port: 49_154) { channel in
+        let host = VsockListener(port: 49_154) { channel in
             received.withLock { $0 = channel }
         }
 
@@ -115,7 +114,7 @@ struct VsockListenerHostTests {
         }
 
         let handedOver = Mutex<Int32?>(nil)
-        let host = VsockListenerHost(
+        let host = VsockListener(
             port: KernovaVsockPort.clipboardData, shouldAdmit: { .admit },
             onAcceptFd: { fd in handedOver.withLock { $0 = fd } })
 
@@ -141,7 +140,7 @@ struct VsockListenerHostTests {
         }
 
         let handedOver = Mutex<Int32?>(nil)
-        let host = VsockListenerHost(
+        let host = VsockListener(
             port: KernovaVsockPort.clipboardData, shouldAdmit: { .admit },
             onAcceptFd: { fd in
                 #expect(!Thread.isMainThread)
@@ -168,7 +167,7 @@ struct VsockListenerHostTests {
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
         let handedOver = Mutex<Int32?>(nil)
-        let host = VsockListenerHost(
+        let host = VsockListener(
             port: KernovaVsockPort.dropData, shouldAdmit: { verdict },
             onAcceptFd: { fd in handedOver.withLock { $0 = fd } })
 

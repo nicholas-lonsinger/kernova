@@ -900,7 +900,7 @@ final class AppAlertPresenter {
         let box = ShownBox()
         box.shown = showAlert(
             GuestAccountPasswordAlert.configuration(
-                prompt: answer.prompt, fields: fields,
+                prompt: answer.prompt, fields: fields, host: viewModel.library.virtualizationHost,
                 answer: { value in answer(.answered(value)) },
                 retry: { [weak self, weak window] message in
                     box.shown?.followUp = {

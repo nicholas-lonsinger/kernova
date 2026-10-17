@@ -18,7 +18,8 @@ struct VZNetworkDeviceHandleTests {
         vmnet.materialize(.common(.hostOnly), through: sessionNetworks)
         return Harness(
             handle: VZNetworkDeviceHandle(
-                session: install, initialPlan: initialPlan, vmnetNetworks: sessionNetworks),
+                session: install, initialPlan: initialPlan, vmnetNetworks: sessionNetworks,
+                vmnetAttachments: MockVmnetNetworkOperator()),
             install: install)
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -36,7 +37,9 @@ struct VMLibraryViewModelEphemeralTests {
         let later = VMSnapshot(
             name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
 
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
         storage.bundles[bundleURL] = config
         if ephemeral {
@@ -80,15 +83,21 @@ struct VMLibraryViewModelEphemeralTests {
             storageService: storage,
             diskImageService: MockDiskImageService(),
             machineFiles: snapshots,
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -340,7 +349,9 @@ struct VMLibraryViewModelEphemeralTests {
     func startRefusedWhileTheBaselineIsUnreadable() async throws {
         let harness = try await makeHarness(phase: .stopped)
         let instance = harness.instance
-        let config = VMConfiguration(name: "Throwaway", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Throwaway", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         harness.storage.files.setSnapshotConfiguration(config, id: harness.later.id, at: instance.bundleURL)
         harness.storage.files.setData(
             Data("not json".utf8),

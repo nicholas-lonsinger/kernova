@@ -171,7 +171,9 @@ struct VMLibraryIntentTests {
         let source = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("Vanished.\(VMBundleFormat.fileExtension)", isDirectory: true)
         wired.storage.files.seed(
-            VMConfiguration(name: "Vanished", guestOS: .linux, bootMode: .efi),
+            VMConfiguration(
+                name: "Vanished", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize),
             hostState: VMHostState(), snapshots: VMSnapshotManifest(),
             pairings: USBAccessoryPairingSet(), at: source)
 

@@ -114,7 +114,9 @@ struct StatusMenuVMSectionTests {
 
     @Test("An arrival's row shows its operation, not a status")
     func rowModelPreparing() {
-        let configuration = VMConfiguration(name: "Clone", guestOS: .linux, bootMode: .efi)
+        let configuration = VMConfiguration(
+            name: "Clone", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let arrival = VMArrival.inert(.cloning, configuration: configuration)
 
         let rows = StatusMenuVMSection.rows(for: [.arriving(arrival)])

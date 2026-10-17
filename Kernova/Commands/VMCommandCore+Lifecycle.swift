@@ -303,7 +303,7 @@ extension VMCommandCore {
             )
         }
         let credentials = GuestProvisioningCredentials(intent: account, password: password)
-        if let refusal = MacOSGuestProvisioning.validate(credentials) {
+        if let refusal = library.virtualizationHost.guestAccountRefusal(credentials) {
             #log(
                 Self.logger, .notice,
                 "macOS turned down the password for the account '\(account.username, privacy: .public)' on '\(configuration.name, privacy: .public)'"
@@ -467,7 +467,7 @@ extension VMCommandCore {
         from error: Error, verb: VMVerb, on instance: VMInstance
     ) -> StartFailedAttachment? {
         guard let builderError = error as? ConfigurationBuilderError,
-            !VirtualizationService.isFileLockContention(builderError),
+            !VirtualizationFailure.isFileLockContention(builderError),
             let reason = builderError.attachmentReason
         else { return nil }
         switch builderError {
@@ -510,7 +510,7 @@ extension VMCommandCore {
     private func explainedFailure(
         for error: Error, verb: VMVerb, on instance: VMInstance
     ) -> (title: String, message: String)? {
-        guard VirtualizationService.isVirtualMachineLimitExceeded(error) else { return nil }
+        guard VirtualizationFailure.isVirtualMachineLimitExceeded(error) else { return nil }
         let action = Self.bringUpLabel(for: instance, verb: verb)
         // The heading names the operation, the message names the control: a
         // resumed download's button says "Resume Download" and the operation is

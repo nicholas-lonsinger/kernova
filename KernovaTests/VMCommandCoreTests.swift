@@ -3120,7 +3120,11 @@ struct VMCommandCoreTests {
         diskImages.createDiskImageError = NSError(domain: "test", code: 1)
         let harness = makeHarness(diskImages: diskImages)
         var configuration = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
@@ -3141,7 +3145,11 @@ struct VMCommandCoreTests {
     func aCancelledCreateDropsTheHeldPassword() async throws {
         let harness = makeHarness()
         var configuration = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
@@ -3316,7 +3324,11 @@ struct VMCommandCoreTests {
     func createHoldsThePasswordForTheStartItChains() async throws {
         let harness = makeHarness()
         var configuration = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
@@ -3337,7 +3349,11 @@ struct VMCommandCoreTests {
     func createWithoutAStartStillHoldsTheAnswer() async throws {
         let harness = makeHarness()
         var configuration = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
@@ -3360,7 +3376,11 @@ struct VMCommandCoreTests {
     func createRefusesAPasswordMacOSWillNotTake() throws {
         let harness = makeHarness()
         var configuration = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let refusal = try #require(throws: CommandError.self) {
@@ -3380,7 +3400,9 @@ struct VMCommandCoreTests {
     @Test("A create refuses a password for a configuration naming no account")
     func createRefusesAPasswordForNoAccount() throws {
         let harness = makeHarness()
-        let configuration = VMConfiguration(name: "Plain VM", guestOS: .macOS, bootMode: .macOS)
+        let configuration = VMConfiguration(
+            name: "Plain VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
 
         let refusal = try #require(throws: CommandError.self) {
             try harness.core.create(
@@ -3404,7 +3426,9 @@ struct VMCommandCoreTests {
         // The write fails after the arrival is registered, so the sheet that
         // asked is long gone and the hook is all the failure has.
         _ = try harness.core.create(
-            configuration: VMConfiguration(name: "Disk Fail VM", guestOS: .linux, bootMode: .efi),
+            configuration: VMConfiguration(
+                name: "Disk Fail VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize),
             startAfterCreate: false, guestAccountPassword: nil)
         try await harness.failureReported.wait { !harness.failures.isEmpty }
 

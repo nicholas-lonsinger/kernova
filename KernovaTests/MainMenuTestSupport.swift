@@ -33,17 +33,24 @@ func makeLibraryViewModel(
     VMLibraryViewModel(
         storageService: storageService,
         diskImageService: diskImageService,
+        machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+        virtualizationHost: VirtualizationHost(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
+        localImageInspector: LocalRestoreImageInspector(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
+        bridgedInterfaces: HostBridgedInterfaceProvider(),
         usbAccessoryService: usbAccessoryService,
         fileSystem: fileSystem,
         downloadsDirectory: nil,
         preferences: preferences,
-        vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+        vmnetNetworks: VmnetNetworkService.scripted(),
+        arpTable: ScriptedARPTable(),
+        entitlements: .entitled,
         organization: organization,
-        hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+        hostNotifications: .isolated(),
+        hostPasteboard: FakePasteboard()
     )
 }
 

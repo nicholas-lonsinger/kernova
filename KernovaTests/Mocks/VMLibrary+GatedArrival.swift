@@ -41,7 +41,11 @@ extension VMLibrary {
         gate: GatedStep
     ) -> VMArrival {
         var configuration = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+            name: name,
+            guestOS: guestOS,
+            bootMode: guestOS == .macOS ? .macOS : .efi,
+            cpuCount: guestOS.hostCPUCount,
+            memorySizeInGB: guestOS.hostMemorySize)
         configuration.networkEnabled = false
         return beginGatedArrival(kind, configuration: configuration, gate: gate)
     }

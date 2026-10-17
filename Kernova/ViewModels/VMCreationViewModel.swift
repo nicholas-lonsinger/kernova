@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import Virtualization
 
 /// Wizard steps for creating a new VM.
 ///
@@ -110,16 +109,28 @@ final class VMCreationViewModel {
     /// one set of rules at both ends.
     let linuxImageResolveService: any LinuxImageResolving
 
+    /// What Virtualization answers about this Mac: the bounds the resource
+    /// steps clamp to, the new VM's machine identifier, and the verdict on the
+    /// account the wizard gathers.
+    let host: any VirtualizationHostProviding
+
+    /// The Virtualization-backed collaborators — `host`, `localImageInspector`
+    /// and `ipswService` — take no default: the engine makes them, and
+    /// ``VMLibraryViewModel/makeCreationViewModel()`` hands them over.
     init(
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
-        localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector(),
-        ipswService: any IPSWProviding = IPSWService(),
+        host: any VirtualizationHostProviding,
+        localImageInspector: any LocalRestoreImageInspecting,
+        ipswService: any IPSWProviding,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService()
     ) {
+        self.host = host
         self.probeService = probeService
         self.localImageInspector = localImageInspector
         self.ipswService = ipswService
         self.linuxImageResolveService = linuxImageResolveService
+        cpuCount = VMGuestOS.macOS.defaultCPUCount(within: host.resourceLimits)
+        memorySize = VMGuestOS.macOS.defaultMemorySize(within: host.resourceLimits)
     }
 
     // MARK: - Wizard State
@@ -164,8 +175,8 @@ final class VMCreationViewModel {
         didSet {
             clampToWalkedStep()
             guard oldValue != selectedOS else { return }
-            cpuCount = selectedOS.defaultCPUCount
-            memorySize = selectedOS.defaultMemorySize
+            cpuCount = selectedOS.defaultCPUCount(within: host.resourceLimits)
+            memorySize = selectedOS.defaultMemorySize(within: host.resourceLimits)
         }
     }
 
@@ -254,9 +265,9 @@ final class VMCreationViewModel {
 
     var vmName: String = "My Virtual Machine"
 
-    // Start at the defaults of `selectedOS`'s initial value.
-    var cpuCount: Int = VMGuestOS.macOS.defaultCPUCount
-    var memorySize: VMMemorySize = VMGuestOS.macOS.defaultMemorySize
+    // Start at the defaults of `selectedOS`'s initial value, which `init` sets.
+    var cpuCount: Int
+    var memorySize: VMMemorySize
 
     var diskSizeInGB: Int = VMGuestOS.defaultDiskSizeInGB
     var networkEnabled: Bool = true
@@ -360,7 +371,7 @@ final class VMCreationViewModel {
         guard unattendedSetupActive else { return nil }
         return MacOSGuestProvisioning.refusal(
             for: guestAccountCredentials, verifiedBy: guestAccountVerifyPassword,
-            gathering: .wholeAccount, incomplete: "Enter the account details to continue.")
+            gathering: .wholeAccount, incomplete: "Enter the account details to continue.", host: host)
     }
 
     // MARK: - Step 5: Review
@@ -917,7 +928,7 @@ final class VMCreationViewModel {
 
         let genericMachineIdentifierData: Data? =
             (bootMode == .efi || bootMode == .linuxKernel)
-            ? VZGenericMachineIdentifier().dataRepresentation
+            ? host.makeGenericMachineIdentifier()
             : nil
 
         // For an EFI install from an ISO already on disk, the installer goes in

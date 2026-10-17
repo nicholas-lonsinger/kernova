@@ -112,7 +112,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
             state.capturedConfigurations[snapshotID] = configuration
             return VMSnapshotCapturePlan(
                 saveFileURL: layout.snapshotLayout(id: snapshotID).saveFileURL,
-                relativePaths: VMBundleMachineFiles.capturedRelativePaths(
+                relativePaths: VMBundleItems.capturedRelativePaths(
                     for: configuration, layout: layout))
         }
     }
@@ -145,7 +145,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
             }
             return VMSnapshotRestorePlan(
                 configuration: configuration,
-                relativePaths: VMBundleMachineFiles.capturedRelativePaths(
+                relativePaths: VMBundleItems.capturedRelativePaths(
                     for: configuration, layout: layout),
                 kind: kind)
         }

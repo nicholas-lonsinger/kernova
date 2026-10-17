@@ -35,10 +35,14 @@ struct VMLibraryViewModelTests {
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualizationService,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: removableMediaDeviceService,
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,
@@ -47,7 +51,8 @@ struct VMLibraryViewModelTests {
             vmnetNetworks: .scripted(),
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -63,15 +68,22 @@ struct VMLibraryViewModelTests {
         let vm = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: suspending,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         vm.presenter = presenter
         vm.libraryWindowPresenter = presenter
@@ -2044,7 +2056,8 @@ struct VMLibraryViewModelTests {
 
     /// A CPU count the guest takes that is not `config`'s own.
     private func movedCPUCount(_ config: VMConfiguration) -> Int {
-        config.cpuCount == VMResourceLimits.cpuCount.lower ? config.cpuCount + 1 : config.cpuCount - 1
+        config.cpuCount == VirtualizationHost.frameworkResourceLimits.cpuCount.lower
+            ? config.cpuCount + 1 : config.cpuCount - 1
     }
 
     @Test("the configuration forward hands a consent refusal back without presenting it")
@@ -2204,7 +2217,9 @@ struct VMLibraryViewModelTests {
     {
         let storage = MockVMStorageService()
         for name in ["First VM", "Second VM"] {
-            var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+            var config = VMConfiguration(
+                name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
             config.macAddress = mac
             storage.bundles[VMInstanceFixture.bundleURL(for: config.id)] = config
         }
@@ -2935,15 +2950,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: installService,
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -3351,7 +3373,7 @@ struct VMLibraryViewModelTests {
     private func makeCreationWizard(
         name: String, startAfterCreate: Bool = true
     ) -> VMCreationViewModel {
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
         wizard.vmName = name
@@ -3362,7 +3384,7 @@ struct VMLibraryViewModelTests {
     /// A wizard filled in for a macOS VM whose image can be provisioned, with
     /// the account toggle on and the form filled.
     private func makeAccountCreationWizard(name: String) -> VMCreationViewModel {
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.vmName = name
         wizard.startAfterCreate = false
         wizard.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
@@ -3654,7 +3676,7 @@ struct VMLibraryViewModelTests {
         try Data(repeating: 0x12, count: 256).write(to: destination)
 
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "Overwrite VM"
@@ -3682,7 +3704,7 @@ struct VMLibraryViewModelTests {
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
 
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "No-overwrite VM"
@@ -3744,15 +3766,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: raceInstaller,
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -3840,7 +3869,9 @@ struct VMLibraryViewModelTests {
 
     @Test("A pending Linux image download loads as .initialBoot")
     func initialStatusHonorsLinuxContext() {
-        var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Debian", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let layout = VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: config.id))
 
@@ -3850,7 +3881,7 @@ struct VMLibraryViewModelTests {
     @Test("createVM persists a catalog pick's download context for Linux")
     func createVMPersistsLinuxDownloadContext() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
         wizard.vmName = "Catalog Linux VM"
@@ -3871,7 +3902,7 @@ struct VMLibraryViewModelTests {
     @Test("createVM leaves a local-ISO Linux VM with no download context")
     func createVMLocalISOHasNoLinuxContext() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
+        let wizard = VMCreationViewModel.overEngine()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
         wizard.vmName = "Local ISO VM"
@@ -4996,7 +5027,9 @@ struct VMLibraryViewModelTests {
     func importVMSourceAlreadyInVMsDirectory() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let vmsDir = try storage.vmsDirectory
-        let config = VMConfiguration(name: "Already There", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Already There", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
         let existing = viewModel.library.admitForTesting(
@@ -5284,7 +5317,9 @@ struct VMLibraryViewModelTests {
     func exactCopyCarriedSnapshotKeepsItsCapturedNetwork() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let taken = UUID()
-        var captured = VMConfiguration(name: "Original", guestOS: .linux, bootMode: .efi)
+        var captured = VMConfiguration(
+            name: "Original", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         captured.applyNetworkMode(.hostOnly)
         captured.networkMembership = .isolated
         captured.macAddress = "02:4b:4e:56:0d:01"
@@ -5750,11 +5785,26 @@ struct VMLibraryViewModelTests {
     func loadVMsAppliesCustomOrder() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
-            name: "First", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+            name: "First",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 100))
         let config2 = VMConfiguration(
-            name: "Second", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+            name: "Second",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 200))
         let config3 = VMConfiguration(
-            name: "Third", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 300))
+            name: "Third",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 300))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -5771,14 +5821,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: RemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5791,9 +5849,19 @@ struct VMLibraryViewModelTests {
     func loadVMsFallsBackToCreatedAt() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
-            name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+            name: "Older",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 100))
         let config2 = VMConfiguration(
-            name: "Newer", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+            name: "Newer",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 200))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -5811,7 +5879,12 @@ struct VMLibraryViewModelTests {
     func reconcileAppendsNewVMs() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
-            name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+            name: "Existing",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 200))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
@@ -5822,7 +5895,12 @@ struct VMLibraryViewModelTests {
 
         // Simulate a new VM appearing on disk
         let config2 = VMConfiguration(
-            name: "Discovered", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+            name: "Discovered",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 100))
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url2] = config2
@@ -5851,7 +5929,9 @@ struct VMLibraryViewModelTests {
     @Test("custom order ignores stale UUIDs not present in loaded VMs")
     func customOrderIgnoresStaleUUIDs() async {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Only VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
@@ -5863,14 +5943,22 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
+            removableMediaDeviceService: RemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter
@@ -5959,7 +6047,9 @@ struct VMLibraryViewModelTests {
     func onAgentBecameCurrentAutoEjectsInstaller() async throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let storage = MockVMStorageService()
-        var config = VMConfiguration(name: "Wired VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Wired VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.removableMedia = [
             RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         ]
@@ -6254,16 +6344,23 @@ struct VMLibraryViewModelTests {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: HostBridgedInterfaceProvider(),
             usbAccessoryService: MockUSBAccessoryService(),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            hostNotifications: .isolated(), hostPasteboard: FakePasteboard()
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard()
         )
         viewModel.presenter = presenter
         viewModel.libraryWindowPresenter = presenter

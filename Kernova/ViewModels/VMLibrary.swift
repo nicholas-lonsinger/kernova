@@ -47,11 +47,15 @@ final class VMLibrary: VMAdmissionPeers {
     /// without an entitlement reads it.
     let entitlements: EntitlementService
 
+    /// What Virtualization answers about this Mac — the resources a guest may
+    /// be given, fresh machine identities, its verdict on a guest account.
+    let virtualizationHost: any VirtualizationHostProviding
+
     /// The named networks VMs join together.
     let networks: VMNetworkDirectory
 
     /// The host interfaces a network naming one is titled from.
-    @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
+    @ObservationIgnored let bridgedInterfaces: any BridgedInterfaceProviding
     /// The library's smart groups, folders and tags.
     let organization: VMOrganizationDirectory
 
@@ -518,11 +522,13 @@ final class VMLibrary: VMAdmissionPeers {
         organization: VMOrganizationDirectory,
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore(),
-        bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
+        virtualizationHost: any VirtualizationHostProviding,
+        bridgedInterfaces: any BridgedInterfaceProviding,
         appActivation: HostNotification,
         hostPasteboard: any ClipboardPasteboard
     ) {
         self.storageService = storageService
+        self.virtualizationHost = virtualizationHost
         self.bridgedInterfaces = bridgedInterfaces
         self.appActivation = appActivation
         self.hostPasteboard = hostPasteboard

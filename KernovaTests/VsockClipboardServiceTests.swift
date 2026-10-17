@@ -844,7 +844,7 @@ struct VsockClipboardServiceTests {
         /// Dials one transfer's data connection into the service — the guest's
         /// half of every answer — and returns the guest's end of it.
         ///
-        /// Queued onto the main actor exactly the way `VsockListenerHost` delivers
+        /// Queued onto the main actor exactly the way `VsockListener` delivers
         /// an accepted connection in production, so the double's timing is the
         /// service's real timing. The guest's end is writable whenever the accept
         /// lands, so nothing here waits for it.

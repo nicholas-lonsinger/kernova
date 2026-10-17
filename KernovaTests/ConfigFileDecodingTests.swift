@@ -13,7 +13,9 @@ struct ConfigFileDecodingTests {
     private static let unrecognized = "plan9-mode"
 
     private func configJSON(_ edit: (inout [String: Any]) -> Void = { _ in }) throws -> Data {
-        let config = VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let data = try VMConfiguration.makeJSONEncoder().encode(config)
         var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         edit(&object)
@@ -43,7 +45,9 @@ struct ConfigFileDecodingTests {
             $0["displayHiDPI"] = "yes"
         }
         let diagnosis = diagnose(data)
-        let fresh = VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+        let fresh = VMConfiguration(
+            name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         #expect(
             diagnosis.problems == [
@@ -66,7 +70,12 @@ struct ConfigFileDecodingTests {
     func anAbsentDefaultedFieldIsNoProblem() throws {
         let data = try configJSON { $0["networkMode"] = nil }
         let strict = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-        #expect(strict.networkMode == VMConfiguration(name: "", guestOS: .linux, bootMode: .efi).networkMode)
+        #expect(
+            strict.networkMode
+                == VMConfiguration(
+                    name: "", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize
+                ).networkMode)
         #expect(diagnose(data).problems.isEmpty)
     }
 
@@ -493,7 +502,9 @@ struct ConfigFileDecodingTests {
             try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
         }
         let diagnosis = diagnose(data)
-        let fresh = VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+        let fresh = VMConfiguration(
+            name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         #expect(
             diagnosis.problems.map(\.path?.description) == ["$.bridgedInterfaceIdentifier", "$.kernelCommandLine"])

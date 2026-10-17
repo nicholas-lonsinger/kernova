@@ -940,7 +940,7 @@ struct VMCommandCoreAttachmentTests {
         let context = instance.beginSessionContextForTesting()
         if !directories.isEmpty {
             context.directoryShare =
-                try serving ?? ConfigurationBuilder.macOSDirectoryShare(for: directories)
+                try serving ?? MacOSDirectoryShare.make(for: directories)
         }
         return instance
     }
@@ -969,7 +969,7 @@ struct VMCommandCoreAttachmentTests {
         let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept, going])
         let device = try #require(LiveShareDevice(of: instance))
         let added = SharedDirectory(path: try folder("added"))
-        let next = try ConfigurationBuilder.macOSDirectoryShare(
+        let next = try MacOSDirectoryShare.make(
             for: [kept, added], serving: device.serving)
 
         let swap = device.swap(to: next)
@@ -1036,7 +1036,7 @@ struct VMCommandCoreAttachmentTests {
         try harness.core.removeSharedDirectory(.id(instance.id), directory: first.id)
 
         #expect(instance.sessionContext?.directoryShare?.entries.map(\.name) == [second.mountName])
-        let rebuilt = try ConfigurationBuilder.macOSDirectoryShare(
+        let rebuilt = try MacOSDirectoryShare.make(
             for: instance.configuration.sharedDirectories ?? [])
         #expect(rebuilt.entries.map(\.name) == [second.mountName])
     }

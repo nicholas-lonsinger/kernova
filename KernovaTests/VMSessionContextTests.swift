@@ -165,19 +165,17 @@ struct VMSessionContextTests {
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
-    private static func buildResult(
+    private static func buildProducts(
         coldRemovableMedia: [RemovableMediaDeviceInfo] = []
-    ) -> ConfigurationBuilder.BuildResult {
-        ConfigurationBuilder.BuildResult(
-            configuration: VZVirtualMachineConfiguration(),
+    ) -> VMSessionBuildProducts {
+        VMSessionBuildProducts(
             serialInputPipe: Pipe(),
             serialOutputPipe: Pipe(),
             clipboardInputPipe: Pipe(),
             clipboardOutputPipe: Pipe(),
             coldRemovableMedia: coldRemovableMedia,
             directoryShare: nil,
-            vmnetNetworks: VmnetNetworkService.scripted().sessionNetworks(ownedBy: UUID()),
-            entitlements: .unentitled)
+            vmnetNetworks: VmnetNetworkService.scripted().sessionNetworks(ownedBy: UUID()))
     }
 
     @Test("A bring-up that tries again releases the previous attempt's context before opening the next")
@@ -203,17 +201,17 @@ struct VMSessionContextTests {
         #expect(instance.sessionContext == nil)
     }
 
-    // MARK: - Build result
+    // MARK: - Build products
 
-    @Test("adoptBuildResult takes the build's pipes and cold-attached media")
-    func adoptBuildResultPopulatesTheContext() async throws {
+    @Test("adoptBuildProducts takes the build's pipes and cold-attached media")
+    func adoptBuildProductsPopulatesTheContext() async throws {
         let instance = makeInstance(guestOS: .linux, phase: .stopped)
         let media = RemovableMediaDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
-        let result = Self.buildResult(coldRemovableMedia: [media])
+        let result = Self.buildProducts(coldRemovableMedia: [media])
 
         try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             let session = instance.beginSessionContext(context)
-            instance.adoptBuildResult(context, result)
+            instance.adoptBuildProducts(context, result)
 
             #expect(session.serialInputPipe === result.serialInputPipe)
             #expect(session.serialOutputPipe === result.serialOutputPipe)
@@ -282,7 +280,7 @@ struct VMSessionContextTests {
         let coldBooted = RemovableMediaDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
         try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             instance.beginSessionContext(context)
-            instance.adoptBuildResult(context, Self.buildResult(coldRemovableMedia: [coldBooted]))
+            instance.adoptBuildProducts(context, Self.buildProducts(coldRemovableMedia: [coldBooted]))
             context.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
         }.value()

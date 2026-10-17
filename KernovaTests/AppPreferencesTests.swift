@@ -183,7 +183,9 @@ struct AppPreferencesTests {
     @Test("A guest running macOS 12 or earlier is offered only Clone as Exact Copy")
     func cloneMenuItemsOfAMontereyGuestOfferOnlyAnExactCopy() {
         let (prefs, _) = makePreferences()
-        var monterey = VMConfiguration(name: "Monterey", guestOS: .macOS, bootMode: .macOS)
+        var monterey = VMConfiguration(
+            name: "Monterey", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         monterey.lastSeenGuestOSVersion = "12.7.6"
         for preferred in CloneOutcome.allCases {
             prefs.cloneOutcome = preferred

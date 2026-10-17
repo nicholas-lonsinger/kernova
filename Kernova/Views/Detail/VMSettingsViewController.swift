@@ -3,7 +3,6 @@ import AppKit
 import KernovaKit
 import KernovaLogging
 import UniformTypeIdentifiers
-import Virtualization
 
 /// Pure-AppKit settings pane for editing a stopped VM's configuration, or
 /// viewing a running VM's configuration in read-only mode.
@@ -75,7 +74,7 @@ final class VMSettingsViewController: NSViewController {
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
         isReadOnly: Bool,
-        bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
+        bridgedInterfaces: any BridgedInterfaceProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },

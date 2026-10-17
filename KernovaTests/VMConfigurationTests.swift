@@ -48,14 +48,14 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Test macOS VM",
             guestOS: .macOS,
-            bootMode: .macOS
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize
         )
 
         #expect(config.name == "Test macOS VM")
         #expect(config.guestOS == .macOS)
         #expect(config.bootMode == .macOS)
-        #expect(config.cpuCount == VMGuestOS.macOS.defaultCPUCount)
-        #expect(config.memorySizeInGB == VMGuestOS.macOS.defaultMemorySize)
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
         #expect(config.networkEnabled == true)
         #expect(config.displayWidth == 1920)
@@ -68,13 +68,13 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Test Linux VM",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
 
         #expect(config.guestOS == .linux)
         #expect(config.bootMode == .efi)
-        #expect(config.cpuCount == VMGuestOS.linux.defaultCPUCount)
-        #expect(config.memorySizeInGB == VMGuestOS.linux.defaultMemorySize)
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
@@ -129,7 +129,11 @@ struct VMConfigurationTests {
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.dropFilesEnabled)
-        #expect(VMConfiguration(name: "New VM", guestOS: .macOS, bootMode: .macOS).dropFilesEnabled)
+        #expect(
+            VMConfiguration(
+                name: "New VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+                memorySizeInGB: VMGuestOS.macOS.hostMemorySize
+            ).dropFilesEnabled)
     }
 
     // MARK: - SharedDirectory Tests
@@ -175,6 +179,8 @@ struct VMConfigurationTests {
             name: "Linux VM",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             removableMedia: [
                 RemovableMediaItem(
                     path: "/Users/test/Downloads/ubuntu.iso", readOnly: true, notes: "install media")
@@ -205,6 +211,8 @@ struct VMConfigurationTests {
             name: "Bookmarked VM",
             guestOS: .linux,
             bootMode: .linuxKernel,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             kernelPath: "/boot/vmlinuz",
             initrdPath: "/boot/initrd",
             kernelBookmark: Data([0x0A]),
@@ -279,7 +287,9 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "No Shares",
             guestOS: .macOS,
-            bootMode: .macOS
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize
         )
 
         let data = try JSONEncoder().encode(config)
@@ -334,6 +344,8 @@ struct VMConfigurationTests {
             name: "Multi-Disk VM",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             storageDisks: [
                 StorageDisk(
                     path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: false,
@@ -387,7 +399,9 @@ struct VMConfigurationTests {
 
     @Test("effectiveStorageDisks synthesizes the main disk when storageDisks is nil")
     func effectiveStorageDisksSynthesizesMainDiskForNil() {
-        let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/effective-nil.kernova"))
 
         let disks = config.effectiveStorageDisks(layout: layout)
@@ -400,7 +414,9 @@ struct VMConfigurationTests {
 
     @Test("effectiveStorageDisks synthesizes the main disk when storageDisks is empty")
     func effectiveStorageDisksSynthesizesMainDiskForEmpty() {
-        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = []
         let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/effective-empty.kernova"))
 
@@ -413,7 +429,9 @@ struct VMConfigurationTests {
             StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio),
             StorageDisk(path: "/tmp/data.asif", label: "Data"),
         ]
-        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = disks
         let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/effective-configured.kernova"))
 
@@ -423,7 +441,11 @@ struct VMConfigurationTests {
     @Test("setStorageDisks stores nil for an empty list")
     func setStorageDisksStoresNilForEmpty() {
         var config = VMConfiguration(
-            name: "Test VM", guestOS: .linux, bootMode: .efi,
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             storageDisks: [StorageDisk(path: "/tmp/data.asif", label: "Data")])
 
         config.setStorageDisks([])
@@ -433,7 +455,9 @@ struct VMConfigurationTests {
 
     @Test("setStorageDisks stores a non-empty list as given")
     func setStorageDisksStoresNonEmptyList() {
-        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let disk = StorageDisk(path: "/tmp/data.asif", label: "Data")
 
         config.setStorageDisks([disk])
@@ -453,6 +477,8 @@ struct VMConfigurationTests {
             name: "Pending macOS VM",
             guestOS: .macOS,
             bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
             installContext: context
         )
 
@@ -479,6 +505,8 @@ struct VMConfigurationTests {
             name: "Local IPSW VM",
             guestOS: .macOS,
             bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
             installContext: context
         )
 
@@ -500,7 +528,9 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Plain VM",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
 
         let data = try JSONEncoder().encode(config)
@@ -517,7 +547,11 @@ struct VMConfigurationTests {
             fullName: "Ada Lovelace", username: "ada", logsInAutomatically: true,
             enablesRemoteLogin: true)
         let config = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS,
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
             pendingGuestAccount: account)
 
         let data = try VMConfiguration.makeJSONEncoder().encode(config)
@@ -550,7 +584,9 @@ struct VMConfigurationTests {
 
     @Test("A clone owes no account: the bundle it copies has already booted")
     func cloneDropsThePendingGuestAccount() {
-        var config = VMConfiguration(name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.pendingGuestAccount = GuestAccountIntent(
             fullName: "Ada Lovelace", username: "ada", logsInAutomatically: true,
             enablesRemoteLogin: false)
@@ -567,7 +603,11 @@ struct VMConfigurationTests {
         // The only shape the boundary offers: four values to the configuration,
         // the password left with the credentials.
         let config = VMConfiguration(
-            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS,
+            name: "Unattended VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
             pendingGuestAccount: GuestAccountIntent(
                 fullName: credentials.fullName, username: credentials.username,
                 logsInAutomatically: credentials.logsInAutomatically,
@@ -598,6 +638,8 @@ struct VMConfigurationTests {
             name: "Pending Debian VM",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             linuxInstallContext: context
         )
 
@@ -615,7 +657,9 @@ struct VMConfigurationTests {
 
     @Test("VMConfiguration with nil linuxInstallContext omits field from JSON")
     func nilLinuxInstallContextOmittedFromJSON() throws {
-        let config = VMConfiguration(name: "Plain VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Plain VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         let data = try JSONEncoder().encode(config)
         let jsonObject = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -664,12 +708,20 @@ struct VMConfigurationTests {
     @Test("System key forwarding defaults to always, and round-trips")
     func systemKeyForwardingRoundTrips() throws {
         #expect(
-            VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
-                .systemKeyForwarding == .always)
+            VMConfiguration(
+                name: "Test VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+                memorySizeInGB: VMGuestOS.macOS.hostMemorySize
+            )
+            .systemKeyForwarding == .always)
 
         for mode in VMSystemKeyForwarding.allCases {
             let config = VMConfiguration(
-                name: "Keys VM", guestOS: .macOS, bootMode: .macOS, systemKeyForwarding: mode)
+                name: "Keys VM",
+                guestOS: .macOS,
+                bootMode: .macOS,
+                cpuCount: VMGuestOS.macOS.hostCPUCount,
+                memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
+                systemKeyForwarding: mode)
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             let decoder = JSONDecoder()
@@ -695,8 +747,14 @@ struct VMConfigurationTests {
     @Test("displayResolution reads and writes the stored trio")
     func displayResolutionAccessesTheTrio() {
         var config = VMConfiguration(
-            name: "Test VM", guestOS: .macOS, bootMode: .macOS,
-            displayWidth: 2560, displayHeight: 1600, displayPPI: 220)
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
+            displayWidth: 2560,
+            displayHeight: 1600,
+            displayPPI: 220)
         #expect(config.displayResolution == DisplayBootSizing.Resolution(width: 2560, height: 1600, ppi: 220))
 
         config.displayResolution = DisplayBootSizing.Resolution(width: 1280, height: 800, ppi: 144)
@@ -712,7 +770,9 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
         #expect(config.clipboardSharingEnabled == false)
     }
@@ -746,7 +806,9 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .macOS,
-            bootMode: .macOS
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize
         )
         #expect(config.lastSeenAgentVersion == nil)
     }
@@ -758,7 +820,9 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .macOS,
-            bootMode: .macOS
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize
         )
         #expect(config.lastSeenGuestOSVersion == nil)
     }
@@ -769,6 +833,8 @@ struct VMConfigurationTests {
             name: "Persisted VM",
             guestOS: .macOS,
             bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)"
         )
 
@@ -790,7 +856,9 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .macOS,
-            bootMode: .macOS
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize
         )
         #expect(config.installedImage == nil)
     }
@@ -801,6 +869,8 @@ struct VMConfigurationTests {
             name: "Persisted VM",
             guestOS: .macOS,
             bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
         )
 
@@ -816,6 +886,8 @@ struct VMConfigurationTests {
             name: "Persisted VM",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             installedImage: .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil)
         )
 
@@ -846,7 +918,9 @@ struct VMConfigurationTests {
 
     @Test("networkChoice maps the persisted fields and is nil without a device")
     func networkChoiceMapsPersistedFields() {
-        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.networkMode = .bridged
         config.bridgedInterfaceIdentifier = "en0"
         #expect(
@@ -875,6 +949,8 @@ struct VMConfigurationTests {
             name: "Host Only VM",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             networkMode: .hostOnly
         )
 
@@ -904,7 +980,9 @@ struct VMConfigurationTests {
 
     @Test("An isolated config round-trips onto a network only it joins")
     func isolationRoundTripsOntoTheVMsOwnNetwork() throws {
-        var config = VMConfiguration(name: "Isolated", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Isolated", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.networkMembership = .isolated
         let decoded = try VMConfiguration.makeJSONDecoder().decode(
             VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
@@ -921,7 +999,9 @@ struct VMConfigurationTests {
     @Test("A named network's membership persists as its identifier and joins that network in the VM's mode")
     func namedMembershipRoundTripsAsItsIdentifier() throws {
         let lab = UUID()
-        var config = VMConfiguration(name: "Member", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Member", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.networkMembership = .network(lab)
         let data = try VMConfiguration.makeJSONEncoder().encode(config)
         let stored = try #require(
@@ -951,7 +1031,9 @@ struct VMConfigurationTests {
 
     @Test("inputDeviceMode defaults to automatic, in the initializer and on a missing key")
     func inputDeviceModeDefaults() throws {
-        let config = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+        let config = VMConfiguration(
+            name: "Test VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         #expect(config.inputDeviceMode == .automatic)
 
         let decoder = JSONDecoder()
@@ -962,7 +1044,9 @@ struct VMConfigurationTests {
 
     @Test("Configuration preserves an explicit input device mode")
     func inputDeviceModeRoundTrip() throws {
-        var config = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.inputDeviceMode = .usb
 
         let encoder = JSONEncoder()
@@ -1074,6 +1158,21 @@ struct VMConfigurationTests {
 
     // MARK: - Missing Required Fields
 
+    @Test("Decoding JSON missing a resource field throws for that key", arguments: ["cpuCount", "memorySizeInGB"])
+    func missingResourceFieldThrows(_ key: String) {
+        let json = Self.makeBaseJSON().replacingOccurrences(
+            of: #""\#(key)": \d+,"#, with: "", options: .regularExpression)
+        #expect(!json.contains("\"\(key)\""))
+        do {
+            _ = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+            Issue.record("Decoded a configuration with no \(key)")
+        } catch DecodingError.keyNotFound(let missing, _) {
+            #expect(missing.stringValue == key)
+        } catch {
+            Issue.record("Expected keyNotFound(\(key)), got \(error)")
+        }
+    }
+
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
         // Omits the required field clipboardSharingEnabled. (The audio keys are
@@ -1107,7 +1206,9 @@ struct VMConfigurationTests {
     @Test("removableMediaChanged detects a readOnly flip on an existing item")
     func removableMediaChangedDetectsReadOnlyFlip() {
         let id = UUID()
-        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        var base = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         base.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         var modified = base
         modified.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
@@ -1118,7 +1219,9 @@ struct VMConfigurationTests {
     func removableMediaChangedIgnoresStorageDisks() {
         // Storage disks are restart-only on VZ (storageDevices is fixed at
         // VM start). The live reconcile flow only acts on removableMedia.
-        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        let base = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         var modified = base
         modified.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
@@ -1128,7 +1231,9 @@ struct VMConfigurationTests {
 
     @Test("removableMediaChanged detects list mutations")
     func removableMediaChangedDetectsMutations() {
-        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        let base = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         var added = base
         added.removableMedia = [RemovableMediaItem(path: "/tmp/install.iso", readOnly: true)]
         #expect(VMConfiguration.removableMediaChanged(old: base, new: added))
@@ -1144,7 +1249,11 @@ struct VMConfigurationTests {
         // Whole-second creation date: the ISO-8601 strategy drops fractional
         // seconds, which would break exact equality after the round trip.
         let config = VMConfiguration(
-            name: "Round Trip", guestOS: .linux, bootMode: .efi, cpuCount: 4,
+            name: "Round Trip",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: 4,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             createdAt: Date(timeIntervalSince1970: 1_750_000_000))
         let bundleURL = try makeBundle(config)
 
@@ -1166,7 +1275,9 @@ struct VMConfigurationTests {
 
     @Test("Adopting a snapshot's state takes its hardware and keeps this VM's identity")
     func adoptingSnapshotStateKeepsIdentity() {
-        var current = VMConfiguration(name: "Renamed since", guestOS: .macOS, bootMode: .macOS)
+        var current = VMConfiguration(
+            name: "Renamed since", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         current.memorySizeInGB = .gibibytes(16)
         current.cpuCount = 8
         current.audioInputEnabled = true

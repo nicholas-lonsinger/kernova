@@ -16,7 +16,8 @@ struct VMConfigurationKeyRegistryTests {
     private func makeConfiguration(guestOS: VMGuestOS = .macOS) -> VMConfiguration {
         VMConfiguration(
             name: "Alpha", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            cpuCount: guestOS.defaultCPUCount, memorySizeInGB: guestOS.defaultMemorySize,
+            cpuCount: guestOS.defaultCPUCount(within: VirtualizationHost.frameworkResourceLimits),
+            memorySizeInGB: guestOS.defaultMemorySize(within: VirtualizationHost.frameworkResourceLimits),
             displayWidth: 3840, displayHeight: 2400,
             displayPPI: guestOS == .macOS
                 ? DisplayBootSizing.hiDPIPixelsPerInch : DisplayBootSizing.standardPixelsPerInch,
@@ -35,7 +36,8 @@ struct VMConfigurationKeyRegistryTests {
         networks: [VMNamedNetwork] = []
     ) -> VMConfigurationWriteContext {
         VMConfigurationWriteContext(
-            snapshots: manifest ?? makeManifest(), entitlements: entitlements, networks: .listed(networks))
+            snapshots: manifest ?? makeManifest(), entitlements: entitlements, networks: .listed(networks),
+            resourceLimits: VirtualizationHost.frameworkResourceLimits)
     }
 
     /// Writes `key` into whichever half of `settings` holds it.
@@ -222,11 +224,11 @@ struct VMConfigurationKeyRegistryTests {
     func outOfRangeValuesAreRefused() throws {
         let original = makeConfiguration()
         let cases: [(key: String, value: String)] = [
-            ("cpus", String(VMResourceLimits.cpuCount.lower - 1)),
-            ("cpus", String(VMResourceLimits.cpuCount.upper + 1)),
+            ("cpus", String(VirtualizationHost.frameworkResourceLimits.cpuCount.lower - 1)),
+            ("cpus", String(VirtualizationHost.frameworkResourceLimits.cpuCount.upper + 1)),
             ("cpus", "four"),
             ("memory", "0"),
-            ("memory", VMResourceLimits.memorySize.upper.adding(gibibytes: 1).gibibytesText),
+            ("memory", VirtualizationHost.frameworkResourceLimits.memorySize.upper.adding(gibibytes: 1).gibibytesText),
             ("memory", "lots"),
             ("display.width", "0"),
             ("display.width", String(original.displayBaseSizeBounds.upper + 1)),

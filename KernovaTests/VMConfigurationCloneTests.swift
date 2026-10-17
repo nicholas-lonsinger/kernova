@@ -16,6 +16,8 @@ struct VMConfigurationCloneTests {
             name: name,
             guestOS: guestOS,
             bootMode: bootMode,
+            cpuCount: guestOS.hostCPUCount,
+            memorySizeInGB: guestOS.hostMemorySize,
             hardwareModelData: hardwareModelData,
             sharedDirectories: sharedDirectories
         )
@@ -36,6 +38,8 @@ struct VMConfigurationCloneTests {
             name: "Old VM",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             createdAt: Date.distantPast
         )
         let clone = original.clonedForNewInstance(existingNames: [])
@@ -83,6 +87,8 @@ struct VMConfigurationCloneTests {
             name: "Test",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             displayWidth: 2560,
             displayHeight: 1440,
             displayPPI: 218
@@ -100,6 +106,8 @@ struct VMConfigurationCloneTests {
             name: "Test",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             networkEnabled: true,
             macAddress: "aa:bb:cc:dd:ee:ff"
         )
@@ -117,6 +125,8 @@ struct VMConfigurationCloneTests {
             name: "Test",
             guestOS: .linux,
             bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
             networkMode: .bridged,
             bridgedInterfaceIdentifier: "en0"
         )

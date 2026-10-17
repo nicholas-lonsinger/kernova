@@ -47,7 +47,9 @@ struct VMNetworkDirectoryTests {
     func theJoinedNetworkMatchesItsKind() throws {
         let directory = VMNetworkDirectory(fileURL: nil)
         let lab = try directory.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
-        var config = VMConfiguration(name: "Member", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Member", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.networkMembership = .network(lab.id)
 
         #expect(directory.network(joinedBy: config) == nil)

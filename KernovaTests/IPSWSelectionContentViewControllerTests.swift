@@ -16,7 +16,8 @@ struct IPSWSelectionContentViewControllerTests {
     /// popover repeating them.
     @Test("The step shows its subtitle and each source's description, and no title popover")
     func showsSubtitleAndDescriptions() {
-        let vc = IPSWSelectionContentViewController(creationVM: VMCreationViewModel())
+        let vc = IPSWSelectionContentViewController(
+            creationVM: VMCreationViewModel.overEngine())
         vc.loadViewIfNeeded()
 
         for text in [
@@ -36,7 +37,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Defaults to Download Latest with the default destination shown")
     func defaultDownloadSelected() {
-        let vm = VMCreationViewModel()  // macOS + downloadLatest, default download path
+        let vm = VMCreationViewModel.overEngine()  // macOS + downloadLatest, default download path
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
@@ -51,7 +52,7 @@ struct IPSWSelectionContentViewControllerTests {
     func downloadLatestShowsLookedUpImage() async {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
-        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -74,7 +75,7 @@ struct IPSWSelectionContentViewControllerTests {
     func downloadLatestShowsImageWithoutItsSize() async {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeError = RestoreImageProbeError.unknownSize
-        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -88,8 +89,7 @@ struct IPSWSelectionContentViewControllerTests {
     func downloadLatestFallsBackToThePathBadge() async {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -106,7 +106,7 @@ struct IPSWSelectionContentViewControllerTests {
         let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.ipswDownloadPath = path
         #expect(vm.shouldShowOverwriteWarning == true)
 
@@ -136,7 +136,7 @@ struct IPSWSelectionContentViewControllerTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true, sizeBytes: 8_500_000_000)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
         vm.ipswDownloadPath = path
@@ -169,7 +169,7 @@ struct IPSWSelectionContentViewControllerTests {
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.ipswDownloadPath = path
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -188,7 +188,7 @@ struct IPSWSelectionContentViewControllerTests {
         let path = makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.ipswDownloadPath = path
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -209,7 +209,7 @@ struct IPSWSelectionContentViewControllerTests {
     @Test("Leaving the step and returning while a pick's inspection is still running redraws when it lands")
     func reenteringMidInspectionPicksTheWatchBackUp() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         try await inspector.waitUntilInspecting()
 
@@ -236,7 +236,7 @@ struct IPSWSelectionContentViewControllerTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -257,7 +257,7 @@ struct IPSWSelectionContentViewControllerTests {
     @Test("A pending pick leaves the checking message to the nav bar")
     func pendingPickLeavesCheckingToNavBar() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         try await inspector.waitUntilInspecting()
 
@@ -277,7 +277,7 @@ struct IPSWSelectionContentViewControllerTests {
     func overwriteConfirm() {
         let path = makeIPSW()
 
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.ipswDownloadPath = path
         #expect(vm.shouldShowOverwriteWarning == true)
 
@@ -297,7 +297,7 @@ struct IPSWSelectionContentViewControllerTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
         vm.ipswDownloadPath = path
@@ -323,7 +323,7 @@ struct IPSWSelectionContentViewControllerTests {
         let path = makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.ipswDownloadPath = path
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -354,7 +354,7 @@ struct IPSWSelectionContentViewControllerTests {
     @available(macOS 27.0, *)
     @Test("An image that can be provisioned offers the account toggle")
     func provisionableImageOffersTheAccountToggle() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -364,7 +364,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("An image that can't be provisioned shows no account toggle at all")
     func unprovisionableImageShowsNoAccountToggle() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -378,7 +378,7 @@ struct IPSWSelectionContentViewControllerTests {
     @available(macOS 27.0, *)
     @Test("The account toggle writes back, and a pick that can't deliver takes the offer away")
     func accountToggleWritesBackAndRetracts() throws {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel.overEngine()
         vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()

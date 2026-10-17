@@ -37,6 +37,15 @@ enum VMInstanceFixture {
             hostPasteboard: FakePasteboard())
     }
 
+    /// A fresh configuration for a `guestOS` VM named `name`, with the
+    /// resources the creation wizard gives one on this Mac — inside the bounds
+    /// a configuration write is checked against.
+    static func makeConfiguration(name: String, guestOS: VMGuestOS) -> VMConfiguration {
+        VMConfiguration(
+            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
+            cpuCount: guestOS.hostCPUCount, memorySizeInGB: guestOS.hostMemorySize)
+    }
+
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
     /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``
     /// and a library's fixture admission build their bundle from.
@@ -45,8 +54,7 @@ enum VMInstanceFixture {
         pairings: USBAccessoryPairingSet, files: InMemoryVMBundleFiles,
         mutate: (inout VMConfiguration) -> Void
     ) -> VMBundleRead {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+        var config = makeConfiguration(name: name, guestOS: guestOS)
         mutate(&config)
         let url = bundleURL(for: config.id)
         files.seed(config, hostState: hostState, snapshots: snapshots, pairings: pairings, at: url)
@@ -64,8 +72,7 @@ enum VMInstanceFixture {
         name: String, guestOS: VMGuestOS, snapshots: VMSnapshotManifest,
         mutate: (inout VMConfiguration) -> Void
     ) throws -> VMBundleRead {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+        var config = makeConfiguration(name: name, guestOS: guestOS)
         mutate(&config)
         let url = bundleURL(for: config.id)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -121,4 +128,13 @@ extension VMBundle.Factory {
                 removableMedia: VMRemovableMediaReconciler(lifecycle: makeTestLifecycle()),
                 guestAddresses: guestAddresses))
     }
+}
+
+extension VMGuestOS {
+    /// The CPU count the creation wizard gives a new guest of this OS on this
+    /// Mac.
+    var hostCPUCount: Int { defaultCPUCount(within: VirtualizationHost.frameworkResourceLimits) }
+
+    /// The memory the creation wizard gives a new guest of this OS on this Mac.
+    var hostMemorySize: VMMemorySize { defaultMemorySize(within: VirtualizationHost.frameworkResourceLimits) }
 }
