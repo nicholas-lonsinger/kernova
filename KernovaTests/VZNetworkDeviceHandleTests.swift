@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VZNetworkDeviceHandle Tests", .caseScoped)
 @MainActor
@@ -19,7 +20,7 @@ struct VZNetworkDeviceHandleTests {
         return Harness(
             handle: VZNetworkDeviceHandle(
                 session: install, initialPlan: initialPlan, vmnetNetworks: sessionNetworks,
-                vmnetAttachments: MockVmnetNetworkOperator()),
+                vmnetAttachments: MockVmnetAttachments()),
             install: install)
     }
 

@@ -3,6 +3,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Shared fixtures for the app-level suites: the ``MainMenuController`` ones and
 /// every suite that needs a mocked ``VMLibraryViewModel`` to build an app
@@ -33,7 +34,7 @@ func makeLibraryViewModel(
     VMLibraryViewModel(
         storageService: storageService,
         diskImageService: diskImageService,
-        machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+        machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()),
         virtualizationHost: VirtualizationHost(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
@@ -50,7 +51,8 @@ func makeLibraryViewModel(
         entitlements: .entitled,
         organization: organization,
         hostNotifications: .isolated(),
-        hostPasteboard: FakePasteboard()
+        hostPasteboard: FakePasteboard(),
+        guestAgent: .testing
     )
 }
 

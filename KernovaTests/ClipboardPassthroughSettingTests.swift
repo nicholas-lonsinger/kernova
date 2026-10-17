@@ -1,6 +1,7 @@
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The confirmation outcomes of the clipboard flags' one write path, which
 /// every surface offering either switch goes through.

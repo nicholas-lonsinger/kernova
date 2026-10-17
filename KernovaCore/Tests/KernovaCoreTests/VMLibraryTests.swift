@@ -1,0 +1,1198 @@
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+@Suite("VMLibrary Tests", .serialized, .caseScoped)
+@MainActor
+struct VMLibraryTests {
+    private let scratch = TestScratchDirectory(prefix: "VMLibraryTests")
+    /// What the library asked a user to be told, in place of a presenter.
+    ///
+    /// Fresh per test (the struct is re-instantiated).
+    private let failures = MockLibraryFailureSink()
+    private let preferences = makeTestPreferences()
+    /// Records trash/remove requests so nothing ever lands in the user's Trash.
+    private let fileSystem = MockFileSystem()
+
+    private func makeLibrary(
+        storageService: MockVMStorageService = MockVMStorageService(),
+        virtualizationService: MockVirtualizationService = MockVirtualizationService(),
+        removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
+        linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
+        downloadService: MockDownloadService = MockDownloadService(),
+        downloadsDirectory: URL? = nil,
+        vmnetNetworks: VmnetNetworkService = .scripted(),
+        arpTable: ScriptedARPTable = ScriptedARPTable(),
+        appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive
+    ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
+        let library = makeWiredLibrary(
+            storage: storageService,
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()),
+            lifecycle: makeTestLifecycle(
+                virtualization: virtualizationService,
+                removableMedia: removableMediaDeviceService,
+                linuxImageResolveService: linuxImageResolveService,
+                downloadService: downloadService,
+                fileSystem: fileSystem,
+                downloadsDirectory: downloadsDirectory),
+            fileSystem: fileSystem,
+            preferences: preferences,
+            vmnetNetworks: vmnetNetworks,
+            arpTable: arpTable,
+            appActivation: appActivation)
+        library.onFailure = { [failures] title, message, subject in
+            failures.record(title: title, message: message, subject: subject)
+        }
+        library.onUnreadableFilesFound = { [failures] in failures.recordCheckRequest() }
+        return (library, storageService, virtualizationService, removableMediaDeviceService)
+    }
+
+    // MARK: - Load
+
+    @Test("init reads nothing — the library is loaded after launch, not during construction")
+    func initDoesNotReadStorage() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url = scratch.url
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+
+        #expect(storage.listVMBundlesCallCount == 0)
+        #expect(library.instances.isEmpty)
+        #expect(library.hasLoadedLibrary == false)
+    }
+
+    @Test("startLibrary reclaims what an interrupted run left staged")
+    func startLibraryReclaimsStagedBundles() async {
+        let (library, storage, _, _) = makeLibrary()
+
+        await library.startLibrary()
+
+        #expect(storage.reclaimStagedBundlesCallCount == 1)
+        #expect(library.hasLoadedLibrary == true)
+    }
+
+    @Test("A bundle read leaves an interrupted revert's staging in place, and the launch reclaim removes it")
+    func launchReclaimsRestoreStaging() async throws {
+        let storage = MockVMStorageService()
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        let config = VMConfiguration(
+            name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let bundleURL = try storage.bundleURL(for: config)
+        storage.bundles[bundleURL] = config
+        let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
+
+        _ = try library.bundleReader.read(at: bundleURL)
+        #expect(FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
+
+        await library.startLibrary()
+        #expect(!FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
+    }
+
+    @Test("hasLoadedLibrary flips once the read applies, even for an empty library")
+    func hasLoadedLibraryFlipsOnEmptyLibrary() async {
+        let (library, _, _, _) = makeLibrary()
+        #expect(library.hasLoadedLibrary == false)
+
+        await library.loadVMs()
+
+        #expect(library.hasLoadedLibrary == true)
+        #expect(library.instances.isEmpty)
+    }
+
+    @Test("hasLoadedLibrary flips even when the bundle listing fails")
+    func hasLoadedLibraryFlipsWhenListingFails() async {
+        let storage = MockVMStorageService()
+        storage.listVMBundlesError = VMStorageError.bundleNotFound(scratch.url)
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        // The read is over and the answer is "no VMs" — the UI must not wait
+        // forever on a load that already failed.
+        #expect(library.hasLoadedLibrary == true)
+        #expect(library.instances.isEmpty)
+        #expect(failures.showError == true)
+        #expect(failures.errorSubject?.isLibrary == true)
+    }
+
+    @Test("An arrival registered while the read is in flight survives the load")
+    func loadVMsKeepsArrivalsAddedDuringTheRead() async {
+        let storage = MockVMStorageService()
+        let onDisk = VMConfiguration(
+            name: "On Disk", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url = scratch.url
+            .appendingPathComponent("\(onDisk.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = onDisk
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+
+        let load = Task { @MainActor in await library.loadVMs() }
+        // Runs behind `load`, so `loadVMs` has captured the pre-read instance
+        // list and suspended on the detached scan. The append below then lands
+        // in the read window, with no `await` before it for `apply` to slip in.
+        await Task { @MainActor in }.value
+
+        // An import or a wizard-created VM registered after the scan started,
+        // so the scan cannot know about it.
+        let gate = GatedStep()
+        let arrival = library.beginGatedArrival(named: "Arrived Mid-Read", gate: gate)
+
+        _ = await load.value
+
+        // The scan's result must not delete it — its bundle copy is still
+        // running, and nothing else would put the row back.
+        #expect(library.arrivals.map(\.id) == [arrival.id])
+        #expect(library.instances.map(\.id) == [onDisk.id])
+        #expect(library.entries.count == 2)
+
+        gate.release()
+        await arrival.settle()
+    }
+
+    @Test("loadVMs auto-selects the first VM")
+    func loadVMsAutoSelectsFirst() async {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url1 = scratch.url
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = scratch.url
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+        storage.bundles[url2] = config2
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.count == 2)
+        #expect(library.selectedID == library.instances.first?.id)
+    }
+
+    @Test("loadVMs preserves valid selection on reload")
+    func loadVMsPreservesSelection() async {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url1 = scratch.url
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = scratch.url
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+        storage.bundles[url2] = config2
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+        let secondID = library.instances.last?.id
+        if let secondID { library.selectRevealing(secondID) }
+
+        await library.loadVMs()
+
+        #expect(library.selectedID == secondID)
+    }
+
+    // MARK: - Selection Persistence
+
+    @Test("selectedID persists to UserDefaults on change")
+    func selectedIDPersistsToUserDefaults() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = library.admitFixture()
+
+        library.selectRevealing(instance.id)
+
+        #expect(preferences.sidebarSelection == .library(instance.id))
+    }
+
+    @Test("selectedID clears UserDefaults when set to nil")
+    func selectedIDClearsUserDefaults() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = library.admitFixture()
+        library.selectRevealing(instance.id)
+
+        library.selection = nil
+
+        #expect(preferences.sidebarSelection == nil)
+    }
+
+    @Test("loadVMs restores selection from UserDefaults when VM still exists")
+    func loadVMsRestoresFromUserDefaults() async {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url1 = scratch.url
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = scratch.url
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+        storage.bundles[url2] = config2
+
+        // Seed preferences before the load, which is what consults them
+        preferences.sidebarSelection = .library(config2.id)
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.selectedID == config2.id)
+    }
+
+    @Test("loadVMs keeps a bundle it can't read as an unreadable row and asks for the check")
+    func loadVMsSurfacesErrorForFailedBundles() async {
+        let storage = MockVMStorageService()
+        // Add a good bundle and a bad bundle
+        let goodConfig = VMConfiguration(
+            name: "Good VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let goodURL = scratch.url
+            .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[goodURL] = goodConfig
+
+        let badURL = scratch.url
+            .appendingPathComponent("bad-bundle.kernova", isDirectory: true)
+        // Register the URL so listVMBundles returns it, but mark it to fail on load
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.loadConfigurationFailURLs = [badURL]
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        // Good VM loaded; the bad bundle is a row of its own, and no VM
+        #expect(library.instances.count == 1)
+        #expect(library.instances.first?.name == "Good VM")
+        #expect(library.entries.compactMap(\.unreadable).map(\.bundleURL) == [badURL])
+        #expect(failures.checkRequests == 1)
+        #expect(failures.showError == false)
+    }
+
+    @Test("loadVMs falls back to first VM when stored ID is invalid")
+    func loadVMsFallsBackWhenStoredIDInvalid() async {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "Only VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url = scratch.url
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        // Seed preferences with a UUID that doesn't match any VM
+        preferences.sidebarSelection = .library(UUID())
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.selectedID == config.id)
+    }
+
+    // MARK: - Configuration Writes
+
+    /// Puts `instance` live on a session no lifecycle call holds.
+    private func placeRunning(_ instance: VMInstance) {
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+    }
+
+    @Test("A request whose save fails changes nothing, in memory or on the running VM")
+    func discardedWriteLeavesTheOldValue() throws {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = library.registerFixture(name: "Before")
+        placeRunning(instance)
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        let saved = try library.updateConfiguration(of: instance, as: [.rename, .hotPlugMedia]) {
+            $0.name = "After"
+            $0.removableMedia = [RemovableMediaItem(path: "/tmp/A.iso", readOnly: true)]
+        }
+
+        #expect(saved.failedToSave)
+        #expect(instance.name == "Before")
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(storage.bundles[instance.bundleURL]?.name == "Before")
+        // No pass was launched for a list that never became the configuration.
+        #expect(instance.phase.operation == nil)
+        #expect(failures.errorSubject?.vm === instance)
+        #expect(failures.errorMessage?.hasPrefix("The change to \u{201C}Before\u{201D} wasn\u{2019}t saved: ") == true)
+    }
+
+    @Test("A snapshot's whole configuration passes the MAC-address refusal only as the revert's own write")
+    func onlyARevertCommitsPastTheMACAddressRefusal() async throws {
+        let (library, _, _, _) = makeLibrary()
+        let address = "02:11:22:33:44:55"
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: address)
+        let reverting = library.registerFixture(
+            name: "Reverting", snapshots: VMSnapshotManifest(snapshots: [snapshot])
+        ) { $0.macAddress = "02:66:77:88:99:aa" }
+        library.registerFixture(name: "Holder") { $0.macAddress = address }
+        var captured = reverting.configuration
+        captured.macAddress = address
+        func install(_ permit: borrowing VMEditPermit) throws {
+            try permit.bundle.commitConfiguration { $0 = $0.adoptingSnapshotState(captured) }
+        }
+
+        // An edit that may write the machine keys, and another operation's
+        // own write, are refused whole.
+        #expect(throws: VMLibrary.SettingsRefusal.self) {
+            try reverting.activity.edit(.machineKeys, install)
+        }
+        #expect(throws: VMLibrary.SettingsRefusal.self) {
+            try reverting.activity.performNow(.deletingSnapshot) { context in
+                try install(context.permit)
+                return .rest(.asStarted, ())
+            }
+        }
+        #expect(reverting.configuration.macAddress != address)
+
+        try await reverting.activity.launchBringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: false)
+        ) { context in
+            try install(context.operation.permit)
+            return .rest(.atRest(.stopped), ())
+        }.value()
+        #expect(reverting.configuration.macAddress == address)
+    }
+
+    @Test("Settling on the live media list writes that field alone and tells the VM nothing")
+    func settleRemovableMediaWritesOnlyTheList() async throws {
+        let (library, storage, _, _) = makeLibrary()
+        let queued = RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)
+        let live = RemovableMediaItem(path: "/tmp/live.iso", readOnly: true)
+        let instance = library.registerFixture(name: "Mine") { $0.removableMedia = [queued] }
+        placeRunning(instance)
+        let before = instance.configuration
+
+        // The reconcile pass whose refusal the settle answers holds the VM.
+        let held = try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: [live])
+            return instance.phase.operation?.kind
+        }
+
+        var expected = before
+        expected.removableMedia = [live]
+        #expect(instance.configuration == expected)
+        #expect(storage.bundles[instance.bundleURL] == expected)
+        // No second pass was launched: the reconcile still held the VM.
+        #expect(held == .reconcilingMedia)
+        #expect(instance.phase.operation == nil)
+        #expect(!failures.showError)
+    }
+
+    @Test("Settling on the list the configuration already holds writes nothing")
+    func settleRemovableMediaNoOpsWhenUnchanged() async throws {
+        let (library, storage, _, _) = makeLibrary()
+        let live = RemovableMediaItem(path: "/tmp/live.iso", readOnly: true)
+        let instance = library.registerFixture { $0.removableMedia = [live] }
+        placeRunning(instance)
+        let saves = storage.saveConfigurationCallCount
+
+        try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: [live])
+        }
+
+        #expect(storage.saveConfigurationCallCount == saves)
+    }
+
+    @Test("A settle whose write fails is reported and memory stays as the bundle holds it")
+    func settleRemovableMediaWhoseWriteFailsKeepsTheBundleList() async throws {
+        let (library, storage, _, _) = makeLibrary()
+        let queued = [RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)]
+        let instance = library.registerFixture { $0.removableMedia = queued }
+        placeRunning(instance)
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: nil)
+        }
+
+        #expect(instance.configuration.removableMedia == queued)
+        #expect(storage.bundles[instance.bundleURL]?.removableMedia == queued)
+        #expect(failures.showError)
+    }
+
+    @Test("A reverted configuration is committed as captured, with nothing refused")
+    func commitRevertedConfigurationWritesWithoutRefusing() async throws {
+        let (library, storage, _, _) = makeLibrary()
+        library.registerFixture(name: "Other") {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:01"
+        }
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: "aa:bb:cc:dd:ee:01")
+        let instance = library.registerFixture(
+            name: "Mine", snapshots: VMSnapshotManifest(snapshots: [snapshot])
+        ) {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:02"
+        }
+        var written = instance.configuration
+        written.macAddress = "aa:bb:cc:dd:ee:01"
+        written.memorySizeInGB = written.memorySizeInGB.adding(gibibytes: 2)
+        let saves = storage.saveConfigurationCallCount
+
+        try await instance.activity.launchBringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: false)
+        ) { context in
+            try library.commitRevertedConfiguration(
+                VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
+                context.operation.permit)
+            return .rest(.asStarted, ())
+        }.value()
+
+        #expect(instance.configuration == written)
+        #expect(storage.bundles[instance.bundleURL] == written)
+        #expect(storage.saveConfigurationCallCount == saves + 1)
+        #expect(!failures.showError)
+    }
+
+    @Test("A reverted configuration keeps the name and identity the bundle holds")
+    func commitRevertedConfigurationKeepsTheBundleIdentity() throws {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = library.registerFixture(name: "Loaded")
+        // Another copy renamed the VM and gave it a machine identifier after
+        // this one read the bundle.
+        var onDisk = instance.configuration
+        onDisk.name = "Renamed Elsewhere"
+        onDisk.genericMachineIdentifierData = Data([0x01, 0x02, 0x03])
+        storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+        var captured = VMConfiguration(
+            name: "Captured", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        captured.memorySizeInGB = onDisk.memorySizeInGB.adding(gibibytes: 2)
+        captured.genericMachineIdentifierData = Data([0x0A])
+
+        try withOperationNow(on: instance) { context in
+            try library.commitRevertedConfiguration(
+                VMSnapshotRestorePlan(configuration: captured, relativePaths: [], kind: .cold),
+                context.permit)
+        }
+
+        #expect(instance.configuration.name == "Renamed Elsewhere")
+        #expect(instance.configuration.id == onDisk.id)
+        #expect(instance.configuration.createdAt == onDisk.createdAt)
+        #expect(instance.configuration.genericMachineIdentifierData == Data([0x01, 0x02, 0x03]))
+        #expect(instance.configuration.memorySizeInGB == captured.memorySizeInGB)
+        #expect(storage.bundles[instance.bundleURL] == instance.configuration)
+    }
+
+    @Test(
+        "An updateSettings whose host-state write fails reports that the configuration landed, and memory equals both files"
+    )
+    func updateSettingsWhoseHostStateWriteFailsReportsTheConfigurationLanded() throws {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = library.registerFixture()
+        let memory = instance.configuration.memorySizeInGB
+        storage.saveHostStateError = NSError(domain: "test", code: 1)
+
+        let outcome = try library.updateSettings(
+            of: instance, as: [.machineKeys, .liveKeys],
+            configuration: { $0.memorySizeInGB = memory.adding(gibibytes: 2) },
+            hostState: { $0.startsAutomaticallyOnLaunch = true })
+
+        guard case .notSaved(let failure) = outcome else {
+            Issue.record("expected a partial write, got \(outcome)")
+            return
+        }
+        #expect(failure.failed == .hostState)
+        #expect(failure.landed == [.configuration])
+        #expect(instance.configuration.memorySizeInGB == memory.adding(gibibytes: 2))
+        #expect(!instance.hostState.startsAutomaticallyOnLaunch)
+        #expect(instance.configuration == storage.bundles[instance.bundleURL])
+        #expect(instance.hostState == storage.hostStates[instance.bundleURL])
+        #expect(failures.errorSubject?.vm === instance)
+        #expect(
+            failures.errorMessage?.hasPrefix("The change to \u{201C}\(instance.name)\u{201D} was saved only in part")
+                == true)
+    }
+
+    @Test("An arrival becomes a VM holding the configuration its write put in the bundle")
+    func arrivalAdoptsTheWrittenConfiguration() async throws {
+        let (library, storage, _, _) = makeLibrary()
+        let requested = VMConfiguration(
+            name: "Copy", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        var written = requested
+        written.storageDisks = [
+            StorageDisk(
+                path: "AdditionalDisks/\(UUID().uuidString).asif", readOnly: false,
+                label: "Remapped", isInternal: true, kind: .virtio)
+        ]
+        let published = written
+
+        let arrival = library.beginArrival(
+            kind: .creating, configuration: requested,
+            destination: try storage.bundleURL(for: requested),
+            staged: try VMStagedBundle.mint(in: storage), source: nil
+        ) { staged in
+            try storage.createVMBundle(at: staged.url)
+            try staged.writeInitial(published)
+        }
+        let instance = try await arrival.settled.value
+
+        // What the bundle holds, which is the written configuration as its
+        // coding keeps it.
+        #expect(instance.configuration == storage.bundles[instance.bundleURL])
+        #expect(instance.configuration.storageDisks == published.storageDisks)
+        #expect(library.arrivals.isEmpty)
+        #expect(library.instances.map(\.id) == [requested.id])
+    }
+
+    // MARK: - Guest Addresses
+
+    @Test("A running VM switched live onto NAT is watched until its address is seen")
+    func liveSwitchOntoNATWatchesTheGuest() async throws {
+        let vmnet = ScriptedVmnetNetworks()
+        vmnet.materialize(.common(.nat), on: "192.168.64.0")
+        let table = ScriptedARPTable([
+            .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
+        ])
+        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet.service, arpTable: table)
+        let instance = library.admitFixture(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.macAddress = "aa:bb:cc:dd:ee:01"
+        }
+        library.guestAddresses.watch()
+        // Bridged is nothing the table answers for, so nothing is read.
+        #expect(library.guestAddresses.readTaskForTesting == nil)
+
+        try library.updateConfiguration(of: instance, as: .networkAttachment) {
+            $0.networkMode = .nat
+        }
+
+        let loop = try #require(library.guestAddresses.readTaskForTesting)
+        try await waitForChange {
+            library.guestAddresses.address(for: instance) == .observed("192.168.64.4")
+        }
+        loop.cancel()
+        await loop.value
+    }
+
+    // MARK: - Selected Instance
+
+    @Test("selectedInstance returns the instance matching selectedID")
+    func selectedInstance() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = library.admitFixture()
+        library.selectRevealing(instance.id)
+
+        #expect(library.selectedInstance?.id == instance.id)
+    }
+
+    @Test("selectedInstance returns nil when no match")
+    func selectedInstanceNil() {
+        let (library, _, _, _) = makeLibrary()
+        library.selection = .library(UUID())
+
+        #expect(library.selectedInstance == nil)
+    }
+
+    // MARK: - Reconcile With Disk
+
+    @Test("Becoming active adopts a bundle that arrived without a write to the VMs directory")
+    func activationAdoptsBundleTheDirectoryNeverReported() async throws {
+        let activation = HostNotifications.isolated().appDidBecomeActive
+        let (library, storage, _, _) = makeLibrary(appActivation: activation)
+        await library.startLibrary()
+        #expect(library.instances.isEmpty)
+
+        // Listed only once its configuration lands, which a hand copy writes
+        // inside the bundle, where the directory watch sees nothing.
+        let config = VMConfiguration(
+            name: "Hand Copied", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.bundles[try storage.bundleURL(for: config)] = config
+        activation.post()
+
+        try await waitForChange { library.instances.map(\.name) == ["Hand Copied"] }
+    }
+
+    @Test("Evicting a VM whose bundle is gone drops its held guest-account password")
+    func reconcileDropsTheHeldGuestAccountPassword() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = library.admitFixture(name: "Gone VM")
+        instance.activity.placeForTesting(.stopped)
+        library.holdGuestAccountPassword(
+            GuestAccountPassword("analytical-engine"), for: instance.id)
+
+        // Storage has no bundles, so the VM is evicted — and eviction is where a
+        // held answer goes, whichever way the VM left the library.
+        library.reconcileWithDisk()
+
+        #expect(library.instances.isEmpty)
+        #expect(library.heldGuestAccountPassword(for: instance) == nil)
+    }
+
+    @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
+    func reconcilePreservesRunningVMs() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = library.admitFixture(name: "Running VM")
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+
+        library.reconcileWithDisk()
+
+        #expect(library.instances.count == 1)
+        #expect(library.instances.first?.name == "Running VM")
+    }
+
+    // MARK: - Eviction (F16)
+
+    @Test("A cold-suspended VM whose bundle is removed is evicted")
+    func aColdSuspendedVMWhoseBundleIsRemovedIsEvicted() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Suspended", phase: .suspended, guestOS: .linux, library: library,
+            preferences: makeTestPreferences())
+
+        storage.files.removeBundle(at: instance.bundleURL)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.isEmpty)
+    }
+
+    @Test("A live-paused VM whose bundle is removed is kept")
+    func aLivePausedVMWhoseBundleIsRemovedIsKept() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Paused", phase: .livePaused(sessionID: UUID()), guestOS: .linux,
+            library: library, preferences: makeTestPreferences())
+
+        storage.files.removeBundle(at: instance.bundleURL)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.first === instance)
+    }
+
+    @Test("A VM at rest with an operation in flight is kept when its bundle is removed")
+    func aVMWithAnOperationInFlightIsKept() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Reverting", phase: .stopped, guestOS: .linux, library: library,
+            preferences: makeTestPreferences())
+        instance.activity.placeForTesting(
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
+
+        storage.files.removeBundle(at: instance.bundleURL)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.first === instance)
+    }
+
+    /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
+    /// out of band leaves the phase describing something that is not there —
+    /// every predicate that asks the bundle has already moved on.
+    @Test("reconcileWithDisk rests a suspension whose slot has left the bundle")
+    func reconcileNormalizesAnEmptiedSuspension() throws {
+        let (library, storage, _, _) = makeLibrary()
+        let holding = library.admitFixture(name: "Still suspended")
+        holding.activity.placeForTesting(.suspended)
+        try VMInstanceFixture.writeSaveFile(for: holding)
+        let emptied = library.admitFixture(name: "Slot gone")
+        emptied.activity.placeForTesting(.suspended)
+        // Both bundles are on disk, so the pass has read them and what it found
+        // inside them stands.
+        storage.bundles[holding.bundleURL] = holding.configuration
+        storage.bundles[emptied.bundleURL] = emptied.configuration
+
+        library.reconcileWithDisk()
+
+        #expect(emptied.phase == .stopped)
+        // The one whose slot is still there is left naming it.
+        #expect(holding.phase == .suspended)
+    }
+
+    @Test("reconcileWithDisk leaves a suspension alone when it could not read the bundle")
+    func reconcileLeavesAnUnreadBundlesSuspensionAlone() {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = library.admitFixture(name: "Bundle out of sight")
+        instance.activity.placeForTesting(.suspended)
+        // Listed, but its configuration cannot be read this pass.
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.loadConfigurationFailURLs = [instance.bundleURL]
+
+        library.reconcileWithDisk()
+
+        // A bundle the scan could not read says nothing about the slot inside
+        // it, and the eviction pass keeps a VM whose bundle is still listed.
+        #expect(library.instances.count == 1)
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
+    func reconcileUpdatesSelection() {
+        let (library, storage, _, _) = makeLibrary()
+        let remaining = library.admitFixture(name: "Remaining")
+        let removed = library.admitFixture(name: "Removed")
+        removed.activity.placeForTesting(.stopped)
+        library.selectRevealing(removed.id)
+
+        // Only keep the remaining instance's bundle on disk
+        let bundleURL = scratch.url
+            .appendingPathComponent("\(remaining.id.uuidString).kernova", isDirectory: true)
+        storage.bundles = [bundleURL: remaining.configuration]
+
+        library.reconcileWithDisk()
+
+        #expect(library.selectedID == remaining.id || library.selectedID != removed.id)
+    }
+
+    @Test("reconcileWithDisk keeps a bundle it can't read as a row and asks for the check")
+    func reconcilePresentsErrorForFailedConfigs() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "Good VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let goodURL = scratch.url
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[goodURL] = config
+
+        // Create library first (no bad bundles yet)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+
+        // Introduce the bad bundle after construction so it is new to reconcileWithDisk
+        let badURL = scratch.url
+            .appendingPathComponent("broken-vm.kernova", isDirectory: true)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.loadConfigurationFailURLs.insert(badURL)
+
+        failures.reset()
+
+        library.reconcileWithDisk()
+
+        #expect(failures.checkRequests == 1)
+        #expect(library.entries.compactMap(\.unreadable).map(\.name) == ["broken-vm.kernova"])
+        #expect(library.instances.contains { $0.name == "Good VM" })
+    }
+
+    @Test("reconcileWithDisk presents error when listing bundles fails")
+    func reconcilePresentsErrorForFilesystemFailure() {
+        let (library, storage, _, _) = makeLibrary()
+        failures.reset()
+
+        storage.listVMBundlesError = VMStorageError.bundleNotFound(scratch.url)
+
+        library.reconcileWithDisk()
+
+        #expect(failures.showError == true)
+        #expect(failures.errorMessage?.contains("VM bundle not found") == true)
+        #expect(failures.errorSubject?.isLibrary == true)
+    }
+
+    @Test("reconcileWithDisk suppression is maintained after full reload")
+    func reconcileSuppressionMaintainedAfterReload() async {
+        let storage = MockVMStorageService()
+        let badURL = scratch.url
+            .appendingPathComponent("broken-vm.kernova", isDirectory: true)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.loadConfigurationFailURLs.insert(badURL)
+
+        // The initial load reports the error and seeds unreadableReports
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+        #expect(failures.checkRequests == 1)
+
+        // First reconcile after the load is suppressed
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(failures.checkRequests == 0)
+
+        // Full reload resets suppression, then re-seeds from its own failures
+        await library.loadVMs()
+        #expect(failures.checkRequests == 1)
+
+        // Reconciliation should still be suppressed since loadVMs re-seeded the set
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(failures.checkRequests == 0)
+    }
+
+    /// A present but unreadable sidecar holds state nobody knows, so the VM stays
+    /// out rather than entering with defaults a later write would put over it.
+    @Test("A bundle whose host state cannot be read is reported and kept as an unreadable row")
+    func unreadableHostStateKeepsTheBundleOut() async throws {
+        let storage = MockVMStorageService()
+        let goodConfig = VMConfiguration(
+            name: "Good VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let goodURL = scratch.url
+            .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[goodURL] = goodConfig
+        let badURL = scratch.url
+            .appendingPathComponent("unreadable-host-state.kernova", isDirectory: true)
+        storage.bundles[badURL] = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.loadHostStateFailURLs = [badURL]
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.map(\.name) == ["Good VM"])
+        let row = try #require(library.entries.compactMap(\.unreadable).first)
+        #expect(row.name == "Bad VM")
+        #expect(row.file.location == .bundle(badURL, .hostState))
+        #expect(failures.checkRequests == 1)
+        #expect(storage.saveHostStateCallCount == 0)
+    }
+
+    /// Pairings are made again by attaching the device once, so an unreadable
+    /// file costs the VM nothing more than them.
+    @Test("A bundle whose pairings cannot be read loads with none, asks for the check once, and keeps the file")
+    func unreadablePairingsLoadEmpty() async throws {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "Paired VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let bundleURL = try storage.bundleURL(for: config)
+        storage.bundles[bundleURL] = config
+        let unreadable = Data("{ not json".utf8)
+        storage.files.setData(
+            unreadable, atRelativePath: VMBundleLayout.usbPairingsRelativePath, in: bundleURL)
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.map(\.name) == ["Paired VM"])
+        #expect(library.instances.first?.usbPairings.isEmpty == true)
+        #expect(
+            storage.files.data(atRelativePath: VMBundleLayout.usbPairingsRelativePath, in: bundleURL)
+                == unreadable)
+        // The check lists the file; no alert of its own.
+        #expect(failures.errorMessage == nil)
+        #expect(failures.checkRequests == 1)
+        library.reconcileWithDisk()
+        library.refreshFromOtherCopies()
+        #expect(failures.checkRequests == 1)
+    }
+
+    @Test("reconcileWithDisk keeps out, and reports once, a new bundle whose host state cannot be read")
+    func reconcileKeepsOutAnUnreadableHostState() {
+        let storage = MockVMStorageService()
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        let bundleURL = scratch.url
+            .appendingPathComponent("unreadable-sidecar.kernova", isDirectory: true)
+        storage.bundles[bundleURL] = VMConfiguration(
+            name: "Unreadable VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.loadHostStateFailURLs.insert(bundleURL)
+
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(library.instances.isEmpty)
+        #expect(library.entries.compactMap(\.unreadable).map(\.name) == ["Unreadable VM"])
+        #expect(failures.checkRequests == 1)
+
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(failures.checkRequests == 0)
+
+        storage.loadHostStateFailURLs.remove(bundleURL)
+        library.reconcileWithDisk()
+        #expect(library.instances.map(\.name) == ["Unreadable VM"])
+        #expect(library.entries.compactMap(\.unreadable).isEmpty)
+    }
+
+    @Test("reconcileWithDisk reports a bundle again after it read successfully in between")
+    func reconcileReReportsAfterBundleRecovery() {
+        let storage = MockVMStorageService()
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+
+        // Introduce the bad bundle after construction so it is new to reconcileWithDisk
+        let bundleURL = scratch.url
+            .appendingPathComponent("recoverable.kernova", isDirectory: true)
+        let config = VMConfiguration(
+            name: "Recoverable VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.bundles[bundleURL] = config
+        storage.loadConfigurationFailURLs.insert(bundleURL)
+
+        // First reconciliation reports the error
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(failures.checkRequests == 1)
+
+        // "Fix" the bundle by removing it from the fail set
+        storage.loadConfigurationFailURLs.remove(bundleURL)
+
+        // Reconciliation succeeds — no error, and the bundle is cleared from reported set
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(failures.checkRequests == 0)
+
+        // Re-corrupt it
+        storage.loadConfigurationFailURLs.insert(bundleURL)
+        // Remove the instance that was added on successful load so reconciliation tries again
+        for instance in library.instances where instance.name == "Recoverable VM" {
+            library.evict(instance)
+        }
+
+        // Should report the error again since it was cleared from the reported set
+        library.reconcileWithDisk()
+        #expect(failures.checkRequests == 1)
+    }
+
+    // MARK: - Initial Boot status assignment
+
+    @Test("loadVMs assigns .initialBoot when config has installContext")
+    func loadVMsAssignsInitialBoot() async {
+        let storage = MockVMStorageService()
+        var config = VMConfiguration(
+            name: "Pending VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
+        config.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: "/tmp/restore.ipsw"
+        )
+        let url = scratch.url
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.count == 1)
+        #expect(library.instances[0].status == .initialBoot)
+    }
+
+    @Test("loadVMs assigns .stopped when no installContext")
+    func loadVMsAssignsStoppedWithoutInstallContext() async {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(
+            name: "Installed VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url = scratch.url
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.count == 1)
+        #expect(library.instances[0].status == .stopped)
+    }
+
+    @Test("reconcileWithDisk keeps an orphaned VM its setup holds, and evicts it once at rest")
+    func reconcileKeepsAVMItsSetupHolds() {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = library.admitFixture(
+            name: "Pending VM", guestOS: .macOS, phase: .initialBoot
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
+        instance.activity.placeForTesting(
+            .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot))
+        // Bundle absent from storage → eligible for eviction once nothing holds it.
+
+        library.reconcileWithDisk()
+
+        // Evicting it now would leave the setup mutating a VM the library no
+        // longer knows about.
+        #expect(library.instances.first === instance)
+
+        instance.activity.placeForTesting(.initialBoot)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.isEmpty)
+        #expect(instance.phase == .removed)
+        #expect(storage.deleteVMBundleCallCount == 0)
+    }
+
+    // MARK: - Reconcile With Disk (Arrivals)
+
+    @Test("reconcileWithDisk leaves an arrival in flight in place")
+    func reconcilePreservesArrivals() async {
+        let (library, _, _, _) = makeLibrary()
+        let gate = GatedStep()
+        let arrival = library.beginGatedArrival(named: "Preparing VM", gate: gate)
+
+        // Storage lists no bundle — the arrival's is still under the staging
+        // directory, which no listing admits.
+        library.reconcileWithDisk()
+
+        #expect(library.arrivals.map(\.id) == [arrival.id])
+        #expect(library.entries.map(\.name) == ["Preparing VM"])
+
+        gate.release()
+        await arrival.settle()
+    }
+
+    // MARK: - USB Accessory Pairings
+
+    /// A library over `storage`, whose bundle files hold every VM's pairings.
+    private func makePairingLibrary() -> (VMLibrary, MockVMStorageService) {
+        let storage = MockVMStorageService()
+        // A build that passes accessories through, the only one that edits
+        // pairings.
+        let library = makeWiredLibrary(
+            storage: storage, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()),
+            lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()),
+            fileSystem: fileSystem, preferences: preferences)
+        library.onFailure = { [failures] title, message, subject in
+            failures.record(title: title, message: message, subject: subject)
+        }
+        return (library, storage)
+    }
+
+    private func pairing(key: String) -> USBAccessoryPairing {
+        USBAccessoryPairing(
+            key: key, form: .serialNumber, displayName: "Samsung Type-C",
+            receptacleLabel: "Port-USB-C@2", pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    @Test("A loaded VM mirrors the pairings its bundle holds")
+    func loadMirrorsPairings() async throws {
+        let (library, storage) = makePairingLibrary()
+        let config = VMConfiguration(
+            name: "Paired VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let bundleURL = try storage.bundleURL(for: config)
+        storage.bundles[bundleURL] = config
+        storage.files.setPairings(USBAccessoryPairingSet(pairings: [pairing(key: "k")]), at: bundleURL)
+
+        await library.loadVMs()
+
+        #expect(library.instances.first?.usbPairings.pairings.map(\.key) == ["k"])
+    }
+
+    @Test("An arrival's VM takes on its bundle's pairings when it publishes, and not before")
+    func publicationMirrorsPairings() async throws {
+        let (library, storage) = makePairingLibrary()
+        let written = VMConfiguration(
+            name: "Fresh VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let pairings = USBAccessoryPairingSet(pairings: [pairing(key: "k")])
+        let gate = GatedStep()
+
+        let arrival = library.beginArrival(
+            kind: .importing, configuration: written,
+            destination: try storage.bundleURL(for: written),
+            staged: try VMStagedBundle.mint(in: storage), source: nil
+        ) { staged in
+            try await gate.pass()
+            try storage.createVMBundle(at: staged.url)
+            try staged.writeInitial(written)
+            try staged.update(.usbPairings) { $0 = pairings }
+        }
+        // Registered, but no VM exists yet to hold any pairing.
+        #expect(library.instances.isEmpty)
+        #expect(library.arrivals.map(\.id) == [arrival.id])
+
+        gate.release()
+        let instance = try await arrival.settled.value
+
+        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
+    }
+
+    @Test("A bundle with no pairings mirrors an empty set")
+    func loadMirrorsNoPairingsForAFreshBundle() async throws {
+        let (library, storage) = makePairingLibrary()
+        let config = VMConfiguration(
+            name: "Fresh VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.bundles[try storage.bundleURL(for: config)] = config
+
+        await library.loadVMs()
+
+        // A clone's bundle is a fresh directory, and the pairing file is
+        // not among the ones a clone copies — so the clone starts
+        // expecting nothing, rather than racing its source for one device.
+        #expect(library.instances.first?.usbPairings.isEmpty == true)
+    }
+
+    @Test("updateUSBPairings writes the bundle, and writes nothing when nothing changed")
+    func updateUSBPairingsPersistsAndNoOps() throws {
+        let (library, storage) = makePairingLibrary()
+        let instance = library.registerFixture(name: "Paired VM")
+        let path = VMBundleLayout.usbPairingsRelativePath
+
+        try library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) }
+        #expect(storage.files.pairings(at: instance.bundleURL)?.pairings.map(\.key) == ["k"])
+        #expect(storage.files.replaceCount(of: path) == 1)
+
+        // Removing a key the VM never held leaves the set as it was.
+        try library.updateUSBPairings(of: instance) { $0.remove(key: "absent") }
+        #expect(storage.files.replaceCount(of: path) == 1)
+    }
+
+    @Test("A pairing write that fails throws and leaves memory as the bundle holds it")
+    func updateUSBPairingsThrowsOnAFailedWrite() {
+        let (library, storage) = makePairingLibrary()
+        let instance = library.registerFixture(name: "Paired VM")
+        storage.files.setReplaceError(
+            VMStorageError.bundleNotFound(instance.bundleURL),
+            for: VMBundleLayout.usbPairingsRelativePath)
+
+        #expect(throws: VMStorageError.self) {
+            try library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) }
+        }
+
+        #expect(instance.usbPairings.isEmpty)
+        #expect(storage.files.pairings(at: instance.bundleURL)?.isEmpty == true)
+    }
+
+    @Test("Pairing an accessory takes its key off every other virtual machine")
+    func pairUSBAccessoryIsLibraryWide() throws {
+        let (library, _) = makePairingLibrary()
+        let first = library.registerFixture(name: "First")
+        let second = library.registerFixture(name: "Second")
+        try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
+
+        try second.activity.edit(.pairingRules) {
+            try library.pairUSBAccessory(pairing(key: "k"), $0)
+        }
+
+        #expect(first.usbPairings.isEmpty)
+        #expect(second.usbPairings.pairings.map(\.key) == ["k"])
+    }
+
+    @Test("A pairing is not moved off a VM that takes no pairing edit, and lands nowhere")
+    func pairUSBAccessoryRefusedByAHeldOtherVM() throws {
+        let (library, _) = makePairingLibrary()
+        let first = library.registerFixture(name: "First")
+        let second = library.registerFixture(name: "Second")
+        try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
+        first.activity.placeForTesting(.operating(.deleting, from: .stopped))
+
+        let refused = #expect(throws: VMLibrary.PairingMoveRefused.self) {
+            try second.activity.edit(.pairingRules) {
+                try library.pairUSBAccessory(pairing(key: "k"), $0)
+            }
+        }
+
+        #expect(refused?.holder === first)
+        #expect(refused?.refusal == VMAdmissionRefusal(refusal: .busy(.deleting)))
+        #expect(first.usbPairings.pairings.map(\.key) == ["k"])
+        #expect(second.usbPairings.isEmpty)
+    }
+}

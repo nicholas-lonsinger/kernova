@@ -1,0 +1,1435 @@
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+/// The operation machinery of ``VMActivity``: the admission commit, the one
+/// ending commit, the session actions that take no admission, and the session
+/// events that rest a settled VM or only mark an operation's session ended.
+///
+/// Every operation here is a real one committed by the activity — nothing is
+/// placed over a running body — so what each test observes is what the
+/// structure allows, not what a placed phase pretends.
+@Suite("VMActivity Tests", .serialized, .caseScoped)
+@MainActor
+struct VMActivityTests {
+    private struct Probe: Error, Equatable {}
+
+    /// What the hooks and closures under test saw, in place of captured
+    /// mutable locals.
+    @MainActor
+    private final class Recorder {
+        var poweredOff = 0
+        var sent = 0
+        var terminations = 0
+        var phase: VMLifecyclePhase?
+        var operation: VMOperation?
+        var sessionID: UUID?
+        var sessionEnd: VMSessionEnd?
+        var outcome: VMOutcome?
+        var resolvedAtWhenEnded: Bool?
+        var hookSawResolved: Bool?
+        var hookProbe: Task<Void, Never>?
+        var whenEndedResult: Result<Void, any Error>?
+        var guestStart: VMGuestStartKind?
+        var captureMode: VMCaptureMode?
+        var revertedTo: (snapshotID: UUID, resumesAfter: Bool)?
+    }
+
+    private func makeInstance(
+        _ phase: VMLifecyclePhase, guestOS: VMGuestOS = .linux,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> (VMInstance, Recorder) {
+        let instance = VMInstanceFixture.make(guestOS: guestOS, phase: phase, mutate: mutate)
+        let recorder = Recorder()
+        instance.activity.onPoweredOff = {
+            recorder.poweredOff += 1
+            return []
+        }
+        return (instance, recorder)
+    }
+
+    /// A VM wired into a library whose build passes USB accessories through,
+    /// holding one snapshot — so every live operation kind is admitted from a
+    /// settled live phase. The caller keeps the library alive.
+    private func makeWiredInstance(
+        _ phase: VMLifecyclePhase
+    ) -> (VMInstance, Recorder, VMLibrary) {
+        let library = makeWiredLibrary(
+            lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()))
+        let instance = library.registerFixture(
+            phase: phase,
+            snapshots: VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
+        let recorder = Recorder()
+        // Wiring installs the library's own power-off hook; the recorder's
+        // stands in for it here.
+        instance.activity.onPoweredOff = {
+            recorder.poweredOff += 1
+            return []
+        }
+        return (instance, recorder, library)
+    }
+
+    /// Launches `kind` with a body that parks on `gate` and then rests where
+    /// it started.
+    @discardableResult
+    private func launchGated(
+        _ kind: VMOperationKind, on instance: VMInstance, gate: GatedStep
+    ) throws -> VMOutcome {
+        guard let nonBringUp = VMNonBringUpKind(kind) else {
+            guard case .bringUp(let bringUp) = kind else { preconditionFailure("\(kind)") }
+            return try instance.activity.launchAnyBringUp(bringUp) { _ in
+                try await gate.pass()
+                return .rest(.asStarted, ())
+            }
+        }
+        return try instance.activity.launch(nonBringUp) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+    }
+
+    // MARK: - perform
+
+    @Test("perform commits the operation from the phase it was admitted from and rests where the body says")
+    func performCommitsAndRestsWhereTheBodySays() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+
+        try await instance.activity.perform(.pausing) { context in
+            recorder.operation = instance.phase.operation
+            recorder.sessionID = context.sessionID
+            return .rest(.live(.paused), ())
+        }
+
+        let operation = try #require(recorder.operation)
+        #expect(operation.kind == .pausing)
+        #expect(operation.startedFrom == .running(sessionID: session))
+        #expect(operation.session == VMOperationSession(id: session, guest: .running))
+        #expect(operation.sessionEnd == nil)
+        #expect(recorder.sessionID == session)
+        #expect(instance.phase == .livePaused(sessionID: session))
+    }
+
+    @Test("Each typed entry point commits its kind and hands the body what it was admitted with")
+    func typedEntryPointsCarryTheirKind() async throws {
+        let (starting, startRecorder) = makeInstance(.stopped)
+        try await starting.activity.launchStartGuest(.starting(recovery: false)) { context in
+            startRecorder.operation = starting.phase.operation
+            startRecorder.guestStart = context.kind
+            return .rest(.asStarted, ())
+        }.value()
+        #expect(startRecorder.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
+        #expect(startRecorder.guestStart == .starting(recovery: false))
+
+        let (capturing, captureRecorder) = makeInstance(.stopped)
+        try await capturing.activity.captureSnapshot(.stopped) { context in
+            captureRecorder.operation = capturing.phase.operation
+            captureRecorder.captureMode = context.mode
+            return .rest(.asStarted, ())
+        }
+        #expect(captureRecorder.operation?.kind == .capturingSnapshot(.stopped))
+        #expect(captureRecorder.captureMode == .stopped)
+
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: nil)
+        let (reverting, revertRecorder) = makeInstance(.stopped)
+        reverting.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        try await reverting.activity.launchRevert(to: snapshot, resumesAfter: false) { context in
+            revertRecorder.operation = reverting.phase.operation
+            revertRecorder.revertedTo = (context.snapshot.id, context.resumesAfter)
+            return .rest(.asStarted, ())
+        }.value()
+        #expect(
+            revertRecorder.operation?.kind
+                == .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: false)))
+        #expect(revertRecorder.revertedTo?.snapshotID == snapshot.id)
+        #expect(revertRecorder.revertedTo?.resumesAfter == false)
+    }
+
+    @Test("A body that throws rests the VM where its kind's failure rest says, and rethrows")
+    func throwingBodyRestsWhereTheKindSays() async throws {
+        let session = UUID()
+        let message = Probe().localizedDescription
+        // Written out rather than read from `restAfterFailure`, so the commit
+        // is checked against the rule and not against itself.
+        let cases: [(VMOperationKind, VMLifecyclePhase, VMLifecyclePhase)] = [
+            (.pausing, .running(sessionID: session), .running(sessionID: session)),
+            // A failed hot resume leaves the guest where it was, still in memory.
+            (.resuming, .livePaused(sessionID: session), .livePaused(sessionID: session)),
+            (.saving, .running(sessionID: session), .failed(message: message)),
+            (.deletingSnapshot, .stopped, .stopped),
+            (.capturingSnapshot(.stopped), .stopped, .stopped),
+            (
+                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)),
+                .running(sessionID: session), .stopped
+            ),
+        ]
+        for (kind, startedFrom, rest) in cases {
+            let (instance, _) = makeInstance(startedFrom)
+            instance.seedSnapshotManifest(
+                VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
+            await #expect(throws: Probe.self, "\(kind)") {
+                if case .bringUp(let bringUp) = kind {
+                    try await instance.activity.launchAnyBringUp(bringUp) {
+                        (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
+                        throw Probe()
+                    }.value()
+                } else {
+                    try await instance.activity.perform(try #require(VMNonBringUpKind(kind))) {
+                        (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+                        throw Probe()
+                    }
+                }
+            }
+            #expect(instance.phase == rest, "\(kind)")
+        }
+
+        // A bring-up's permanent failure is the failed phase carrying its
+        // message; nothing is live after it.
+        let (booting, _) = makeInstance(.stopped)
+        await #expect(throws: Probe.self) {
+            try await booting.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
+                (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
+                throw Probe()
+            }.value()
+        }
+        #expect(booting.phase == .failed(message: message))
+        #expect(!booting.hasLiveVirtualMachine)
+    }
+
+    @Test("A live rest over a session that ended mid-body rests where the end puts the VM")
+    func liveRestOverAnEndedSessionRestsWhereTheEndSays() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+
+        try await instance.activity.perform(.pausing) { context in
+            instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
+            recorder.sessionEnd = context.sessionEnd
+            return .rest(.live(.paused), ())
+        }
+
+        #expect(recorder.sessionEnd == .stoppedWithError(message: Probe().localizedDescription))
+        #expect(instance.phase == .failed(message: Probe().localizedDescription))
+        // An error is not a power-off.
+        #expect(recorder.poweredOff == 0)
+
+        let (poweringOff, powerOffs) = makeInstance(.running(sessionID: session))
+        try await poweringOff.activity.perform(.pausing) { _ in
+            poweringOff.activity.deliverSessionEvent(.guestDidStop, from: session)
+            // Held until the body ends: the hook fires at the ending commit.
+            powerOffs.phase = poweringOff.phase
+            #expect(powerOffs.poweredOff == 0)
+            return .rest(.live(.paused), ())
+        }
+        #expect(powerOffs.phase?.operation?.kind == .pausing)
+        #expect(poweringOff.phase == .stopped)
+        #expect(powerOffs.poweredOff == 1)
+    }
+
+    @Test("performNow commits and ends in one step, and refuses what the phase does not admit")
+    func performNowCommitsAndEndsInOneStep() throws {
+        let (instance, recorder) = makeInstance(.suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        // A body that throws rests where the kind says: back on the slot.
+        #expect(throws: Probe.self) {
+            try instance.activity.performNow(.discardingSavedState) {
+                (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+                throw Probe()
+            }
+        }
+        #expect(instance.phase == .suspended)
+
+        try instance.activity.performNow(.discardingSavedState) { context in
+            recorder.operation = instance.phase.operation
+            context.bundle.removeSaveFile()
+            return .rest(.atRest(.stopped), ())
+        }
+        #expect(recorder.operation?.kind == .discardingSavedState)
+        #expect(recorder.operation?.startedFrom == .suspended)
+        #expect(instance.phase == .stopped)
+
+        // Nothing left to discard.
+        #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try instance.activity.performNow(.discardingSavedState) { _ in .rest(.atRest(.stopped), ()) }
+        }
+    }
+
+    // MARK: - Edits
+
+    /// One class at a time, so a table row names the class admission refused.
+    private static let singleEditClasses: [VMEditClasses] = [
+        .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
+        .snapshotMetadata, .pairingRules, .rename, .observations, .removableMediaRemoval,
+    ]
+
+    @Test("An edit's permit is minted exactly where admission admits the edit, naming its own VM")
+    func editMintsAPermitWhereAdmissionAdmits() throws {
+        let session = UUID()
+        let live = VMLifecyclePhase.running(sessionID: session)
+        let phases: [VMLifecyclePhase] = [
+            .stopped, live, .livePaused(sessionID: session),
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true)), from: live),
+            .operating(.saving, from: live), .operating(.pausing, from: live),
+            .operating(.forceStopping, from: live), .removed,
+        ]
+        for phase in phases {
+            let (instance, _, library) = makeWiredInstance(.stopped)
+            defer { withExtendedLifetime(library) {} }
+            instance.activity.placeForTesting(phase)
+            for classes in Self.singleEditClasses {
+                let decision = instance.activity.decide(.edit(classes), posture: .commit)
+                let permitted = try? instance.activity.edit(classes) { permit in
+                    #expect(permit.instance === instance)
+                    #expect(permit.authority == .edit(classes))
+                    return true
+                }
+                #expect((permitted == true) == (decision == .admit), "\(phase) \(classes)")
+                if case .refuse(let reason) = decision {
+                    #expect(throws: VMAdmissionRefusal(refusal: reason), "\(phase) \(classes)") {
+                        try instance.activity.edit(classes) { _ in }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test(
+        "A rename and a live-key write are refused at the write during a revert; presentation bookkeeping is not"
+    )
+    func revertRefusesRenameAndLiveKeysAtTheWrite() throws {
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        let revert = VMOperationKind.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true))
+        let (instance, _, library) = makeWiredInstance(.stopped)
+        defer { withExtendedLifetime(library) {} }
+        instance.activity.placeForTesting(.operating(revert, from: live))
+
+        for classes in [VMEditClasses.rename, .liveKeys] {
+            #expect(throws: VMAdmissionRefusal(refusal: .busy(revert)), "\(classes)") {
+                try instance.activity.edit(classes) { permit in
+                    _ = permit.updateConfiguration { $0.name = "Renamed" }
+                }
+            }
+        }
+        #expect(instance.name != "Renamed")
+        let recorded = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.lastFullscreenDisplayID = 7 }
+        }
+        #expect(recorded.landed)
+        #expect(instance.hostState.lastFullscreenDisplayID == 7)
+        // The display preference is the user's live key, not presentation
+        // bookkeeping: a presentation permit cannot carry it past R8.
+        let preferred = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.displayPreference = .fullscreen }
+        }
+        #expect(preferred.fieldsOutsidePermit == ["displayPreference"])
+        #expect(instance.hostState.displayPreference == .inline)
+    }
+
+    @Test("A commit refuses every field its permit's classes may not write, and changes nothing")
+    func aCommitRefusesFieldsOutsideItsPermit() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+        let memory = instance.configuration.memorySizeInGB
+
+        // A rename admitted on a live VM carries no machine key with it.
+        let renamed = try instance.activity.edit(.rename) { permit in
+            permit.updateConfiguration {
+                $0.name = "Renamed"
+                $0.memorySizeInGB = memory.adding(gibibytes: 4)
+            }
+        }
+        #expect(renamed.fieldsOutsidePermit == ["memorySizeInGB"])
+        #expect(instance.configuration.memorySizeInGB == memory)
+        #expect(instance.name != "Renamed")
+
+        // The settings pair stops at the configuration it refused.
+        let settings = try instance.activity.edit(.observations) { permit in
+            permit.updateSettings(
+                configuration: { $0.clipboardSharingEnabled.toggle() },
+                hostState: { $0.lastFullscreenDisplayID = 3 })
+        }
+        #expect(settings.fieldsOutsidePermit == ["clipboardSharingEnabled"])
+        #expect(instance.hostState.lastFullscreenDisplayID == nil)
+
+        // Host state is checked the same way.
+        let autoStart = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.startsAutomaticallyOnLaunch = true }
+        }
+        #expect(autoStart.fieldsOutsidePermit == ["startsAutomaticallyOnLaunch"])
+        #expect(!instance.hostState.startsAutomaticallyOnLaunch)
+
+        // And the two files one class writes whole.
+        #expect(throws: VMStateFieldRefusal(fields: ["pairings"])) {
+            try instance.activity.edit(.snapshotMetadata) { permit in
+                try permit.bundle.commitUSBPairings {
+                    $0.upsert(
+                        USBAccessoryPairing(
+                            key: "k", form: .serialNumber, displayName: "Stick",
+                            receptacleLabel: nil, pairedAt: Date(timeIntervalSince1970: 0)))
+                }
+            }
+        }
+        #expect(instance.usbPairings.isEmpty)
+        #expect(throws: VMStateFieldRefusal(fields: ["snapshots"])) {
+            try instance.activity.edit(.pairingRules) { permit in
+                try permit.bundle.commitSnapshotManifest { $0.snapshots.removeAll() }
+            }
+        }
+        #expect(instance.snapshotManifest.snapshots.count == 1)
+    }
+
+    @Test(
+        "An observation may turn the install reminder back on and retract the guest account, but never silence or set either"
+    )
+    func observationsWriteOnlyWhatTheyDisprove() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+
+        let dismissed = try instance.activity.edit(.observations) { permit in
+            library.updateHostState(permit) { $0.agentInstallNudgeDismissed = true }
+        }
+        #expect(dismissed.fieldsOutsidePermit == ["agentInstallNudgeDismissed"])
+        library.editHostState(of: instance) { $0.agentInstallNudgeDismissed = true }
+        let reset = try instance.activity.edit(.observations) { permit in
+            library.updateHostState(permit) { $0.agentInstallNudgeDismissed = false }
+        }
+        #expect(reset.landed)
+        #expect(!instance.hostState.agentInstallNudgeDismissed)
+
+        let account = GuestAccountIntent(
+            fullName: "User", username: "user", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        let asserted = try instance.activity.edit(.observations) { permit in
+            permit.updateConfiguration { $0.pendingGuestAccount = account }
+        }
+        #expect(asserted.fieldsOutsidePermit == ["pendingGuestAccount"])
+        #expect(instance.configuration.pendingGuestAccount == nil)
+        try instance.activity.performNow(.deletingSnapshot) { context in
+            #expect(context.permit.updateConfiguration { $0.pendingGuestAccount = account }.landed)
+            return .rest(.asStarted, ())
+        }
+        let retracted = try instance.activity.edit(.observations) { library.retractGuestAccount($0) }
+        #expect(retracted.landed)
+        #expect(instance.configuration.pendingGuestAccount == nil)
+    }
+
+    @Test("An operation's own permit writes the VM it holds, where an edit beside it is refused")
+    func anOperationsPermitWritesItsOwnVM() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+
+        let (authority, besideRefusal) = try instance.activity.performNow(.deletingSnapshot) {
+            (context: borrowing VMOperationContext)
+                -> VMOperationEnding<(VMEditPermit.Authority, VMAdmissionRefusal?)> in
+            #expect(context.instance === instance)
+            #expect(context.permit.instance === instance)
+            var refusal: VMAdmissionRefusal?
+            do {
+                try instance.activity.edit(.snapshotMetadata) { _ in }
+            } catch let refused as VMAdmissionRefusal {
+                refusal = refused
+            }
+            // A machine key no settled live VM takes, written as the
+            // operation's own.
+            #expect(context.permit.updateConfiguration { $0.memorySizeInGB = .gibibytes(6) }.landed)
+            return .rest(.asStarted, (context.permit.authority, refusal))
+        }
+
+        #expect(authority == .operation(.deletingSnapshot))
+        #expect(besideRefusal == VMAdmissionRefusal(refusal: .busy(.deletingSnapshot)))
+        #expect(instance.configuration.memorySizeInGB == .gibibytes(6))
+    }
+
+    // MARK: - launch
+
+    @Test("launch returns with the operation committed, and its end hook sees the rest before the outcome resolves")
+    func launchCommitsBeforeReturningAndEndsBeforeResolving() async throws {
+        let (instance, recorder) = makeInstance(.stopped)
+        let gate = GatedStep()
+
+        let outcome = try instance.activity.launch(
+            .deletingSnapshot,
+            whenEnded: { result in
+                recorder.phase = instance.phase
+                recorder.whenEndedResult = result
+                guard let outcome = recorder.outcome else { return [] }
+                // Runs synchronously up to its first suspension: an outcome
+                // already resolved answers without one.
+                recorder.resolvedAtWhenEnded = false
+                recorder.hookProbe = Task.immediate { @MainActor in
+                    try? await outcome.value()
+                    recorder.resolvedAtWhenEnded = true
+                }
+                recorder.hookSawResolved = recorder.resolvedAtWhenEnded
+                recorder.operation = instance.phase.operation
+                return []
+            }
+        ) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        recorder.outcome = outcome
+
+        // No turn has passed: the operation already holds the VM.
+        #expect(instance.phase.operation?.kind == .deletingSnapshot)
+        #expect(instance.phase.operation?.outcome === outcome)
+        #expect(instance.phase.operation?.startedFrom == .stopped)
+        #expect(throws: VMAdmissionRefusal(refusal: .busy(.deletingSnapshot))) {
+            try instance.activity.launch(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
+        }
+
+        try await gate.waitUntilEntered()
+        gate.release()
+        try await outcome.value()
+
+        #expect(recorder.phase == .stopped)
+        #expect(recorder.operation == nil)
+        #expect(recorder.hookSawResolved == false)
+        await recorder.hookProbe?.value
+        #expect(recorder.resolvedAtWhenEnded == true)
+        #expect((try? recorder.whenEndedResult?.get()) != nil)
+    }
+
+    @Test("A launched body that throws reports the failure to its end hook and its outcome")
+    func launchedFailureReachesTheHookAndTheOutcome() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+
+        let outcome = try instance.activity.launch(
+            .deletingSnapshot,
+            whenEnded: { result in
+                recorder.phase = instance.phase
+                recorder.whenEndedResult = result
+                return []
+            }
+        ) { (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+            throw Probe()
+        }
+        await #expect(throws: Probe.self) { try await outcome.value() }
+
+        #expect(recorder.phase == .running(sessionID: session))
+        #expect(throws: Probe.self) { try recorder.whenEndedResult?.get() }
+    }
+
+    // MARK: - Joining
+
+    @Test("A request that joins an operation awaits that operation's own outcome, success or failure")
+    func joinAwaitsTheSameOutcome() async throws {
+        for failure in [nil, Probe()] as [Probe?] {
+            let (instance, _) = makeInstance(.stopped)
+            let gate = GatedStep()
+            let outcome = try instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
+                try await gate.pass()
+                context.bindSessionForTesting(UUID())
+                return .rest(.live(.running), ())
+            }
+
+            guard case .join(let joined) = instance.activity.decide(.start(recovery: false), posture: .commit)
+            else {
+                Issue.record("A Start during a Start did not join it")
+                continue
+            }
+            #expect(joined === outcome)
+            let joiner = Task { @MainActor in try await joined.value() }
+
+            try await gate.waitUntilEntered()
+            gate.release(throwing: failure)
+
+            let direct = await Task { @MainActor in try await outcome.value() }.result
+            let viaJoin = await joiner.result
+            switch (direct, viaJoin) {
+            case (.success, .success):
+                #expect(failure == nil)
+                #expect(instance.status == .running)
+            case (.failure(let directError), .failure(let joinedError)):
+                #expect(directError as? Probe == failure)
+                #expect(joinedError as? Probe == failure)
+            default:
+                Issue.record("The joiner and the direct caller were told different things")
+            }
+        }
+    }
+
+    // MARK: - cancel
+
+    @Test("Cancelling a guest setup cancels the task its operation runs in, and nothing else")
+    func cancelCancelsTheSetupTask() async throws {
+        let (instance, _) = makeInstance(.initialBoot) {
+            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
+        let cancelled = AsyncGate()
+        let recorder = Recorder()
+
+        // Nothing to cancel at rest.
+        #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try instance.activity.cancel(.guestSetup)
+        }
+
+        let outcome = try instance.launchParkedSetup {
+            Task { @MainActor in
+                recorder.sent += 1
+                cancelled.notify()
+            }
+        }
+        #expect(outcome.task?.isCancelled == false)
+        try instance.activity.cancel(.guestSetup)
+        #expect(outcome.task?.isCancelled == true)
+        try await cancelled.wait { recorder.sent == 1 }
+
+        await #expect(throws: CancellationError.self) { try await outcome.value() }
+        #expect(instance.phase == .initialBoot)
+    }
+
+    @Test("A guest-setup cancel during another operation is refused and leaves it running")
+    func cancelRefusedDuringAnotherOperation() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let gate = GatedStep()
+        let outcome = try launchGated(.deletingSnapshot, on: instance, gate: gate)
+
+        #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try instance.activity.cancel(.guestSetup)
+        }
+        #expect(outcome.task?.isCancelled == false)
+
+        gate.release()
+        try await outcome.value()
+        #expect(instance.phase == .stopped)
+    }
+
+    // MARK: - remove
+
+    @Test("remove is refused during an operation and moves a VM at rest to removed, which refuses everything")
+    func removeRefusedWhileHeldAndFinalAtRest() async throws {
+        let (live, _) = makeInstance(.running(sessionID: UUID()))
+        #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) { try live.activity.remove() }
+
+        let (instance, _) = makeInstance(.stopped)
+        let gate = GatedStep()
+        let outcome = try launchGated(.deletingSnapshot, on: instance, gate: gate)
+        #expect(throws: VMAdmissionRefusal(refusal: .busy(.deletingSnapshot))) {
+            try instance.activity.remove()
+        }
+        #expect(instance.phase.operation?.kind == .deletingSnapshot)
+        gate.release()
+        try await outcome.value()
+
+        try instance.activity.remove()
+        #expect(instance.phase == .removed)
+
+        for capability in VMCapability.allCases {
+            guard let request = capability.request(on: instance) else { continue }
+            #expect(instance.activity.decide(request, posture: .commit) == .refuse(.removed), "\(capability)")
+            #expect(instance.activity.decide(request, posture: .offer) == .refuse(.removed), "\(capability)")
+        }
+        let removed = VMAdmissionRefusal(refusal: .removed)
+        await #expect(throws: removed) {
+            try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
+        }
+        #expect(throws: removed) {
+            try instance.activity.launch(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
+        }
+        await #expect(throws: removed) { try await instance.activity.requestStop {} }
+        await #expect(throws: removed) { try await instance.activity.forceStop {} }
+        #expect(throws: removed) { try instance.activity.cancel(.guestSetup) }
+        #expect(throws: removed) { try instance.activity.remove() }
+        #expect(instance.phase == .removed)
+    }
+
+    // MARK: - Follow-ups
+
+    /// A follow-up that launches `kind`, its body parking on `gate` when one
+    /// is given, and records `label` in `order` once it is admitted.
+    private func followUp(
+        _ label: String, _ kind: VMOperationKind, on instance: VMInstance,
+        scope: VMFollowUp.Scope = .vm, rank: VMFollowUp.Rank = .ordinary,
+        request: VMAdmission.Request? = nil, gate: GatedStep? = nil, order: FollowUpOrder
+    ) -> VMFollowUp {
+        VMFollowUp(scope: scope, rank: rank, request: request) { outcome in
+            if let nonBringUp = VMNonBringUpKind(kind) {
+                try instance.activity.launch(nonBringUp, resolving: outcome) { _ in
+                    try await gate?.pass()
+                    return .rest(.asStarted, ())
+                }
+            } else if case .bringUp(let bringUp) = kind {
+                try instance.activity.launchAnyBringUp(bringUp) { _ in
+                    try await gate?.pass()
+                    return .rest(.asStarted, ())
+                }
+                .forward(to: outcome)
+            }
+            order.admitted.append(label)
+        }
+    }
+
+    /// The queue's invariant, outside a commit step: non-empty only while an
+    /// operation holds the VM.
+    private func expectQueueHeldByAnOperation(
+        _ instance: VMInstance, sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(
+            instance.activity.queuedFollowUpCountForTesting == 0 || instance.phase.operation != nil,
+            "\(instance.activity.queuedFollowUpCountForTesting) queued at \(instance.phase)",
+            sourceLocation: sourceLocation)
+    }
+
+    @Test("A follow-up on a settled VM is admitted at once")
+    func aFollowUpOnASettledVMRunsAtOnce() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let gate = GatedStep()
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, gate: gate, order: order)
+
+        instance.activity.follow(owed)
+
+        #expect(order.admitted == ["copy"])
+        #expect(instance.phase.operation?.outcome === owed.outcome)
+        expectQueueHeldByAnOperation(instance)
+        gate.release()
+        try await owed.outcome.value()
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("A follow-up queued under an operation takes the VM in the step that frees it")
+    func aQueuedFollowUpTakesTheFreedVM() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let gate = GatedStep()
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, gate: gate, order: order)
+
+        instance.activity.follow(owed)
+        #expect(order.admitted.isEmpty)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        expectQueueHeldByAnOperation(instance)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["copy"])
+        #expect(instance.phase.operation?.kind == .copyingOut(.stopped))
+        expectQueueHeldByAnOperation(instance)
+        gate.release()
+        try await owed.outcome.value()
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("A user verb arriving while a drained follow-up runs is refused, as during any operation")
+    func aUserVerbDuringADrainedFollowUpIsRefused() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let gate = GatedStep()
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, gate: gate, order: order)
+        instance.activity.follow(owed)
+
+        holdGate.release()
+        try await hold.value()
+
+        #expect(
+            instance.activity.decide(.start(recovery: false), posture: .commit)
+                == .refuse(.busy(.copyingOut(.stopped))))
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.copyingOut(.stopped)))) {
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
+                .rest(.asStarted, ())
+            }.value()
+        }
+        gate.release()
+        try await owed.outcome.value()
+    }
+
+    @Test("Restorations drain before ordinary follow-ups, and each rank in arrival order")
+    func restorationsFirstThenArrivalOrder() async throws {
+        let (instance, _, library) = makeWiredInstance(.stopped)
+        defer { withExtendedLifetime(library) {} }
+        let snapshotID = try #require(instance.snapshotManifest.snapshots.first?.id)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        // Gated, so the revert still holds the VM when the first drain is
+        // read: ungated, it can end and drain the next before this resumes.
+        let revertGate = GatedStep()
+        let owed = [
+            followUp("first", .copyingOut(.stopped), on: instance, order: order),
+            followUp("second", .copyingOut(.stopped), on: instance, order: order),
+            followUp(
+                "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
+                on: instance, rank: .restoration, gate: revertGate, order: order),
+            followUp("third", .copyingOut(.stopped), on: instance, order: order),
+        ]
+
+        for item in owed { instance.activity.follow(item) }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 4)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["revert"])
+        revertGate.release()
+        for item in owed { try await item.outcome.value() }
+        #expect(order.admitted == ["revert", "first", "second", "third"])
+        #expect(instance.phase == .stopped)
+        expectQueueHeldByAnOperation(instance)
+    }
+
+    @Test("A refused follow-up ends with its refusal, and the drain moves on to the next")
+    func aRefusedFollowUpEndsAndTheDrainMovesOn() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        // A pause asks for a live guest, which a VM at rest is not.
+        let refused = followUp("pause", .pausing, on: instance, order: order)
+        let admitted = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
+        instance.activity.follow(refused)
+        instance.activity.follow(admitted)
+
+        holdGate.release()
+        try await hold.value()
+
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await refused.outcome.value()
+        }
+        try await admitted.outcome.value()
+        #expect(order.admitted == ["copy"])
+    }
+
+    @Test("A session end drops the follow-ups scoped to it, and a follow-up for a gone session is refused")
+    func aSessionEndDropsItsFollowUps() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        try await holdGate.waitUntilEntered()
+        let scoped = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
+        let unscoped = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
+        instance.activity.follow(scoped)
+        instance.activity.follow(unscoped)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await scoped.outcome.value()
+        }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        let late = followUp("late", .pausing, on: instance, scope: .session(session), order: order)
+        instance.activity.follow(late)
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await late.outcome.value()
+        }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        holdGate.release()
+        try await hold.value()
+        try await unscoped.outcome.value()
+        #expect(order.admitted == ["copy"])
+    }
+
+    @Test("A delete ends every follow-up queued on the VM as removed, running none")
+    func aDeleteDropsEveryFollowUp() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let gate = GatedStep()
+        let deletion = Task { try await instance.activity.delete { _ in try await gate.pass() } }
+        try await gate.waitUntilEntered()
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
+        instance.activity.follow(owed)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        gate.release()
+        try await deletion.value
+
+        #expect(instance.phase == .removed)
+        await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
+            try await owed.outcome.value()
+        }
+        let late = followUp("late", .copyingOut(.stopped), on: instance, order: order)
+        instance.activity.follow(late)
+        await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
+            try await late.outcome.value()
+        }
+        #expect(order.admitted.isEmpty)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+    }
+
+    @Test("A withdrawn follow-up ends cancelled and never runs")
+    func aWithdrawnFollowUpNeverRuns() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
+        instance.activity.follow(owed)
+
+        #expect(instance.activity.withdraw(owed))
+
+        await #expect(throws: CancellationError.self) { try await owed.outcome.value() }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        #expect(!instance.activity.withdraw(owed))
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted.isEmpty)
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("A follow-up the operation holding the VM joins takes that operation's outcome instead of queueing")
+    func aJoiningFollowUpTakesTheHoldersOutcome() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let gate = GatedStep()
+        let pass = try launchGated(.reconcilingMedia, on: instance, gate: gate)
+        let joining = followUp(
+            "reconcile", .reconcilingMedia, on: instance, scope: .session(session),
+            request: .operation(.reconcilingMedia), order: order)
+        let queued = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
+
+        instance.activity.follow(joining)
+        instance.activity.follow(queued)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        #expect(instance.phase.operation?.outcome === pass)
+
+        gate.release(throwing: Probe())
+        await #expect(throws: Probe.self) { try await pass.value() }
+        await #expect(throws: Probe.self) { try await joining.outcome.value() }
+        try await queued.outcome.value()
+        #expect(order.admitted == ["pause"])
+    }
+
+    @Test("Follow-ups queued behind one the drain admits join it where its operation declares the join")
+    func queuedFollowUpsJoinTheDrainedOne() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.pausing, on: instance, gate: holdGate)
+        let passGate = GatedStep()
+        // Scoped differently, so the second queues rather than joining the
+        // first in the queue.
+        let first = followUp(
+            "first", .reconcilingMedia, on: instance, scope: .vm,
+            request: .operation(.reconcilingMedia), gate: passGate, order: order)
+        let second = followUp(
+            "second", .reconcilingMedia, on: instance, scope: .session(session),
+            request: .operation(.reconcilingMedia), order: order)
+        instance.activity.follow(first)
+        instance.activity.follow(second)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 2)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["first"])
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        expectQueueHeldByAnOperation(instance)
+
+        passGate.release()
+        try await second.outcome.value()
+        #expect(order.admitted == ["first"])
+        #expect(instance.phase == .running(sessionID: session))
+    }
+
+    @Test("A follow-up making a queued one's request in its scope joins it rather than queueing twice")
+    func aDuplicateFollowUpJoinsTheQueuedOne() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let request = VMAdmission.Request.operation(.attachingUSB(registryID: 7))
+        let passGate = GatedStep()
+        let first = followUp(
+            "first", .pausing, on: instance, scope: .session(session), request: request,
+            gate: passGate, order: order)
+        let duplicate = followUp(
+            "duplicate", .pausing, on: instance, scope: .session(session), request: request,
+            order: order)
+        let elsewhere = followUp(
+            "elsewhere", .pausing, on: instance, scope: .vm, request: request, order: order)
+
+        instance.activity.follow(first)
+        instance.activity.follow(duplicate)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        // The same request in another scope is another follow-up.
+        instance.activity.follow(elsewhere)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 2)
+        instance.activity.withdraw(elsewhere)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["first"])
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        passGate.release(throwing: Probe())
+        await #expect(throws: Probe.self) { try await first.outcome.value() }
+        await #expect(throws: Probe.self) { try await duplicate.outcome.value() }
+        #expect(order.admitted == ["first"])
+    }
+
+    @Test("A power-off during a USB detach runs the revert after the detach and before a queued follow-up")
+    func powerOffDuringADetachRevertsBeforeTheQueue() async throws {
+        let session = UUID()
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: session))
+        defer { withExtendedLifetime(library) {} }
+        instance.beginSessionContextForTesting()
+        let snapshotID = try #require(instance.snapshotManifest.snapshots.first?.id)
+        let order = FollowUpOrder()
+        let revertGate = GatedStep()
+        let revert = followUp(
+            "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
+            on: instance, rank: .restoration, gate: revertGate, order: order)
+        instance.activity.onPoweredOff = { [revert] in [revert] }
+        let detachGate = GatedStep()
+        let detach = try launchGated(.detachingUSB(deviceID: UUID()), on: instance, gate: detachGate)
+        try await detachGate.waitUntilEntered()
+        let trashGate = GatedStep()
+        let trash = followUp("trash", .deletingSnapshot, on: instance, gate: trashGate, order: order)
+        let pause = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
+        instance.activity.follow(trash)
+        instance.activity.follow(pause)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        // The detach keeps the VM; the session's follow-up ends with it.
+        #expect(instance.phase.operation?.outcome === detach)
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await pause.outcome.value()
+        }
+
+        detachGate.release()
+        try await detach.value()
+        #expect(order.admitted == ["revert"])
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        expectQueueHeldByAnOperation(instance)
+
+        revertGate.release()
+        try await revert.outcome.value()
+        #expect(order.admitted == ["revert", "trash"])
+        trashGate.release()
+        try await trash.outcome.value()
+        #expect(instance.phase == .stopped)
+        expectQueueHeldByAnOperation(instance)
+    }
+
+    @Test("Only a failure of the work itself is reported")
+    func onlyAFailureOfTheWorkIsReported() {
+        let session = VMFollowUp.Scope.session(UUID())
+        let silent: [(any Error, VMFollowUp.Scope)] = [
+            (VMAdmissionRefusal(refusal: .removed), .vm),
+            (VMAdmissionRefusal(refusal: .terminating), .vm),
+            (CancellationError(), .vm),
+            (VMAdmissionRefusal(refusal: .invalidState), session),
+        ]
+        for (error, scope) in silent {
+            #expect(!VMFollowUp.isReportable(error, scope: scope), "\(error) \(scope)")
+        }
+        let reported: [(any Error, VMFollowUp.Scope)] = [
+            (VMAdmissionRefusal(refusal: .invalidState), .vm),
+            (VMAdmissionRefusal(refusal: .heldByAnotherCopy), .vm),
+            (VMAdmissionRefusal(refusal: .unsupportedByBuild), session),
+            (Probe(), session),
+        ]
+        for (error, scope) in reported {
+            #expect(VMFollowUp.isReportable(error, scope: scope), "\(error) \(scope)")
+        }
+    }
+
+    // MARK: - Session events
+
+    @Test("A settled session end rests the VM, and only a power-off fires the power-off hook")
+    func settledSessionEndRestsTheVM() throws {
+        let session = UUID()
+        let message = Probe().localizedDescription
+        let cases: [(VMLifecyclePhase, VMSessionEvent, VMLifecyclePhase, Int)] = [
+            (.running(sessionID: session), .guestDidStop, .stopped, 1),
+            (.livePaused(sessionID: session), .guestDidStop, .stopped, 1),
+            (.running(sessionID: session), .didStopWithError(Probe()), .failed(message: message), 0),
+            (.livePaused(sessionID: session), .didStopWithError(Probe()), .failed(message: message), 0),
+        ]
+        for (phase, event, rest, powerOffs) in cases {
+            let (instance, recorder) = makeInstance(phase)
+            instance.beginSessionContextForTesting()
+
+            // One raised by a session the VM no longer holds is dropped.
+            instance.activity.deliverSessionEvent(event, from: UUID())
+            #expect(instance.phase == phase)
+
+            instance.activity.deliverSessionEvent(event, from: session)
+            #expect(instance.phase == rest, "\(phase) \(event)")
+            #expect(instance.activity.sessionContext == nil)
+            #expect(recorder.poweredOff == powerOffs, "\(phase) \(event)")
+        }
+
+        // A slot that survived the session is what the VM comes back on.
+        let (suspending, recorder) = makeInstance(.running(sessionID: session))
+        try VMInstanceFixture.writeSaveFile(for: suspending)
+        suspending.activity.deliverSessionEvent(.guestDidStop, from: session)
+        #expect(suspending.phase == .suspended)
+        #expect(recorder.poweredOff == 1)
+    }
+
+    @Test("A session end during an operation keeps the operation and marks its session ended")
+    func sessionEndDuringAnOperationKeepsIt() async throws {
+        let message = Probe().localizedDescription
+        let cases: [(VMSessionEvent, VMSessionEnd)] = [
+            (.guestDidStop, .poweredOff),
+            (.didStopWithError(Probe()), .stoppedWithError(message: message)),
+        ]
+        for (event, end) in cases {
+            let session = UUID()
+            let (instance, recorder) = makeInstance(.running(sessionID: session))
+            instance.beginSessionContextForTesting()
+            let gate = GatedStep()
+            let outcome = try launchGated(.deletingSnapshot, on: instance, gate: gate)
+            try await gate.waitUntilEntered()
+
+            instance.activity.deliverSessionEvent(event, from: session)
+
+            let operation = try #require(instance.phase.operation)
+            #expect(operation.kind == .deletingSnapshot)
+            #expect(operation.outcome === outcome)
+            #expect(operation.session == nil)
+            #expect(operation.sessionEnd == end)
+            #expect(operation.startedFrom == .running(sessionID: session))
+            #expect(!instance.hasLiveVirtualMachine)
+            #expect(instance.activity.sessionContext == nil)
+            #expect(recorder.poweredOff == 0)
+
+            gate.release()
+            try await outcome.value()
+            let rest: VMLifecyclePhase = end == .poweredOff ? .stopped : .failed(message: message)
+            #expect(instance.phase == rest)
+            #expect(recorder.poweredOff == (end == .poweredOff ? 1 : 0))
+        }
+    }
+
+    // MARK: - Force Stop
+
+    @Test("Force Stop of a settled live VM is its own short operation ending in a power-off")
+    func forceStopOfASettledVMIsAnOperation() async throws {
+        let (instance, recorder) = makeInstance(.running(sessionID: UUID()))
+
+        try await instance.activity.forceStop {
+            recorder.terminations += 1
+            recorder.operation = instance.phase.operation
+        }
+
+        #expect(recorder.terminations == 1)
+        #expect(recorder.operation?.kind == .forceStopping)
+        #expect(instance.phase == .stopped)
+        #expect(recorder.poweredOff == 1)
+
+        // Nothing live to stop.
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await instance.activity.forceStop { recorder.terminations += 1 }
+        }
+        #expect(recorder.terminations == 1)
+    }
+
+    @Test("A second Force Stop joins the first rather than terminating again")
+    func secondForceStopJoinsTheFirst() async throws {
+        let (instance, recorder) = makeInstance(.running(sessionID: UUID()))
+        let gate = GatedStep()
+
+        let first = Task { @MainActor in
+            try await instance.activity.forceStop {
+                recorder.terminations += 1
+                try await gate.pass()
+            }
+        }
+        try await gate.waitUntilEntered()
+        let held = try #require(instance.phase.operation)
+        #expect(held.kind == .forceStopping)
+        #expect(instance.activity.decide(.sessionAction(.forceStop), posture: .commit) == .join(held.outcome))
+
+        // Entered synchronously, so it is parked on the outcome before the
+        // release below can end the first.
+        let second = Task.immediate { @MainActor in
+            try await instance.activity.forceStop { recorder.terminations += 1 }
+        }
+        gate.release()
+        try await first.value
+        try await second.value
+
+        #expect(recorder.terminations == 1)
+        #expect(instance.phase == .stopped)
+        #expect(recorder.poweredOff == 1)
+    }
+
+    @Test("A Force Stop of a settled VM whose termination fails ends back where it started, for every caller")
+    func failedTerminationOfASettledStopRestsLive() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+        let terminate = GatedStep()
+
+        let first = Task { @MainActor in
+            try await instance.activity.forceStop { try await terminate.pass() }
+        }
+        try await terminate.waitUntilEntered()
+        #expect(instance.phase.operation?.kind == .forceStopping)
+        // Entered synchronously, so it is parked on the stop before the
+        // release below can end it.
+        let second = Task.immediate { @MainActor in
+            try await instance.activity.forceStop { recorder.terminations += 1 }
+        }
+
+        terminate.release(throwing: Probe())
+        await #expect(throws: Probe.self) { try await first.value }
+        await #expect(throws: Probe.self) { try await second.value }
+        #expect(recorder.terminations == 0)
+        #expect(instance.phase == .running(sessionID: session))
+        #expect(recorder.poweredOff == 0)
+    }
+
+    /// One operation of every kind that holds a live session, admitted from
+    /// the settled live phase it starts from.
+    private func liveOperations(session: UUID) -> [(VMOperationKind, VMLifecyclePhase)] {
+        let running = VMLifecyclePhase.running(sessionID: session)
+        return [
+            (.pausing, running),
+            (.resuming, .livePaused(sessionID: session)),
+            (.saving, running),
+            (.capturingSnapshot(.live), running),
+            (.deletingSnapshot, running),
+            (.attachingUSB(registryID: 1), running),
+            (.detachingUSB(deviceID: UUID()), running),
+            (.reconcilingMedia, running),
+            (.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true)), running),
+        ]
+    }
+
+    @Test("Every kind that tolerates a stop keeps holding the VM through a stop request and a Force Stop")
+    func toleratingKindsKeepHoldingThroughBothStops() async throws {
+        let session = UUID()
+        let tolerating = liveOperations(session: session).filter {
+            $0.0.declaration.toleratedSessionActions.contains(.forceStop)
+        }
+        #expect(!tolerating.isEmpty)
+        for (kind, startedFrom) in tolerating {
+            let (instance, recorder, library) = makeWiredInstance(startedFrom)
+            let gate = GatedStep()
+            let outcome = try launchGated(kind, on: instance, gate: gate)
+            try await gate.waitUntilEntered()
+            let held = instance.phase
+
+            try await instance.activity.requestStop { recorder.sent += 1 }
+            #expect(recorder.sent == 1, "\(kind)")
+            #expect(instance.phase == held, "\(kind)")
+
+            try await instance.activity.forceStop { recorder.terminations += 1 }
+            #expect(recorder.terminations == 1, "\(kind)")
+            let operation = try #require(instance.phase.operation, "\(kind)")
+            #expect(operation.kind == kind)
+            #expect(operation.outcome === outcome, "\(kind)")
+            #expect(operation.session == nil, "\(kind)")
+            #expect(operation.sessionEnd == .poweredOff, "\(kind)")
+            #expect(recorder.poweredOff == 0, "\(kind)")
+
+            gate.release()
+            try await outcome.value()
+            #expect(instance.phase == .stopped, "\(kind)")
+            #expect(recorder.poweredOff == 1, "\(kind)")
+            withExtendedLifetime(library) {}
+        }
+    }
+
+    @Test("An operation that ends before its Force Stop lands hands the VM to that Force Stop")
+    func operationEndingOnAStoppingSessionHandsOver() async throws {
+        let session = UUID()
+        let tolerating = liveOperations(session: session).filter {
+            $0.0.declaration.toleratedSessionActions.contains(.forceStop)
+        }
+        #expect(!tolerating.isEmpty)
+        for (kind, startedFrom) in tolerating {
+            for slot in [false, true] {
+                let (instance, recorder, library) = makeWiredInstance(startedFrom)
+                let body = GatedStep()
+                let terminate = GatedStep()
+                let outcome = try launchGated(kind, on: instance, gate: body)
+                try await body.waitUntilEntered()
+
+                let first = Task { @MainActor in
+                    try await instance.activity.forceStop {
+                        recorder.terminations += 1
+                        try await terminate.pass()
+                    }
+                }
+                try await terminate.waitUntilEntered()
+                #expect(instance.phase.operation?.kind == kind, "\(kind)")
+                #expect(instance.phase.operation?.session?.stopping != nil, "\(kind)")
+                // Entered synchronously, so it is parked on the stop before
+                // anything below can land it.
+                let second = Task.immediate { @MainActor in
+                    try await instance.activity.forceStop { recorder.terminations += 1 }
+                }
+
+                if slot { try VMInstanceFixture.writeSaveFile(for: instance) }
+                body.release()
+                try await outcome.value()
+
+                let handed = try #require(instance.phase.operation, "\(kind)")
+                #expect(handed.kind == .forceStopping, "\(kind)")
+                #expect(handed.session?.id == session, "\(kind)")
+                #expect(!instance.phase.isSettledLive, "\(kind)")
+                for request: VMAdmission.Request in [.operation(.saving), .resume] {
+                    guard case .refuse = instance.activity.decide(request, posture: .commit) else {
+                        Issue.record("\(request) admitted on a stopping session after \(kind)")
+                        continue
+                    }
+                }
+                #expect(recorder.poweredOff == 0, "\(kind)")
+
+                terminate.release()
+                try await first.value
+                try await second.value
+                #expect(recorder.terminations == 1, "\(kind)")
+                #expect(instance.phase == (slot ? .suspended : .stopped), "\(kind)")
+                #expect(recorder.poweredOff == 1, "\(kind)")
+                withExtendedLifetime(library) {}
+            }
+        }
+    }
+
+    @Test("A Force Stop whose termination fails ends the stop for every caller and leaves the VM live")
+    func failedTerminationEndsTheStop() async throws {
+        let session = UUID()
+        // Once the operation has handed the VM over, and while it still holds it.
+        for handsOver in [true, false] {
+            let (instance, recorder, library) = makeWiredInstance(.running(sessionID: session))
+            let body = GatedStep()
+            let terminate = GatedStep()
+            let outcome = try launchGated(.deletingSnapshot, on: instance, gate: body)
+            try await body.waitUntilEntered()
+
+            let first = Task { @MainActor in
+                try await instance.activity.forceStop { try await terminate.pass() }
+            }
+            try await terminate.waitUntilEntered()
+            let second = Task.immediate { @MainActor in
+                try await instance.activity.forceStop { recorder.terminations += 1 }
+            }
+            if handsOver {
+                body.release()
+                try await outcome.value()
+                #expect(instance.phase.operation?.kind == .forceStopping)
+            }
+
+            terminate.release(throwing: Probe())
+            await #expect(throws: Probe.self) { try await first.value }
+            await #expect(throws: Probe.self) { try await second.value }
+            #expect(recorder.terminations == 0)
+            if !handsOver {
+                #expect(instance.phase.operation?.kind == .deletingSnapshot)
+                #expect(instance.phase.operation?.session?.stopping == nil)
+                body.release()
+                try await outcome.value()
+            }
+            #expect(instance.phase == .running(sessionID: session), "\(handsOver)")
+            #expect(recorder.poweredOff == 0)
+            withExtendedLifetime(library) {}
+        }
+    }
+
+    @Test("A kind that tolerates no stop refuses both stops as busy and never reaches the VM")
+    func nonToleratingKindsRefuseBothStops() async throws {
+        let session = UUID()
+        let refusing = liveOperations(session: session).filter {
+            $0.0.declaration.toleratedSessionActions.isEmpty
+        }
+        #expect(!refusing.isEmpty)
+        for (kind, startedFrom) in refusing {
+            let (instance, recorder, library) = makeWiredInstance(startedFrom)
+            let gate = GatedStep()
+            let outcome = try launchGated(kind, on: instance, gate: gate)
+            try await gate.waitUntilEntered()
+            let held = instance.phase
+
+            let busy = VMAdmissionRefusal(refusal: .busy(kind))
+            await #expect(throws: busy, "\(kind)") {
+                try await instance.activity.requestStop { recorder.sent += 1 }
+            }
+            await #expect(throws: busy, "\(kind)") {
+                try await instance.activity.forceStop { recorder.terminations += 1 }
+            }
+            #expect(recorder.sent == 0, "\(kind)")
+            #expect(recorder.terminations == 0, "\(kind)")
+            #expect(instance.phase == held, "\(kind)")
+
+            gate.release()
+            try await outcome.value()
+            #expect(instance.phase == startedFrom, "\(kind)")
+            withExtendedLifetime(library) {}
+        }
+    }
+
+    // MARK: - Graceful stop
+
+    @Test("A stop request takes no admission and moves no phase")
+    func requestStopMovesNoPhase() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+
+        try await instance.activity.requestStop {
+            recorder.sent += 1
+            recorder.phase = instance.phase
+        }
+        #expect(recorder.sent == 1)
+        #expect(recorder.phase == .running(sessionID: session))
+        #expect(instance.phase == .running(sessionID: session))
+
+        // Nothing to ask at rest.
+        let (resting, restingRecorder) = makeInstance(.stopped)
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await resting.activity.requestStop { restingRecorder.sent += 1 }
+        }
+        #expect(restingRecorder.sent == 0)
+    }
+
+    // MARK: - Binding a session
+
+    @Test("A bring-up's bound session is the operation's, and the rest it commits")
+    func bindSessionBindsToTheBringUp() async throws {
+        let (instance, recorder) = makeInstance(.stopped)
+        let session = UUID()
+
+        try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
+            recorder.sessionID = context.operation.sessionID
+            #expect(instance.liveSessionID == nil)
+            context.bindSessionForTesting(session)
+            #expect(context.operation.sessionID == session)
+            #expect(instance.phase.operation?.session == VMOperationSession(id: session, guest: .running))
+            #expect(instance.liveSessionID == session)
+            return .rest(.live(.running), ())
+        }.value()
+
+        #expect(recorder.sessionID == nil)
+        #expect(instance.phase == .running(sessionID: session))
+    }
+
+    @Test("A bring-up that fails before binding a session releases the context it opened")
+    func failedBringUpReleasesItsOpenContext() async throws {
+        let (instance, _) = makeInstance(.stopped)
+
+        await #expect(throws: Probe.self) {
+            try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
+                (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
+                instance.beginSessionContextForTesting()
+                throw Probe()
+            }.value()
+        }
+
+        #expect(instance.activity.sessionContext == nil)
+        #expect(!instance.hasLiveVirtualMachine)
+    }
+}
+
+/// The labels of the follow-ups a test queued, in the order each was admitted.
+@MainActor
+private final class FollowUpOrder {
+    var admitted: [String] = []
+}

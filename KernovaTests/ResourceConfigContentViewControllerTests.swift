@@ -3,6 +3,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("ResourceConfigContentViewController Tests", .caseScoped)
 @MainActor

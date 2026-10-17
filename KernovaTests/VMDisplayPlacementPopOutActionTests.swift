@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Unit tests for `VMDisplayPlacement.popOutAction(hasWindow:mode:)`
 /// — what "Pop Out Display" does for a VM.

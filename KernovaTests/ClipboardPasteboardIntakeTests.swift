@@ -5,6 +5,7 @@ import Testing
 import UniformTypeIdentifiers
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("ClipboardPasteboardIntake", .caseScoped)
 @MainActor

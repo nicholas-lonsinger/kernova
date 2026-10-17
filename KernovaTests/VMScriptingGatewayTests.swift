@@ -5,6 +5,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The Apple event front door: which verb a script runs, what it waits for
 /// before running one, how it addresses a VM by name, and how the consent a

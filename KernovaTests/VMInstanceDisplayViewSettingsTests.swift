@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The one derivation of the `VZVirtualMachineView` properties a VM's display
 /// carries, which both display hosts read.

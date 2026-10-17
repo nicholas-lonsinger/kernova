@@ -1,0 +1,102 @@
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+/// The app-wide paste ceiling reaching a running guest, over a real control
+/// channel.
+///
+/// The ceiling lives in `AppPreferences`, so it produces no `VMConfiguration`
+/// diff for `applyLivePolicy` to carry — without an explicit re-push a running
+/// guest keeps enforcing the value it was handed at connect, and the two ends
+/// silently disagree until the next reconnect.
+@Suite("Clipboard paste ceiling policy push", .serialized, .caseScoped)
+@MainActor
+struct ClipboardPasteLimitPolicyPushTests {
+    private func makeInstance(in library: VMLibrary, preferences: AppPreferences) -> VMInstance {
+        let instance = library.admitFixture(
+            name: "Ceiling VM", guestOS: .macOS, phase: .running(sessionID: UUID()),
+            preferences: preferences, mutate: { $0.clipboardSharingEnabled = true })
+        // The phase's session identity stands in for a live `VZVirtualMachine`,
+        // not for the session context the control service lives in.
+        instance.beginSessionContextForTesting()
+        return instance
+    }
+
+    /// Installs a production-wired control service on `instance`, mirroring the
+    /// accept closure in `startVsockServices()`, and returns the guest end.
+    private func attachControlService(to instance: VMInstance) throws -> VsockChannel {
+        let (guestFd, hostFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        let host = VsockChannel(fileDescriptor: hostFd)
+        guest.start()
+        host.start()
+
+        instance.sessionContext?.vsock.control?.stop()
+        let service = instance.makeControlService(for: host)
+        instance.sessionContext?.vsock.control = service
+        service.start()
+        return guest
+    }
+
+    /// Reads frames from `guest` until a `PolicyUpdate` arrives.
+    private func nextPolicy(from guest: VsockChannel) async throws -> Kernova_V1_PolicyUpdate {
+        for _ in 0..<6 {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let policy) = next.payload { return policy }
+        }
+        Issue.record("No PolicyUpdate arrived")
+        throw CancellationError()
+    }
+
+    @Test("changing the ceiling re-pushes policy to a connected guest, without a reconnect")
+    func changingTheCeilingRePushes() async throws {
+        let preferences = makeTestPreferences()
+        let viewModel = VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
+            virtualizationHost: FakeVirtualizationHost(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            localImageInspector: MockLocalRestoreImageInspector(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: MockBridgedInterfaceProvider(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
+            preferences: preferences,
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard(), guestAgent: .testing)
+
+        let instance = makeInstance(in: viewModel.library, preferences: preferences)
+        let guest = try attachControlService(to: instance)
+        defer {
+            instance.stopVsockServices()
+            guest.close()
+        }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(Frame.controlHello(agentVersion: "0.54.0"))
+
+        // The connect-time push carries whatever is stored now.
+        let initial = try await nextPolicy(from: guest)
+        #expect(initial.clipboardMaxPasteBytes == UInt64(preferences.clipboardMaxPasteBytes))
+
+        // The Settings pane's action, verbatim: write the preference, then ask
+        // the library to carry it to every running guest.
+        let raised = 16 * 1024 * 1024 * 1024
+        preferences.clipboardMaxPasteBytes = raised
+        viewModel.applyClipboardPasteLimitChange()
+
+        let pushed = try await nextPolicy(from: guest)
+        #expect(pushed.clipboardMaxPasteBytes == UInt64(raised))
+        #expect(instance.effectiveClipboardMaxPasteBytes == raised)
+    }
+}

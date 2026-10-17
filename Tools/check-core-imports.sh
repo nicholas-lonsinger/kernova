@@ -5,9 +5,9 @@
 # can re-export AppKit. Every module a KernovaCore file imports is therefore on
 # an allowlist, not off a deny-list.
 #
-# The `KernovaCore` target may import only `core_modules`; `KernovaCoreTests`
-# may also import `test_modules`. Other targets in the package are out of
-# scope. A new entry names a module that re-exports neither AppKit nor
+# The `KernovaCore` target may import only `core_modules`;
+# `KernovaCoreTestSupport` may also import `support_modules`, and
+# `KernovaCoreTests` `test_modules`. A new entry names a module that re-exports neither AppKit nor
 # Virtualization; what a module merely imports is KernovaCore/Package.swift's
 # MemberImportVisibility setting's concern.
 #
@@ -47,9 +47,11 @@ core_entries=(
     'UniformTypeIdentifiers # UTType'
 )
 core_modules=$(printf '%s\n' "${core_entries[@]}" | awk '{ print $1 }' | paste -sd ' ' -)
-test_modules='Testing KernovaCore KernovaTestSupport'
+test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport SwiftProtobuf CoreGraphics'
+support_modules='Testing KernovaCore KernovaTestSupport CoreGraphics'
 
 sources_root='KernovaCore/Sources/KernovaCore'
+support_root='KernovaCore/Sources/KernovaCoreTestSupport'
 tests_root='KernovaCore/Tests/KernovaCoreTests'
 
 swiftc=$(xcrun --find swiftc) || { echo "check-core-imports: swiftc not found" >&2; exit 1; }
@@ -101,12 +103,14 @@ check() {
 }
 
 check "$sources_root" "$core_modules"
+check "$support_root" "$core_modules $support_modules"
 check "$tests_root" "$core_modules $test_modules"
 
 if [ -n "$violations" ]; then
     echo "check-core-imports: KernovaCore imports a module off its allowlist:" >&2
     printf '%s' "$violations" | sort -u >&2
-    echo "  allowed in $sources_root: $core_modules; in $tests_root, also: $test_modules" >&2
+    echo "  allowed in $sources_root: $core_modules; in $support_root, also: $support_modules;" \
+        "in $tests_root, also: $test_modules" >&2
     failed=1
 fi
 

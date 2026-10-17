@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers `AppWindowRegistry.workingInstance(keyWindow:mainWindow:)` — the VM
 /// the menu bar's commands act on — handed the key and main windows rather

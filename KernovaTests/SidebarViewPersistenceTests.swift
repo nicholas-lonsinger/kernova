@@ -1,10 +1,10 @@
 import AppKit
 import Foundation
-import KernovaCore
 import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// What the sidebar keeps across a relaunch: its options, its selected row,
 /// and which sections are collapsed — and what it never keeps, the search.
@@ -27,7 +27,7 @@ struct SidebarViewPersistenceTests {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -44,7 +44,7 @@ struct SidebarViewPersistenceTests {
             networks: VMNetworkDirectory(fileURL: nil),
             organization: organization,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard())
+            hostPasteboard: FakePasteboard(), guestAgent: .testing)
         let (macID, linuxID) = (macID, linuxID)
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS) { $0.id = macID }
         viewModel.library.admitFixture(name: "Linux", guestOS: .linux) { $0.id = linuxID }

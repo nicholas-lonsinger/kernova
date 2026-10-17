@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Tests for the Settings window's tab container.
 ///
@@ -22,7 +23,7 @@ struct SettingsTabViewControllerTests {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -37,7 +38,8 @@ struct SettingsTabViewControllerTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
         for index in 1...vmCount {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)

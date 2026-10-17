@@ -2,12 +2,13 @@ import Testing
 import Foundation
 import Virtualization
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VirtualizationService Tests", .caseScoped)
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
-        vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetNetworkOperator(),
+        vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetAttachments(),
         bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled,
         isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
@@ -19,7 +20,7 @@ struct VirtualizationServiceTests {
         let session = MockSnapshotSession(guestState: .running)
         var stateWhileCapturing: MockSnapshotSession.GuestState?
 
-        try await VirtualizationService.captureLiveState(
+        try await VMLiveStateCapture.captureLiveState(
             session: session, wasRunning: true,
             saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
         ) {
@@ -37,7 +38,7 @@ struct VirtualizationServiceTests {
         // here restarts the guest while the VM is reported as paused.
         let session = MockSnapshotSession(guestState: .paused)
 
-        try await VirtualizationService.captureLiveState(
+        try await VMLiveStateCapture.captureLiveState(
             session: session, wasRunning: false,
             saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
         ) {}
@@ -55,7 +56,7 @@ struct VirtualizationServiceTests {
         var captured = false
 
         await #expect(throws: VMSnapshotError.self) {
-            try await VirtualizationService.captureLiveState(
+            try await VMLiveStateCapture.captureLiveState(
                 session: session, wasRunning: true,
                 saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
             ) { captured = true }
@@ -81,7 +82,7 @@ struct VirtualizationServiceTests {
         func sweep(_ session: MockSnapshotSession) async throws {
             try await instance.activity.perform(.saving) { context in
                 do {
-                    try await VirtualizationService.detachUSBAccessories(context, session: session)
+                    try await VMLiveStateCapture.detachUSBAccessories(context, session: session)
                     return .rest(.asStarted, ())
                 } catch {
                     return .failed(.asStarted, error)
@@ -186,7 +187,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VMSessionError.self) {
             try await fixture.instance.activity.captureSnapshot(.live) { context in
-                try await VirtualizationService.detachUSBAccessories(
+                try await VMLiveStateCapture.detachUSBAccessories(
                     owingReturns: context, session: session)
                 return .rest(.asStarted, ())
             }
@@ -506,7 +507,7 @@ struct VirtualizationServiceTests {
     ) throws -> RevertFixture {
         let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
         let library = makeWiredLibrary(
-            machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem()))
+            machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()))
         let instance = try library.registerOnDiskFixture(
             name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot])
         ) {
@@ -986,6 +987,7 @@ struct VirtualizationServiceTests {
                 == VZError.Code.invalidVirtualMachineConfiguration.rawValue)
         #expect(Code.virtualMachineLimitExceeded.rawValue == VZError.Code.virtualMachineLimitExceeded.rawValue)
         #expect(Code.operationCancelled.rawValue == VZError.Code.operationCancelled.rawValue)
+        #expect(vzInstallationFailedCode == VZError.Code.installationFailed.rawValue)
     }
 
     @Test("VM limit exceeded error is transient")

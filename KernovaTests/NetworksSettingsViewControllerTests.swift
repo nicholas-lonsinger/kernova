@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The Settings window's Networks pane: the library's named networks, created,
 /// renamed and deleted through the command core.
@@ -81,7 +82,7 @@ struct NetworksSettingsViewControllerTests {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -97,7 +98,7 @@ struct NetworksSettingsViewControllerTests {
             entitlements: .entitled,
             networks: VMNetworkDirectory(fileURL: fileURL),
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard())
+            hostPasteboard: FakePasteboard(), guestAgent: .testing)
         var checks = 0
         viewModel.onShowConfigCheck = { _ in checks += 1 }
 

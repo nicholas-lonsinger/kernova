@@ -3,6 +3,7 @@ import Testing
 import Foundation
 import Virtualization
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("ConfigurationBuilder Tests", .caseScoped)
 struct ConfigurationBuilderTests {
@@ -24,20 +25,21 @@ struct ConfigurationBuilderTests {
             try Data().write(to: VMBundleLayout(bundleURL: tempDir).diskImageURL)
         }
         if withEFIVariableStore {
-            try VMBundleMachineFiles(fileSystem: MockFileSystem()).ensureEFIVariableStore(bundleURL: tempDir)
+            try VirtualizationPlatformFiles().ensureEFIVariableStore(bundleURL: tempDir)
         }
         return tempDir
     }
 
-    /// A builder over `networks`' service, attaching through its scripted
-    /// operator — a fresh pair by default.
+    /// A builder over `networks`' service, attaching through `attachments` —
+    /// fresh ones by default.
     private func makeBuilder(
         _ networks: ScriptedVmnetNetworks = ScriptedVmnetNetworks(),
+        attachments: MockVmnetAttachments = MockVmnetAttachments(),
         entitlements: EntitlementService = .unentitled
     ) -> ConfigurationBuilder {
         ConfigurationBuilder(
             bridgedInterfaces: HostBridgedInterfaceProvider(), vmnetNetworks: networks.service,
-            vmnetAttachments: networks.operations, entitlements: entitlements)
+            vmnetAttachments: attachments, entitlements: entitlements)
     }
 
     /// Fails the test when `error` is a path-validation refusal.
@@ -131,7 +133,7 @@ struct ConfigurationBuilderTests {
         // The builder only reads the bundle.
         #expect(!FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
 
-        try VMBundleMachineFiles(fileSystem: MockFileSystem()).ensureEFIVariableStore(bundleURL: bundleURL)
+        try VirtualizationPlatformFiles().ensureEFIVariableStore(bundleURL: bundleURL)
 
         #expect(FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
         _ = try builder.assemble(from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
@@ -1047,13 +1049,14 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(networks, entitlements: .entitled)
+        let attachments = MockVmnetAttachments()
+        let builder = makeBuilder(networks, attachments: attachments, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
-        #expect(devices[0].attachment === networks.operations.attachments.last)
+        #expect(devices[0].attachment === attachments.made.last)
         #expect(networks.operations.createdKinds == [.nat])
         #expect(networks.service.ipv4Subnet(for: .common(.nat)) != nil)
     }
@@ -1129,13 +1132,14 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(networks, entitlements: .entitled)
+        let attachments = MockVmnetAttachments()
+        let builder = makeBuilder(networks, attachments: attachments, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
-        #expect(devices[0].attachment === networks.operations.attachments.last)
+        #expect(devices[0].attachment === attachments.made.last)
         #expect(networks.operations.createdKinds == [.hostOnly])
         #expect(networks.service.ipv4Subnet(for: .common(.hostOnly)) != nil)
     }
@@ -1163,7 +1167,8 @@ struct ConfigurationBuilderTests {
     func isolatedModesAttachTheVMsOwnNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(networks, entitlements: .entitled)
+        let attachments = MockVmnetAttachments()
+        let builder = makeBuilder(networks, attachments: attachments, entitlements: .entitled)
 
         var nat = makeLinuxConfig()
         nat.networkMembership = .isolated
@@ -1171,7 +1176,7 @@ struct ConfigurationBuilderTests {
         hostOnly.networkMembership = .isolated
         for (config, kind) in [(nat, VmnetNetworkKind.nat), (hostOnly, .hostOnly)] {
             let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-            #expect(result.configuration.networkDevices[0].attachment === networks.operations.attachments.last)
+            #expect(result.configuration.networkDevices[0].attachment === attachments.made.last)
             #expect(result.products.vmnetNetworks.owner == config.id)
             #expect(networks.service.ipv4Subnet(for: VmnetNetworkID(kind: kind, scope: .vm(config.id))) != nil)
         }

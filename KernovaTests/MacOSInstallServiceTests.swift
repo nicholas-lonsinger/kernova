@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers the restore-image path resolution that precedes both Virtualization hand-offs.
 ///

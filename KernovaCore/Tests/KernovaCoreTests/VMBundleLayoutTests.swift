@@ -1,0 +1,286 @@
+import Foundation
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+@Suite("VMBundleLayout Tests", .caseScoped)
+struct VMBundleLayoutTests {
+    private let bundleURL = URL(fileURLWithPath: "/tmp/TestVM.bundle", isDirectory: true)
+    private let scratch = TestScratchDirectory(prefix: "VMBundleLayoutTests")
+
+    // MARK: - Path Computed Properties
+
+    @Test("diskImageURL appends Disk.asif to bundle path")
+    func diskImageURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.diskImageURL.lastPathComponent == "Disk.asif")
+        #expect(layout.diskImageURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("the snapshot store hangs off a Snapshots directory in the bundle")
+    func snapshotStorePaths() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.snapshotsDirectoryURL.lastPathComponent == "Snapshots")
+        #expect(layout.snapshotsDirectoryURL.deletingLastPathComponent() == bundleURL)
+        #expect(layout.snapshotManifestURL.lastPathComponent == "manifest.json")
+        #expect(
+            layout.snapshotManifestURL.deletingLastPathComponent()
+                == layout.snapshotsDirectoryURL)
+    }
+
+    @Test("a snapshot's layout names its captured copies the way the bundle names its own")
+    func snapshotLayoutMirrorsTheBundle() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let id = UUID()
+        let snapshot = layout.snapshotLayout(id: id)
+
+        #expect(snapshot.bundleURL == layout.snapshotDirectoryURL(id: id))
+        #expect(snapshot.bundleURL.lastPathComponent == id.uuidString)
+        #expect(snapshot.diskImageURL.lastPathComponent == "Disk.asif")
+        #expect(snapshot.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
+        // Distinct from the bundle's own suspend slot, which a revert overwrites
+        // but never consumes.
+        #expect(snapshot.saveFileURL != layout.saveFileURL)
+    }
+
+    @Test("auxiliaryStorageURL appends AuxiliaryStorage to bundle path")
+    func auxiliaryStorageURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.auxiliaryStorageURL.lastPathComponent == "AuxiliaryStorage")
+        #expect(layout.auxiliaryStorageURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("hardwareModelURL appends HardwareModel to bundle path")
+    func hardwareModelURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.hardwareModelURL.lastPathComponent == "HardwareModel")
+        #expect(layout.hardwareModelURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("machineIdentifierURL appends MachineIdentifier to bundle path")
+    func machineIdentifierURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.machineIdentifierURL.lastPathComponent == "MachineIdentifier")
+        #expect(layout.machineIdentifierURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("efiVariableStoreURL appends EFIVariableStore to bundle path")
+    func efiVariableStoreURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.efiVariableStoreURL.lastPathComponent == "EFIVariableStore")
+        #expect(layout.efiVariableStoreURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("saveFileURL appends SaveFile.vzvmsave to bundle path")
+    func saveFileURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
+        #expect(layout.saveFileURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("serialLogURL appends serial.log to bundle path")
+    func serialLogURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.serialLogURL.lastPathComponent == "serial.log")
+        #expect(layout.serialLogURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("serialLogRotatedURL appends serial.log.1 to bundle path")
+    func serialLogRotatedURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.serialLogRotatedURL.lastPathComponent == "serial.log.1")
+        #expect(layout.serialLogRotatedURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("additionalDisksDirectoryURL appends AdditionalDisks to bundle path")
+    func additionalDisksDirectoryURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.additionalDisksDirectoryURL.lastPathComponent == "AdditionalDisks")
+        #expect(layout.additionalDisksDirectoryURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("additionalDiskURL returns path with UUID and .asif extension")
+    func additionalDiskURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let diskID = UUID()
+        let diskURL = layout.additionalDiskURL(id: diskID)
+        #expect(diskURL.lastPathComponent == "\(diskID.uuidString).asif")
+        #expect(
+            diskURL.path(percentEncoded: false).hasPrefix(
+                layout.additionalDisksDirectoryURL.path(percentEncoded: false)))
+    }
+
+    // MARK: - hasSaveFile
+
+    // MARK: - diskSizes.onDiskBytes
+
+    private func mainDiskSizes(_ layout: VMBundleLayout) -> VMBundleLayout.DiskSizes {
+        layout.diskSizes(
+            of: DiskImageReference(
+                path: layout.diskImageURL.lastPathComponent, isInternal: true))
+    }
+
+    private func mainDiskOnDiskBytes(_ layout: VMBundleLayout) -> UInt64? {
+        mainDiskSizes(layout).onDiskBytes
+    }
+
+    private func mainDiskCapacityBytes(_ layout: VMBundleLayout) -> UInt64? {
+        mainDiskSizes(layout).capacityBytes
+    }
+
+    @Test("onDiskBytes is nil when the disk image does not exist")
+    func diskOnDiskBytesReturnsNilForMissingFile() {
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        #expect(mainDiskOnDiskBytes(layout) == nil)
+    }
+
+    @Test("onDiskBytes is non-nil for an existing file")
+    func diskOnDiskBytesReturnsSize() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        let testData = Data(repeating: 0xAB, count: 4096)
+        try testData.write(to: layout.diskImageURL)
+
+        let usage = mainDiskOnDiskBytes(layout)
+        #expect(usage != nil)
+        // totalFileAllocatedSizeKey returns block-aligned allocation, so >= data size
+        #expect(usage! >= 4096)
+    }
+
+    @Test("onDiskBytes is the physical allocation, below the logical size for sparse files")
+    func diskOnDiskBytesReturnsSparseSize() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        let path = layout.diskImageURL.path(percentEncoded: false)
+
+        // Create a sparse file via ftruncate: 10 MB logical size, 0 bytes physically allocated
+        let logicalSize: UInt64 = 10 * 1024 * 1024
+        FileManager.default.createFile(atPath: path, contents: nil)
+        let fd = open(path, O_WRONLY)
+        ftruncate(fd, off_t(logicalSize))
+        close(fd)
+
+        let usage = mainDiskOnDiskBytes(layout)
+        #expect(usage != nil)
+        // Physical allocation should be much less than the 10 MB logical size
+        #expect(usage! < logicalSize)
+    }
+
+    // MARK: - diskSizes.capacityBytes
+
+    @Test("capacityBytes reads the virtual capacity from a shdw header")
+    func diskCapacityBytesReadsASIFHeader() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        // Minimal `shdw` header: magic at 0, sector count (big-endian) at 0x30.
+        var header = Data(count: 0x38)
+        header.replaceSubrange(0..<4, with: Data("shdw".utf8))
+        var sectorsBE = UInt64(97_656_250).bigEndian  // 50 GB / 512
+        withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
+        try header.write(to: layout.diskImageURL)
+
+        #expect(mainDiskCapacityBytes(layout) == 50_000_000_000)
+    }
+
+    @Test("capacityBytes is the logical file size for a non-ASIF file")
+    func diskCapacityBytesLogicalSizeForNonASIF() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        // A raw image (no `shdw` magic): apparent size *is* the capacity.
+        try Data(repeating: 0xAB, count: 0x40).write(to: layout.diskImageURL)
+
+        #expect(mainDiskCapacityBytes(layout) == 0x40)
+    }
+
+    @Test("capacityBytes resolves an external (absolute) path's logical size")
+    func diskCapacityBytesExternalAbsolutePath() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let fileURL = scratch.url.appendingPathComponent("\(UUID().uuidString).img")
+        try Data(repeating: 0xCD, count: 2048).write(to: fileURL)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        #expect(
+            layout.diskSizes(
+                of: DiskImageReference(
+                    path: fileURL.path(percentEncoded: false), isInternal: false)
+            )
+            .capacityBytes == 2048)
+    }
+
+    @Test("capacityBytes is unknown for a file that cannot be opened, never its apparent size")
+    func diskCapacityBytesNilForUnopenableFile() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        let path = layout.diskImageURL.path(percentEncoded: false)
+        // A raw image whose apparent size would read as a capacity if the file
+        // opened; with no read permission it stands for the sandbox's denial.
+        try Data(repeating: 0xAB, count: 0x40).write(to: layout.diskImageURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        }
+
+        let sizes = mainDiskSizes(layout)
+        #expect(sizes.onDiskBytes != nil)
+        #expect(sizes.capacityBytes == nil)
+    }
+
+    @Test("an external image is read through its bookmark, which tracks a moved file")
+    func diskSizesReadThroughBookmark() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let original = scratch.url.appendingPathComponent("\(UUID().uuidString).img")
+        try Data(repeating: 0xCD, count: 2048).write(to: original)
+        let bookmark = try #require(SecurityScopedBookmark.make(for: original))
+        let moved = scratch.url.appendingPathComponent("\(UUID().uuidString).img")
+        try FileManager.default.moveItem(at: original, to: moved)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        let sizes = layout.diskSizes(
+            of: DiskImageReference(
+                path: original.path(percentEncoded: false), isInternal: false,
+                bookmark: bookmark))
+        #expect(sizes.capacityBytes == 2048)
+    }
+
+    @Test("capacityBytes is nil for a malformed ASIF rather than its file size")
+    func diskCapacityBytesNilForMalformedASIF() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        // `shdw` magic but an out-of-bounds sector count (1 sector = 512 bytes,
+        // below the 1 MB floor). A recognizable ASIF must report unknown — not
+        // fall back to the apparent file size, which a sparse container doesn't
+        // tie to capacity.
+        var header = Data(count: 0x38)
+        header.replaceSubrange(0..<4, with: Data("shdw".utf8))
+        var sectorsBE = UInt64(1).bigEndian
+        withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
+        try header.write(to: layout.diskImageURL)
+
+        #expect(mainDiskCapacityBytes(layout) == nil)
+    }
+
+    @Test("capacityBytes rejects a sector count that overflows when ×512")
+    func diskCapacityBytesNilForOverflowingSectorCount() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        // A crafted sector count whose `× 512` overflows UInt64 and *wraps* back
+        // to exactly 1 GB — inside the sanity window. A wrapping multiply would
+        // report a fabricated 1 GB capacity; the checked multiply must reject it.
+        var header = Data(count: 0x38)
+        header.replaceSubrange(0..<4, with: Data("shdw".utf8))
+        var sectorsBE = UInt64(0x0080_0000_0020_0000).bigEndian
+        withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
+        try header.write(to: layout.diskImageURL)
+
+        #expect(mainDiskCapacityBytes(layout) == nil)
+    }
+}

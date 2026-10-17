@@ -5,6 +5,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The General panel's own behavior, drilled into through the shell.
 @Suite("VM Settings General Panel Tests", .serialized, .caseScoped, .scopedWindows)

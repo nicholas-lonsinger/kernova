@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers ``AppTerminationController/handleTerminationRequest()`` — which quits
 /// terminate the agent and which downgrade to a GUI close — and the latch

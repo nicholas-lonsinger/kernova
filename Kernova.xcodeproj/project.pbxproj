@@ -184,6 +184,11 @@
 			path = KernovaKit/Sources/KernovaTestSupport;
 			sourceTree = "<group>";
 		};
+		A1000009 /* KernovaCoreTestSupport */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = KernovaCore/Sources/KernovaCoreTestSupport;
+			sourceTree = "<group>";
+		};
 		A1000101 /* KernovaRelaunchHelper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = KernovaRelaunchHelper;
@@ -312,6 +317,7 @@
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
 				A1000008 /* KernovaTestSupport */,
+				A1000009 /* KernovaCoreTestSupport */,
 				A1000101 /* KernovaRelaunchHelper */,
 				A1000401 /* KernovaCLI */,
 				A1000201 /* KernovaMacOSAgent */,
@@ -408,6 +414,7 @@
 			fileSystemSynchronizedGroups = (
 				A1000007 /* KernovaTests */,
 				A1000008 /* KernovaTestSupport */,
+				A1000009 /* KernovaCoreTestSupport */,
 			);
 			name = KernovaTests;
 			packageProductDependencies = (

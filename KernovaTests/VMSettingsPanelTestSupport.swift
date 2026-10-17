@@ -4,6 +4,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the
 /// shell's own and the six per-panel ones.
@@ -25,7 +26,7 @@ func makeSettingsViewModel(
     VMLibraryViewModel(
         storageService: storage,
         diskImageService: MockDiskImageService(),
-        machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem()),
+        machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
         virtualizationHost: VirtualizationHost(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
@@ -41,7 +42,8 @@ func makeSettingsViewModel(
         entitlements: entitled ? .entitled : .unentitled,
         networks: networks,
         hostNotifications: hostNotifications,
-        hostPasteboard: FakePasteboard()
+        hostPasteboard: FakePasteboard(),
+        guestAgent: .testing
     )
 }
 

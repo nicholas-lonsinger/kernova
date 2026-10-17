@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// A `Networks.json` Kernova can't read reads as unreadable on every surface
 /// that lists the networks — never as none — and Use Defaults repairs it.

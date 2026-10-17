@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VMDisplayBackingView Tests", .caseScoped)
 @MainActor

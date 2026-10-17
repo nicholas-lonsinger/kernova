@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Covers `AppWindowRegistry.hasTrackedUserWindow` — the deterministic half
 /// of the window-presence answer the activation-policy reconcile and the reopen

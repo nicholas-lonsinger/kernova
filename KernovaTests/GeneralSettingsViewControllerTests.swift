@@ -3,6 +3,7 @@ import ServiceManagement
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Behavior tests for the General settings pane's login-item approval note.
 @Suite("General Settings Tests", .serialized, .caseScoped, .scopedWindows)

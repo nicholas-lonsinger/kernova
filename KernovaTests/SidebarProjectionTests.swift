@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The sidebar's projection — ``SidebarLayout``, the ``SidebarTree`` built from
 /// it, and the selection and reorder rules over both — on synthetic layouts
@@ -290,7 +291,7 @@ struct SidebarProjectionTests {
             guard let destination = offset(id, to: index), let source = order.firstIndex(of: id)
             else { return nil }
             var result = order
-            result.move(fromOffsets: IndexSet(integer: source), toOffset: destination)
+            result.moveSubranges(RangeSet(source..<source + 1), to: destination)
             return result
         }
 

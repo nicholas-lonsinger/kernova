@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 @testable import KernovaKit
 
 /// Exercises `HostClipboardPublisher.publish(from:)`'s cancellation contract:

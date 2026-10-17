@@ -3,6 +3,7 @@ import Testing
 import Virtualization
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("GuestMACAddress", .caseScoped)
 struct GuestMACAddressTests {

@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 @Suite("VMIdentityHeaderView Tests", .caseScoped)
 @MainActor

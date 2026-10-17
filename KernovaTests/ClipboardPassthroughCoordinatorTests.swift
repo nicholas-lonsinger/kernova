@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Exercises `ClipboardPassthroughCoordinator` — the automatic-passthrough
 /// driver — over a private `NSPasteboard(name:)` so tests never touch the

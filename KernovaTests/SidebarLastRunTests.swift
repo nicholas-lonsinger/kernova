@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The sidebar's Last Run sort: the order it projects, the detail line it
 /// states, and the shared clock that keeps a relative line current.
@@ -24,7 +25,7 @@ struct SidebarLastRunTests {
         VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -39,7 +40,8 @@ struct SidebarLastRunTests {
             arpTable: ScriptedARPTable(),
             entitlements: .entitled,
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 

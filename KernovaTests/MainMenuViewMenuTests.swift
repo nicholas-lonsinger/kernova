@@ -3,6 +3,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The View menu's sidebar items: that they mirror the library section's
 /// header menu, set the same options, carry shortcuts nothing else in the

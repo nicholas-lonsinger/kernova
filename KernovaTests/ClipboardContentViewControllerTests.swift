@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 @testable import KernovaKit
 
 /// Fresh per-test "Copy to Mac" harness: a private destination pasteboard, an
@@ -35,7 +36,7 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
     VMLibraryViewModel(
         storageService: MockVMStorageService(),
         diskImageService: MockDiskImageService(),
-        machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+        machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
         virtualizationHost: VirtualizationHost(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
@@ -50,7 +51,8 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
         arpTable: ScriptedARPTable(),
         entitlements: .entitled,
         hostNotifications: .isolated(),
-        hostPasteboard: FakePasteboard()
+        hostPasteboard: FakePasteboard(),
+        guestAgent: .testing
     )
 }
 
@@ -588,7 +590,7 @@ struct ClipboardAgentDiskControlTests {
 
     @Test("The footer's button tracks the installer's attached state through observation")
     func footerTracksInstallerAttachment() async throws {
-        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
         let viewModel = makeClipboardViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()),

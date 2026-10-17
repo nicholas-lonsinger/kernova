@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// A group header's Start All, Suspend All and Stop All: what the menu counts
 /// and enables, and what a pick does in the app — one account of what was
@@ -19,7 +20,7 @@ struct SidebarGroupActionTests {
         VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
-            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem()),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
@@ -35,7 +36,8 @@ struct SidebarGroupActionTests {
             entitlements: .entitled,
             organization: VMOrganizationDirectory(fileURL: nil),
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard()
+            hostPasteboard: FakePasteboard(),
+            guestAgent: .testing
         )
     }
 

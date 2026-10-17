@@ -1,10 +1,10 @@
 import AppKit
 import Foundation
-import KernovaCore
 import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The sidebar's name search: how it narrows every sidebar section and what
 /// their headers count, how it stays apart from the filter, what a search from
