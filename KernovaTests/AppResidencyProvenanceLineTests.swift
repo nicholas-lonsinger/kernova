@@ -2,25 +2,25 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppResidencyController.residentProvenanceLine`.
+/// Unit tests for `AppResidencyPolicy.residentProvenanceLine`.
 ///
 /// The pure formatter behind the resident app's startup `.notice` log line
 /// (#455). Launch Services elects among every on-disk copy by `CFBundleVersion`,
 /// so the copy that actually launched need not be the one the developer
 /// expected; this one greppable line makes "which copy is this" legible from the
 /// log alone.
-@Suite("AppResidencyController.residentProvenanceLine", .caseScoped)
+@Suite("AppResidencyPolicy.residentProvenanceLine", .caseScoped)
 struct AppResidencyProvenanceLineTests {
     private func provenance(
-        _ origin: AppResidencyController.LaunchProvenance.Origin, isHidden: Bool
-    ) -> AppResidencyController.LaunchProvenance {
-        AppResidencyController.LaunchProvenance(origin: origin, isHidden: isHidden)
+        _ origin: AppResidencyPolicy.LaunchProvenance.Origin, isHidden: Bool
+    ) -> AppResidencyPolicy.LaunchProvenance {
+        AppResidencyPolicy.LaunchProvenance(origin: origin, isHidden: isHidden)
     }
 
     @Test("formats bundle path, build, configuration, and entitlement state into one line")
     func formatsAllFields() {
         #expect(
-            AppResidencyController.residentProvenanceLine(
+            AppResidencyPolicy.residentProvenanceLine(
                 bundlePath: "/Applications/Kernova.app",
                 build: "142",
                 configuration: "Release",
@@ -33,7 +33,7 @@ struct AppResidencyProvenanceLineTests {
     @Test("reports an unentitled signature")
     func unentitledSignature() {
         #expect(
-            AppResidencyController.residentProvenanceLine(
+            AppResidencyPolicy.residentProvenanceLine(
                 bundlePath: "/Applications/Kernova.app",
                 build: "142",
                 configuration: "Debug",
@@ -48,7 +48,7 @@ struct AppResidencyProvenanceLineTests {
     @Test("reports a launch that asked for no window")
     func hiddenLaunch() {
         #expect(
-            AppResidencyController.residentProvenanceLine(
+            AppResidencyPolicy.residentProvenanceLine(
                 bundlePath: "/Applications/Kernova.app",
                 build: "142",
                 configuration: "Debug",

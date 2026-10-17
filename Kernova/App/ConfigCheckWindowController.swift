@@ -23,7 +23,7 @@ final class ConfigCheckWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         // Centered first, so a saved frame the autosave name restores wins.
         window.center()
-        window.setFrameAutosaveName(stage.configCheckFrame)
+        window.setFrameAutosaveName(stage.autosave.configCheckFrame)
         super.init(window: window)
     }
 

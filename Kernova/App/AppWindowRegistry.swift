@@ -286,7 +286,7 @@ final class AppWindowRegistry {
     /// Does NOT special-case `NSApp.isHidden`, which turns every window's
     /// `isVisible` false without closing one: this answers what is on screen,
     /// and hiding is a term of the residency decision instead — see
-    /// ``AppResidencyController/residencyOutcome(hasVisibleUserWindow:isHidden:keepInMenuBar:hasUninterruptibleWork:)``.
+    /// ``AppResidencyPolicy/residencyOutcome(hasVisibleUserWindow:isHidden:keepInMenuBar:hasUninterruptibleWork:)``.
     var hasUserWindow: Bool {
         if hasTrackedUserWindow { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
@@ -331,4 +331,13 @@ extension AppWindowRegistry: VMDisplayPlacementHosting {
     var libraryScreen: NSScreen? { libraryWindow?.screen }
 
     func displayWindowShown(_ window: NSWindow) { shown(window) }
+}
+
+extension AlertWindowState {
+    @MainActor
+    init(_ window: NSWindow) {
+        self.init(
+            isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
+            isOnActiveSpace: window.isOnActiveSpace)
+    }
 }

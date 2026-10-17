@@ -90,15 +90,15 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName(stage.displayFrame(for: instance.instanceID))
+        window.setFrameAutosaveName(stage.autosave.displayFrame(for: instance.instanceID))
 
-        let toolbar = NSToolbar(identifier: stage.displayToolbar)
+        let toolbar = NSToolbar(identifier: stage.autosave.displayToolbar)
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
         // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = stage.savesState
+        toolbar.autosavesConfiguration = stage.autosave.savesState
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 

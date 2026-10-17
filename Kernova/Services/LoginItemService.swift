@@ -13,7 +13,7 @@ protocol LoginItemRegistration {
 /// Registers the app itself to open at login through `SMAppService.mainApp`.
 ///
 /// A login launch is then an ordinary Launch Services open, which
-/// ``AppResidencyController/launchPosture(for:keepInMenuBar:)`` brings up
+/// ``AppResidencyPolicy/launchPosture(for:keepInMenuBar:)`` brings up
 /// headless with *Continue running in the menu bar* on, and `.regular` with its
 /// library window otherwise — the same pair a launch that asks for no window
 /// gets.

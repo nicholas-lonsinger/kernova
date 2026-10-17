@@ -141,26 +141,27 @@ enum GuestAccountPasswordAlert {
         host: any VirtualizationHostProviding,
         answer: @escaping (GuestAccountPasswordAnswer) -> Void,
         retry: @escaping (String) -> Void
-    ) -> AlertConfiguration {
-        AlertConfiguration(
-            title: title(fullName: prompt.fullName, username: prompt.username),
-            message: message(vmName: prompt.vm.name),
-            buttons: [
-                AlertButton("Set Up Account", role: .default) {
-                    // The wizard's own rule, on the wizard's own validator, so
-                    // a password this sheet accepts is one the boot can use.
-                    if let refusal = MacOSGuestProvisioning.passwordRefusal(
-                        fullName: prompt.fullName, username: prompt.username,
-                        password: fields.password, verifiedBy: fields.verification, host: host)
-                    {
-                        retry(refusal)
-                        return
-                    }
-                    answer(.password(fields.password))
-                },
-                AlertButton("Skip Setup") { answer(.skip) },
-                AlertButton("Cancel", role: .cancel) { answer(.cancelled) },
-            ],
+    ) -> SheetAlert {
+        SheetAlert(
+            AlertConfiguration(
+                title: title(fullName: prompt.fullName, username: prompt.username),
+                message: message(vmName: prompt.vm.name),
+                buttons: [
+                    AlertButton("Set Up Account", role: .default) {
+                        // The wizard's own rule, on the wizard's own validator, so
+                        // a password this sheet accepts is one the boot can use.
+                        if let refusal = MacOSGuestProvisioning.passwordRefusal(
+                            fullName: prompt.fullName, username: prompt.username,
+                            password: fields.password, verifiedBy: fields.verification, host: host)
+                        {
+                            retry(refusal)
+                            return
+                        }
+                        answer(.password(fields.password))
+                    },
+                    AlertButton("Skip Setup") { answer(.skip) },
+                    AlertButton("Cancel", role: .cancel) { answer(.cancelled) },
+                ]),
             accessoryView: fields,
             initialFirstResponder: fields.passwordField)
     }

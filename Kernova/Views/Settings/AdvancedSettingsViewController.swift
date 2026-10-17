@@ -333,8 +333,8 @@ final class AdvancedSettingsViewController: NSViewController {
 
         guard let window = view.window else { return }
         presentSheetAlert(
-            .acknowledgement(
-                title: title, message: Self.reason(for: failure), accessoryView: hint),
+            SheetAlert(
+                .acknowledgement(title: title, message: Self.reason(for: failure)), accessoryView: hint),
             in: window)
     }
 

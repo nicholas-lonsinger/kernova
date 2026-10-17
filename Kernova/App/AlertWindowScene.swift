@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 /// What alert routing reads about one window.
 struct AlertWindowState: Equatable {
@@ -10,15 +10,6 @@ struct AlertWindowState: Equatable {
     /// alert: a sheet on a miniaturized window, or on one in another Space, is
     /// on screen for nobody.
     var canTakeAlert: Bool { isVisible && !isMiniaturized && isOnActiveSpace }
-}
-
-extension AlertWindowState {
-    @MainActor
-    init(_ window: NSWindow) {
-        self.init(
-            isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
-            isOnActiveSpace: window.isOnActiveSpace)
-    }
 }
 
 /// The windows an alert can be shown on, as they stand at the moment one is

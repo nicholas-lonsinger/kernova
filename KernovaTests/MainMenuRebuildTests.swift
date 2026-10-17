@@ -63,7 +63,7 @@ struct MainMenuRebuildTests {
     func quitSectionMatchesModel() throws {
         let fixture = makeFixture()
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: false)
+        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: false)
 
         let items = quitItems(in: appMenu, count: model.count)
         #expect(items.map(\.title) == model.map(\.title))
@@ -80,7 +80,7 @@ struct MainMenuRebuildTests {
         fixture.viewModel.keepInMenuBarOnQuit = true
         fixture.update(appMenu)
 
-        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
         let after = quitItems(in: appMenu, count: model.count)
         #expect(after.map(\.title) == model.map(\.title))
         #expect(after.last?.keyEquivalentModifierMask == [.command, .option])
@@ -109,7 +109,7 @@ struct MainMenuRebuildTests {
         fixture.viewModel.keepInMenuBarOnQuit = true
         fixture.update(appMenu)
 
-        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
         #expect(!appMenu.items.contains { $0 === intruder })
         #expect(appMenu.items.first === bystander)
         #expect(quitItems(in: appMenu, count: model.count).map(\.title) == model.map(\.title))
@@ -119,7 +119,7 @@ struct MainMenuRebuildTests {
     func injectedItemIsSweptWithoutAModelChange() throws {
         let fixture = makeFixture(keepInMenuBar: true)
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
         let before = quitItems(in: appMenu, count: model.count)
         // What AppKit attaches beside a `terminate:` item, arriving after the
         // section was built and without anything the model would notice. It goes
@@ -151,7 +151,7 @@ struct MainMenuRebuildTests {
     func matchingSplitSectionIsNotMutated() throws {
         let fixture = makeFixture(keepInMenuBar: true)
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
         let before = quitItems(in: appMenu, count: model.count)
         let itemCountBefore = appMenu.items.count
 

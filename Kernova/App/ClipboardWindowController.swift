@@ -43,7 +43,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName(stage.clipboardFrame(for: instance.instanceID))
+        window.setFrameAutosaveName(stage.autosave.clipboardFrame(for: instance.instanceID))
         updateWindowTitle()
     }
 

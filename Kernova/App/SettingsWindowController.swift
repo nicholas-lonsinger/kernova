@@ -27,7 +27,7 @@ final class SettingsWindowController: NSWindowController {
         // stretching the first pane's cards over the excess). AppKit has no
         // position-only autosave, so `SettingsTabViewController` re-asserts the
         // height on appear.
-        window.setFrameAutosaveName(stage.settingsFrame)
+        window.setFrameAutosaveName(stage.autosave.settingsFrame)
         self.tabs = tabs
         super.init(window: window)
     }

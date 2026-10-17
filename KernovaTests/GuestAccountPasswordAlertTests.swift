@@ -32,7 +32,7 @@ struct GuestAccountPasswordAlertTests {
     private func makeConfiguration(
         password: String, verification: String, answers: Answers,
         prompt: GuestAccountPrompt? = nil
-    ) -> (AlertConfiguration, GuestAccountPasswordFields) {
+    ) -> (SheetAlert, GuestAccountPasswordFields) {
         let fields = GuestAccountPasswordFields()
         fields.passwordField.stringValue = password
         fields.verifyField.stringValue = verification

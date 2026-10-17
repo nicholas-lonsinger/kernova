@@ -1,6 +1,4 @@
-import Cocoa
-import Darwin
-import KernovaAppRegistry
+import Foundation
 import KernovaLogging
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.
@@ -16,7 +14,7 @@ protocol SoftQuitHosting: AnyObject {
 ///
 /// The latches that decide a pending quit are read and written nowhere else.
 @MainActor
-final class AppTerminationController: NSObject {
+final class AppTerminationController {
     private let viewModel: VMLibraryViewModel
     /// Where a downgraded quit closes the GUI.
     private let residency: any SoftQuitHosting
@@ -30,10 +28,10 @@ final class AppTerminationController: NSObject {
     private var isRunningTerminationSavePass = false
 
     /// Latched once that pass has finished, which is what lets the gate answer
-    /// `.terminateNow` for the quit the pass itself then asks for.
+    /// `.now` for the quit the pass itself then asks for.
     private var hasCompletedTerminationSavePass = false
 
-    /// Whether the gate has answered `.terminateLater` and AppKit is waiting on
+    /// Whether the gate has answered `.later` and AppKit is waiting on
     /// the reply the finished pass owes it.
     private var owesDeferredTerminationReply = false
 
@@ -42,7 +40,7 @@ final class AppTerminationController: NSObject {
     private var terminationIsTCCRevocation = false
 
     /// Set in ``handleTerminationRequest()`` when TCC revocation is detected AND
-    /// running VMs require an async save (`.terminateLater`).
+    /// running VMs require an async save (`.later`).
     private var relaunchAfterTermination = false
 
     /// Set by the true-quit affordances (the status item's Quit, the app menu's
@@ -64,6 +62,9 @@ final class AppTerminationController: NSObject {
     /// was not delivered by one.
     private let pendingQuitEvent: @MainActor () -> QuitEvent?
 
+    /// What the gate learns about a quit Apple Event's sender.
+    private let senderProbe: QuitSenderProbe
+
     /// Ends the termination a finished save pass ran for.
     private let endTermination: @MainActor (TerminationEnding) -> Void
 
@@ -71,12 +72,14 @@ final class AppTerminationController: NSObject {
 
     init(
         viewModel: VMLibraryViewModel, residency: any SoftQuitHosting,
-        pendingQuitEvent: @escaping @MainActor () -> QuitEvent? = AppTerminationController.currentQuitEvent,
-        endTermination: @escaping @MainActor (TerminationEnding) -> Void = AppTerminationController.end
+        pendingQuitEvent: @escaping @MainActor () -> QuitEvent?,
+        senderProbe: QuitSenderProbe,
+        endTermination: @escaping @MainActor (TerminationEnding) -> Void
     ) {
         self.viewModel = viewModel
         self.residency = residency
         self.pendingQuitEvent = pendingQuitEvent
+        self.senderProbe = senderProbe
         self.endTermination = endTermination
     }
 
@@ -118,27 +121,23 @@ final class AppTerminationController: NSObject {
     }
 
     /// Classifies a quit Apple Event by its sender PID, in isolation from the AE
-    /// itself so the full matrix is unit-testable with injected probes.
+    /// itself.
     ///
     /// The governing principle: user-facing quit affordances soft-quit;
     /// programmatic and external quits are honored as real quits, and an
     /// unattributable sender fails safe toward termination.
-    nonisolated static func classifyQuit(
-        senderPID: pid_t?,
-        bundleIDResolver: (pid_t) -> String?,
-        isProcessAlive: (pid_t) -> Bool
-    ) -> QuitClassification {
+    nonisolated static func classifyQuit(senderPID: pid_t?, sender: QuitSenderProbe) -> QuitClassification {
         // A non-positive PID targets a process group, not a single process, so it
         // can't be probed the same way: unattributable.
         guard let senderPID, senderPID > 0 else { return .terminateAndSave }
 
-        guard isProcessAlive(senderPID) else { return .terminateAndSave }
+        guard sender.isProcessAlive(senderPID) else { return .terminateAndSave }
 
         if senderPID == getpid() { return .stayResident }
 
         // Live sender with no resolvable bundle ID (e.g. `osascript` running an
         // AppleScript `quit`) — a programmatic quit; honor it.
-        guard let bundleID = bundleIDResolver(senderPID) else { return .terminateAndSave }
+        guard let bundleID = sender.bundleID(senderPID) else { return .terminateAndSave }
 
         if tccSenderBundleIDs.contains(bundleID) { return .terminateAndRelaunch }
         if systemQuitSenderBundleIDs.contains(bundleID) { return .terminateAndSave }
@@ -163,7 +162,7 @@ final class AppTerminationController: NSObject {
     /// flag always drives the process toward actual termination on the same call
     /// that set it, so there is never a stale `true` left over. Resetting on
     /// `.stayResident` would let a later, unrelated GUI-origin quit clear the very
-    /// flag an in-flight `.terminateLater` VM-save depends on.
+    /// flag an in-flight `.later` VM-save depends on.
     func latchQuitClassification(_ classification: QuitClassification) {
         switch classification {
         case .stayResident:
@@ -181,26 +180,18 @@ final class AppTerminationController: NSObject {
         var senderPID: pid_t?
     }
 
-    /// Whether `event` is the Standard Suite's quit.
-    nonisolated static func isQuitEvent(_ event: NSAppleEventDescriptor) -> Bool {
-        event.eventClass == AEEventClass(kCoreEventClass)
-            && event.eventID == AEEventID(kAEQuitApplication)
-    }
-
-    /// The quit Apple Event `NSAppleEventManager` is handling, if the event it
-    /// is handling is the Standard Suite's quit.
-    ///
-    /// A sender PID is stamped on an event as it is received, never on one
-    /// built locally.
-    static func currentQuitEvent() -> QuitEvent? {
-        guard let event = NSAppleEventManager.shared().currentAppleEvent, isQuitEvent(event)
-        else { return nil }
-        return QuitEvent(senderPID: event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value)
+    /// What the gate can learn about the process that sent a quit Apple Event.
+    struct QuitSenderProbe {
+        /// Whether a process with this PID is running.
+        let isProcessAlive: (pid_t) -> Bool
+        /// The bundle identifier of the application with this PID, or `nil`
+        /// when it is no application that has one.
+        let bundleID: (pid_t) -> String?
     }
 
     /// Latches what the quit Apple Event being handled demands, if the pending
     /// quit was delivered by one: the sender is what decides — see
-    /// ``classifyQuit(senderPID:bundleIDResolver:isProcessAlive:)``.
+    /// ``classifyQuit(senderPID:sender:)``.
     ///
     /// Read at the gate, from the event being handled, rather than by a handler
     /// of the controller's own: which handler receives a quit changes with the
@@ -217,21 +208,17 @@ final class AppTerminationController: NSObject {
     /// Latches what a quit delivered by `senderPID` demands.
     private func latchClassificationOfQuit(senderPID: pid_t?) {
         // Resolved once and fed to `classifyQuit` as fixed values so the same
-        // attribution result also drives the logging below. The two probes can't
-        // collapse into one: `NSRunningApplication` alone reads a live non-GUI
-        // sender like `osascript` as dead, and the Dock's stay-resident outcome
-        // depends on being seen as alive *and* identifiable.
+        // attribution result also drives the logging below.
         let attributablePID: pid_t? = senderPID.flatMap { pid in
-            guard pid > 0, processIsRunning(pid) else { return nil }
+            guard pid > 0, senderProbe.isProcessAlive(pid) else { return nil }
             return pid
         }
-        let bundleID = attributablePID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+        let bundleID = attributablePID.flatMap(senderProbe.bundleID)
 
         let classification = Self.classifyQuit(
             senderPID: senderPID,
-            bundleIDResolver: { _ in bundleID },
-            isProcessAlive: { _ in attributablePID != nil }
-        )
+            sender: QuitSenderProbe(
+                isProcessAlive: { _ in attributablePID != nil }, bundleID: { _ in bundleID }))
 
         if let attributablePID {
             if let bundleID {
@@ -270,6 +257,16 @@ final class AppTerminationController: NSObject {
         case saveThenTerminate
     }
 
+    /// The gate's answer to `applicationShouldTerminate(_:)`.
+    enum TerminationReply: Equatable {
+        /// The quit does not happen.
+        case cancel
+        /// Terminate at once.
+        case now
+        /// Terminate once the save pass answers.
+        case later
+    }
+
     /// Decides the termination gate's reply.
     ///
     /// `quitMustWaitOut` forces the deferred reply even when the gate has
@@ -306,9 +303,9 @@ final class AppTerminationController: NSObject {
     /// an Apple Event asked for is classified here by that event, whichever
     /// handler delivered it.
     ///
-    /// `.terminateLater` is reached only by a termination AppKit begins on its
-    /// own, and is answered by the save pass — see ``requestFullQuit()``.
-    func handleTerminationRequest() -> NSApplication.TerminateReply {
+    /// `.later` is reached only by a termination AppKit begins on its own, and
+    /// is answered by the save pass — see ``requestFullQuit()``.
+    func handleTerminationRequest() -> TerminationReply {
         latchClassificationOfQuitEvent()
         switch Self.terminationOutcome(
             hasCompletedSavePass: hasCompletedTerminationSavePass,
@@ -324,12 +321,12 @@ final class AppTerminationController: NSObject {
             Task { @MainActor in
                 self.residency.closeGUIForSoftQuit()
             }
-            return .terminateCancel
+            return .cancel
 
         case .deferToSavePass:
-            // Deferred, never cancelled: a `.terminateCancel` here would report a
-            // veto to whoever asked, and loginwindow reads that as the app
-            // refusing a logout, restart, or shut down. `.terminateLater` runs a
+            // Deferred, never cancelled: a `.cancel` here would report a veto to
+            // whoever asked, and loginwindow reads that as the app refusing a
+            // logout, restart, or shut down. `.later` runs a
             // nested wait instead, and the reply this records is what the
             // running pass answers it with when it finishes.
             if terminationIsTCCRevocation {
@@ -337,11 +334,11 @@ final class AppTerminationController: NSObject {
             }
             owesDeferredTerminationReply = true
             #log(Self.logger, .notice, "Quit requested while the termination save pass is running — deferring to it")
-            return .terminateLater
+            return .later
 
         case .terminateNow:
             viewModel.abandonArrivalsForTermination()
-            return .terminateNow
+            return .now
 
         case .saveThenTerminate:
             // macOS quits and relaunches the app when a TCC permission is revoked, and
@@ -353,7 +350,7 @@ final class AppTerminationController: NSObject {
             isRunningTerminationSavePass = true
             owesDeferredTerminationReply = true
             runSavePassThenEndTermination()
-            return .terminateLater
+            return .later
         }
     }
 
@@ -368,7 +365,7 @@ final class AppTerminationController: NSObject {
     /// guest, then ask AppKit to terminate.
     ///
     /// Two phases, in that order, because the one-phase form cannot work from
-    /// here. Terminating first makes the gate reply `.terminateLater`, and
+    /// here. Terminating first makes the gate reply `.later`, and
     /// AppKit answers that by spinning a nested run loop — which the save pass
     /// this controller runs cannot make progress inside, since it is a
     /// main-actor `Task` and the caller may already be occupying the main queue.
@@ -427,16 +424,6 @@ final class AppTerminationController: NSObject {
             let ending: TerminationEnding = self.owesDeferredTerminationReply ? .deferredReply : .terminate
             self.owesDeferredTerminationReply = false
             self.endTermination(ending)
-        }
-    }
-
-    /// Ends a termination the way `ending` names, through AppKit.
-    static func end(_ ending: TerminationEnding) {
-        switch ending {
-        case .deferredReply:
-            NSApplication.shared.reply(toApplicationShouldTerminate: true)
-        case .terminate:
-            NSApp.terminate(nil)
         }
     }
 
