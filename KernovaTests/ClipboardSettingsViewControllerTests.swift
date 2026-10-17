@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Behavior tests for the Clipboard settings pane.
 ///

@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// What the resume prompt says, what each of its three buttons answers with,
 /// and what it refuses before answering at all.

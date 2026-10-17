@@ -6,6 +6,7 @@ import Virtualization
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// The System panel's own behavior, drilled into through the shell.
 @Suite("VM Settings System Panel Tests", .serialized, .caseScoped, .scopedWindows)

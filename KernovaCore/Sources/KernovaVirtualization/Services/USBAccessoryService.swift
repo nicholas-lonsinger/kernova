@@ -228,7 +228,7 @@ private final class AccessoryListener: NSObject, AAUSBAccessoryListener, @unchec
 }
 
 /// Where the capability's presence is decided, once.
-enum USBAccessorySupport {
+package enum USBAccessorySupport {
     /// The service when this build can pass accessories through, `nil` when it
     /// cannot.
     ///
@@ -236,7 +236,7 @@ enum USBAccessorySupport {
     /// signature without the entitlement — into the one answer every caller
     /// reads, so no surface has to ask which of them applies.
     @MainActor
-    static func makeService(entitlements: EntitlementService)
+    package static func makeService(entitlements: EntitlementService)
         -> (any USBAccessoryProviding)?
     {
         guard entitlements.supportsUSBAccessories else { return nil }

@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the
 /// shell's own and the six per-panel ones.

@@ -1,9 +1,13 @@
-import KernovaKit
-import Testing
 import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
 import Virtualization
-@testable import Kernova
+
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaVirtualization
+@testable import KernovaVirtualizationTestSupport
 
 @Suite("ConfigurationBuilder Tests", .caseScoped)
 struct ConfigurationBuilderTests {
@@ -14,35 +18,6 @@ struct ConfigurationBuilderTests {
     }
 
     // MARK: - Helpers
-
-    /// Creates a bundle directory with a dummy disk image, holding the EFI
-    /// variable store a bring-up creates before an EFI build unless
-    /// `withEFIVariableStore` is off.
-    private func makeBundle(withDisk: Bool = false, withEFIVariableStore: Bool = true) throws -> URL {
-        let tempDir = scratch.url.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        if withDisk {
-            try Data().write(to: VMBundleLayout(bundleURL: tempDir).diskImageURL)
-        }
-        if withEFIVariableStore {
-            try VirtualizationPlatformFiles().ensureEFIVariableStore(bundleURL: tempDir)
-        }
-        return tempDir
-    }
-
-    /// A builder over `networks`' service, attaching through `attachments` —
-    /// fresh ones by default.
-    private func makeBuilder(
-        _ networks: ScriptedVmnetNetworks = ScriptedVmnetNetworks(),
-        attachments: MockVmnetAttachments = MockVmnetAttachments(),
-        entitlements: EntitlementService = .unentitled,
-        guestAgentInstaller: URL? = nil
-    ) -> ConfigurationBuilder {
-        ConfigurationBuilder(
-            bridgedInterfaces: HostBridgedInterfaceProvider(), vmnetNetworks: networks.service,
-            vmnetAttachments: attachments, entitlements: entitlements,
-            guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: guestAgentInstaller))
-    }
 
     /// Fails the test when `error` is a path-validation refusal.
     ///
@@ -91,26 +66,15 @@ struct ConfigurationBuilderTests {
             networkMode: .hostOnly)
     }
 
-    /// Returns a Linux/EFI config with optional shared directories.
-    private func makeLinuxConfig(
-        sharedDirectories: [SharedDirectory]? = nil
-    ) -> VMConfiguration {
-        var config = VMConfiguration(
-            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        config.sharedDirectories = sharedDirectories
-        return config
-    }
-
     // MARK: - Boot Validation
 
     @Test("Builder throws when the default main disk file is missing")
     func efiBootWithoutDisk() throws {
-        let bundleURL = try makeBundle()
+        let bundleURL = try scratch.makeEngineBundle()
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
-            try builder.build(from: makeLinuxConfig(), bundleURL: bundleURL)
+            try builder.build(from: VMConfiguration.testLinux(), bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e
@@ -121,12 +85,12 @@ struct ConfigurationBuilderTests {
 
     @Test("An EFI build over a bundle with no variable store fails naming it, and ensuring the store fixes it")
     func efiBootWithoutVariableStore() throws {
-        let bundleURL = try makeBundle(withDisk: true, withEFIVariableStore: false)
-        let builder = makeBuilder()
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true, withEFIVariableStore: false)
+        let builder = ConfigurationBuilder.testing()
         let storeURL = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
 
         #expect {
-            try builder.assemble(from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
+            try builder.assemble(from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError, case .efiVariableStoreMissing = e
             else { return false }
@@ -138,17 +102,17 @@ struct ConfigurationBuilderTests {
         try VirtualizationPlatformFiles().ensureEFIVariableStore(bundleURL: bundleURL)
 
         #expect(FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
-        _ = try builder.assemble(from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
+        _ = try builder.assemble(from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false)
     }
 
     @Test("Builder throws for kernel boot without kernel path")
     func kernelBootWithoutPath() throws {
-        let bundleURL = try makeBundle()
+        let bundleURL = try scratch.makeEngineBundle()
 
         let config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -161,12 +125,12 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for macOS boot without hardware model")
     func macOSBootWithoutHardwareModel() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let config = VMConfiguration(
             name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect(throws: (any Error).self) {
             try builder.build(from: config, bundleURL: bundleURL)
         }
@@ -176,12 +140,12 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for missing shared directory path")
     func builderThrowsForMissingSharedDirectoryPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let share = SharedDirectory(path: "/nonexistent/path/\(UUID().uuidString)")
-        let config = makeLinuxConfig(sharedDirectories: [share])
+        let config = VMConfiguration.testLinux(sharedDirectories: [share])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -195,17 +159,17 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for shared path that is a file")
     func builderThrowsForSharedPathThatIsAFile() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a file (not a directory) to use as the shared path
         let filePath = bundleURL.appendingPathComponent("not-a-directory").path(percentEncoded: false)
         FileManager.default.createFile(atPath: filePath, contents: nil)
 
-        let config = makeLinuxConfig(sharedDirectories: [
+        let config = VMConfiguration.testLinux(sharedDirectories: [
             SharedDirectory(path: filePath)
         ])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -218,7 +182,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for non-writable read-write share")
     func builderThrowsForNonWritableReadWriteShare() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
@@ -230,11 +194,11 @@ struct ConfigurationBuilderTests {
                 [.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false))
         }
 
-        let config = makeLinuxConfig(sharedDirectories: [
+        let config = VMConfiguration.testLinux(sharedDirectories: [
             SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: false)
         ])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -247,18 +211,18 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for dangling symlink as shared directory")
     func builderThrowsForDanglingSymlinkSharedDirectory() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a symlink pointing to a nonexistent target
         let symlinkPath = bundleURL.appendingPathComponent("dangling-link").path(percentEncoded: false)
         let nonexistentTarget = bundleURL.appendingPathComponent("no-such-dir").path(percentEncoded: false)
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
 
-        let config = makeLinuxConfig(sharedDirectories: [
+        let config = VMConfiguration.testLinux(sharedDirectories: [
             SharedDirectory(path: symlinkPath)
         ])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -271,7 +235,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for symlink to file as shared directory")
     func builderThrowsForSymlinkToFileAsSharedDirectory() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a regular file, then symlink to it
         let filePath = bundleURL.appendingPathComponent("a-file").path(percentEncoded: false)
@@ -279,11 +243,11 @@ struct ConfigurationBuilderTests {
         let symlinkPath = bundleURL.appendingPathComponent("link-to-file").path(percentEncoded: false)
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: filePath)
 
-        let config = makeLinuxConfig(sharedDirectories: [
+        let config = VMConfiguration.testLinux(sharedDirectories: [
             SharedDirectory(path: symlinkPath)
         ])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -299,7 +263,7 @@ struct ConfigurationBuilderTests {
     /// Sharing pane shows.
     @Test("A live swap's refusal of a served folder names the entry, not its resolved path")
     func liveSwapRefusalNamesTheEntry() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let target = bundleURL.appendingPathComponent("served-target")
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         let targetPath = target.path(percentEncoded: false)
@@ -325,7 +289,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder follows symlink to valid shared directory")
     func builderFollowsSymlinkToValidSharedDirectory() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real directory and a symlink to it
         let realDir = bundleURL.appendingPathComponent("real-share")
@@ -334,11 +298,11 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(
             atPath: symlinkPath, withDestinationPath: realDir.path(percentEncoded: false))
 
-        let config = makeLinuxConfig(sharedDirectories: [
+        let config = VMConfiguration.testLinux(sharedDirectories: [
             SharedDirectory(path: symlinkPath, readOnly: true)
         ])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink should be resolved and accepted.
         do {
@@ -354,14 +318,14 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent kernel path")
     func builderThrowsForNonexistentKernelPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         var config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = "/nonexistent/\(UUID().uuidString)/vmlinuz"
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -374,7 +338,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent initrd path")
     func builderThrowsForNonexistentInitrdPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -386,7 +350,7 @@ struct ConfigurationBuilderTests {
         config.kernelPath = kernelPath
         config.initrdPath = "/nonexistent/\(UUID().uuidString)/initrd.img"
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -401,7 +365,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent removable media path")
     func builderThrowsForNonexistentRemovableMediaPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         var config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
@@ -410,7 +374,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(path: "/nonexistent/\(UUID().uuidString)/install.iso", readOnly: true)
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -423,7 +387,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Attach failure for removable media throws typed error with item identity")
     func removableMediaAttachFailureThrowsTypedError() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // 100 bytes is not a multiple of the 512-byte sector size, so
         // VZDiskImageStorageDeviceAttachment rejects the file even though it
@@ -440,7 +404,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(id: itemID, path: isoPath, readOnly: true, label: "Bad ISO")
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -453,7 +417,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Attach failure for external storage disk throws typed error with item identity")
     func storageDiskAttachFailureThrowsTypedError() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Unaligned size — see the removable-media counterpart above.
         let diskPath = bundleURL.appendingPathComponent("bad.img").path(percentEncoded: false)
@@ -470,7 +434,7 @@ struct ConfigurationBuilderTests {
                 isInternal: false, kind: .virtio),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -483,7 +447,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Removable media is attached to XHCI controller, not storageDevices")
     func removableMediaOnXHCIController() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
@@ -493,7 +457,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: true)]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         let vz = result.configuration
 
@@ -506,7 +470,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Removable media returns coldRemovableMedia infos with matching UUIDs")
     func removableMediaReturnsDeviceInfos() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
@@ -519,7 +483,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(id: configuredUUID, path: isoPath, readOnly: true)
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         #expect(result.products.coldRemovableMedia.count == 1)
@@ -535,19 +499,19 @@ struct ConfigurationBuilderTests {
 
     @Test("No removable media returns empty coldRemovableMedia")
     func noRemovableMediaReturnsEmpty() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         #expect(result.products.coldRemovableMedia.isEmpty)
     }
 
     @Test("Builder throws for non-writable removable media when readOnly is false")
     func builderThrowsForNonWritableRemovableMedia() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("readonly.iso").path(percentEncoded: false)
         FileManager.default.createFile(atPath: isoPath, contents: Data([0]))
@@ -559,7 +523,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: false)]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -574,12 +538,12 @@ struct ConfigurationBuilderTests {
 
     @Test("Default storage disks list synthesizes the main disk at index 0")
     func defaultStorageDisksSynthesizesMainDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         #expect(result.configuration.storageDevices.count == 1)
@@ -588,7 +552,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Storage disks list orders devices on storageDevices by position")
     func storageDisksOrderingPreserved() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
@@ -601,7 +565,7 @@ struct ConfigurationBuilderTests {
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         // Position [0] is the ISO (USB mass storage), [1] is virtio main disk.
@@ -627,7 +591,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent external storage disk")
     func builderThrowsForNonexistentStorageDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         var config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
@@ -643,7 +607,7 @@ struct ConfigurationBuilderTests {
             ),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -656,7 +620,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as external storage disk")
     func builderThrowsForDirectoryAsStorageDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("disk-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -675,7 +639,7 @@ struct ConfigurationBuilderTests {
             ),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -688,7 +652,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for non-writable read-write external storage disk")
     func builderThrowsForNonWritableStorageDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
         FileManager.default.createFile(atPath: diskPath, contents: Data([0]))
@@ -703,7 +667,7 @@ struct ConfigurationBuilderTests {
             StorageDisk(path: diskPath, readOnly: false, label: "Data", isInternal: false, kind: .virtio),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -716,7 +680,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder accepts read-only storage disk for non-writable file")
     func builderAcceptsReadOnlyStorageDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
         FileManager.default.createFile(atPath: diskPath, contents: Data([0]))
@@ -731,7 +695,7 @@ struct ConfigurationBuilderTests {
             StorageDisk(path: diskPath, readOnly: true, label: "Data", isInternal: false, kind: .virtio),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         do {
             _ = try builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
@@ -743,7 +707,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder accepts read-only share for non-writable directory")
     func builderAcceptsReadOnlyShareForNonWritableDirectory() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
@@ -755,11 +719,11 @@ struct ConfigurationBuilderTests {
                 [.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false))
         }
 
-        let config = makeLinuxConfig(sharedDirectories: [
+        let config = VMConfiguration.testLinux(sharedDirectories: [
             SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: true)
         ])
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — shared directory validation should pass.
         do {
@@ -778,7 +742,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as kernel path")
     func builderThrowsForDirectoryAsKernelPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -788,7 +752,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = dirPath.path(percentEncoded: false)
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -801,7 +765,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as initrd path")
     func builderThrowsForDirectoryAsInitrdPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -816,7 +780,7 @@ struct ConfigurationBuilderTests {
         config.kernelPath = kernelPath
         config.initrdPath = dirPath.path(percentEncoded: false)
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -829,7 +793,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as removable media path")
     func builderThrowsForDirectoryAsRemovableMediaPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("iso-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -841,7 +805,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(path: dirPath.path(percentEncoded: false), readOnly: true)
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -856,7 +820,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for symlink to directory as kernel path")
     func builderThrowsForSymlinkToDirectoryAsKernelPath() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -869,7 +833,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = symlinkPath
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -884,7 +848,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder follows symlink to valid kernel file")
     func builderFollowsSymlinkToValidKernelFile() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real kernel file and a symlink to it
         let realKernel = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -897,7 +861,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = symlinkPath
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink to kernel file should be resolved and accepted.
         do {
@@ -906,56 +870,6 @@ struct ConfigurationBuilderTests {
             expectNoPathValidationError(error)
         } catch {
             // VZ framework or other errors are expected
-        }
-    }
-
-    // MARK: - Clipboard Sharing
-
-    @Test("BuildResult includes clipboard pipes when clipboard sharing is enabled")
-    func clipboardPipesWhenEnabled() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        var config = makeLinuxConfig()
-        config.clipboardSharingEnabled = true
-
-        let builder = makeBuilder()
-        do {
-            let result = try builder.build(from: config, bundleURL: bundleURL)
-            #expect(result.products.clipboardInputPipe != nil)
-            #expect(result.products.clipboardOutputPipe != nil)
-        } catch {
-            let isVZError = (error as NSError).domain == "VZErrorDomain"
-            if isVZError {
-                withKnownIssue("VZ validation unavailable — assertions skipped") {
-                    Issue.record("\(error)")
-                }
-            } else {
-                Issue.record("Unexpected non-VZ error: \(error)")
-            }
-        }
-    }
-
-    @Test("BuildResult has nil clipboard pipes when clipboard sharing is disabled")
-    func clipboardPipesWhenDisabled() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-
-        var config = makeLinuxConfig()
-        config.clipboardSharingEnabled = false
-
-        let builder = makeBuilder()
-        do {
-            let result = try builder.build(from: config, bundleURL: bundleURL)
-            #expect(result.products.clipboardInputPipe == nil)
-            #expect(result.products.clipboardOutputPipe == nil)
-        } catch {
-            let isVZError = (error as NSError).domain == "VZErrorDomain"
-            if isVZError {
-                withKnownIssue("VZ validation unavailable — assertions skipped") {
-                    Issue.record("\(error)")
-                }
-            } else {
-                Issue.record("Unexpected non-VZ error: \(error)")
-            }
         }
     }
 
@@ -970,9 +884,9 @@ struct ConfigurationBuilderTests {
         _ config: VMConfiguration,
         _ assertions: (_ hasInput: Bool, _ hasOutput: Bool, _ deviceCount: Int) -> Void
     ) throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
-        let result = try makeBuilder().assemble(from: config, bundleURL: bundleURL, validate: false)
+        let result = try ConfigurationBuilder.testing().assemble(from: config, bundleURL: bundleURL, validate: false)
         let streams = result.configuration.audioDevices
             .compactMap { $0 as? VZVirtioSoundDeviceConfiguration }
             .flatMap(\.streams)
@@ -995,7 +909,7 @@ struct ConfigurationBuilderTests {
     func audioStreamsMatchToggles(
         _ c: (input: Bool, output: Bool, hasInput: Bool, hasOutput: Bool, deviceCount: Int)
     ) throws {
-        var config = makeLinuxConfig()
+        var config = VMConfiguration.testLinux()
         config.audioInputEnabled = c.input
         config.audioOutputEnabled = c.output
         try withAudioStreams(config) { hasInput, hasOutput, deviceCount in
@@ -1014,15 +928,15 @@ struct ConfigurationBuilderTests {
     private func networkDevices(for config: VMConfiguration) throws
         -> [VZNetworkDeviceConfiguration]
     {
-        let bundleURL = try makeBundle(withDisk: true)
-        return try makeBuilder()
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        return try ConfigurationBuilder.testing()
             .assemble(from: config, bundleURL: bundleURL, validate: false)
             .configuration.networkDevices
     }
 
     @Test("Mode None configures no network device at all")
     func networkDisabledOmitsTheDevice() throws {
-        var config = makeLinuxConfig()
+        var config = VMConfiguration.testLinux()
         config.networkEnabled = false
         // A bridged mode left behind by an earlier choice must not resurrect the
         // device: `networkEnabled == false` is the None mode.
@@ -1032,13 +946,13 @@ struct ConfigurationBuilderTests {
 
     @Test("NAT without the entitlement attaches one virtio device over NAT")
     func natModeAttachesNAT() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(networks, entitlements: .unentitled)
+        let builder = ConfigurationBuilder.testing(networks, entitlements: .unentitled)
 
         let devices = try builder.assemble(
-            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
+            from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
         let device = try #require(devices.first as? VZVirtioNetworkDeviceConfiguration)
@@ -1048,14 +962,14 @@ struct ConfigurationBuilderTests {
 
     @Test("NAT with the entitlement attaches the app-managed NAT network")
     func entitledNATModeAttachesTheManagedNetwork() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
         let attachments = MockVmnetAttachments()
-        let builder = makeBuilder(networks, attachments: attachments, entitlements: .entitled)
+        let builder = ConfigurationBuilder.testing(networks, attachments: attachments, entitlements: .entitled)
 
         let devices = try builder.assemble(
-            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
+            from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment === attachments.made.last)
@@ -1065,16 +979,16 @@ struct ConfigurationBuilderTests {
 
     @Test("A NAT network that cannot be materialized builds the device detached")
     func entitledNATModeWithoutANetworkBuildsDetached() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
         networks.operations.createNetworkError = TestFailure("vmnet refused")
-        let builder = makeBuilder(networks, entitlements: .entitled)
+        let builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.
         let devices = try builder.assemble(
-            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
+            from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment == nil)
@@ -1082,7 +996,7 @@ struct ConfigurationBuilderTests {
 
     @Test("A configured MAC address reaches the network device")
     func macAddressReachesTheDevice() throws {
-        var config = makeLinuxConfig()
+        var config = VMConfiguration.testLinux()
         config.macAddress = "aa:bb:cc:dd:ee:ff"
         let device = try #require(try networkDevices(for: config).first)
         #expect(device.macAddress.string == "aa:bb:cc:dd:ee:ff")
@@ -1090,7 +1004,7 @@ struct ConfigurationBuilderTests {
 
     @Test("An unparsable MAC address leaves VZ's generated one in place")
     func invalidMACAddressIsIgnored() throws {
-        var config = makeLinuxConfig()
+        var config = VMConfiguration.testLinux()
         config.macAddress = "not-a-mac"
         let device = try #require(try networkDevices(for: config).first)
         #expect(device.macAddress.string != "not-a-mac")
@@ -1098,9 +1012,9 @@ struct ConfigurationBuilderTests {
 
     @Test("Bridged mode with no bridgeable host interface builds the device detached")
     func bridgedModeWithoutAnInterfaceBuildsDetached() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
-        var builder = makeBuilder(entitlements: .entitled)
+        var builder = ConfigurationBuilder.testing(entitlements: .entitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
 
         // The boot (and a restore from saved state, which rebuilds the same
@@ -1114,9 +1028,9 @@ struct ConfigurationBuilderTests {
 
     @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")
     func bridgedModeWithoutTheEntitlementThrows() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
-        var builder = makeBuilder(entitlements: .unentitled)
+        var builder = ConfigurationBuilder.testing(entitlements: .unentitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
 
         #expect {
@@ -1131,11 +1045,11 @@ struct ConfigurationBuilderTests {
 
     @Test("Host Only mode attaches the app-managed network")
     func hostOnlyModeAttachesTheManagedNetwork() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
         let attachments = MockVmnetAttachments()
-        let builder = makeBuilder(networks, attachments: attachments, entitlements: .entitled)
+        let builder = ConfigurationBuilder.testing(networks, attachments: attachments, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
@@ -1148,10 +1062,10 @@ struct ConfigurationBuilderTests {
 
     @Test("Host Only mode in a build without the entitlement names the entitlement")
     func hostOnlyModeWithoutTheEntitlementThrows() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        let builder = makeBuilder(networks, entitlements: .unentitled)
+        let builder = ConfigurationBuilder.testing(networks, entitlements: .unentitled)
 
         #expect {
             try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
@@ -1167,12 +1081,12 @@ struct ConfigurationBuilderTests {
 
     @Test("An isolated VM attaches its own network of its mode, through a view opened for it")
     func isolatedModesAttachTheVMsOwnNetwork() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let networks = ScriptedVmnetNetworks()
         let attachments = MockVmnetAttachments()
-        let builder = makeBuilder(networks, attachments: attachments, entitlements: .entitled)
+        let builder = ConfigurationBuilder.testing(networks, attachments: attachments, entitlements: .entitled)
 
-        var nat = makeLinuxConfig()
+        var nat = VMConfiguration.testLinux()
         nat.networkMembership = .isolated
         var hostOnly = makeHostOnlyConfig()
         hostOnly.networkMembership = .isolated
@@ -1189,7 +1103,7 @@ struct ConfigurationBuilderTests {
     @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
     @MainActor
     func everyPathFollowsJoinedNetwork() async throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         for (mode, kind) in [(VMNetworkMode.nat, VmnetNetworkKind.nat), (.hostOnly, .hostOnly)] {
             let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
                 $0.networkEnabled = true
@@ -1204,7 +1118,7 @@ struct ConfigurationBuilderTests {
             // The build asks the VM's own session view for its own network.
             let networks = ScriptedVmnetNetworks()
             networks.operations.subnet = .scripted("192.168.70.0")
-            let result = try makeBuilder(networks, entitlements: .entitled)
+            let result = try ConfigurationBuilder.testing(networks, entitlements: .entitled)
                 .assemble(from: config, bundleURL: bundleURL, validate: false)
             #expect(result.products.vmnetNetworks.owner == config.id)
             #expect(networks.operations.createdKinds == [kind])
@@ -1242,11 +1156,11 @@ struct ConfigurationBuilderTests {
 
     @Test("An isolated VM whose own network cannot be materialized builds detached, never on the common one")
     func isolatedModeWithoutItsNetworkBuildsDetached() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let networks = ScriptedVmnetNetworks()
         networks.operations.createNetworkError = TestFailure("network limit reached")
-        let builder = makeBuilder(networks, entitlements: .entitled)
-        var config = makeLinuxConfig()
+        let builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
+        var config = VMConfiguration.testLinux()
         config.networkMembership = .isolated
 
         let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
@@ -1258,9 +1172,9 @@ struct ConfigurationBuilderTests {
 
     @Test("An isolated NAT VM in a build without the entitlement is refused, not put on system NAT")
     func isolatedNATWithoutTheEntitlementThrows() throws {
-        let bundleURL = try makeBundle(withDisk: true)
-        let builder = makeBuilder(entitlements: .unentitled)
-        var config = makeLinuxConfig()
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        let builder = ConfigurationBuilder.testing(entitlements: .unentitled)
+        var config = VMConfiguration.testLinux()
         config.networkMembership = .isolated
 
         #expect {
@@ -1275,11 +1189,11 @@ struct ConfigurationBuilderTests {
 
     @Test("A Host Only network that cannot be materialized builds the device detached")
     func hostOnlyModeWithoutANetworkBuildsDetached() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
         networks.operations.createNetworkError = TestFailure("vmnet refused")
-        let builder = makeBuilder(networks, entitlements: .entitled)
+        let builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.
@@ -1302,7 +1216,7 @@ struct ConfigurationBuilderTests {
             name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.lastSeenGuestOSVersion = "13.5"
-        makeBuilder().configureMacOSDevices(vz, config: config)
+        ConfigurationBuilder.testing().configureMacOSDevices(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
@@ -1317,7 +1231,7 @@ struct ConfigurationBuilderTests {
             name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        makeBuilder().configureMacOSDevices(vz, config: config)
+        ConfigurationBuilder.testing().configureMacOSDevices(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
@@ -1334,7 +1248,7 @@ struct ConfigurationBuilderTests {
         config.displayWidth = 2560
         config.displayHeight = 1600
         config.displayPPI = 220
-        makeBuilder().configureMacOSDevices(vz, config: config)
+        ConfigurationBuilder.testing().configureMacOSDevices(vz, config: config)
 
         let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
         let display = try #require(graphics.displays.first)
@@ -1345,12 +1259,12 @@ struct ConfigurationBuilderTests {
 
     @Test("EFI scanout carries the configured display size")
     func efiScanoutMatchesConfiguration() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
-        var config = makeLinuxConfig()
+        var config = VMConfiguration.testLinux()
         config.displayWidth = 1680
         config.displayHeight = 1050
-        let result = try makeBuilder().assemble(
+        let result = try ConfigurationBuilder.testing().assemble(
             from: config, bundleURL: bundleURL, validate: false)
 
         let graphics = try #require(
@@ -1362,10 +1276,10 @@ struct ConfigurationBuilderTests {
 
     @Test("EFI guests get only the USB pointing/keyboard devices")
     func efiInputDevicesAreUSBOnly() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
-        let result = try makeBuilder().assemble(
-            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
+        let result = try ConfigurationBuilder.testing().assemble(
+            from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false)
         let vz = result.configuration
 
         // The Mac devices are Mac-platform only, so a generic-platform guest
@@ -1380,7 +1294,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")
     func internalStorageDiskRejectsPathTraversal() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Marking the entry `isInternal: true` opts into bundle-containment
         // validation. A `..` segment that resolves outside the bundle must
@@ -1398,7 +1312,7 @@ struct ConfigurationBuilderTests {
             )
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -1413,7 +1327,7 @@ struct ConfigurationBuilderTests {
 
     @Test("External storage disk via symlink attaches to symlink target, not symlink path")
     func externalStorageDiskFollowsSymlink() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Real file in a scratch directory outside the bundle, plus a
         // symlink to it. The builder must hand VZ the resolved target
@@ -1430,7 +1344,7 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realPath)
 
         // The bundle's own Disk.asif also needs to be sized for the same
-        // reason; replace the zero-byte stub created by makeBundle.
+        // reason; replace the zero-byte stub created by makeEngineBundle.
         let mainDiskURL = VMBundleLayout(bundleURL: bundleURL).diskImageURL
         try? FileManager.default.removeItem(at: mainDiskURL)
         FileManager.default.createFile(
@@ -1448,7 +1362,7 @@ struct ConfigurationBuilderTests {
                 isInternal: false, kind: .virtio),
         ]
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         // `assemble(validate: false)` skips VZ's "is this a real disk image?"
         // check, which would otherwise reject the tiny stub file.
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
@@ -1490,10 +1404,10 @@ struct ConfigurationBuilderTests {
 
     @Test("A guest below the USB floor gets the agent disk on virtio, attached last")
     func subFloorGuestGetsVirtioAgentDisk() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
 
-        let builder = makeBuilder(guestAgentInstaller: agentURL)
+        let builder = ConfigurationBuilder.testing(guestAgentInstaller: agentURL)
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1514,10 +1428,10 @@ struct ConfigurationBuilderTests {
         "A guest at or above the USB floor gets no agent disk",
         arguments: ["12.3", "12.3.1", "13.0", "26.0"])
     func atFloorGuestGetsNoAgentDisk(installedVersion: String) throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
 
-        let builder = makeBuilder(guestAgentInstaller: agentURL)
+        let builder = ConfigurationBuilder.testing(guestAgentInstaller: agentURL)
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: installedVersion), bundleURL: bundleURL,
             validate: false)
@@ -1526,10 +1440,10 @@ struct ConfigurationBuilderTests {
 
     @Test("A missing installer image leaves the VM bootable")
     func missingAgentDiskStillBuilds() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let missing = scratch.url.appendingPathComponent("\(UUID().uuidString).dmg")
-        let builder = makeBuilder(guestAgentInstaller: missing)
+        let builder = ConfigurationBuilder.testing(guestAgentInstaller: missing)
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1538,9 +1452,9 @@ struct ConfigurationBuilderTests {
 
     @Test("A build carrying no installer image leaves the VM bootable")
     func absentAgentDiskStillBuilds() throws {
-        let bundleURL = try makeBundle(withDisk: true)
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
-        let builder = makeBuilder()
+        let builder = ConfigurationBuilder.testing()
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1549,8 +1463,8 @@ struct ConfigurationBuilderTests {
 
     @Test("The agent disk's identity is fixed by the bundle and distinct from the main disk's")
     func agentDiskIDIsStableAndDistinct() throws {
-        let bundleURL = try makeBundle()
-        let otherBundleURL = try makeBundle()
+        let bundleURL = try scratch.makeEngineBundle()
+        let otherBundleURL = try scratch.makeEngineBundle()
 
         let disk = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
         let again = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
@@ -1569,7 +1483,7 @@ struct ConfigurationBuilderTests {
 
     @Test("isMainBundleDisk matches the bundle-relative path, not the disk id")
     func isMainBundleDiskMatchesByPath() throws {
-        let bundleURL = try makeBundle()
+        let bundleURL = try scratch.makeEngineBundle()
         let layout = VMBundleLayout(bundleURL: bundleURL)
 
         // A clone regenerates every disk id, so a fresh id at the canonical

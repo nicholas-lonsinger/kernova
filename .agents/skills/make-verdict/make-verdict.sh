@@ -92,7 +92,7 @@ case "$target" in
     *) usage; setup_error "unknown target '$target'" usage ;;
 esac
 if [ "$target" = test-suite ]; then
-    [ -n "$suite" ] || setup_error "test-suite needs <Target/Suite>, e.g. KernovaTests/ConfigurationBuilderTests or KernovaCoreTests/VMConfigurationTests" usage
+    [ -n "$suite" ] || setup_error "test-suite needs <Target/Suite>, e.g. KernovaVirtualizationTests/ConfigurationBuilderTests or KernovaCoreTests/VMConfigurationTests" usage
 elif [ -n "$suite" ]; then
     setup_error "a suite applies to test-suite only" usage
 fi

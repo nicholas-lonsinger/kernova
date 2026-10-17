@@ -1,8 +1,8 @@
 import Foundation
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Scripted stand-in for `VmnetAttachmentMaking`: a NAT attachment for every
 /// handle, since the vmnet one would retain a scripted operator's fabricated

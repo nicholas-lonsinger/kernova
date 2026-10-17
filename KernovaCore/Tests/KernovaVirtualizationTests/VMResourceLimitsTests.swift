@@ -1,10 +1,13 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaVirtualization
+@testable import KernovaVirtualizationTestSupport
 
 @Suite("VMResourceLimits Tests", .caseScoped)
 struct VMResourceLimitsTests {

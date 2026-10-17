@@ -13,7 +13,7 @@ import Virtualization
 /// dispatch queue and is not Sendable"; below a 27.0 deployment target the same
 /// crossing is spelled `@unchecked Sendable`. This type is that one greppable
 /// crossing — a one-line swap once the deployment target reaches 27.0.
-struct VMDisplayHandle: @unchecked Sendable {
+package struct VMDisplayHandle: @unchecked Sendable {
     private let vm: VZVirtualMachine
 
     init(vm: VZVirtualMachine) {
@@ -22,7 +22,7 @@ struct VMDisplayHandle: @unchecked Sendable {
 
     /// Shows the session's VM in `view`, assigning only when it isn't already.
     @MainActor
-    func attach(to view: VZVirtualMachineView) {
+    package func attach(to view: VZVirtualMachineView) {
         if view.virtualMachine !== vm {
             view.virtualMachine = vm
         }
@@ -30,7 +30,7 @@ struct VMDisplayHandle: @unchecked Sendable {
 
     /// Clears whatever VM `view` is showing.
     @MainActor
-    static func detach(_ view: VZVirtualMachineView) {
+    package static func detach(_ view: VZVirtualMachineView) {
         view.virtualMachine = nil
     }
 }
@@ -45,25 +45,25 @@ struct VMDisplayHandle: @unchecked Sendable {
 /// enforces: "Other properties or function calls on VZVirtualMachine must
 /// happen on this queue. The framework also invokes any completion handlers
 /// from asynchronous functions on this queue."
-actor VMSession: VMSessionOperating {
+package actor VMSession: VMSessionOperating {
     /// The queue this VM was created with, and this actor's executor.
     nonisolated let queue: DispatchSerialQueue
 
-    nonisolated var unownedExecutor: UnownedSerialExecutor {
+    package nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
     }
 
     /// Session identity, carried by every delivered event so the owner can
     /// drop events from a session it has already replaced.
-    nonisolated let id: UUID
+    package nonisolated let id: UUID
 
-    nonisolated let displayHandle: VMDisplayHandle
+    package nonisolated let displayHandle: VMDisplayHandle
 
     // Configuration facts snapshotted at creation, so main-actor guards on
     // device presence stay synchronous.
-    nonisolated let hasVirtioSocketDevice: Bool
-    nonisolated let hasNetworkDevice: Bool
-    nonisolated let hasUSBController: Bool
+    package nonisolated let hasVirtioSocketDevice: Bool
+    package nonisolated let hasNetworkDevice: Bool
+    package nonisolated let hasUSBController: Bool
 
     private let vm: VZVirtualMachine
 
@@ -146,7 +146,7 @@ actor VMSession: VMSessionOperating {
     }
 
     /// Forcefully terminates the VM.
-    func stop() async throws {
+    package func stop() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.stop { error in
                 if let error {
@@ -178,11 +178,11 @@ actor VMSession: VMSessionOperating {
     }
 
     /// Requests a graceful ACPI shutdown.
-    func requestStop() throws {
+    package func requestStop() throws {
         try vm.requestStop()
     }
 
-    func pause() async throws {
+    package func pause() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.pause { result in
                 continuation.resume(with: result)
@@ -192,7 +192,7 @@ actor VMSession: VMSessionOperating {
 
     /// Pauses only when the VM is running — a save's precondition, answered
     /// and acted on in one hop so no state can move in between.
-    func pauseIfRunning() async throws {
+    package func pauseIfRunning() async throws {
         guard vm.state == .running else { return }
         try await pause()
     }
@@ -200,12 +200,12 @@ actor VMSession: VMSessionOperating {
     /// Resumes only when the VM is paused — the counterpart of
     /// ``pauseIfRunning()``, answered and acted on in one hop so no state can
     /// move in between.
-    func resumeIfPaused() async throws {
+    package func resumeIfPaused() async throws {
         guard vm.state == .paused else { return }
         try await resume()
     }
 
-    func resume() async throws {
+    package func resume() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.resume { result in
                 continuation.resume(with: result)
@@ -213,7 +213,7 @@ actor VMSession: VMSessionOperating {
         }
     }
 
-    func saveMachineState(to url: URL) async throws {
+    package func saveMachineState(to url: URL) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.saveMachineStateTo(url: url) { error in
                 if let error {
@@ -225,7 +225,7 @@ actor VMSession: VMSessionOperating {
         }
     }
 
-    func restoreMachineState(from url: URL) async throws {
+    package func restoreMachineState(from url: URL) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.restoreMachineStateFrom(url: url) { error in
                 if let error {
@@ -281,7 +281,7 @@ actor VMSession: VMSessionOperating {
 
     /// Installs every listener in `listeners` in one hop, replacing whatever
     /// was bound to the ports they serve.
-    func attach(_ listeners: [VsockListener]) {
+    package func attach(_ listeners: [VsockListener]) {
         guard let device = virtioSocketDevice() else { return }
         for host in listeners.map(VsockListenerHost.init) {
             // Store after the bind: `setSocketListener` has already replaced
@@ -294,7 +294,7 @@ actor VMSession: VMSessionOperating {
 
     /// Unbinds every port in `ports` in one hop and releases the host that
     /// served it. A port this session never bound is skipped.
-    func detach(ports: [UInt32]) {
+    package func detach(ports: [UInt32]) {
         guard !ports.isEmpty, let device = virtioSocketDevice() else { return }
         for port in ports {
             guard let host = socketListenerHosts.removeValue(forKey: port) else { continue }
@@ -312,7 +312,7 @@ actor VMSession: VMSessionOperating {
     /// bound to a delegate that is already gone. Releasing it is not enough on
     /// its own — the `VZVirtualMachine` outlives the session whenever the
     /// display view is still holding it.
-    nonisolated func detachRemainingListeners() {
+    package nonisolated func detachRemainingListeners() {
         queue.async {
             self.assumeIsolated { session in
                 session.detach(ports: Array(session.socketListenerHosts.keys))
@@ -360,7 +360,7 @@ actor VMSession: VMSessionOperating {
 
     /// Attaches the disk image at `url` as a USB mass storage device, building
     /// the device on the queue through ``attachUSBDevice(_:)``.
-    func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID {
+    package func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID {
         try await attachUSBDevice {
             let attachment: VZDiskImageStorageDeviceAttachment
             do {
@@ -385,7 +385,7 @@ actor VMSession: VMSessionOperating {
 
     /// Detaches the USB device carrying `uuid`, throwing
     /// `VMSessionError.usbDeviceNotFound` when the controller doesn't hold it.
-    func detachUSBDevice(uuid: UUID) async throws {
+    package func detachUSBDevice(uuid: UUID) async throws {
         let controller = try usbController()
         guard let device = controller.usbDevices.first(where: { $0.uuid == uuid }) else {
             throw VMSessionError.usbDeviceNotFound
@@ -474,7 +474,7 @@ actor VMSession: VMSessionOperating {
     /// The ordered fire-and-forget contract of
     /// ``applyNetworkAttachment(_:onBuildFailure:)``: the set is a property
     /// write that reports nothing.
-    nonisolated func applyDirectoryShare(
+    package nonisolated func applyDirectoryShare(
         _ share: MacOSDirectoryShare, installed: @escaping @Sendable () -> Void
     ) {
         queue.async {
@@ -505,7 +505,7 @@ extension VMSessionOperating {
     ///
     /// `nil` for a session the engine did not make; only the engine makes the
     /// sessions a VM holds.
-    var virtualMachineSession: VMSession? { self as? VMSession }
+    package var virtualMachineSession: VMSession? { self as? VMSession }
 }
 
 // MARK: - Delegate Adapter

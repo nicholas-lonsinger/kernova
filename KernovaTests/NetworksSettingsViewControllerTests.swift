@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// The Settings window's Networks pane: the library's named networks, created,
 /// renamed and deleted through the command core.

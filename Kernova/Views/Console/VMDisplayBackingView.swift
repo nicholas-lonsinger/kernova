@@ -1,6 +1,7 @@
 import Cocoa
 import KernovaCore
 import KernovaLogging
+import KernovaVirtualization
 import Virtualization
 
 /// The `VZVirtualMachineView` properties Kernova drives from a VM's settings,

@@ -2,6 +2,7 @@ import Cocoa
 import KernovaCore
 import KernovaKit
 import KernovaLogging
+import KernovaVirtualization
 
 /// The app's entry point and composition root: the one place that claims this
 /// copy of Kernova, reads `Bundle.main`, and builds the production services

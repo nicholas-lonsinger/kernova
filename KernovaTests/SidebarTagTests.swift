@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Color tags: their definitions in the library file, each VM's assignments in
 /// its host state, and every surface that shows, filters, groups or edits

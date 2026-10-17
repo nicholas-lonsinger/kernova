@@ -1,6 +1,7 @@
 import Cocoa
 import KernovaCore
 import KernovaLogging
+import KernovaVirtualization
 
 /// AppKit container that layers pure-AppKit VM displays on top of the detail
 /// content (the empty state, or the per-VM detail router).

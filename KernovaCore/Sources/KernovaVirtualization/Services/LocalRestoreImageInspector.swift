@@ -9,11 +9,13 @@ import Virtualization
 /// Used before adopting a file the wizard did not download itself, so the
 /// version shown on the Review step is the image's own rather than the one the
 /// user happened to have selected when the file was found.
-struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
+package struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "LocalRestoreImageInspector")
 
-    func inspect(_ url: URL) async throws -> InspectedRestoreImage {
+    package init() {}
+
+    package func inspect(_ url: URL) async throws -> InspectedRestoreImage {
         // VZ rejects a path containing a symlink in any component and reports it
         // as a missing file, so it is only ever handed resolved URLs.
         let resolved = url.resolvingSymlinksInPath()

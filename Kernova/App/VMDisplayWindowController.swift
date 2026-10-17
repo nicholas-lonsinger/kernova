@@ -1,6 +1,7 @@
 import Cocoa
 import KernovaCore
 import KernovaLogging
+import KernovaVirtualization
 
 /// A dedicated window displaying a single VM's screen, either as a resizable
 /// pop-out window or in native macOS fullscreen.

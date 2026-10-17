@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// The sidebar's Last Run sort: the order it projects, the detail line it
 /// states, and the shared clock that keeps a relative line current.

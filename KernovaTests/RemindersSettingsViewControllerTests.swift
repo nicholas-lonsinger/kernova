@@ -4,6 +4,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Layout tests for the Reminders settings pane.
 ///

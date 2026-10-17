@@ -5,10 +5,12 @@ import Virtualization
 
 /// The firmware and platform files of a VM bundle, as Virtualization writes
 /// them.
-struct VirtualizationPlatformFiles: VMPlatformFileWriting {
+package struct VirtualizationPlatformFiles: VMPlatformFileWriting {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMBundleMachineFiles")
 
-    func ensureEFIVariableStore(bundleURL: URL) throws {
+    package init() {}
+
+    package func ensureEFIVariableStore(bundleURL: URL) throws {
         let url = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
         guard !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return }
         _ = try VZEFIVariableStore(creatingVariableStoreAt: url, options: [])
@@ -17,7 +19,7 @@ struct VirtualizationPlatformFiles: VMPlatformFileWriting {
             "Created the EFI variable store in '\(bundleURL.lastPathComponent, privacy: .public)'")
     }
 
-    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
+    package func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
         guard let model = VZMacHardwareModel(dataRepresentation: hardwareModel) else {
             throw ConfigurationBuilderError.invalidHardwareModel
         }

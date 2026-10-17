@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Folders as the sidebar lists them: the sections the projection adds, the
 /// menus that make and change them, the drags that fill and order them, and

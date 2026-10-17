@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 @testable import KernovaKit
 
 /// Fresh per-test "Copy to Mac" harness: a private destination pasteboard, an
