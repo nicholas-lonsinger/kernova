@@ -27,8 +27,10 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../KernovaKit"),
-        // The version KernovaKit takes; the tests build messages with its `with`.
-        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
+        // For the tests, which build messages with its `with`. Any 1.x: SwiftPM
+        // resolves one version for the graph, and KernovaKit's requirement is
+        // the one that sets its floor.
+        .package(url: "https://github.com/apple/swift-protobuf.git", "1.0.0"..<"2.0.0"),
     ],
     targets: [
         .target(

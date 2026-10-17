@@ -50,7 +50,7 @@ struct MainMenuViewMenuTests {
         try populate(viewModel)
         let windows = makeWindowRegistry(viewModel)
         let controller = MainMenuController(
-            viewModel: viewModel, windows: windows, hasBundledGuestAgentDisk: true)
+            viewModel: viewModel, windows: windows)
         let mainMenu = controller.makeMainMenu()
         let fixture = Fixture(
             controller: controller, viewModel: viewModel, windows: windows, mainMenu: mainMenu,

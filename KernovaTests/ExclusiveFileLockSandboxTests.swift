@@ -1,9 +1,6 @@
 import Foundation
-import KernovaTestSupport
 import Testing
 
-@testable import KernovaCore
-@testable import KernovaCoreTestSupport
 @testable import KernovaKit
 
 /// `ExclusiveFileLock` on a directory, run inside the sandboxed app test host,

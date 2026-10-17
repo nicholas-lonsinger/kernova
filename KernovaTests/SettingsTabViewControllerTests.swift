@@ -194,7 +194,7 @@ struct SettingsTabViewControllerTests {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let registry = makeWindowRegistry(viewModel)
         let controller = MainMenuController(
-            viewModel: viewModel, windows: registry, hasBundledGuestAgentDisk: true)
+            viewModel: viewModel, windows: registry)
         let appMenu = try #require(controller.makeMainMenu().items.first?.submenu)
         let settings = try #require(appMenu.items.first { $0.keyEquivalent == "," })
         #expect(settings.keyEquivalentModifierMask == [.command])

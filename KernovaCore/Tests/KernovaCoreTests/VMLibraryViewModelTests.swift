@@ -476,9 +476,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         // Even if a caller passes the agent's id in the trash set, it is
-        // excluded by `externalAttachments`, so no task is spawned. Require
-        // this *before* awaiting: a regression would otherwise move the real
-        // app-bundle DMG to the Trash.
+        // excluded by `externalAttachments`, so nothing is trashed.
         await viewModel.delete(instance, deletingExternalIDs: [agentID])
 
         #expect(viewModel.instances.isEmpty)

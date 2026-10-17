@@ -7,9 +7,11 @@
 #
 # The `KernovaCore` target may import only `core_modules`;
 # `KernovaCoreTestSupport` may also import `support_modules`, and
-# `KernovaCoreTests` `test_modules`. A new entry names a module that
-# re-exports neither AppKit nor Virtualization; what a module merely imports
-# is KernovaCore/Package.swift's MemberImportVisibility setting's concern.
+# `KernovaCoreTests` `test_modules`. Every entry is a module that reaches none
+# of AppKit, SwiftUI or Virtualization — importing it alone leaves `NSView`,
+# `SwiftUI.View` and `VZVirtualMachine` out of scope — and a new one is checked
+# the same way; what a module merely imports is KernovaCore/Package.swift's
+# MemberImportVisibility setting's concern.
 #
 # The compiler's own parser lists each file's imports
 # (`-emit-imported-modules`), so every spelling, comments and string literals,
@@ -29,24 +31,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-core_entries=(
-    'Foundation'
-    'KernovaKit'
-    'KernovaLogging'
-    'AppIntents             # the intents, entities and queries Shortcuts and Spotlight read'
-    'AVFoundation           # microphone authorization status'
-    'CoreServices           # Apple event error numbers a script reads'
-    'CoreSpotlight          # indexing VM entities for Spotlight'
-    'CryptoKit              # digests and stable identifiers'
-    'ImageIO                # image dimensions in a clipboard description'
-    'IOKit                  # USB accessory enumeration and system sleep notifications'
-    'Security               # code-signing entitlements and peer authorization'
-    'ServiceManagement      # the login item'
-    'Synchronization        # Mutex'
-    'System                 # Errno'
-    'UniformTypeIdentifiers # UTType'
-)
-core_modules=$(printf '%s\n' "${core_entries[@]}" | awk '{ print $1 }' | paste -sd ' ' -)
+core_modules='Foundation KernovaKit KernovaLogging AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
 test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport SwiftProtobuf CoreGraphics Observation'
 support_modules='Testing KernovaCore KernovaTestSupport CoreGraphics Observation'
 

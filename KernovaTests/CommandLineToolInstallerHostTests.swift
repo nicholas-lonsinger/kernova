@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import KernovaCore
@@ -28,5 +29,15 @@ struct CommandLineToolInstallerHostTests {
         let target = try FileManager.default.destinationOfSymbolicLink(
             atPath: destination.path(percentEncoded: false))
         #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+    }
+
+    @Test("The offer follows the container the socket binds in")
+    func availabilityFollowsTheContainer() {
+        // One condition, read in one place: an Install button that could only
+        // ever produce a tool reaching nothing is not offered at all.
+        let hasContainer = KernovaAppGroup.containerURL() != nil
+        let hasTool = FileManager.default.fileExists(
+            atPath: CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+        #expect(CommandLineToolInstaller.isAvailable == (hasContainer && hasTool))
     }
 }

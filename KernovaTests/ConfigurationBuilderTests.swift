@@ -35,11 +35,13 @@ struct ConfigurationBuilderTests {
     private func makeBuilder(
         _ networks: ScriptedVmnetNetworks = ScriptedVmnetNetworks(),
         attachments: MockVmnetAttachments = MockVmnetAttachments(),
-        entitlements: EntitlementService = .unentitled
+        entitlements: EntitlementService = .unentitled,
+        guestAgentInstaller: URL? = nil
     ) -> ConfigurationBuilder {
         ConfigurationBuilder(
             bridgedInterfaces: HostBridgedInterfaceProvider(), vmnetNetworks: networks.service,
-            vmnetAttachments: attachments, entitlements: entitlements)
+            vmnetAttachments: attachments, entitlements: entitlements,
+            guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: guestAgentInstaller))
     }
 
     /// Fails the test when `error` is a path-validation refusal.
@@ -1480,9 +1482,6 @@ struct ConfigurationBuilderTests {
     }
 
     /// Writes a stand-in for the bundled installer image.
-    ///
-    /// `Bundle.main` in a test run is the test host, not the app, so the real
-    /// resource is never found — every guest-agent-disk test injects its own.
     private func makeAgentDiskImage() throws -> URL {
         let url = scratch.url.appendingPathComponent("\(UUID().uuidString).dmg")
         try Data(count: 1_048_576).write(to: url)
@@ -1494,8 +1493,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
 
-        var builder = makeBuilder()
-        builder.guestAgentDiskURL = agentURL
+        let builder = makeBuilder(guestAgentInstaller: agentURL)
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1519,8 +1517,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
 
-        var builder = makeBuilder()
-        builder.guestAgentDiskURL = agentURL
+        let builder = makeBuilder(guestAgentInstaller: agentURL)
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: installedVersion), bundleURL: bundleURL,
             validate: false)
@@ -1532,8 +1529,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
 
         let missing = scratch.url.appendingPathComponent("\(UUID().uuidString).dmg")
-        var builder = makeBuilder()
-        builder.guestAgentDiskURL = missing
+        let builder = makeBuilder(guestAgentInstaller: missing)
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1544,8 +1540,7 @@ struct ConfigurationBuilderTests {
     func absentAgentDiskStillBuilds() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        var builder = makeBuilder()
-        builder.guestAgentDiskURL = nil
+        let builder = makeBuilder()
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)

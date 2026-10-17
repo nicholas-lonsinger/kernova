@@ -17,9 +17,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, read for the clone alternate's title.
     private var preferences: AppPreferences { viewModel.preferences }
-    /// Whether this build carries the guest-agent installer disk image the
-    /// guest-agent item mounts.
-    private let hasBundledGuestAgentDisk: Bool
     /// The app's windows: the VM the working window shows, and the library
     /// window whose sidebar the View menu's section items read and act on
     /// while it is on screen.
@@ -97,12 +94,10 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     init(
         viewModel: VMLibraryViewModel,
-        windows: AppWindowRegistry,
-        hasBundledGuestAgentDisk: Bool = BundledGuestAgent.inMainBundle.installerDiskImageURL != nil
+        windows: AppWindowRegistry
     ) {
         self.viewModel = viewModel
         self.windows = windows
-        self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
     }
 
     // MARK: - Command Target
@@ -394,7 +389,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             // Layered over the capability: a bundled DMG for the VM to hold, and
             // the mount/eject model that decides both title and enablement. The
             // unavailable title set above stands unless both hold.
-            guard isAvailable, hasBundledGuestAgentDisk else { return false }
+            guard isAvailable, viewModel.library.guestAgent.installerDiskImageURL != nil else { return false }
             let model = GuestAgentDiskControl.model(for: instance)
             menuItem.title = model.title
             return model.isEnabled

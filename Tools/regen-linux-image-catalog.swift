@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 //
-// Regenerate Kernova/Resources/LinuxImageCatalog.json — the Linux installer
+// Regenerate KernovaCore/Sources/KernovaCore/Resources/LinuxImageCatalog.json — the Linux installer
 // images offered by the creation wizard's distribution source.
 //
 // Run before cutting a release, and whenever a distribution ships a point
@@ -60,7 +60,7 @@ let repoRoot = URL(
     } ?? FileManager.default.currentDirectoryPath)
 let outputURL =
     repoRoot
-    .appendingPathComponent("Kernova/Resources/LinuxImageCatalog.json")
+    .appendingPathComponent("KernovaCore/Sources/KernovaCore/Resources/LinuxImageCatalog.json")
 
 // `repoRoot` is this script's own path minus two components, so a copy living
 // anywhere but `Tools/` resolves somewhere else entirely and would write the

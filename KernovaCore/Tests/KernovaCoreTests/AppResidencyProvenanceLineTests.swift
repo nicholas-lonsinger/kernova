@@ -23,12 +23,12 @@ struct AppResidencyProvenanceLineTests {
     func formatsAllFields() {
         #expect(
             AppResidencyPolicy.residentProvenanceLine(
-                bundlePath: "/Applications/Kernova.app",
+                bundlePath: "/Volumes/Apps/Kernova.app",
                 build: "142",
                 configuration: "Release",
                 vmNetworkingEntitled: true,
                 launch: provenance(.user, isHidden: false))
-                == "bundle=/Applications/Kernova.app build=142 config=Release "
+                == "bundle=/Volumes/Apps/Kernova.app build=142 config=Release "
                 + "vmNetworking=entitled launch=user hidden=false")
     }
 
@@ -36,12 +36,12 @@ struct AppResidencyProvenanceLineTests {
     func unentitledSignature() {
         #expect(
             AppResidencyPolicy.residentProvenanceLine(
-                bundlePath: "/Applications/Kernova.app",
+                bundlePath: "/Volumes/Apps/Kernova.app",
                 build: "142",
                 configuration: "Debug",
                 vmNetworkingEntitled: false,
                 launch: provenance(.loginItem, isHidden: false))
-                == "bundle=/Applications/Kernova.app build=142 config=Debug "
+                == "bundle=/Volumes/Apps/Kernova.app build=142 config=Debug "
                 + "vmNetworking=unentitled launch=loginItem hidden=false")
     }
 
@@ -51,12 +51,12 @@ struct AppResidencyProvenanceLineTests {
     func hiddenLaunch() {
         #expect(
             AppResidencyPolicy.residentProvenanceLine(
-                bundlePath: "/Applications/Kernova.app",
+                bundlePath: "/Volumes/Apps/Kernova.app",
                 build: "142",
                 configuration: "Debug",
                 vmNetworkingEntitled: false,
                 launch: provenance(.user, isHidden: true))
-                == "bundle=/Applications/Kernova.app build=142 config=Debug "
+                == "bundle=/Volumes/Apps/Kernova.app build=142 config=Debug "
                 + "vmNetworking=unentitled launch=user hidden=true")
     }
 }

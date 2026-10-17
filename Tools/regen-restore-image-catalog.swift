@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 //
-// Regenerate Kernova/Resources/RestoreImageCatalog.json — the macOS restore
+// Regenerate KernovaCore/Sources/KernovaCore/Resources/RestoreImageCatalog.json — the macOS restore
 // images offered by the creation wizard's "Choose a Version…" source.
 //
 // Run before cutting a release, and any time Apple ships a macOS build.
@@ -142,7 +142,7 @@ let repoRoot = URL(
     } ?? FileManager.default.currentDirectoryPath)
 let outputURL =
     repoRoot
-    .appendingPathComponent("Kernova/Resources/RestoreImageCatalog.json")
+    .appendingPathComponent("KernovaCore/Sources/KernovaCore/Resources/RestoreImageCatalog.json")
 
 // `repoRoot` is this script's own path minus two components, so a copy living
 // anywhere but `Tools/` resolves somewhere else entirely and would write the

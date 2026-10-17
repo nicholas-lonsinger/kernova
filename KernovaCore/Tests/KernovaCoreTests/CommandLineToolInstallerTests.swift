@@ -188,14 +188,4 @@ struct CommandLineToolInstallerTests {
         #expect(command.contains(CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false)))
         #expect(command.contains("/usr/local/bin/kernova"))
     }
-
-    @Test("The offer follows the container the socket binds in")
-    func availabilityFollowsTheContainer() {
-        // One condition, read in one place: an Install button that could only
-        // ever produce a tool reaching nothing is not offered at all.
-        let hasContainer = KernovaAppGroup.containerURL() != nil
-        let hasTool = FileManager.default.fileExists(
-            atPath: CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
-        #expect(CommandLineToolInstaller.isAvailable == (hasContainer && hasTool))
-    }
 }

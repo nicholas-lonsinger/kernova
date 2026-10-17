@@ -23,11 +23,11 @@ final class VirtualizationService {
     init(
         vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
-        isProtectedDataAvailable: @escaping @MainActor () -> Bool
+        guestAgent: BundledGuestAgent, isProtectedDataAvailable: @escaping @MainActor () -> Bool
     ) {
         configBuilder = ConfigurationBuilder(
             bridgedInterfaces: bridgedInterfaces, vmnetNetworks: vmnetNetworks,
-            vmnetAttachments: vmnetAttachments, entitlements: entitlements)
+            vmnetAttachments: vmnetAttachments, entitlements: entitlements, guestAgent: guestAgent)
         self.isProtectedDataAvailable = isProtectedDataAvailable
     }
 

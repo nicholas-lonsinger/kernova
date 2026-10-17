@@ -114,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let vmnetNetworks = VmnetNetworkService(operations: vmnetOperator)
         let bridgedInterfaces = HostBridgedInterfaceProvider()
         let hostNotifications = HostNotifications.appKit()
+        let guestAgent = BundledGuestAgent(bundle: .main)
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
             machineFiles: VMBundleMachineFiles(
@@ -121,11 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
                 vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
-                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
+                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent,
                 isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
                 vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
-                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements),
+                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent),
             ipswService: IPSWService(),
             localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: RemovableMediaDeviceService(),
@@ -146,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             organization: VMOrganizationDirectory(fileURL: VMOrganizationDirectory.productionFileURL),
             hostNotifications: hostNotifications,
             hostPasteboard: NSPasteboard.general,
-            guestAgent: .inMainBundle)
+            guestAgent: guestAgent)
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,

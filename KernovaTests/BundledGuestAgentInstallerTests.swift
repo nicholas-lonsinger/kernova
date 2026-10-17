@@ -7,13 +7,13 @@ import Testing
 /// only the app as host has one to match.
 @Suite("Bundled guest agent installer", .caseScoped)
 struct BundledGuestAgentInstallerTests {
-    @Test("isInstaller(of: .inMainBundle) matches the bundled DMG path only")
+    @Test("isInstaller(of:) matches the app's bundled DMG path only")
     func bundledGuestAgentInstallerMatchesThePathOnly() throws {
-        let agentPath = try #require(BundledGuestAgent.inMainBundle.installerDiskImageURL)
+        let agentPath = try #require(BundledGuestAgent(bundle: .main).installerDiskImageURL)
             .path(percentEncoded: false)
-        #expect(RemovableMediaItem(path: agentPath, readOnly: true).isInstaller(of: .inMainBundle))
+        #expect(RemovableMediaItem(path: agentPath, readOnly: true).isInstaller(of: BundledGuestAgent(bundle: .main)))
         #expect(
             !RemovableMediaItem(path: "/tmp/other.iso", readOnly: true)
-                .isInstaller(of: .inMainBundle))
+                .isInstaller(of: BundledGuestAgent(bundle: .main)))
     }
 }

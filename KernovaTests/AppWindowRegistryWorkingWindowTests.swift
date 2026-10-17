@@ -90,7 +90,7 @@ struct AppWindowRegistryWorkingWindowTests {
         makeMenuInstance(in: fixture.viewModel)
         let other = showTestWindow(styleMask: [.titled])
         let controller = MainMenuController(
-            viewModel: fixture.viewModel, windows: fixture.registry, hasBundledGuestAgentDisk: true)
+            viewModel: fixture.viewModel, windows: fixture.registry)
         let working = fixture.registry.workingInstance(keyWindow: other, mainWindow: other)
 
         #expect(working == nil)

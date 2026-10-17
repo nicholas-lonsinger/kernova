@@ -93,7 +93,7 @@ help:
 	@printf 'Kernova build targets:\n\n'
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-22s %s\n", $$1, $$2}'
 	@printf '\n'
-	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
+	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/ConfigurationBuilderTests or SUITE=KernovaCoreTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
 
@@ -219,7 +219,7 @@ test-unhosted: ## Run only the unhosted lanes: each local package's tests under 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
 		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
-		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \
+		echo 'Example: make test-suite SUITE=KernovaCoreTests/VMConfigurationTests' >&2; \
 		exit 2; \
 	fi
 	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)

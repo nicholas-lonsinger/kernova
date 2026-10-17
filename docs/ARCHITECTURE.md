@@ -53,7 +53,7 @@ their own idiom:
 - `VMScriptingGateway` (`Kernova/Scripting/`) — Apple events, through the
   delegate's `virtualMachines` element.
 
-## Models (`KernovaCore/Sources/KernovaCore/Models/`)
+## Models
 
 `VMConfiguration` (`config.json`), `VMHostState` (`host-state.json`),
 `VMSnapshotManifest` (`Snapshots/manifest.json`) and `USBAccessoryPairingSet`
@@ -91,7 +91,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `VMConfiguration.effectiveGuestMacOSVersion` of
 `VMInstance.effectiveConfiguration`, the one source of a guest's version.
 
-## Services (`KernovaCore/Sources/KernovaCore/Services/`; the engine's in `Kernova/Services/`)
+## Services
 
 - VZ-facing, the engine: `ConfigurationBuilder` (the one
   `VZVirtualMachineConfiguration` translation), `VMSession`,
@@ -120,7 +120,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 - Sockets: `UnixSocketListener` under `SerialSocketRelay` and
   `VMCommandSocketListener`.
 
-## Views (`Kernova/Views/`)
+## Views
 
 `MainWindowController` (`Kernova/App/`) hosts `SidebarViewController` and
 `DetailContainerViewController`; the detail side routes through
@@ -136,9 +136,7 @@ view-backed item.
 `KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
 Virtualization; the app links it and reaches its `package` declarations, and
 its tests run without the app as host. Its `KernovaUI` target is the AppKit
-layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`. Its
-`KernovaCoreTestSupport` holds the fakes and fixtures every bundle testing the
-core shares.
+layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
 (`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
 `KernovaUITests` each explain
