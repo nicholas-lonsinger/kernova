@@ -1,0 +1,50 @@
+dragspy transcript, run 1 (spike 36605277), guest macOS 26.6.2, screen 1024x1077, 2026-10-14.
+Transcribed by the Tester from the guest Terminal; annotations in parentheses are the Tester's.
+Host release times come from the Tester's host-side button logger (run1-host-buttons.txt).
+
+16:39:48.810  dragspy start  screen 1024x1077  LEFT UP  at 531,730
+16:40:46.500  LEFT DOWN  at 339,923   (setup clicks and window arranging through 16:43:21.986)
+16:40:46.515  LEFT UP    at 339,923
+16:41:05.075  LEFT DOWN  at 5,303
+16:41:06.427  LEFT UP    at 82,303
+16:41:38.561  LEFT DOWN  at 791,718
+16:41:38.764  LEFT UP    at 791,718
+16:41:48.282  LEFT DOWN  at 445,536
+16:41:49.907  LEFT UP    at 703,536
+16:42:22.621  LEFT DOWN  at 694,303
+16:42:24.238  LEFT UP    at 208,303
+16:42:33.177  LEFT DOWN  at 161,542
+16:42:35.079  LEFT UP    at 746,542
+16:42:51.486  LEFT DOWN  at 674,542
+16:42:52.821  LEFT UP    at 674,624
+16:43:09.385  LEFT DOWN  at 603,638
+16:43:10.718  LEFT UP    at 603,488
+16:43:20.652  LEFT DOWN  at 674,471
+16:43:21.986  LEFT UP    at 674,567
+16:43:42.122  LEFT DOWN  at 285,812   (step 4: calibration drag inside the display)
+16:43:42.458  DRAG STARTED (drag pasteboard changed)  at 285,783
+16:43:43.937  LEFT UP    at 285,698
+16:45:28.172  LEFT DOWN  at 285,695   (step 5: exit right, "late" mode; host release 16:45:34.352)
+16:45:28.499  DRAG STARTED (drag pasteboard changed)  at 313,695
+16:45:38.055  LEFT UP    at 998,695   (= host "SPIKE injected up (late)" at 16:45:38.056)
+16:46:42.472  LEFT DOWN  at 104,232   (step 6: click on the guest desktop; drag-me.txt had moved to the Desktop)
+16:46:42.648  LEFT UP    at 104,232
+16:47:10.190  LEFT DOWN  at 132,715   (Finder Desktop sidebar clicks to check the file's location)
+16:47:10.373  LEFT UP    at 132,715
+16:47:17.144  LEFT DOWN  at 132,715
+16:47:17.325  LEFT UP    at 132,715
+16:47:46.526  LEFT DOWN  at 285,812   (step 7: exit left, "handoff" mode; host release 16:47:50.654)
+16:47:46.867  DRAG STARTED (drag pasteboard changed)  at 256,812
+16:47:48.301  LEFT UP    at 13,812    (= host "SPIKE injected up (handoff)" at 16:47:48.305, button still held)
+16:49:12.977  LEFT DOWN  at 285,812   (5x: exit right, release over a host window, host release 16:49:19.240)
+16:49:13.313  DRAG STARTED (drag pasteboard changed)  at 313,812
+16:49:22.918  LEFT UP    at 998,812
+16:51:22.578  LEFT DOWN  at 285,812   (5r: exit right over empty desktop, host release 16:51:32.099)
+16:51:22.910  DRAG STARTED (drag pasteboard changed)  at 285,783
+16:51:35.770  LEFT UP    at 998,173   (= host "SPIKE injected up (late)" at 16:51:35.800)
+16:52:36.789  LEFT DOWN  at 285,812   (7r: exit left over empty desktop, host release 16:52:44.011)
+16:52:37.126  DRAG STARTED (drag pasteboard changed)  at 285,783
+16:52:41.681  LEFT UP    at 27,173
+16:53:33.590  LEFT DOWN  at 531,202   (click to focus Terminal before ^C)
+16:53:33.761  LEFT UP    at 531,202
+^C

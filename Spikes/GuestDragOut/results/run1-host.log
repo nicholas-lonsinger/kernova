@@ -1,0 +1,207 @@
+Timestamp               Ty Process[PID:TID]
+2026-10-14 16:40:03.537 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 256,759
+2026-10-14 16:40:03.537 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 256,759 inside=yes synthetic=no
+2026-10-14 16:40:03.537 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:03.537 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:03.537 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 256,759 inside=yes synthetic=no
+2026-10-14 16:40:16.987 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 185,821
+2026-10-14 16:40:16.987 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 185,821 inside=yes synthetic=no
+2026-10-14 16:40:16.987 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:16.987 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:16.987 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 185,821 inside=yes synthetic=no
+2026-10-14 16:40:25.128 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 203,595
+2026-10-14 16:40:25.129 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 203,595 inside=yes synthetic=no
+2026-10-14 16:40:25.129 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:25.129 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:25.129 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 203,595 inside=yes synthetic=no
+2026-10-14 16:40:26.312 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 185,821
+2026-10-14 16:40:26.312 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 185,821 inside=yes synthetic=no
+2026-10-14 16:40:26.312 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:26.312 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:26.312 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 185,821 inside=yes synthetic=no
+2026-10-14 16:40:27.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 203,595
+2026-10-14 16:40:27.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 203,595 inside=yes synthetic=no
+2026-10-14 16:40:27.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:27.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:27.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 203,595 inside=yes synthetic=no
+2026-10-14 16:40:28.695 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 185,821
+2026-10-14 16:40:28.695 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 185,821 inside=yes synthetic=no
+2026-10-14 16:40:28.695 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:28.695 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:28.695 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 185,821 inside=yes synthetic=no
+2026-10-14 16:40:29.878 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 203,595
+2026-10-14 16:40:29.879 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 203,595 inside=yes synthetic=no
+2026-10-14 16:40:29.879 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:29.879 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:29.879 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 203,595 inside=yes synthetic=no
+2026-10-14 16:40:41.145 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 231,821
+2026-10-14 16:40:41.145 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 231,821 inside=yes synthetic=no
+2026-10-14 16:40:41.145 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:41.145 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:41.145 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 231,821 inside=yes synthetic=no
+2026-10-14 16:40:46.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 262,713
+2026-10-14 16:40:46.512 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 262,713 inside=yes synthetic=no
+2026-10-14 16:40:46.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:46.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:46.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 262,713 inside=yes synthetic=no
+2026-10-14 16:40:53.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 600,638
+2026-10-14 16:40:53.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 600,638 inside=yes synthetic=no
+2026-10-14 16:40:53.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:40:53.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:40:53.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 600,638 inside=yes synthetic=no
+2026-10-14 16:41:05.083 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 4,234
+2026-10-14 16:41:05.084 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 4,234 inside=yes synthetic=no
+2026-10-14 16:41:05.418 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 14,234 inside=yes synthetic=no
+2026-10-14 16:41:06.428 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:06.428 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=3 at=mouseUp
+2026-10-14 16:41:06.428 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 63,234 inside=yes synthetic=no
+2026-10-14 16:41:19.978 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 231,821
+2026-10-14 16:41:19.979 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 231,821 inside=yes synthetic=no
+2026-10-14 16:41:19.979 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:19.979 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:41:19.979 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 231,821 inside=yes synthetic=no
+2026-10-14 16:41:21.170 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 262,713
+2026-10-14 16:41:21.170 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 262,713 inside=yes synthetic=no
+2026-10-14 16:41:21.170 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:21.170 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:41:21.170 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 262,713 inside=yes synthetic=no
+2026-10-14 16:41:26.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 611,555
+2026-10-14 16:41:26.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 611,555 inside=yes synthetic=no
+2026-10-14 16:41:26.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:26.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:41:26.720 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 611,555 inside=yes synthetic=no
+2026-10-14 16:41:35.328 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 231,821
+2026-10-14 16:41:35.328 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 231,821 inside=yes synthetic=no
+2026-10-14 16:41:35.328 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:35.328 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:41:35.328 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 231,821 inside=yes synthetic=no
+2026-10-14 16:41:36.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 262,713
+2026-10-14 16:41:36.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 262,713 inside=yes synthetic=no
+2026-10-14 16:41:36.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:36.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:41:36.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 262,713 inside=yes synthetic=no
+2026-10-14 16:41:38.573 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 611,555
+2026-10-14 16:41:38.574 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 611,555 inside=yes synthetic=no
+2026-10-14 16:41:38.767 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:38.767 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:41:38.767 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 611,555 inside=yes synthetic=no
+2026-10-14 16:41:48.291 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 344,414
+2026-10-14 16:41:48.291 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 344,414 inside=yes synthetic=no
+2026-10-14 16:41:48.626 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 355,413 inside=yes synthetic=no
+2026-10-14 16:41:49.909 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:41:49.909 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=4 at=mouseUp
+2026-10-14 16:41:49.909 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 543,414 inside=yes synthetic=no
+2026-10-14 16:42:22.634 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 536,234
+2026-10-14 16:42:22.634 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 536,234 inside=yes synthetic=no
+2026-10-14 16:42:22.970 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 526,234 inside=yes synthetic=no
+2026-10-14 16:42:24.250 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:42:24.250 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=4 at=mouseUp
+2026-10-14 16:42:24.250 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 161,234 inside=yes synthetic=no
+2026-10-14 16:42:33.191 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 124,419
+2026-10-14 16:42:33.191 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 124,419 inside=yes synthetic=no
+2026-10-14 16:42:33.520 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 135,419 inside=yes synthetic=no
+2026-10-14 16:42:35.091 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE poll saw release
+2026-10-14 16:42:35.091 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:42:35.091 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=5 at=mouseUp
+2026-10-14 16:42:35.091 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 576,419 inside=yes synthetic=no
+2026-10-14 16:42:51.495 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 521,419
+2026-10-14 16:42:51.495 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 521,419 inside=yes synthetic=no
+2026-10-14 16:42:51.828 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 521,426 inside=yes synthetic=no
+2026-10-14 16:42:52.832 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:42:52.832 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=3 at=mouseUp
+2026-10-14 16:42:52.832 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 521,482 inside=yes synthetic=no
+2026-10-14 16:43:09.399 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 466,493
+2026-10-14 16:43:09.399 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 466,493 inside=yes synthetic=no
+2026-10-14 16:43:09.728 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 466,482 inside=yes synthetic=no
+2026-10-14 16:43:10.724 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:43:10.724 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=3 at=mouseUp
+2026-10-14 16:43:10.724 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 466,377 inside=yes synthetic=no
+2026-10-14 16:43:20.653 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 521,364
+2026-10-14 16:43:20.653 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 521,364 inside=yes synthetic=no
+2026-10-14 16:43:20.986 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 521,371 inside=yes synthetic=no
+2026-10-14 16:43:21.994 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE poll saw release
+2026-10-14 16:43:21.995 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:43:21.995 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=3 at=mouseUp
+2026-10-14 16:43:21.995 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 521,438 inside=yes synthetic=no
+2026-10-14 16:43:42.128 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 220,627
+2026-10-14 16:43:42.128 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 220,627 inside=yes synthetic=no
+2026-10-14 16:43:42.461 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 220,605 inside=yes synthetic=no
+2026-10-14 16:43:43.945 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:43:43.945 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=4 at=mouseUp
+2026-10-14 16:43:43.945 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 220,539 inside=yes synthetic=no
+2026-10-14 16:45:28.173 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 220,537
+2026-10-14 16:45:28.173 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 220,537 inside=yes synthetic=no
+2026-10-14 16:45:28.503 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 242,537 inside=yes synthetic=no
+2026-10-14 16:45:32.069 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE exit edge=right 793,537
+2026-10-14 16:45:32.069 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=25 at=sessionStart
+2026-10-14 16:45:32.069 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session begin mode=late
+2026-10-14 16:45:32.070 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session willBegin screen=581,569
+2026-10-14 16:45:34.907 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session end op=0 1319,569
+2026-10-14 16:45:38.056 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:45:38.056 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 771,537 inside=yes synthetic=yes
+2026-10-14 16:45:38.056 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE injected up (late) 771,537
+2026-10-14 16:46:42.473 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 80,179
+2026-10-14 16:46:42.473 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 80,179 inside=yes synthetic=no
+2026-10-14 16:46:42.656 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:46:42.656 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:46:42.656 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 80,179 inside=yes synthetic=no
+2026-10-14 16:47:10.198 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 102,552
+2026-10-14 16:47:10.198 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 102,552 inside=yes synthetic=no
+2026-10-14 16:47:10.381 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:47:10.381 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:47:10.381 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 102,552 inside=yes synthetic=no
+2026-10-14 16:47:17.148 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 102,552
+2026-10-14 16:47:17.148 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 102,552 inside=yes synthetic=no
+2026-10-14 16:47:17.329 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE poll saw release
+2026-10-14 16:47:17.331 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:47:17.331 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:47:17.331 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 102,552 inside=yes synthetic=no
+2026-10-14 16:47:46.539 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 220,627
+2026-10-14 16:47:46.540 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 220,627 inside=yes synthetic=no
+2026-10-14 16:47:46.873 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 198,627 inside=yes synthetic=no
+2026-10-14 16:47:48.303 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE exit edge=left -1,627
+2026-10-14 16:47:48.303 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=10 at=sessionStart
+2026-10-14 16:47:48.304 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session begin mode=handoff
+2026-10-14 16:47:48.305 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:47:48.305 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 10,627 inside=yes synthetic=yes
+2026-10-14 16:47:48.305 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE injected up (handoff) 10,627
+2026-10-14 16:47:48.305 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session willBegin screen=581,659
+2026-10-14 16:47:51.211 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session end op=0 196,659
+2026-10-14 16:49:13.009 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 220,627
+2026-10-14 16:49:13.010 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 220,627 inside=yes synthetic=no
+2026-10-14 16:49:13.339 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 242,627 inside=yes synthetic=no
+2026-10-14 16:49:16.910 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE exit edge=right 793,627
+2026-10-14 16:49:16.910 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=25 at=sessionStart
+2026-10-14 16:49:16.911 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session begin mode=late
+2026-10-14 16:49:16.912 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session willBegin screen=581,659
+2026-10-14 16:49:19.798 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session end op=0 1319,659
+2026-10-14 16:49:22.947 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:49:22.947 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 771,627 inside=yes synthetic=yes
+2026-10-14 16:49:22.947 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE injected up (late) 771,627
+2026-10-14 16:51:22.605 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 220,627
+2026-10-14 16:51:22.605 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 220,627 inside=yes synthetic=no
+2026-10-14 16:51:22.938 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 220,605 inside=yes synthetic=no
+2026-10-14 16:51:29.811 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE exit edge=right 793,134
+2026-10-14 16:51:29.811 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=48 at=sessionStart
+2026-10-14 16:51:29.812 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session begin mode=late
+2026-10-14 16:51:29.814 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session willBegin screen=581,659
+2026-10-14 16:51:32.651 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session end op=0 1319,166
+2026-10-14 16:51:35.800 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:51:35.800 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 771,134 inside=yes synthetic=yes
+2026-10-14 16:51:35.800 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE injected up (late) 771,134
+2026-10-14 16:52:36.826 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 220,627
+2026-10-14 16:52:36.826 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 220,627 inside=yes synthetic=no
+2026-10-14 16:52:37.152 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged(first) 220,605 inside=yes synthetic=no
+2026-10-14 16:52:41.714 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE exit edge=left -1,134
+2026-10-14 16:52:41.714 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=32 at=sessionStart
+2026-10-14 16:52:41.714 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session begin mode=handoff
+2026-10-14 16:52:41.715 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:52:41.715 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 21,134 inside=yes synthetic=yes
+2026-10-14 16:52:41.715 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE injected up (handoff) 21,134
+2026-10-14 16:52:41.716 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session willBegin screen=581,659
+2026-10-14 16:52:44.568 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE session end op=0 196,166
+2026-10-14 16:53:33.618 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor down 410,156
+2026-10-14 16:53:33.618 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view down 410,156 inside=yes synthetic=no
+2026-10-14 16:53:33.797 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE monitor up session=no
+2026-10-14 16:53:33.797 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view dragged total=0 at=mouseUp
+2026-10-14 16:53:33.797 Df Kernova[25017:29c59e] [app.kernova:DragOutSpike] SPIKE view up 410,156 inside=yes synthetic=no

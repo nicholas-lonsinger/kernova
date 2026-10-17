@@ -1,0 +1,66 @@
+pbear@Pandas-Virtual-Machine ~ % base64 -d -i /tmp/dc.b64 | gunzip > /tmp/dragcatch && chmod +x /tmp/dragcatch && /tmp/dragcatch
+22:29:12.352  dragcatch start  screen 791x832  LEFT UP  at 264,652
+22:29:57.589  LEFT DOWN  at 787,196
+22:29:59.039  LEFT UP    at 675,402
+22:30:00.200  LEFT DOWN  at 300,766
+22:30:01.628  LEFT UP    at 355,419
+22:30:14.039  LEFT DOWN  at 79,234
+22:30:15.469  LEFT UP    at 212,234
+22:30:28.059  LEFT DOWN  at 410,420
+22:30:29.489  LEFT UP    at 256,420
+22:30:43.379  LEFT DOWN  at 410,289
+22:30:44.799  LEFT UP    at 410,465
+22:30:53.089  LEFT DOWN  at 4,564
+22:30:54.519  LEFT UP    at 212,564
+22:31:06.109  LEFT DOWN  at 432,701
+22:31:07.539  LEFT UP    at 543,701
+22:31:15.859  LEFT DOWN  at 161,531
+22:31:17.289  LEFT UP    at 388,531
+22:31:28.829  LEFT DOWN  at 156,531
+22:31:30.359  LEFT UP    at 388,531
+22:31:41.778  LEFT DOWN  at 515,699
+22:31:43.209  LEFT UP    at 240,751
+22:31:53.639  LEFT DOWN  at 717,688
+22:31:55.069  LEFT UP    at 441,739
+22:32:37.850  LEFT DOWN  at 457,674
+22:32:37.869  DRAG STARTED  at 452,663
+22:32:38.828  LEFT UP    at 413,586
+22:33:12.550  LEFT DOWN  at 413,586
+22:33:12.559  DRAG STARTED  at 425,562
+22:33:14.892  ARMED catcher under pointer at 784,79
+22:33:15.559  LEFT UP    at 784,79
+22:33:17.130  catcher hidden
+22:33:56.549  LEFT DOWN  at 477,553
+22:33:56.559  LEFT UP    at 477,553
+22:34:28.309  LEFT DOWN  at 457,669
+22:34:28.328  DRAG STARTED  at 445,650
+22:34:28.339  DRAG STARTED  at 445,650
+22:34:30.960  ARMED catcher under pointer at 9,79
+22:34:31.625  CATCHER draggingEntered  pointer 10,79  sourceMask=55
+22:34:31.627  CATCHER draggingUpdated (first)  pointer 10,79
+22:34:31.719  LEFT UP    at 10,79
+22:34:31.720  CATCHER prepareForDragOperation
+22:34:31.722  CATCHER performDragOperation  fileURLs=["/private/tmp/drag-me.txt"]  promises=0
+22:34:31.724  CATCHER can read drag-me.txt  bytes=25
+22:34:31.725  CATCHER concludeDragOperation
+22:34:33.249  catcher hidden
+22:35:01.289  LEFT DOWN  at 457,669
+22:35:01.309  DRAG STARTED  at 467,649
+22:35:03.850  ARMED catcher under pointer at 784,79
+22:35:04.528  LEFT UP    at 784,79
+22:35:06.090  catcher hidden
+22:35:41.689  LEFT DOWN  at 457,669
+22:35:41.709  DRAG STARTED  at 445,650
+22:35:44.390  ARMED catcher under pointer at 9,79
+22:35:45.059  CATCHER draggingEntered  pointer 10,79  sourceMask=55
+22:35:45.061  CATCHER draggingUpdated (first)  pointer 10,79
+22:35:45.155  CATCHER prepareForDragOperation
+22:35:45.157  CATCHER performDragOperation  fileURLs=["/private/tmp/drag-me.txt"]  promises=0
+22:35:45.158  CATCHER can read drag-me.txt  bytes=25
+22:35:45.159  LEFT UP    at 10,79
+22:35:45.160  CATCHER concludeDragOperation
+22:35:46.726  catcher hidden
+22:36:10.078  LEFT DOWN  at 388,419
+22:36:10.088  LEFT UP    at 388,419
+^C
+pbear@Pandas-Virtual-Machine ~ % 
