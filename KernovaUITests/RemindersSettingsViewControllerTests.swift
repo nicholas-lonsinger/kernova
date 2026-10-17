@@ -1,8 +1,10 @@
 import AppKit
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 @testable import KernovaVirtualization
 
@@ -415,11 +417,4 @@ struct RemindersSettingsViewControllerTests {
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height <= scrollView.frame.height)
     }
-}
-
-/// Enough VMs that the Reminders pane outgrows the tallest window the screen
-/// can hold, at well under one row per 20 points of that height.
-@MainActor
-func overflowingVMCount() -> Int {
-    Int((SettingsPaneMetrics.maxHeight(in: nil) ?? 1_000) / 20)
 }
