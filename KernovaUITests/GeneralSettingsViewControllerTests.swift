@@ -1,8 +1,10 @@
 import AppKit
+import KernovaTestSupport
 import ServiceManagement
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// Behavior tests for the General settings pane's login-item approval note.

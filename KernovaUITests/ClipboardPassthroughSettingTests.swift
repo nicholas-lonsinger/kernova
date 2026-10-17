@@ -1,6 +1,8 @@
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The confirmation outcomes of the clipboard flags' one write path, which
