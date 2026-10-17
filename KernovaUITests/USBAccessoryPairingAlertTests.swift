@@ -4,6 +4,7 @@ import KernovaKit
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// What the prompt says, and what each of its buttons answers with.

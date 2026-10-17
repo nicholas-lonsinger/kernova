@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The color a VM's status draws in, which the AppKit layer maps from the

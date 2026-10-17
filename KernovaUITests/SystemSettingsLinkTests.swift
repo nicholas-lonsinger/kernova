@@ -1,6 +1,7 @@
 import AppKit
 import Testing
 
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("SystemSettingsLink Tests", .caseScoped)

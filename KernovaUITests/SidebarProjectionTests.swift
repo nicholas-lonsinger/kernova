@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The sidebar's projection — ``SidebarLayout``, the ``SidebarTree`` built from

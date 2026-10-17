@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The one derivation of the `VZVirtualMachineView` properties a VM's display

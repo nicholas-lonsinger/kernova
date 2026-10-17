@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// ``VMLibraryViewModel/vmNamesSharingMachineIdentity(with:)``: which other VMs
