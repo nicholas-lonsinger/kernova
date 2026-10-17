@@ -12,9 +12,9 @@ extension BundledGuestAgent {
 
 extension AppBundleProducts {
     /// The products of an app under `/var/empty`, which holds none — no disk
-    /// template, relaunch helper or tool — at host version 1.0, bundling
+    /// template, relaunch helper or tool — at host version 1.0 build 1, bundling
     /// ``BundledGuestAgent/testing``.
     package static let testing = AppBundleProducts(
         bundleURL: URL(filePath: "/var/empty/Kernova.app", directoryHint: .isDirectory),
-        hostVersion: "1.0", guestAgent: .testing)
+        hostVersion: "1.0", buildNumber: "1", guestAgent: .testing)
 }

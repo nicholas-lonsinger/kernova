@@ -111,7 +111,7 @@ struct MainMenuValidationTests {
     func guestAgentDiskWithoutBundledImage() {
         let fixture = makeFixture(
             bundleProducts: AppBundleProducts(
-                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0",
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
                 guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: nil)))
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
