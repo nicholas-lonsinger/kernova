@@ -21,3 +21,7 @@ SWIFT_EMIT_LOC_STRINGS = NO
 SWIFT_PACKAGE_NAME = kernovacore
 
 CODE_SIGN_STYLE = Automatic
+
+// The bundle compiles the test-support folders into its own module, so
+// KernovaAppKitTestSupport skips importing them as products.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) TEST_SUPPORT_COMPILED_IN
