@@ -1,9 +1,11 @@
 import Cocoa
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// A `Networks.json` Kernova can't read reads as unreadable on every surface

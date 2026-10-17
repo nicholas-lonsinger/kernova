@@ -2,9 +2,11 @@ import Cocoa
 import CoreServices
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// What each script command reads off its event and asks of the gateway.

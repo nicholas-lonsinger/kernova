@@ -2,6 +2,7 @@ import Cocoa
 import CoreServices
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
@@ -12,7 +13,7 @@ import Testing
 /// The specifiers are the ones Cocoa builds for each form a script can write,
 /// evaluated where evaluation is what reads them — against the test host,
 /// whose `virtual machines` element is empty.
-@Suite("VM script selector", .caseScoped)
+@Suite("VM script selector", .caseScoped, .emptyScriptingLibrary)
 @MainActor
 struct VMScriptSelectorTests {
     private func makeContainer() throws -> NSScriptClassDescription {

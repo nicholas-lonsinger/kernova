@@ -1,9 +1,11 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The check window's layout and keys, over a source the test drives.

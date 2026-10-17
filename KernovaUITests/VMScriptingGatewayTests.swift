@@ -2,9 +2,11 @@ import Cocoa
 import CoreServices
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The Apple event front door: which verb a script runs, what it waits for
@@ -14,7 +16,7 @@ import Testing
 /// A read that arrives before the library has landed is suspended and
 /// re-issued through Cocoa's own Apple event handling, which only a live
 /// script exercises; what is tested here is everything short of that.
-@Suite("VM scripting gateway", .caseScoped)
+@Suite("VM scripting gateway", .caseScoped, .emptyScriptingLibrary)
 @MainActor
 struct VMScriptingGatewayTests {
     /// A readiness await the test holds open, so a verb's wait for the first

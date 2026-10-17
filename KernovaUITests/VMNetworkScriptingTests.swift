@@ -2,9 +2,11 @@ import Cocoa
 import CoreServices
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 /// The dictionary's `network`: what a script reads, and what `make`, `set
@@ -13,7 +15,7 @@ import Testing
 /// Driven through the gateway and the element objects, with the command Cocoa
 /// would be answering standing in as ``VMScriptingGateway/answeringCommand``:
 /// the Apple event round trip itself takes a live script.
-@Suite("VM network scripting", .caseScoped)
+@Suite("VM network scripting", .caseScoped, .emptyScriptingLibrary)
 @MainActor
 struct VMNetworkScriptingTests {
     private func makeGateway(_ wired: WiredCommandCore) -> VMScriptingGateway {
