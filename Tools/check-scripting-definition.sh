@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Cocoa scripting reads its dictionary from the main bundle: Info.plist's
+# OSAScriptingDefinition names the sdef among the bundle's resources, and
+# NSAppleScriptEnabled turns scripting on. A bundle missing either loads no
+# dictionary, and nothing fails to compile. The app and the test host must
+# both carry them — the host so the scripting tests resolve the same
+# dictionary the app ships.
+#
+# Checks each target's Info.plist (the INFOPLIST_FILE its xcconfig assigns),
+# that the sdef it names is one tracked file in the app's folder, and that the
+# test host takes that file into its bundle by membership exception. Reports
+# every violation before failing.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
+pbxproj="Kernova.xcodeproj/project.pbxproj"
+targets=(Kernova KernovaTestHost)
+
+status=0
+fail_with() {
+    echo "check-scripting-definition: $*" >&2
+    status=1
+}
+
+# The sdef path relative to the app's folder, as the host's membership
+# exception names it; set from the app's own plist.
+sdef_rel=""
+
+for target in "${targets[@]}"; do
+    xcconfig="Config/Targets/$target.xcconfig"
+    plist=$(sed -n 's/^[[:space:]]*INFOPLIST_FILE[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$xcconfig" 2>/dev/null | head -1)
+    if [ -z "$plist" ] || [ ! -f "$plist" ]; then
+        fail_with "$xcconfig assigns no readable INFOPLIST_FILE"
+        continue
+    fi
+
+    enabled=$(plutil -extract NSAppleScriptEnabled raw -o - "$plist" 2>/dev/null)
+    if [ "$enabled" != "true" ]; then
+        fail_with "$plist: NSAppleScriptEnabled is not true"
+    fi
+
+    declared=$(plutil -extract OSAScriptingDefinition raw -o - "$plist" 2>/dev/null)
+    if [ -z "$declared" ]; then
+        fail_with "$plist: OSAScriptingDefinition is missing"
+        continue
+    fi
+
+    matches=$(git ls-files 'Kernova/*' | awk -F/ -v name="$declared" '$NF == name')
+    if [ "$(grep -c . <<<"$matches")" -ne 1 ]; then
+        fail_with "$plist: OSAScriptingDefinition names $declared, which is not exactly one tracked file under Kernova/"
+        continue
+    fi
+
+    if [ "$target" = "Kernova" ]; then
+        sdef_rel=${matches#Kernova/}
+    elif [ -n "$sdef_rel" ] && [ "${matches#Kernova/}" != "$sdef_rel" ]; then
+        fail_with "$plist names $declared; the app ships $sdef_rel"
+    fi
+done
+
+if [ -n "$sdef_rel" ]; then
+    # The exception set on the app's folder for the host is what puts the
+    # file in the host's bundle; the app's own exceptions exclude.
+    exception=$(awk -v want="$sdef_rel" '
+        /Exceptions for "Kernova" folder in "KernovaTestHost" target \*\/ = \{/ { inside = 1 }
+        inside && $0 ~ /^\t\t\};/ { inside = 0 }
+        inside { gsub(/[\t ,]/, ""); if ($0 == want) print }
+    ' "$pbxproj")
+    if [ -z "$exception" ]; then
+        fail_with "$pbxproj: KernovaTestHost takes no membership of Kernova/$sdef_rel"
+    fi
+fi
+
+if [ "$status" -eq 0 ]; then
+    pass "scripting definition: the app and the test host both declare and bundle Kernova/$sdef_rel"
+fi
+exit "$status"
