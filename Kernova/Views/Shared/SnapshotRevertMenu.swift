@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Identifies which VM and snapshot a "Revert to Snapshot" item names, carried
 /// as the item's `representedObject`.

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The outline view's items — the ``SidebarTree``'s nodes — and the drags

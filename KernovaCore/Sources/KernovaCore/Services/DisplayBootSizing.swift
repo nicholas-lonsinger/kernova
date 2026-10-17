@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// The on-screen area a VM's display is about to occupy.

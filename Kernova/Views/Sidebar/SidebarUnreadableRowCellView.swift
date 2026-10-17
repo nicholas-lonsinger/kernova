@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Leaf-row cell for a bundle Kernova can't read: the icon and name dimmed, a
 /// yellow warning at the trailing edge, and the reason as the tooltip.

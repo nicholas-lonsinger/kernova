@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// AppKit Boot Order sheet: shows a draggable list of the VM's storage
 /// disks so the user can change boot priority / guest device

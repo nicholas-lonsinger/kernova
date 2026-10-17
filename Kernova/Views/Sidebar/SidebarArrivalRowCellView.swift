@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Leaf-row cell for an arrival — a create, clone or import still writing its
 /// bundle: a spinner in the icon slot, the name, the detail line Show Details

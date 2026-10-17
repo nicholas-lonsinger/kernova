@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCore
 import KernovaKit
 import KernovaLogging
 import Virtualization

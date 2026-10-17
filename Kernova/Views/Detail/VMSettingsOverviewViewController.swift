@@ -1,5 +1,6 @@
-import KernovaKit
 import AppKit
+import KernovaCore
+import KernovaKit
 
 /// The detail pane's overview: one card per ``VMSettingsCategory``, stacked down
 /// the pane's column in category order, each stating the category's current

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaCore
 
 /// Nested sheet listing every Linux installer image in the bundled catalog.
 ///

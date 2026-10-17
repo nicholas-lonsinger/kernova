@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Trailing accessory shown in the sidebar row while a VM is in Ephemeral Mode.
 ///

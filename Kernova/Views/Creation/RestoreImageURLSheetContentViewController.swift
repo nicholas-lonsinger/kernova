@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaCore
 
 /// Nested sheet that takes a restore image URL and checks it before anything is
 /// downloaded.

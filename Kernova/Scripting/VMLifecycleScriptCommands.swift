@@ -1,5 +1,6 @@
 import Cocoa
 import CoreServices
+import KernovaCore
 import KernovaKit
 import KernovaLogging
 

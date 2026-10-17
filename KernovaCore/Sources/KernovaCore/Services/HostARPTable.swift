@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// A 48-bit Ethernet address, as the host's ARP table and a VM's configuration

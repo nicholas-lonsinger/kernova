@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Builds a disk-size menu-item title with the number right-aligned and the
 /// unit left-aligned to shared tab stops, so the number/unit columns line up

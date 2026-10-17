@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaCore
 
 /// Nested sheet listing every macOS restore image in the bundled catalog.
 ///

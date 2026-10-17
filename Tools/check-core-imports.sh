@@ -29,7 +29,24 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-core_modules='Foundation KernovaKit KernovaLogging'
+core_entries=(
+    'Foundation'
+    'KernovaKit'
+    'KernovaLogging'
+    'AppIntents             # the intents, entities and queries Shortcuts and Spotlight read'
+    'AVFoundation           # microphone authorization status'
+    'CoreServices           # Apple event error numbers a script reads'
+    'CoreSpotlight          # indexing VM entities for Spotlight'
+    'CryptoKit              # digests and stable identifiers'
+    'ImageIO                # image dimensions in a clipboard description'
+    'IOKit                  # USB accessory enumeration and system sleep notifications'
+    'Security               # code-signing entitlements and peer authorization'
+    'ServiceManagement      # the login item'
+    'Synchronization        # Mutex'
+    'System                 # Errno'
+    'UniformTypeIdentifiers # UTType'
+)
+core_modules=$(printf '%s\n' "${core_entries[@]}" | awk '{ print $1 }' | paste -sd ' ' -)
 test_modules='Testing KernovaCore KernovaTestSupport'
 
 sources_root='KernovaCore/Sources/KernovaCore'

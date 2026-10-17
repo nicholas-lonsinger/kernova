@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Sheet that names a new snapshot before it is taken.
 @MainActor

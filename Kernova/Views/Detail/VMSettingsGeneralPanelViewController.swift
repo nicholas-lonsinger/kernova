@@ -1,5 +1,6 @@
-import KernovaKit
 import AppKit
+import KernovaCore
+import KernovaKit
 import KernovaLogging
 
 /// The General category: the VM's identity rows and its startup behavior.

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaCore
 
 /// Nested sheet that takes an installer image URL, and the SHA-256 to check the
 /// download against, before anything is downloaded.

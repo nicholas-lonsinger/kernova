@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// The alert that asks which running guest a newly assigned USB accessory
 /// should be passed through to.

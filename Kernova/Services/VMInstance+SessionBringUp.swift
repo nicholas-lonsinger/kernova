@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCore
 import Virtualization
 
 /// The engine's half of a bring-up: creating the `VZVirtualMachine` a built

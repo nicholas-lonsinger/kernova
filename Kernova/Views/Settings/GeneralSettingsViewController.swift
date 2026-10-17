@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import ServiceManagement
 
 /// The "General" pane of the Settings window.

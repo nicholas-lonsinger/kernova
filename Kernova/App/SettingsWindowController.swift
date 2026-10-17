@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Hosts the app-wide Settings window (⌘,).
 ///

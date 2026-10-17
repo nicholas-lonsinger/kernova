@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Content for the transient popover the menu-bar status item shows when a
 /// clipboard transfer was refused and no clipboard window was open to say so.

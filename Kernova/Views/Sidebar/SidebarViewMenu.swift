@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The menus a sidebar section's header opens — from its button or a

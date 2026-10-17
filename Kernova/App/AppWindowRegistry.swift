@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCore
 import KernovaLogging
 
 /// The one owner of which user-facing windows exist, and whether any of them is

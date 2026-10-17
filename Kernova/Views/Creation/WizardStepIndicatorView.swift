@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// The dotted step-progress bar at the top of the creation wizard.
 ///

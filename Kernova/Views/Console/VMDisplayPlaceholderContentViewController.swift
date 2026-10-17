@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaLogging
 
 /// AppKit content view controller for the detail-pane "console" placeholder.

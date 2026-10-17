@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Value snapshot of one snapshot row's rendered appearance, so a pass that
 /// changed nothing about it skips the rebuild.

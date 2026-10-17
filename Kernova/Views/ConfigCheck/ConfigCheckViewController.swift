@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// The Check Config Files window's content: a count, a plain-text report of
 /// every config file Kernova can't read, and Use Defaults for the ones it can

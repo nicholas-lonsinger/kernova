@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaCore
 import KernovaKit
 import KernovaLogging
 import UniformTypeIdentifiers

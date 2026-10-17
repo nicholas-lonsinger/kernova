@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// The header above the settings form: a tile, a title, and a status dot beside

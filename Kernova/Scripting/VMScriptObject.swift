@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCore
 import KernovaKit
 import KernovaLogging
 

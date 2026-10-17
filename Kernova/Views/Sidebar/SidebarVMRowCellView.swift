@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Leaf-row cell for a single virtual machine in the sidebar.
 ///

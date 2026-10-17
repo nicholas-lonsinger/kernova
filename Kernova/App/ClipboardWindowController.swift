@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCore
 import KernovaLogging
 
 /// Manages a clipboard sharing window for a single VM instance.

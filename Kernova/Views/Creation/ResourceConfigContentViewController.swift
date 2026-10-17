@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaKit
 
 /// Step 3 of the creation wizard: name the VM and allocate resources.

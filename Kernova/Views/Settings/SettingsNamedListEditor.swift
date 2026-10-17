@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaLogging
 
 /// What a Settings pane listing the library's named items — its networks, its

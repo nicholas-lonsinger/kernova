@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCore
 import KernovaLogging
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.

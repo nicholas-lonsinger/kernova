@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 extension HostNotifications {
     /// The host's notifications as AppKit posts them: app activation on the
