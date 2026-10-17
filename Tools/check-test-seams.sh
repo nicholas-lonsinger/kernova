@@ -39,9 +39,9 @@
 #
 # The second gate runs over the files the first one skips. AppKit writes a
 # window frame, a split position, and a toolbar configuration to
-# `UserDefaults.standard` with no injection point, and under the app as test
-# host that is the app's own domain — so test code that names the process-wide
-# store reads and writes the state of the app the developer is running. A test's
+# `UserDefaults.standard` with no injection point, and in the test host that
+# domain outlives the run — so test code that names the process-wide store
+# reads what an earlier run left and leaves its own for the next. A test's
 # own defaults are a `MemoryUserDefaults`, and a window that should persist
 # nothing takes `WindowAutosaveScope.unsaved()`. Both spellings of the
 # process-wide store are the finding, `UserDefaults.standard` and
@@ -65,9 +65,8 @@
 # parenthesis — that does not name it.
 #
 # The fifth gate runs over the second one's files too. The temporary directory
-# is shared by every test and, under the app as test host, is the app's own
-# container, so what a test leaves there outlives it and piles up run after
-# run. A `TestScratchDirectory` is removed when the case that minted it ends,
+# is shared by every test, so what a test leaves there outlives it and piles up
+# run after run. A `TestScratchDirectory` is removed when the case that minted it ends,
 # whatever still holds it, so test code reaches the temporary directory only
 # through that owner. Its file and its own test, `scratch_owners`, are the only
 # places the spellings may appear: `temporaryDirectory`,

@@ -3,6 +3,7 @@ import Foundation
 import AppKit
 import Darwin
 import KernovaKit
+import KernovaTestSupport
 import UniformTypeIdentifiers
 
 // MARK: - Test Suite

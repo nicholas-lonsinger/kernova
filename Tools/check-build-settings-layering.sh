@@ -86,7 +86,7 @@ violations=$(awk '
 # them, so they are out of scope here.
 signing_files=(
     Config/Targets/Kernova.xcconfig
-    Config/Targets/KernovaTests.xcconfig
+    Config/Targets/KernovaAppBundleTests.xcconfig
     Config/Targets/KernovaMacOSAgentTests.xcconfig
     Config/Targets/KernovaTestHost.xcconfig
     Config/Targets/KernovaUITests.xcconfig

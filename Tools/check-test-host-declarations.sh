@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# Cocoa scripting reads its dictionary from the main bundle: Info.plist's
-# OSAScriptingDefinition names the sdef among the bundle's resources, and
-# NSAppleScriptEnabled turns scripting on. A bundle missing either loads no
-# dictionary, and nothing fails to compile. The app and the test host must
-# both carry them — the host so the scripting tests resolve the same
-# dictionary the app ships.
+# Code under test reads two declarations from the main bundle, which in a test
+# run is the test host, so the host must carry the app's own:
 #
-# Checks each target's Info.plist (the INFOPLIST_FILE its xcconfig assigns),
-# that the sdef it names is one tracked file in the app's folder, and that the
-# test host takes that file into its bundle by membership exception. Reports
-# every violation before failing.
+# - Cocoa scripting loads its dictionary from Info.plist's
+#   OSAScriptingDefinition, naming an sdef among the bundle's resources, once
+#   NSAppleScriptEnabled turns scripting on. A bundle missing either loads no
+#   dictionary, and nothing fails to compile.
+# - `UTType(exportedAs:)` expects its identifier in the main bundle's
+#   UTExportedTypeDeclarations and logs a "was expected to be declared"
+#   warning when it is missing. Declared there, the type the host sees is the
+#   app's, not whatever a Kernova.app Launch Services last registered says.
+#
+# Checks each target's Info.plist (the INFOPLIST_FILE its xcconfig assigns):
+# that both carry the scripting keys, that the sdef the plist names is one
+# tracked file in the app's folder the host takes into its bundle by membership
+# exception, and that the host's UTExportedTypeDeclarations equal the app's.
+# Reports every violation before failing.
 
 set -uo pipefail
 
@@ -24,13 +30,15 @@ targets=(Kernova KernovaTestHost)
 
 status=0
 fail_with() {
-    echo "check-scripting-definition: $*" >&2
+    echo "check-test-host-declarations: $*" >&2
     status=1
 }
 
 # The sdef path relative to the app's folder, as the host's membership
-# exception names it; set from the app's own plist.
+# exception names it, and the app's exported types; both set from the app's
+# own plist.
 sdef_rel=""
+app_types=""
 
 for target in "${targets[@]}"; do
     xcconfig="Config/Targets/$target.xcconfig"
@@ -38,6 +46,16 @@ for target in "${targets[@]}"; do
     if [ -z "$plist" ] || [ ! -f "$plist" ]; then
         fail_with "$xcconfig assigns no readable INFOPLIST_FILE"
         continue
+    fi
+
+    types=$(plutil -extract UTExportedTypeDeclarations xml1 -o - "$plist" 2>/dev/null)
+    if [ -z "$types" ]; then
+        fail_with "$plist: UTExportedTypeDeclarations is missing"
+    elif [ "$target" = "Kernova" ]; then
+        app_types=$types
+    elif [ -n "$app_types" ] && [ "$types" != "$app_types" ]; then
+        fail_with "$plist: UTExportedTypeDeclarations differ from the app's:"
+        diff <(printf '%s\n' "$app_types") <(printf '%s\n' "$types") >&2
     fi
 
     enabled=$(plutil -extract NSAppleScriptEnabled raw -o - "$plist" 2>/dev/null)
@@ -78,6 +96,6 @@ if [ -n "$sdef_rel" ]; then
 fi
 
 if [ "$status" -eq 0 ]; then
-    pass "scripting definition: the app and the test host both declare and bundle Kernova/$sdef_rel"
+    pass "test host declarations: the app and the test host both declare and bundle Kernova/$sdef_rel, and export the same types"
 fi
 exit "$status"
