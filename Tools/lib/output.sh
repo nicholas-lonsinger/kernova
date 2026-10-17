@@ -57,3 +57,6 @@ detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
 
 # Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
 pretty_path() { printf '%s' "${1/#$HOME/~}"; }
+
+# Display-only: a directory's on-disk footprint, human-readable (1.8G).
+disk_size() { du -sh "$1" 2>/dev/null | cut -f1; }

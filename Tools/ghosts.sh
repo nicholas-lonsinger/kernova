@@ -243,7 +243,7 @@ fi
 found_count=0
 fixed_count=0
 
-# section/pass/warn/value/detail/pretty_path come from Tools/lib/output.sh.
+# section/pass/warn/value/detail/pretty_path/disk_size come from Tools/lib/output.sh.
 # These two stay local because they also drive this script's summary counters.
 ghost() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
 fixed() { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
@@ -281,7 +281,7 @@ if [ "$EVICT" = 1 ]; then
     # it happens rather than wondering later why the next build was cold.
     printf 'Removing build arena %s — %s\n' \
         "$(labeled_path "$EVICT_DIR")" \
-        "$(du -sh "$EVICT_DIR" 2>/dev/null | cut -f1)"
+        "$(disk_size "$EVICT_DIR")"
     evict_dd_arena "$EVICT_DIR"
     if [ -d "$EVICT_DIR" ]; then
         printf 'ghosts.sh: failed to remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
@@ -393,7 +393,7 @@ if read_worktree_layout "$REPO_ROOT"; then
         pass 'No orphaned directories under .claude/worktrees/'
     else
         for dir in "${orphan_dirs[@]}"; do
-            ghost "Orphaned worktree directory: $(pretty_path "$dir")"
+            ghost "Orphaned worktree directory: $(pretty_path "$dir") — $(disk_size "$dir")"
             if [ "$FIX" = 1 ]; then
                 if trash "$dir" 2>/dev/null; then
                     fixed "trashed: $(pretty_path "$dir")"
@@ -436,7 +436,7 @@ else
         # lookup after the delete falls back to the bare hashed path on the one
         # line where naming the worktree matters most.
         dir_label=$(labeled_path "$dir")
-        ghost "Orphaned arena: $dir_label — $(du -sh "$dir" 2>/dev/null | cut -f1)"
+        ghost "Orphaned arena: $dir_label — $(disk_size "$dir")"
         if path_held "$dir"; then
             while IFS= read -r blocked; do
                 detail "$blocked"
@@ -445,7 +445,7 @@ else
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
-                fixed "unregistered bundles and deleted: $dir_label"
+                fixed "deleted: $(pretty_path "$dir")"
             else
                 detail "delete failed for $dir_label"
             fi
