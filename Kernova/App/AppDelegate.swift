@@ -116,7 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let hostNotifications = HostNotifications.appKit()
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
-            machineFiles: VMBundleMachineFiles(fileSystem: FileManager.default),
+            machineFiles: VMBundleMachineFiles(
+                fileSystem: FileManager.default, platform: VirtualizationPlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
                 vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,

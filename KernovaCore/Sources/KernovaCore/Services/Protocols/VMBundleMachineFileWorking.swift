@@ -45,7 +45,7 @@ package struct VMSnapshotRestorePlan: Sendable {
 ///
 /// Every method blocks on the filesystem, so ``VMBundle`` calls them off the
 /// main actor.
-package protocol VMBundleMachineFileWorking: Sendable {
+package protocol VMBundleMachineFileWorking: VMPlatformFileWriting {
     // MARK: Snapshots
 
     /// Creates the snapshot's directory and writes the configuration the
@@ -114,20 +114,6 @@ package protocol VMBundleMachineFileWorking: Sendable {
     /// Removes the bundle's suspend slot; a bundle holding none is a success.
     func removeSaveFile(bundleURL: URL) throws
 
-    // MARK: Firmware and platform
-
-    /// Creates the bundle's EFI variable store unless it already holds one.
-    func ensureEFIVariableStore(bundleURL: URL) throws
-
-    /// Writes the macOS platform files an install boots from, answering the
-    /// machine identifier the bundle now holds.
-    ///
-    /// `HardwareModel` and `MachineIdentifier` are written only when absent, so
-    /// the guest keeps one identity across install retries; `AuxiliaryStorage`
-    /// is always created afresh for `hardwareModel`, since it carries the
-    /// firmware state a fresh install run must match.
-    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data
-
     // MARK: In-bundle disks
 
     /// Writes a new disk image of `sizeInGB` at the in-bundle path `id` names,
@@ -182,4 +168,21 @@ package enum VMSnapshotError: LocalizedError, TitledError {
             "Couldn\u{2019}t Revert to the Snapshot"
         }
     }
+}
+
+/// The firmware and platform files of a VM bundle, which only Virtualization
+/// writes; the engine answers it, and ``VMBundleMachineFiles`` hands its
+/// requirements to one.
+package protocol VMPlatformFileWriting: Sendable {
+    /// Creates the bundle's EFI variable store unless it already holds one.
+    func ensureEFIVariableStore(bundleURL: URL) throws
+
+    /// Writes the macOS platform files an install boots from, answering the
+    /// machine identifier the bundle now holds.
+    ///
+    /// `HardwareModel` and `MachineIdentifier` are written only when absent, so
+    /// the guest keeps one identity across install retries; `AuxiliaryStorage`
+    /// is always created afresh for `hardwareModel`, since it carries the
+    /// firmware state a fresh install run must match.
+    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data
 }

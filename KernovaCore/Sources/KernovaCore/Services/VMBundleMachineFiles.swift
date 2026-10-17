@@ -1,15 +1,14 @@
 import Foundation
-import KernovaCore
 import KernovaKit
 import KernovaLogging
-import Virtualization
 
 /// The file operations behind ``VMBundle``'s machine files, against the real
 /// filesystem. A snapshot's directory holds its VZ saved state, the
 /// configuration it was captured under and copy-on-write disk copies.
 ///
-/// `VMBundleLayout` owns the names; this owns the file operations.
-struct VMBundleMachineFiles: VMBundleMachineFileWorking {
+/// `VMBundleLayout` owns the names; this owns the file operations, and
+/// `platform` writes the firmware and platform files.
+package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMBundleMachineFiles")
 
     /// The operations a test must not run for real: trashing moves a file into
@@ -17,13 +16,16 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     /// files, which is what this type's tests exercise.
     private let fileSystem: any FileSystemOperating
 
-    init(fileSystem: any FileSystemOperating) {
+    private let platform: any VMPlatformFileWriting
+
+    package init(fileSystem: any FileSystemOperating, platform: any VMPlatformFileWriting) {
         self.fileSystem = fileSystem
+        self.platform = platform
     }
 
     // MARK: - Capture
 
-    func prepareSnapshot(
+    package func prepareSnapshot(
         bundleURL: URL, snapshotID: UUID, configuration: VMConfiguration
     ) throws -> VMSnapshotCapturePlan {
         let layout = VMBundleLayout(bundleURL: bundleURL)
@@ -37,7 +39,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
             relativePaths: VMBundleItems.capturedRelativePaths(for: configuration, layout: layout))
     }
 
-    func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws {
+    package func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         try VMBundleItems.copyItems(
             relativePaths, from: layout.bundleURL,
@@ -45,7 +47,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
             ifMissing: .fail { VMSnapshotError.captureSourceMissing($0) })
     }
 
-    func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
+    package func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let destinationLayout = layout.snapshotLayout(id: snapshotID)
         let manager = FileManager.default
@@ -70,7 +72,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     /// `kind` comes from the manifest rather than from whether a saved state is
     /// on disk: a warm snapshot whose saved state was lost has to keep refusing,
     /// not quietly restore as a cold one.
-    func planRestore(
+    package func planRestore(
         bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
     ) throws -> VMSnapshotRestorePlan {
         let sourceLayout = VMBundleLayout(bundleURL: bundleURL).snapshotLayout(id: snapshotID)
@@ -106,7 +108,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     /// Nothing in the bundle is touched, so a failure here — or anything that
     /// stops the revert before ``installRestore(bundleURL:plan:)`` — leaves the
     /// bundle exactly as it was. A cold plan stages no saved state.
-    func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
+    package func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let sourceLayout = layout.snapshotLayout(id: snapshotID)
         let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
@@ -136,7 +138,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     /// Each swap is a rename, so a file the bundle holds is never absent,
     /// whatever interrupts the revert. A cold plan drops the bundle's own saved
     /// state, so the VM comes back stopped on the captured disks.
-    func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
+    package func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
         let manager = FileManager.default
@@ -191,7 +193,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         }
     }
 
-    func sweepRestoreStaging(bundleURL: URL) {
+    package func sweepRestoreStaging(bundleURL: URL) {
         let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
         let manager = FileManager.default
         guard manager.fileExists(atPath: staging.path(percentEncoded: false)) else { return }
@@ -211,7 +213,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Removal
 
-    func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
+    package func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
         let directory = VMBundleLayout(bundleURL: bundleURL).snapshotDirectoryURL(id: snapshotID)
         guard FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) else {
             return
@@ -219,7 +221,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         try fileSystem.trashItem(at: directory)
     }
 
-    func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID) {
+    package func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID) {
         let directory = VMBundleLayout(bundleURL: bundleURL).snapshotDirectoryURL(id: snapshotID)
         do {
             try FileManager.default.removeItem(at: directory)
@@ -237,7 +239,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Suspend slot
 
-    func removeSaveFile(bundleURL: URL) throws {
+    package func removeSaveFile(bundleURL: URL) throws {
         do {
             try FileManager.default.removeItem(at: VMBundleLayout(bundleURL: bundleURL).saveFileURL)
         } catch let error as NSError
@@ -249,41 +251,17 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Firmware and platform
 
-    func ensureEFIVariableStore(bundleURL: URL) throws {
-        let url = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
-        guard !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return }
-        _ = try VZEFIVariableStore(creatingVariableStoreAt: url, options: [])
-        #log(
-            Self.logger, .notice,
-            "Created the EFI variable store in '\(bundleURL.lastPathComponent, privacy: .public)'")
+    package func ensureEFIVariableStore(bundleURL: URL) throws {
+        try platform.ensureEFIVariableStore(bundleURL: bundleURL)
     }
 
-    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
-        guard let model = VZMacHardwareModel(dataRepresentation: hardwareModel) else {
-            throw ConfigurationBuilderError.invalidHardwareModel
-        }
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        let manager = FileManager.default
-        if !manager.fileExists(atPath: layout.hardwareModelURL.path(percentEncoded: false)) {
-            try hardwareModel.write(to: layout.hardwareModelURL)
-        }
-        if !manager.fileExists(atPath: layout.machineIdentifierURL.path(percentEncoded: false)) {
-            try VZMacMachineIdentifier().dataRepresentation.write(to: layout.machineIdentifierURL)
-        }
-        // Without `.allowOverwrite`, a second Start after an install that got past
-        // setup but didn't finish throws "File exists" before the installer runs.
-        _ = try VZMacAuxiliaryStorage(
-            creatingStorageAt: layout.auxiliaryStorageURL, hardwareModel: model,
-            options: [.allowOverwrite])
-        #log(
-            Self.logger, .info,
-            "Created platform files in '\(bundleURL.lastPathComponent, privacy: .public)'")
-        return try Data(contentsOf: layout.machineIdentifierURL)
+    package func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
+        try platform.createMacPlatformFiles(bundleURL: bundleURL, hardwareModel: hardwareModel)
     }
 
     // MARK: - In-bundle disks
 
-    func createInternalDisk(
+    package func createInternalDisk(
         bundleURL: URL, id: UUID, sizeInGB: Int, diskImages: any DiskImageProviding
     ) async throws -> String {
         let relativePath = VMBundleLayout.additionalDiskRelativePath(id: id)
@@ -312,13 +290,13 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         return relativePath
     }
 
-    func trashInternalDisk(bundleURL: URL, relativePath: String) throws {
+    package func trashInternalDisk(bundleURL: URL, relativePath: String) throws {
         try fileSystem.trashItem(at: bundleURL.appendingPathComponent(relativePath))
     }
 
     // MARK: - Sizes
 
-    func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
+    package func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         var sizes: [UUID: SnapshotSize] = [:]
         for id in snapshotIDs {
