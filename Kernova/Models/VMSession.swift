@@ -357,6 +357,31 @@ actor VMSession: VMSessionOperating {
         return uuid
     }
 
+    /// Attaches the disk image at `url` as a USB mass storage device, building
+    /// the device on the queue through ``attachUSBDevice(_:)``.
+    func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID {
+        try await attachUSBDevice {
+            let attachment: VZDiskImageStorageDeviceAttachment
+            do {
+                attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
+            } catch {
+                #log(
+                    Self.logger, .error,
+                    "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                throw error
+            }
+            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+            if let uuid {
+                // Override the framework-generated UUID so the live device
+                // matches the caller's persisted identity (e.g.
+                // `RemovableMediaItem.id`) for save-state restore matching.
+                usbConfig.uuid = uuid
+            }
+            return VZUSBMassStorageDevice(configuration: usbConfig)
+        }
+    }
+
     /// Detaches the USB device carrying `uuid`, throwing
     /// `VMSessionError.usbDeviceNotFound` when the controller doesn't hold it.
     func detachUSBDevice(uuid: UUID) async throws {
@@ -474,8 +499,8 @@ actor VMSession: VMSessionOperating {
 extension VMSessionOperating {
     /// This session as the actor that owns its `VZVirtualMachine` — the one
     /// crossing from the session the core holds back to the engine's own type,
-    /// for the operations whose arguments are Virtualization objects (a USB
-    /// device, the display view's machine).
+    /// for the operations whose arguments are Virtualization objects (a
+    /// passthrough accessory's device, the display view's machine).
     ///
     /// `nil` for a session the engine did not make; only the engine makes the
     /// sessions a VM holds.

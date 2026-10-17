@@ -1,12 +1,10 @@
 import Foundation
 import KernovaLogging
-import Virtualization
 
 /// Manages runtime USB mass storage device attach/detach via XHCI controller.
 @MainActor
 final class RemovableMediaDeviceService: RemovableMediaAttaching {
-    // `nonisolated`: the attach factory logs from the session's queue.
-    private nonisolated static let logger = KernovaLogger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RemovableMediaDeviceService")
 
     func attach(
@@ -15,7 +13,7 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
         desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> RemovableMediaDeviceInfo {
-        guard let session = instance.session?.virtualMachineSession else {
+        guard let session = instance.session else {
             #log(
                 Self.logger, .error,
                 "Cannot attach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
@@ -55,26 +53,7 @@ final class RemovableMediaDeviceService: RemovableMediaAttaching {
         let url = resolved.url
         let uuid: UUID
         do {
-            uuid = try await session.attachUSBDevice {
-                let attachment: VZDiskImageStorageDeviceAttachment
-                do {
-                    attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
-                } catch {
-                    #log(
-                        Self.logger, .error,
-                        "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    throw error
-                }
-                let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-                if let desiredUUID {
-                    // Override the framework-generated UUID so the live device
-                    // matches the caller's persisted identity (e.g.
-                    // `RemovableMediaItem.id`) for save-state restore matching.
-                    usbConfig.uuid = desiredUUID
-                }
-                return VZUSBMassStorageDevice(configuration: usbConfig)
-            }
+            uuid = try await session.attachMassStorage(url: url, readOnly: readOnly, uuid: desiredUUID)
         } catch let error as VMSessionError {
             #log(
                 Self.logger, .error,

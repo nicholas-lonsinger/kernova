@@ -20,6 +20,9 @@ struct ConfigurationBuilder: Sendable {
         /// What `configuration`'s vmnet attachment was built by — the one the
         /// session's attachment recovery must attach by.
         let vmnetAttachments: any VmnetAttachmentMaking
+        /// The host state `configuration`'s bridged interface was chosen from —
+        /// the one the session's attachment recovery must choose from.
+        let bridgedInterfaces: any BridgedInterfaceProviding
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigurationBuilder")
@@ -29,7 +32,7 @@ struct ConfigurationBuilder: Sendable {
     var guestAgentDiskURL: URL? = KernovaMacOSAgentInfo.installerDiskImageURL
 
     /// Host state behind a bridged attachment's interface choice.
-    var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
+    var bridgedInterfaces: any BridgedInterfaceProviding
 
     /// The app-managed vmnet networks behind a Host Only or NAT attachment.
     let vmnetNetworks: VmnetNetworkService
@@ -114,7 +117,8 @@ struct ConfigurationBuilder: Sendable {
                 directoryShare: directoryShare,
                 vmnetNetworks: sessionNetworks),
             entitlements: entitlements,
-            vmnetAttachments: vmnetAttachments
+            vmnetAttachments: vmnetAttachments,
+            bridgedInterfaces: bridgedInterfaces
         )
     }
 

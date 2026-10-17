@@ -12,10 +12,11 @@ final class MacOSInstallService {
 
     init(
         vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
-        entitlements: EntitlementService
+        bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService
     ) {
         configBuilder = ConfigurationBuilder(
-            vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetAttachments, entitlements: entitlements)
+            bridgedInterfaces: bridgedInterfaces, vmnetNetworks: vmnetNetworks,
+            vmnetAttachments: vmnetAttachments, entitlements: entitlements)
     }
 
     // MARK: - Installation

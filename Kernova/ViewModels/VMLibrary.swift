@@ -55,7 +55,7 @@ final class VMLibrary: VMAdmissionPeers {
     let networks: VMNetworkDirectory
 
     /// The host interfaces a network naming one is titled from.
-    @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
+    @ObservationIgnored let bridgedInterfaces: any BridgedInterfaceProviding
     /// The library's smart groups, folders and tags.
     let organization: VMOrganizationDirectory
 

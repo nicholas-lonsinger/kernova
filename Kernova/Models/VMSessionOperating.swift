@@ -56,6 +56,14 @@ protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, VsockListene
 
     func pause() async throws
 
+    /// Attaches the disk image at `url` as a USB mass storage device on the
+    /// XHCI controller, under `uuid` when given, answering the attached
+    /// device's UUID.
+    ///
+    /// Throws `VMSessionError.usbControllerUnavailable` when the VM has no
+    /// controller, or the framework's error for an image it cannot open.
+    func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID
+
     /// Unbinds every vsock listener this session still has bound, ordered
     /// fire-and-forget on the session's queue.
     func detachRemainingListeners()

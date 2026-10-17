@@ -8,7 +8,8 @@ import Virtualization
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
         vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetNetworkOperator(),
-        entitlements: .unentitled, isProtectedDataAvailable: { true })
+        bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled,
+        isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 
     // MARK: - Snapshot capture

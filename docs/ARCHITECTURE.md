@@ -86,9 +86,9 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 
 - VZ-facing, the engine: `ConfigurationBuilder` (the one
   `VZVirtualMachineConfiguration` translation), `VMSession`,
-  `VirtualizationService`, `MacOSInstallService`, `RemovableMediaDeviceService`,
-  `USBAccessoryService` (macOS 27; optional on `VMLifecycleCoordinator` — `nil`
-  is the capability's absence) and `VirtualizationHost`. Code outside the
+  `VirtualizationService`, `MacOSInstallService`, `USBAccessoryService` (macOS
+  27; optional on `VMLifecycleCoordinator` — `nil` is the capability's
+  absence) and `VirtualizationHost`. Code outside the
   engine and the AppKit layer reaches it only through `VMSessionOperating`,
   `VirtualizationHostProviding` and the `Services/Protocols/` seams, whose
   engine implementations `AppDelegate` builds.

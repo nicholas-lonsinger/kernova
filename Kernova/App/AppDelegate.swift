@@ -111,20 +111,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let entitlements = EntitlementService.readFromProcess()
         let vmnetOperator = HostVmnetNetworkOperator()
         let vmnetNetworks = VmnetNetworkService(operations: vmnetOperator)
+        let bridgedInterfaces = HostBridgedInterfaceProvider()
         let hostNotifications = HostNotifications.appKit()
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
             machineFiles: VMBundleMachineFiles(fileSystem: FileManager.default),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
-                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator, entitlements: entitlements,
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
+                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
                 isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
-                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator, entitlements: entitlements),
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
+                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements),
             ipswService: IPSWService(),
             localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: RemovableMediaDeviceService(),
-            bridgedInterfaces: HostBridgedInterfaceProvider(),
+            bridgedInterfaces: bridgedInterfaces,
             usbAccessoryService: USBAccessorySupport.makeService(entitlements: entitlements),
             systemSleep: SystemSleepWatcher(
                 systemWillSleep: hostNotifications.systemWillSleep,

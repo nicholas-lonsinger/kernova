@@ -36,8 +36,8 @@ struct ConfigurationBuilderTests {
         entitlements: EntitlementService = .unentitled
     ) -> ConfigurationBuilder {
         ConfigurationBuilder(
-            vmnetNetworks: networks.service, vmnetAttachments: networks.operations,
-            entitlements: entitlements)
+            bridgedInterfaces: HostBridgedInterfaceProvider(), vmnetNetworks: networks.service,
+            vmnetAttachments: networks.operations, entitlements: entitlements)
     }
 
     /// Fails the test when `error` is a path-validation refusal.

@@ -24,7 +24,8 @@ final class VMDetailRouterViewController: NSViewController {
 
     // Reused children.
     private lazy var settingsVC = VMSettingsViewController(
-        instance: instance, viewModel: viewModel, isReadOnly: false)
+        instance: instance, viewModel: viewModel, isReadOnly: false,
+        bridgedInterfaces: viewModel.library.bridgedInterfaces)
     private lazy var placeholderVC = DetailStatusPlaceholderViewController()
     private lazy var displayVC = VMDisplayPlaceholderContentViewController(instance: instance)
 

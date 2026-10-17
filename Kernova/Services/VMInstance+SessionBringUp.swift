@@ -64,7 +64,7 @@ extension VMInstance {
             device: VZNetworkDeviceHandle(
                 session: session, initialPlan: initialPlan, vmnetNetworks: networks,
                 vmnetAttachments: result.vmnetAttachments),
-            interfaces: HostBridgedInterfaceProvider(),
+            interfaces: result.bridgedInterfaces,
             linkObserver: HostNetworkLinkObserver(),
             vmnetNetworks: networks,
             entitlements: result.entitlements,
