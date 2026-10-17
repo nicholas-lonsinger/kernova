@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("RestoreImageCatalogSheetContentViewController Tests", .caseScoped)
