@@ -26,7 +26,8 @@
 # A URL bound to a local first and passed on a later line is not traced, nor is
 # an `NSApplication` bound to a local.
 #
-# Scope is every tracked Swift file under Kernova/, the app target, or the
+# Scope is every tracked Swift file the app or a test host runs as its own
+# code — Kernova/, KernovaCore/Sources/KernovaUI/ and KernovaTestHost/ — or the
 # files named as arguments, relative to the caller's directory — how
 # Tools/tests/check-self-activation.sh drives it. The CLI and the relaunch
 # helper launch the app from outside it and are not scanned.
@@ -46,7 +47,7 @@ if [ "$#" -gt 0 ]; then
     list_files() { printf '%s\n' "$@"; }
 else
     cd "$(git rev-parse --show-toplevel)" || exit 1
-    list_files() { git ls-files 'Kernova/*.swift'; }
+    list_files() { git ls-files 'Kernova/*.swift' 'KernovaCore/Sources/KernovaUI/*.swift' 'KernovaTestHost/*.swift'; }
 fi
 
 findings=$(list_files "$@" \
@@ -83,4 +84,4 @@ if [ "$scan_status" -ne 0 ]; then
     exit 1
 fi
 
-pass "self-activation: Kernova/ calls no openApplication, opens Bundle.main.bundleURL neither as a document nor withApplicationAt:, and reaches its own activation only through AppPresence"
+pass "self-activation: the app, KernovaUI and the test host call no openApplication, opens Bundle.main.bundleURL neither as a document nor withApplicationAt:, and reaches its own activation only through AppPresence"

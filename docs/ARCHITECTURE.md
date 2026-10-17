@@ -126,7 +126,9 @@ view-backed item.
 `KernovaKit/Package.swift` names every product and why each is shaped as it is.
 `KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
 Virtualization; the app links it and reaches its `package` declarations, and
-its tests run without the app as host.
+its tests run without the app as host. Its `KernovaUI` target is the AppKit
+layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
-(`Kernova Guest Agent.app`) and `KernovaMacOSAgentTests` each explain
+(`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
+`KernovaUITests` each explain
 themselves in `Config/Targets/<Target>.xcconfig` and their entitlements file.

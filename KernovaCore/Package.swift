@@ -21,7 +21,8 @@ let package = Package(
         .macOS(.v26)
     ],
     products: [
-        .library(name: "KernovaCore", targets: ["KernovaCore"])
+        .library(name: "KernovaCore", targets: ["KernovaCore"]),
+        .library(name: "KernovaUI", targets: ["KernovaUI"]),
     ],
     dependencies: [
         .package(path: "../KernovaKit")
@@ -33,6 +34,14 @@ let package = Package(
                 .product(name: "KernovaKit", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
             ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The AppKit layer. Its tests need a running NSApplication, which no
+        // package test target can host, so they are the KernovaUITests bundle
+        // in Kernova.xcodeproj, hosted by KernovaTestHost.
+        .target(
+            name: "KernovaUI",
+            dependencies: ["KernovaCore"],
             swiftSettings: sharedSwiftSettings
         ),
         .testTarget(

@@ -39,6 +39,14 @@
     {
       "parallelizable" : true,
       "target" : {
+        "containerPath" : "container:Kernova.xcodeproj",
+        "identifier" : "A1000802",
+        "name" : "KernovaUITests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
         "containerPath" : "container:KernovaKit",
         "identifier" : "KernovaKitTests",
         "name" : "KernovaKitTests"
