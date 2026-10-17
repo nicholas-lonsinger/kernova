@@ -22,6 +22,7 @@
 		A200001A /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A200001B /* KernovaLogging */; };
 		A200001C /* KernovaCore in Frameworks */ = {isa = PBXBuildFile; productRef = A200001D /* KernovaCore */; };
 		A200001E /* KernovaUI in Frameworks */ = {isa = PBXBuildFile; productRef = A200001F /* KernovaUI */; };
+		A2000022 /* KernovaCoreTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A2000023 /* KernovaCoreTestSupport */; };
 		A2000020 /* KernovaUI in Frameworks */ = {isa = PBXBuildFile; productRef = A2000021 /* KernovaUI */; };
 /* End PBXBuildFile section */
 
@@ -295,6 +296,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A200001E /* KernovaUI in Frameworks */,
+				A2000022 /* KernovaCoreTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -560,6 +562,7 @@
 			name = KernovaUITests;
 			packageProductDependencies = (
 				A200001F /* KernovaUI */,
+				A2000023 /* KernovaCoreTestSupport */,
 			);
 			productName = KernovaUITests;
 			productReference = A1000800 /* KernovaUITests.xctest */;
@@ -1054,6 +1057,10 @@
 		A200001F /* KernovaUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaUI;
+		};
+		A2000023 /* KernovaCoreTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaCoreTestSupport;
 		};
 		A2000021 /* KernovaUI */ = {
 			isa = XCSwiftPackageProductDependency;

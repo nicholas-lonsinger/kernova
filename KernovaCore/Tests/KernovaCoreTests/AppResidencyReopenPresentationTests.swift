@@ -1,6 +1,8 @@
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 /// Unit tests for
 /// `AppResidencyPolicy.reopenPresentation(hasVisibleUserWindow:)` —

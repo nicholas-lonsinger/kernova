@@ -1,6 +1,8 @@
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 /// Covers the unhide decision —
 /// ``AppResidencyPolicy/unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)``. ⌘H turns

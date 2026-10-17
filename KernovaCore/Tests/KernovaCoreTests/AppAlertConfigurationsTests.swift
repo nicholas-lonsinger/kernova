@@ -1,8 +1,10 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 /// Covers `AppAlertConfigurations` — what each alert the presenter shows says,
 /// and the buttons it offers.

@@ -1,6 +1,8 @@
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 /// Covers `AlertQueue` over requests that name the window they go to, and
 /// windows named by strings.

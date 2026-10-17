@@ -1,6 +1,8 @@
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 /// Covers `VMDisplayPlacement.readying(preference:posture:presence:)` — whether
 /// a bring-up opens a window for the VM coming up, and how that window goes on

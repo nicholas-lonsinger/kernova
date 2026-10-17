@@ -1,7 +1,9 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 @Suite("WindowAutosave", .caseScoped)
 struct WindowAutosaveTests {

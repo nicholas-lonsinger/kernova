@@ -1,6 +1,8 @@
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
 
 /// Unit tests for `AppMenuQuitItem.items(downgradesQuitToGUIClose:)` —
 /// the pure helper that decides the app menu's quit section so every mode

@@ -23,6 +23,7 @@ let package = Package(
     products: [
         .library(name: "KernovaCore", targets: ["KernovaCore"]),
         .library(name: "KernovaUI", targets: ["KernovaUI"]),
+        .library(name: "KernovaCoreTestSupport", targets: ["KernovaCoreTestSupport"]),
     ],
     dependencies: [
         .package(path: "../KernovaKit"),
@@ -50,10 +51,11 @@ let package = Package(
             dependencies: ["KernovaCore"],
             swiftSettings: sharedSwiftSettings
         ),
-        // The fakes and fixtures KernovaCoreTests and the app-hosted
-        // KernovaTests share. No product: the hosted bundle compiles this folder
-        // into itself, since linking it would put a second KernovaCore beside
-        // the app's.
+        // The fakes and fixtures every bundle testing the core shares.
+        // KernovaUITests links the product beside KernovaUI, into the one image
+        // that holds them; the app-hosted KernovaTests compiles this folder
+        // instead, since its host already holds KernovaCore
+        // (Tools/check-package-reference.sh).
         .target(
             name: "KernovaCoreTestSupport",
             dependencies: [
