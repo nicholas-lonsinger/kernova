@@ -533,18 +533,15 @@ package final class AppTerminationController {
     ///
     /// Used for TCC revocations, where the built-in relaunch times out during VM save.
     private func launchRelaunchHelper() {
-        guard
-            let helperURL = Bundle.main.url(
-                forAuxiliaryExecutable: "KernovaRelaunchHelper"
-            )
-        else {
+        let products = viewModel.library.bundleProducts
+        guard let helperURL = products.relaunchHelperURL else {
             #log(Self.logger, .fault, "Relaunch helper not found in app bundle")
             assertionFailure("Relaunch helper not found in app bundle")
             return
         }
 
         let pid = ProcessInfo.processInfo.processIdentifier
-        let bundlePath = Bundle.main.bundlePath
+        let bundlePath = products.bundleURL.path
 
         do {
             let process = Process()

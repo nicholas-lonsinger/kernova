@@ -52,7 +52,7 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
         entitlements: .entitled,
         hostNotifications: .isolated(),
         hostPasteboard: FakePasteboard(),
-        guestAgent: .testing
+        bundleProducts: .testing
     )
 }
 

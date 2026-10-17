@@ -98,7 +98,7 @@ struct NetworksSettingsViewControllerTests {
             entitlements: .entitled,
             networks: VMNetworkDirectory(fileURL: fileURL),
             hostNotifications: .isolated(),
-            hostPasteboard: FakePasteboard(), guestAgent: .testing)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
         var checks = 0
         viewModel.onShowConfigCheck = { _ in checks += 1 }
 

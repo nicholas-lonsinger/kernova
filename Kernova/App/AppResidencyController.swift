@@ -174,8 +174,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// built yet.
     func start(provenance: AppResidencyPolicy.LaunchProvenance) {
         let line = AppResidencyPolicy.residentProvenanceLine(
-            bundlePath: Bundle.main.bundlePath,
-            build: Self.buildNumber,
+            bundlePath: viewModel.library.bundleProducts.bundleURL.path,
+            build: viewModel.library.bundleProducts.buildNumber ?? "?",
             configuration: Self.buildConfiguration,
             vmNetworkingEntitled: viewModel.entitlements.hasVMNetworking,
             launch: provenance)
@@ -218,17 +218,6 @@ final class AppResidencyController: WindowResidencyHosting {
     #else
     private static let buildConfiguration = "Release"
     #endif
-
-    /// The build number, substituted into Info.plist at build time by
-    /// `Tools/set-build-number.sh` — a missing value is a build misconfiguration.
-    private static let buildNumber: String = {
-        guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
-            #log(logger, .fault, "CFBundleVersion not found in Info.plist")
-            assertionFailure("CFBundleVersion not found in Info.plist")
-            return "?"
-        }
-        return build
-    }()
 
     // MARK: - Status Item
 

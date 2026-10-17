@@ -39,7 +39,7 @@ struct GuestAccountResumePromptTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         return (viewModel, virtualization)

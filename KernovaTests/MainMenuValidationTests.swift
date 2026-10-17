@@ -29,8 +29,8 @@ struct MainMenuValidationTests {
         }
     }
 
-    private func makeFixture(guestAgent: BundledGuestAgent = .testing) -> Fixture {
-        let viewModel = makeLibraryViewModel(preferences: preferences, guestAgent: guestAgent)
+    private func makeFixture(bundleProducts: AppBundleProducts = .testing) -> Fixture {
+        let viewModel = makeLibraryViewModel(preferences: preferences, bundleProducts: bundleProducts)
         let controller = MainMenuController(viewModel: viewModel, windows: makeWindowRegistry(viewModel))
         return Fixture(controller: controller, viewModel: viewModel)
     }
@@ -109,7 +109,10 @@ struct MainMenuValidationTests {
 
     @Test("A build with no bundled guest-agent disk withholds the command")
     func guestAgentDiskWithoutBundledImage() {
-        let fixture = makeFixture(guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: nil))
+        let fixture = makeFixture(
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: nil)))
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
 

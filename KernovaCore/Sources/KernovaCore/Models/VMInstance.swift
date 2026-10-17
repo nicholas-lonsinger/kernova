@@ -286,9 +286,10 @@ package final class VMInstance {
     /// drive it without writing the real defaults domain.
     let preferences: AppPreferences
 
-    /// The guest agent this host bundles: the version a Hello is current
-    /// against, and the installer image the VM can be handed.
-    package let guestAgent: BundledGuestAgent
+    /// What the app bundle ships: the version this host's Hello advertises,
+    /// and the guest agent — the version a Hello is current against, and the
+    /// installer image the VM can be handed.
+    package let bundleProducts: AppBundleProducts
 
     // MARK: - Initializer
 
@@ -296,9 +297,9 @@ package final class VMInstance {
     /// `hostPasteboard`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
-        hostPasteboard: any ClipboardPasteboard, guestAgent: BundledGuestAgent
+        hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts
     ) {
-        self.guestAgent = guestAgent
+        self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
         self.activity = VMActivity(phase: phase)
@@ -343,7 +344,7 @@ package final class VMInstance {
     /// `true` when the bundled Guest Agent installer DMG is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        guard let path = guestAgent.installerPath else { return false }
+        guard let path = bundleProducts.guestAgent.installerPath else { return false }
         return (configuration.removableMedia ?? []).contains { $0.path == path }
     }
 
@@ -969,7 +970,8 @@ package final class VMInstance {
         VsockControlService(
             channel: channel,
             label: name,
-            bundledAgentVersion: guestAgent.version,
+            hostVersion: bundleProducts.hostVersion,
+            bundledAgentVersion: bundleProducts.guestAgent.version,
             policyProvider: { [weak self] in
                 self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
             },
@@ -1113,7 +1115,7 @@ package final class VMInstance {
         // the disk is mounted to run uninstall.command) must not yank the
         // installer disk out from under the user.
         guard agentVersionChanged else { return }
-        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: guestAgent.version) {
+        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: bundleProducts.guestAgent.version) {
             onAgentBecameCurrent?()
         }
     }

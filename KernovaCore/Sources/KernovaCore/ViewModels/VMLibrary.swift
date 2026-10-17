@@ -139,7 +139,7 @@ package final class VMLibrary: VMAdmissionPeers {
     ) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, guestAgent: guestAgent)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts)
         entries.append(.vm(instance))
         return instance
     }
@@ -318,7 +318,7 @@ package final class VMLibrary: VMAdmissionPeers {
         let entitlements = entitlements
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
-            bundledAgentVersion: guestAgent.version, networks: named,
+            bundledAgentVersion: bundleProducts.guestAgent.version, networks: named,
             tags: organization.tags,
             networkTitle: { config in
                 NetworkModeChoice.label(
@@ -507,9 +507,9 @@ package final class VMLibrary: VMAdmissionPeers {
     /// The host pasteboard every VM's clipboard publishes to and polls.
     let hostPasteboard: any ClipboardPasteboard
 
-    /// The guest agent this host bundles, which every VM the library builds
-    /// is handed.
-    package let guestAgent: BundledGuestAgent
+    /// What the app bundle ships, which every VM the library builds is
+    /// handed.
+    package let bundleProducts: AppBundleProducts
 
     // MARK: - Initialization
 
@@ -529,9 +529,9 @@ package final class VMLibrary: VMAdmissionPeers {
         bridgedInterfaces: any BridgedInterfaceProviding,
         appActivation: HostNotification,
         hostPasteboard: any ClipboardPasteboard,
-        guestAgent: BundledGuestAgent
+        bundleProducts: AppBundleProducts
     ) {
-        self.guestAgent = guestAgent
+        self.bundleProducts = bundleProducts
         self.storageService = storageService
         self.virtualizationHost = virtualizationHost
         self.bridgedInterfaces = bridgedInterfaces
@@ -712,7 +712,7 @@ package final class VMLibrary: VMAdmissionPeers {
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, guestAgent: guestAgent)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts)
         wireHooks(for: instance)
         recordUnreadable(of: scanned.read)
         return instance

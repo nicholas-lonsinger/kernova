@@ -109,6 +109,8 @@ package final class VsockControlService: VsockFeatureService {
 
     private let channel: VsockChannel
     private let label: String
+    /// The version this host advertises in its Hello.
+    private let hostVersion: String
     private let bundledAgentVersion: String?
 
     /// Time source for both timer loops and every liveness measurement — one
@@ -201,6 +203,7 @@ package final class VsockControlService: VsockFeatureService {
     init(
         channel: VsockChannel,
         label: String,
+        hostVersion: String,
         bundledAgentVersion: String?,
         clock: any EngineClock = makePlatformEngineClock(),
         cadence: ControlChannelCadence = .production,
@@ -211,6 +214,7 @@ package final class VsockControlService: VsockFeatureService {
     ) {
         self.channel = channel
         self.label = label
+        self.hostVersion = hostVersion
         self.bundledAgentVersion = bundledAgentVersion
         self.clock = clock
         self.cadence = cadence
@@ -303,7 +307,7 @@ package final class VsockControlService: VsockFeatureService {
         // its own update state. Empty when the sidecar is missing — the guest
         // treats empty as "unknown" and shows no update prompt.
         let hello = Frame.controlHello(
-            agentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "host",
+            agentVersion: hostVersion,
             bundledAgentVersion: bundledAgentVersion ?? "")
         do {
             try channel.send(hello)

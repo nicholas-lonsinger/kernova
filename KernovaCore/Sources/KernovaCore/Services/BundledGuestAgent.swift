@@ -5,8 +5,7 @@ import KernovaLogging
 /// image, both build products the "Package Guest Agent DMG" build phase writes
 /// into the app's Resources.
 ///
-/// `AppDelegate` reads the app's once, through ``init(bundle:)``, and hands that
-/// value to everything that asks.
+/// One of the ``AppBundleProducts``, which reads the app's.
 package struct BundledGuestAgent: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "KernovaMacOSAgentInfo")
 
@@ -37,7 +36,7 @@ package struct BundledGuestAgent: Sendable {
 
     /// Reads `bundle`'s version sidecar once, and finds its installer image on
     /// every ask.
-    package init(bundle: Bundle) {
+    init(bundle: Bundle) {
         self.version = Self.version(in: bundle)
         self.locateInstaller = {
             bundle.url(forResource: Self.dmgResourceName, withExtension: Self.dmgResourceExtension)

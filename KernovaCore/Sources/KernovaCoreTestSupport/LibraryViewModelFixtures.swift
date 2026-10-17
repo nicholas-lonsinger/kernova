@@ -17,7 +17,7 @@ func makeLibraryViewModel(
     usbAccessoryService: (any USBAccessoryProviding)? = nil,
     diskImageService: MockDiskImageService = MockDiskImageService(),
     organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
-    guestAgent: BundledGuestAgent = .testing
+    bundleProducts: AppBundleProducts = .testing
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: storageService,
@@ -40,7 +40,7 @@ func makeLibraryViewModel(
         organization: organization,
         hostNotifications: .isolated(),
         hostPasteboard: FakePasteboard(),
-        guestAgent: guestAgent
+        bundleProducts: bundleProducts
     )
 }
 

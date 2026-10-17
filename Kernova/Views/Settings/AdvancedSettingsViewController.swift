@@ -21,12 +21,14 @@ import KernovaLogging
 @MainActor
 final class AdvancedSettingsViewController: NSViewController {
     private let preferences: AppPreferences
+    private let commandLineTool: CommandLineToolInstaller
     private let alwaysShowSwitch = NSSwitch()
     private let duplicateIDOverrideSwitch = NSSwitch()
     private let cloneOutcomePopUp = NSPopUpButton()
 
-    init(preferences: AppPreferences) {
+    init(preferences: AppPreferences, commandLineTool: CommandLineToolInstaller) {
         self.preferences = preferences
+        self.commandLineTool = commandLineTool
         super.init(nibName: nil, bundle: nil)
         title = "Advanced"
     }
@@ -106,7 +108,7 @@ final class AdvancedSettingsViewController: NSViewController {
         var cards: [NSView] = [optionsCard, identityCard]
         // Absent, not disabled, in a build with no group container: the tool
         // installed from there could reach no app.
-        if CommandLineToolInstaller.isAvailable {
+        if commandLineTool.isAvailable {
             let installButton = NSButton(
                 title: "Install\u{2026}", target: self, action: #selector(installCommandLineTool))
             installButton.bezelStyle = .push
@@ -216,7 +218,7 @@ final class AdvancedSettingsViewController: NSViewController {
     /// another copy of Kernova is pointed at this one: the panel's replace
     /// prompt names the file, not the copy every shell using it drives after.
     private func install(at destination: URL) {
-        guard case .anotherCopysLink(let app) = CommandLineToolInstaller.occupant(at: destination)
+        guard case .anotherCopysLink(let app) = commandLineTool.occupant(at: destination)
         else {
             link(at: destination)
             return
@@ -227,7 +229,7 @@ final class AdvancedSettingsViewController: NSViewController {
                 title: "Point kernova at This Copy of Kernova?",
                 message: "The kernova at \(destination.path) drives the copy of Kernova at "
                     + "\(app.path). Pointing it here makes it drive this copy, at "
-                    + "\(Bundle.main.bundleURL.path), instead.",
+                    + "\(commandLineTool.appBundleURL.path), instead.",
                 buttons: [
                     AlertButton("Point Here", role: .default) { [weak self] in
                         self?.link(at: destination)
@@ -239,12 +241,12 @@ final class AdvancedSettingsViewController: NSViewController {
 
     private func link(at destination: URL) {
         do {
-            try CommandLineToolInstaller.installSymlink(at: destination)
+            try commandLineTool.installSymlink(at: destination)
         } catch {
             presentInstallFailure(
                 error, titled: "Couldn't Install the Command Line Tool",
                 offering: "You can create the link yourself:",
-                command: CommandLineToolInstaller.manualCommand(for: destination))
+                command: commandLineTool.manualCommand(for: destination))
         }
     }
 

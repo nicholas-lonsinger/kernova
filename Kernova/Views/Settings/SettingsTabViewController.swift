@@ -149,7 +149,10 @@ final class SettingsTabViewController: NSTabViewController {
         case .clipboard: ClipboardSettingsViewController(viewModel: viewModel)
         case .networks: NetworksSettingsViewController(viewModel: viewModel)
         case .tags: TagsSettingsViewController(viewModel: viewModel)
-        case .advanced: AdvancedSettingsViewController(preferences: viewModel.preferences)
+        case .advanced:
+            AdvancedSettingsViewController(
+                preferences: viewModel.preferences,
+                commandLineTool: viewModel.library.bundleProducts.commandLineTool)
         }
     }
 

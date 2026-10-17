@@ -389,7 +389,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             // Layered over the capability: a bundled DMG for the VM to hold, and
             // the mount/eject model that decides both title and enablement. The
             // unavailable title set above stands unless both hold.
-            guard isAvailable, viewModel.library.guestAgent.installerDiskImageURL != nil else { return false }
+            guard isAvailable, viewModel.library.bundleProducts.guestAgent.installerDiskImageURL != nil else {
+                return false
+            }
             let model = GuestAgentDiskControl.model(for: instance)
             menuItem.title = model.title
             return model.isEnabled

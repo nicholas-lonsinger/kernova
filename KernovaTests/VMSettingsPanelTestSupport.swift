@@ -43,7 +43,7 @@ func makeSettingsViewModel(
         networks: networks,
         hostNotifications: hostNotifications,
         hostPasteboard: FakePasteboard(),
-        guestAgent: .testing
+        bundleProducts: .testing
     )
 }
 

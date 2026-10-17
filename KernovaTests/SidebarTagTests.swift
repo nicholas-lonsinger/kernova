@@ -39,7 +39,7 @@ struct SidebarTagTests {
             organization: VMOrganizationDirectory(fileURL: nil),
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
     }
 

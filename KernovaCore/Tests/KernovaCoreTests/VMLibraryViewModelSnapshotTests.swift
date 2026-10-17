@@ -42,7 +42,7 @@ struct VMLibraryViewModelSnapshotTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         return Harness(
@@ -83,7 +83,7 @@ struct VMLibraryViewModelSnapshotTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            guestAgent: .testing
+            bundleProducts: .testing
         )
         viewModel.presenter = presenter
         return SuspendingHarness(
