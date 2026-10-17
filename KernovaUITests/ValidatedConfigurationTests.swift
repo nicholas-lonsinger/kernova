@@ -18,52 +18,34 @@ struct ValidatedConfigurationTests {
 
     // MARK: - Clipboard Sharing
 
-    @Test("BuildResult includes clipboard pipes when clipboard sharing is enabled")
+    @Test(
+        "BuildResult includes clipboard pipes when clipboard sharing is enabled",
+        .enabled(if: VZVirtualMachine.isSupported)
+    )
     func clipboardPipesWhenEnabled() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
         var config = VMConfiguration.testLinux()
         config.clipboardSharingEnabled = true
 
-        let builder = ConfigurationBuilder.testing()
-        do {
-            let result = try builder.build(from: config, bundleURL: bundleURL)
-            #expect(result.products.clipboardInputPipe != nil)
-            #expect(result.products.clipboardOutputPipe != nil)
-        } catch {
-            let isVZError = (error as NSError).domain == "VZErrorDomain"
-            if isVZError {
-                withKnownIssue("VZ validation unavailable — assertions skipped") {
-                    Issue.record("\(error)")
-                }
-            } else {
-                Issue.record("Unexpected non-VZ error: \(error)")
-            }
-        }
+        let result = try ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+
+        #expect(result.products.clipboardInputPipe != nil)
+        #expect(result.products.clipboardOutputPipe != nil)
     }
 
-    @Test("BuildResult has nil clipboard pipes when clipboard sharing is disabled")
+    @Test(
+        "BuildResult has nil clipboard pipes when clipboard sharing is disabled",
+        .enabled(if: VZVirtualMachine.isSupported)
+    )
     func clipboardPipesWhenDisabled() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
         var config = VMConfiguration.testLinux()
         config.clipboardSharingEnabled = false
 
-        let builder = ConfigurationBuilder.testing()
-        do {
-            let result = try builder.build(from: config, bundleURL: bundleURL)
-            #expect(result.products.clipboardInputPipe == nil)
-            #expect(result.products.clipboardOutputPipe == nil)
-        } catch {
-            let isVZError = (error as NSError).domain == "VZErrorDomain"
-            if isVZError {
-                withKnownIssue("VZ validation unavailable — assertions skipped") {
-                    Issue.record("\(error)")
-                }
-            } else {
-                Issue.record("Unexpected non-VZ error: \(error)")
-            }
-        }
+        let result = try ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+
+        #expect(result.products.clipboardInputPipe == nil)
+        #expect(result.products.clipboardOutputPipe == nil)
     }
 
     // MARK: - Session

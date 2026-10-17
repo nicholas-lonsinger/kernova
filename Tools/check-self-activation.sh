@@ -27,8 +27,9 @@
 # an `NSApplication` bound to a local.
 #
 # Scope is every tracked Swift file the app or a test host runs as its own
-# code — Kernova/, KernovaCore/Sources/KernovaUI/ and KernovaTestHost/ — or the
-# files named as arguments, relative to the caller's directory — how
+# code — Kernova/, KernovaCore/Sources/KernovaVirtualization/ (Virtualization
+# re-exports Cocoa), KernovaCore/Sources/KernovaUI/ and KernovaTestHost/ — or
+# the files named as arguments, relative to the caller's directory — how
 # Tools/tests/check-self-activation.sh drives it. The CLI and the relaunch
 # helper launch the app from outside it and are not scanned.
 #
@@ -47,7 +48,10 @@ if [ "$#" -gt 0 ]; then
     list_files() { printf '%s\n' "$@"; }
 else
     cd "$(git rev-parse --show-toplevel)" || exit 1
-    list_files() { git ls-files 'Kernova/*.swift' 'KernovaCore/Sources/KernovaUI/*.swift' 'KernovaTestHost/*.swift'; }
+    list_files() {
+        git ls-files 'Kernova/*.swift' 'KernovaCore/Sources/KernovaVirtualization/*.swift' \
+            'KernovaCore/Sources/KernovaUI/*.swift' 'KernovaTestHost/*.swift'
+    }
 fi
 
 findings=$(list_files "$@" \
