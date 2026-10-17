@@ -1,9 +1,15 @@
-import AppKit
+import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// The alerts ``AppAlertPresenter`` shows, built from what each is about.
-extension AppAlertPresenter {
+/// The alerts ``AppAlertPresenter`` shows, built from what each is about, each
+/// button acting on `viewModel`.
+@MainActor
+struct AppAlertConfigurations {
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppAlertPresenter")
+
+    let viewModel: VMLibraryViewModel
+
     /// An alternative the core offered that this alert has no route for — a
     /// live button that would do nothing, which is a programming error the same
     /// way a missing handler is.
@@ -24,7 +30,7 @@ extension AppAlertPresenter {
     ) -> AlertConfiguration {
         AlertConfiguration(
             confirming: prompt,
-            confirm: { [weak self] in self?.viewModel.cancelArrival(arrival) })
+            confirm: { [weak viewModel] in viewModel?.cancelArrival(arrival) })
     }
 
     /// The revert confirmation.
@@ -33,13 +39,13 @@ extension AppAlertPresenter {
     ) -> AlertConfiguration {
         AlertConfiguration(
             confirming: Self.revertPrompt(snapshot, on: vm),
-            confirm: { [weak self] in
-                guard let self else { return }
-                Task { await self.viewModel.revert(vm, to: snapshot) }
+            confirm: { [weak viewModel] in
+                guard let viewModel else { return }
+                Task { await viewModel.revert(vm, to: snapshot) }
             },
-            alternative: { [weak self] _ in
-                guard let self else { return }
-                Task { await self.viewModel.revert(vm, to: snapshot, takingSnapshotFirst: true) }
+            alternative: { [weak viewModel] _ in
+                guard let viewModel else { return }
+                Task { await viewModel.revert(vm, to: snapshot, takingSnapshotFirst: true) }
             })
     }
 
@@ -65,8 +71,8 @@ extension AppAlertPresenter {
             confirming: turningOffEphemeralMode
                 ? Self.deleteEphemeralBaselinePrompt(snapshot, on: vm)
                 : VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm),
-            confirm: { [weak self] in
-                self?.viewModel.deleteSnapshot(
+            confirm: { [weak viewModel] in
+                viewModel?.deleteSnapshot(
                     vm, snapshot: snapshot, turningOffEphemeralMode: turningOffEphemeralMode)
             })
     }
@@ -91,17 +97,17 @@ extension AppAlertPresenter {
     func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
             confirming: VMCommandCore.forceStopPrompt(vm),
-            confirm: { [weak self] in
-                guard let self else { return }
-                Task { await self.viewModel.forceStop(vm) }
+            confirm: { [weak viewModel] in
+                guard let viewModel else { return }
+                Task { await viewModel.forceStop(vm) }
             },
-            alternative: { [weak self] alternative in
-                guard let self else { return }
+            alternative: { [weak viewModel] alternative in
+                guard let viewModel else { return }
                 guard alternative.disposition == .graceful else {
                     Self.reportUnhandledAlternative(alternative, on: "force stop")
                     return
                 }
-                Task { await self.viewModel.stop(vm) }
+                Task { await viewModel.stop(vm) }
             })
     }
 
@@ -111,9 +117,9 @@ extension AppAlertPresenter {
             message:
                 "The virtual machine will boot into the macOS Recovery environment for this launch only. Restart normally to return to macOS.",
             buttons: [
-                AlertButton("Start in Recovery", role: .default) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.start(vm, bootIntoRecovery: true) }
+                AlertButton("Start in Recovery", role: .default) { [weak viewModel] in
+                    guard let viewModel else { return }
+                    Task { await viewModel.start(vm, bootIntoRecovery: true) }
                 },
                 AlertButton("Cancel", role: .cancel),
             ])
@@ -137,14 +143,14 @@ extension AppAlertPresenter {
             message:
                 "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).\(ephemeralReturn)",
             buttons: [
-                AlertButton("Resume and Shut Down", role: .default) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.resumeAndStop(vm) }
+                AlertButton("Resume and Shut Down", role: .default) { [weak viewModel] in
+                    guard let viewModel else { return }
+                    Task { await viewModel.resumeAndStop(vm) }
                 },
                 AlertButton("Cancel", role: .cancel),
-                AlertButton("Force Stop", role: .destructive) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.forceStop(vm) }
+                AlertButton("Force Stop", role: .destructive) { [weak viewModel] in
+                    guard let viewModel else { return }
+                    Task { await viewModel.forceStop(vm) }
                 },
             ])
     }
@@ -171,9 +177,9 @@ extension AppAlertPresenter {
                     Self.startFailedRecoveryResumes(failure, holdsSavedState: vm.hasSaveFile)
                         ? "Remove and Resume" : "Remove and Start",
                     role: .destructive
-                ) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
+                ) { [weak viewModel] in
+                    guard let viewModel else { return }
+                    Task { await viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
                 },
                 AlertButton("Cancel", role: .cancel),
             ])

@@ -24,7 +24,7 @@ struct USBAccessoryPairingAlertTests {
             answer: { answer.answered.append($0) })
     }
 
-    private func chooser(in configuration: AlertConfiguration) -> NSPopUpButton? {
+    private func chooser(in configuration: SheetAlert) -> NSPopUpButton? {
         (configuration.accessoryView as? NSStackView)?
             .arrangedSubviews
             .compactMap { $0 as? NSPopUpButton }

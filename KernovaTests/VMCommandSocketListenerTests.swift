@@ -243,18 +243,20 @@ struct VMCommandSocketListenerTests {
     @Test("A permission panel a verb puts up asks the client on that connection to activate")
     func permissionPanelAsksTheConnectionsClient() async throws {
         let harness = try makeHarness()
-        // The real authority, with only the panel's display stood in for: the
-        // user dismisses it, so the verb answers with the refusal.
-        harness.wired.core.sourceAuthority = PowerboxSourceAuthority(present: { _ in .cancel })
+        // An authority that asks for activation as it puts its panel up, as
+        // `PowerboxSourceAuthority` does, and is then dismissed, so the verb
+        // answers with the refusal.
+        let authority = harness.wired.authority
+        authority.whilePanelStands = { ActivationRequester.requestActivation() }
+        authority.error = CommandError.operationFailed(verb: .importVM, message: "Not given permission.")
         harness.listener.start()
         defer { harness.listener.stop() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        // A path nothing can read, so the sandbox's grant is what is asked for.
-        let unreadable = "/nonexistent-\(UUID().uuidString)/Alpha.kernova"
-        try client.send(VMCommandRequest(verb: .importVM(path: unreadable, waitForOutcome: false)))
+        try client.send(
+            VMCommandRequest(verb: .importVM(path: "/Users/somebody/Desktop/Alpha.kernova", waitForOutcome: false)))
 
         #expect(try await client.nextResponse()?.result == .activate)
         #expect(try await client.nextResponse()?.failure != nil)

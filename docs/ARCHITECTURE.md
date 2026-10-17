@@ -14,6 +14,13 @@ model before the library's first read), `AppResidencyController`,
 `MainMenuController` and `AppTerminationController`. `AppDelegate.main()` is the one branch on
 process mode, and the unit-test host takes the arm that builds none of it.
 
+What those owners decide lives in AppKit-free types they call:
+`AppResidencyPolicy`, `VMDisplayPlacement`, `AlertQueue` and
+`AppAlertConfigurations`, `AppMenuQuitItem`, and `WindowAutosave` (inside
+`WindowStage`). `AppTerminationController` is AppKit-free itself; its
+`+AppKit` extension supplies the quit Apple Event, the sender lookup and the
+termination it ends.
+
 The root also builds the one `AppPresence` those owners share. Every window
 controller builds its window through a `WindowStage`; the test stage parks each
 window beyond every display, and the sheets on it go up beside it.

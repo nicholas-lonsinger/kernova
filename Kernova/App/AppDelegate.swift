@@ -233,8 +233,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Reads what the launch asked for.
     ///
     /// The only place either signal is read: everything downstream takes the
-    /// ``AppResidencyController/LaunchProvenance`` this builds.
-    private func readLaunchProvenance() -> AppResidencyController.LaunchProvenance {
+    /// ``AppResidencyPolicy/LaunchProvenance`` this builds.
+    private func readLaunchProvenance() -> AppResidencyPolicy.LaunchProvenance {
         let event = NSAppleEventManager.shared().currentAppleEvent
         let isLoginItem =
             event.map { descriptor in
@@ -248,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(self.presence.isActive, privacy: .public)"
         )
 
-        return AppResidencyController.LaunchProvenance(
+        return AppResidencyPolicy.LaunchProvenance(
             origin: isLoginItem ? .loginItem : .user, isHidden: isHiddenLaunch)
     }
 
@@ -308,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        termination.handleTerminationRequest()
+        NSApplication.TerminateReply(termination.handleTerminationRequest())
     }
 
     func applicationWillTerminate(_ notification: Notification) {

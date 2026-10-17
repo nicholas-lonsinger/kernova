@@ -148,12 +148,12 @@ private final class ParkedTestWindow: NSWindow {
 
 extension WindowStage {
     /// The stage a test builds the app's windows on: AppKit saves nothing for
-    /// them, their toolbars answer to identifiers minted here, and every window
+    /// them (``WindowAutosave/unsaved()``), and every window
     /// is made beyond every display, where its sheets go up too, in the running
     /// test case's scope.
     static func offDesktop() -> WindowStage {
         WindowStage(
-            savesState: false, mainToolbar: UUID().uuidString, displayToolbar: UUID().uuidString,
+            autosave: .unsaved(),
             makeWindow: { contentRect, styleMask in
                 let window = ParkedTestWindow(
                     contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)

@@ -178,20 +178,21 @@ final class TagsSettingsViewController: NSViewController {
         grid.setFrameSize(grid.fittingSize)
 
         presentSheetAlert(
-            AlertConfiguration(
-                title: "New Tag",
-                message: "Put it on a virtual machine from the Tags menu of its row in the sidebar.",
-                buttons: [
-                    AlertButton("Create", role: .default) { [weak self] in
-                        guard let color = colorPopUp.selectedItem?.representedObject as? VMTagColor else {
-                            return
-                        }
-                        self?.editor.attempt("Couldn\u{2019}t Create the Tag") {
-                            try self?.create(name: nameField.stringValue, color: color)
-                        }
-                    },
-                    AlertButton("Cancel", role: .cancel),
-                ],
+            SheetAlert(
+                AlertConfiguration(
+                    title: "New Tag",
+                    message: "Put it on a virtual machine from the Tags menu of its row in the sidebar.",
+                    buttons: [
+                        AlertButton("Create", role: .default) { [weak self] in
+                            guard let color = colorPopUp.selectedItem?.representedObject as? VMTagColor else {
+                                return
+                            }
+                            self?.editor.attempt("Couldn\u{2019}t Create the Tag") {
+                                try self?.create(name: nameField.stringValue, color: color)
+                            }
+                        },
+                        AlertButton("Cancel", role: .cancel),
+                    ]),
                 accessoryView: grid, initialFirstResponder: nameField),
             in: window)
     }

@@ -24,74 +24,6 @@ protocol VMDisplayPlacementHosting: AnyObject {
 /// and writes neither field.
 @MainActor
 final class VMDisplayPlacementController {
-    /// Why a display window is closing.
-    enum CloseReason: Equatable {
-        /// The user closed the window (red button / ⌘W): the VM keeps running
-        /// headless — nothing pops back into the main window.
-        case userClose
-        /// App-initiated dismissal — the VM stopped/errored/suspended out
-        /// from under the window, or the whole GUI is being dismissed.
-        case appDismissal
-        /// Explicit Pop In: the display returns to the main window's detail
-        /// pane and `displayPreference` reverts to `.inline`.
-        case popIn
-    }
-
-    /// A change in where a VM's display lives.
-    enum DisplayTransition: Equatable {
-        /// A display window was put on screen, in the style the request asked for.
-        case shown(fullscreen: Bool)
-        case enteredFullscreen
-        case exitedFullscreen
-        case closed(CloseReason)
-    }
-
-    /// The app-level work a transition owes once the window list has settled.
-    enum FollowUp: Equatable {
-        case none
-        /// Bring the library back so the popped-in display is visible.
-        case restoreLibrary
-    }
-
-    /// Where a transition leaves the VM's display.
-    struct Placement: Equatable {
-        /// The runtime hosting the VM lands in.
-        let mode: VMDisplayMode
-        /// The preference to persist, or `nil` to leave the persisted one alone.
-        let persistPreference: VMDisplayPreference?
-        let followUp: FollowUp
-    }
-
-    /// What "Pop Out Display" does, given the VM's current placement.
-    enum PopOutAction: Equatable {
-        /// A window is open: close it, which pops the display back in.
-        case closeWindowForPopIn
-        /// The VM runs headless with no window: return the display slot directly.
-        case popInFromHeadless
-        /// The display is inline: detach it into a window.
-        case popOut
-    }
-
-    /// How a display window goes on screen.
-    enum WindowShow: Equatable {
-        /// Key and frontmost, in fullscreen when asked for it.
-        case front(fullscreen: Bool)
-        /// Ordered into Kernova's own window layer, taking neither key nor the
-        /// screen from the app the user is in.
-        case behind
-    }
-
-    /// How a pop-in restores the library window.
-    enum LibraryRestore: Equatable {
-        /// The user popped in from the display window — focus the library.
-        case focusLibrary
-        /// The pop-in happened while Kernova was not active — show the library
-        /// without stealing focus from the app the user is in.
-        case showInBackground
-        /// The user is already in another Kernova window.
-        case none
-    }
-
     private let viewModel: VMLibraryViewModel
     private let stage: WindowStage
     weak var host: (any VMDisplayPlacementHosting)?
@@ -101,79 +33,13 @@ final class VMDisplayPlacementController {
     private var windows: [UUID: VMDisplayWindowController] = [:]
     /// The reason recorded for a programmatic close, from the moment it is
     /// requested until the close has been fully handled.
-    private var pendingCloseReasons: [UUID: CloseReason] = [:]
+    private var pendingCloseReasons: [UUID: VMDisplayPlacement.CloseReason] = [:]
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
 
     init(viewModel: VMLibraryViewModel, stage: WindowStage) {
         self.viewModel = viewModel
         self.stage = stage
-    }
-
-    // MARK: - Deciders
-
-    /// Decides what "Pop Out Display" does for a VM.
-    nonisolated static func popOutAction(hasWindow: Bool, mode: VMDisplayMode) -> PopOutAction {
-        if hasWindow { return .closeWindowForPopIn }
-        return mode == .hidden ? .popInFromHeadless : .popOut
-    }
-
-    /// Decides where a transition leaves the display, and what the app owes
-    /// afterwards.
-    ///
-    /// A `nil` `persistPreference` leaves the persisted value alone: the open
-    /// path persisted the user's choice at the request site, and a close that
-    /// is not a pop-in must keep the style the next reopen restores.
-    nonisolated static func placement(for transition: DisplayTransition) -> Placement {
-        switch transition {
-        case .shown(let fullscreen):
-            Placement(
-                mode: fullscreen ? .fullscreen : .popOut, persistPreference: nil, followUp: .none)
-        case .enteredFullscreen:
-            Placement(mode: .fullscreen, persistPreference: .fullscreen, followUp: .none)
-        case .exitedFullscreen:
-            Placement(mode: .popOut, persistPreference: .popOut, followUp: .none)
-        case .closed(.userClose):
-            Placement(mode: .hidden, persistPreference: nil, followUp: .none)
-        case .closed(.appDismissal):
-            Placement(mode: .inline, persistPreference: nil, followUp: .none)
-        case .closed(.popIn):
-            Placement(mode: .inline, persistPreference: .inline, followUp: .restoreLibrary)
-        }
-    }
-
-    /// How a bring-up readies this VM's display, or `nil` when it readies
-    /// nothing.
-    ///
-    /// Two VMs get nothing. An inline one shows in whichever row is selected,
-    /// and a bring-up does not change the user's selection. And an app that is
-    /// presenting no GUI was asked not to have one — a window here would hand
-    /// it the Dock icon and menu bar it came up without.
-    ///
-    /// A bring-up is not a request to look at the guest, so the window takes
-    /// key and the screen only where the user is already in Kernova and asked
-    /// for this VM. From another app, or for a VM nobody asked for in
-    /// particular, it goes up behind what they are looking at — which is also
-    /// why fullscreen is reserved for that one case: entering it moves the user
-    /// to a Space they did not ask for.
-    nonisolated static func readying(
-        preference: VMDisplayPreference, posture: GUIPosture, presence: VMBringUpPresence
-    ) -> WindowShow? {
-        guard preference != .inline else { return nil }
-        switch (posture, presence) {
-        case (.absent, _): return nil
-        case (.background, _), (.foreground, .unattended): return .behind
-        case (.foreground, .attended): return .front(fullscreen: preference == .fullscreen)
-        }
-    }
-
-    /// Decides how a pop-in brings the library back.
-    nonisolated static func libraryRestore(
-        wasKeyWindow: Bool, appWasActive: Bool
-    ) -> LibraryRestore {
-        if wasKeyWindow && appWasActive { return .focusLibrary }
-        if !appWasActive { return .showInBackground }
-        return .none
     }
 
     // MARK: - Registry
@@ -220,7 +86,7 @@ final class VMDisplayPlacementController {
     /// user brings it forward and enters fullscreen themselves.
     func readyDisplay(for instance: VMInstance, presence: VMBringUpPresence) {
         guard
-            let show = Self.readying(
+            let show = VMDisplayPlacement.readying(
                 preference: instance.hostState.displayPreference,
                 posture: residency?.guiPosture ?? .absent, presence: presence)
         else { return }
@@ -229,7 +95,7 @@ final class VMDisplayPlacementController {
     }
 
     func togglePopOut(for instance: VMInstance) {
-        switch Self.popOutAction(
+        switch VMDisplayPlacement.popOutAction(
             hasWindow: windows[instance.instanceID] != nil, mode: instance.displayMode)
         {
         case .closeWindowForPopIn:
@@ -280,13 +146,13 @@ final class VMDisplayPlacementController {
     /// The pending reason is also the idempotence guard: the window
     /// controller's observation reports a dismissal on every tick while the VM
     /// is stopped.
-    private func requestClose(of vmID: UUID, reason: CloseReason) {
+    private func requestClose(of vmID: UUID, reason: VMDisplayPlacement.CloseReason) {
         guard let controller = windows[vmID], pendingCloseReasons[vmID] == nil else { return }
         pendingCloseReasons[vmID] = reason
         controller.closeFromOwner()
     }
 
-    private func openDisplayWindow(for instance: VMInstance, show: WindowShow) {
+    private func openDisplayWindow(for instance: VMInstance, show: VMDisplayPlacement.WindowShow) {
         let vmID = instance.instanceID
         let enterFullscreen = show == .front(fullscreen: true)
 
@@ -313,12 +179,12 @@ final class VMDisplayPlacementController {
             }
         )
         controller.onEnteredFullscreen = { [weak self] in
-            self?.apply(Self.placement(for: .enteredFullscreen), to: instance)
+            self?.apply(VMDisplayPlacement.placement(for: .enteredFullscreen), to: instance)
         }
         controller.onExitedFullscreen = { [weak self] in
             // The mode is what says the window was in fullscreen to begin with.
             guard instance.displayMode == .fullscreen else { return }
-            self?.apply(Self.placement(for: .exitedFullscreen), to: instance)
+            self?.apply(VMDisplayPlacement.placement(for: .exitedFullscreen), to: instance)
         }
         controller.onWillClose = { [weak self] context in
             self?.handleClose(of: instance, context: context)
@@ -343,7 +209,7 @@ final class VMDisplayPlacementController {
             }
         }
 
-        apply(Self.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
+        apply(VMDisplayPlacement.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
         switch show {
         case .front: controller.showWindow(nil)
         case .behind: controller.showWindowBehind()
@@ -351,29 +217,23 @@ final class VMDisplayPlacementController {
         if let window = controller.window { host?.displayWindowShown(window) }
     }
 
-    /// The best screen for entering fullscreen: the display the VM was last
-    /// fullscreen on, else the library window's display, else the primary.
+    /// The screen ``VMDisplayPlacement/fullscreenScreen(lastDisplayID:screens:libraryScreen:displayID:)``
+    /// picks among the connected ones.
     ///
     /// Reads `lastFullscreenDisplayID`, which ``handleClose(of:context:)`` is the
     /// only writer of.
     func preferredScreenForFullscreen(of instance: VMInstance) -> NSScreen? {
-        if let savedID = instance.hostState.lastFullscreenDisplayID {
-            if let target = NSScreen.screens.first(where: { $0.displayID == savedID }) {
-                #log(
-                    Self.logger, .debug,
-                    "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': using saved display \(savedID, privacy: .public)"
-                )
-                return target
-            }
+        let lastDisplayID = instance.hostState.lastFullscreenDisplayID
+        let screen = VMDisplayPlacement.fullscreenScreen(
+            lastDisplayID: lastDisplayID, screens: NSScreen.screens, libraryScreen: host?.libraryScreen,
+            displayID: \.displayID)
+        if let lastDisplayID, screen?.displayID != lastDisplayID {
             #log(
                 Self.logger, .debug,
-                "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back"
+                "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': saved display \(lastDisplayID, privacy: .public) not found, falling back"
             )
         }
-        if let libraryScreen = host?.libraryScreen {
-            return libraryScreen
-        }
-        return NSScreen.screens.first
+        return screen
     }
 
     // MARK: - Transition Handling
@@ -386,7 +246,7 @@ final class VMDisplayPlacementController {
             on: instance)
     }
 
-    private func apply(_ placement: Placement, to instance: VMInstance) {
+    private func apply(_ placement: VMDisplayPlacement.Placement, to instance: VMInstance) {
         instance.displayMode = placement.mode
         if let preference = placement.persistPreference {
             persist(preference, for: instance)
@@ -409,7 +269,7 @@ final class VMDisplayPlacementController {
     ) {
         let vmID = instance.instanceID
         let reason = pendingCloseReasons[vmID] ?? .userClose
-        let placement = Self.placement(for: .closed(reason))
+        let placement = VMDisplayPlacement.placement(for: .closed(reason))
         instance.displayMode = placement.mode
         let appWasActive = host?.presence.isActive ?? false
 
@@ -434,7 +294,7 @@ final class VMDisplayPlacementController {
                 break
             case .restoreLibrary:
                 self.viewModel.selectRevealing(vmID)
-                switch Self.libraryRestore(
+                switch VMDisplayPlacement.libraryRestore(
                     wasKeyWindow: context.wasKeyWindow, appWasActive: appWasActive)
                 {
                 case .focusLibrary:

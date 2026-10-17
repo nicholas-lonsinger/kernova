@@ -4,13 +4,10 @@ import Testing
 
 @testable import Kernova
 
-/// Covers `VMDisplayPlacementController.readying(preference:posture:presence:)`
-/// and the `readyDisplay(for:presence:)` that runs it — whether a bring-up opens
-/// a window for the VM coming up, and how that window goes on screen.
-///
-/// A bring-up is not a request to look at the guest, so both answers are taken
-/// from the app's own posture, the VM's persisted placement, and whether anyone
-/// asked for this VM in particular — never from which door asked.
+/// Covers `VMDisplayPlacementController.readyDisplay(for:presence:)` — the
+/// window a bring-up opens, and how it goes on screen, as
+/// `VMDisplayPlacement.readying(preference:posture:presence:)` decides
+/// (`VMDisplayPlacementReadyingTests`).
 @Suite("VMDisplayPlacementController readying", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
@@ -43,50 +40,6 @@ struct VMDisplayPlacementReadyDisplayTests {
         placement.residency = residency
         return (placement, residency)
     }
-
-    // MARK: - The decision
-
-    @Test("A detached VM readied from the foreground takes key, in its persisted style")
-    func foregroundReadiesInFront() {
-        #expect(
-            VMDisplayPlacementController.readying(preference: .popOut, posture: .foreground, presence: .attended)
-                == .front(fullscreen: false))
-        #expect(
-            VMDisplayPlacementController.readying(preference: .fullscreen, posture: .foreground, presence: .attended)
-                == .front(fullscreen: true))
-    }
-
-    /// Nobody asked for this VM in particular — a group action, a launch
-    /// auto-start — so even in the foreground it neither takes key nor moves
-    /// the user to a fullscreen Space.
-    @Test(
-        "A detached VM nobody asked for goes up behind, even from the foreground",
-        arguments: [VMDisplayPreference.popOut, .fullscreen])
-    func unattendedReadiesBehind(preference: VMDisplayPreference) {
-        #expect(
-            VMDisplayPlacementController.readying(
-                preference: preference, posture: .foreground, presence: .unattended) == .behind)
-        #expect(
-            VMDisplayPlacementController.readying(
-                preference: preference, posture: .background, presence: .unattended) == .behind)
-        #expect(
-            VMDisplayPlacementController.readying(preference: preference, posture: .absent, presence: .unattended)
-                == nil)
-    }
-
-    /// The inline display renders whichever VM the library has selected, and a
-    /// bring-up does not change the user's selection.
-    @Test(
-        "An inline VM readies nothing, whatever the app is presenting",
-        arguments: [GUIPosture.absent, .background, .foreground])
-    func inlineReadiesNothing(posture: GUIPosture) {
-        #expect(
-            VMDisplayPlacementController.readying(preference: .inline, posture: posture, presence: .attended) == nil)
-        #expect(
-            VMDisplayPlacementController.readying(preference: .inline, posture: posture, presence: .unattended) == nil)
-    }
-
-    // MARK: - The wiring
 
     @Test("A bring-up while the app presents no GUI opens no window")
     func absentOpensNoWindow() {

@@ -132,75 +132,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - Quit Section
 
-    /// One item in the app menu's quit section, as decided by `appMenuQuitItems`.
-    struct AppMenuQuitItem: Equatable {
-        /// What invoking the item does.
-        enum Action: Equatable {
-            /// Routes through `NSApplication.terminate(_:)` and thus the
-            /// `applicationShouldTerminate` gate.
-            case terminateThroughGate
-            /// Requests an unconditional full quit, bypassing the
-            /// keep-in-menu-bar downgrade.
-            case quitCompletely
-        }
-
-        let title: String
-        /// The key-equivalent character (always `"q"`; ⌘ is always part of the shortcut).
-        let keyEquivalent: String
-        /// Whether Option joins Command: `false` = ⌘Q, `true` = ⌥⌘Q.
-        let usesOptionModifier: Bool
-        let action: Action
-
-        /// The selector the built item carries. Both dispatch nil-target:
-        /// `terminate:` so the responder chain resolves it to `NSApp` and the
-        /// `applicationShouldTerminate` gate, `quitCompletely:` so it resolves
-        /// to the app delegate at the chain's tail.
-        @MainActor var selector: Selector {
-            switch action {
-            case .terminateThroughGate: #selector(NSApplication.terminate(_:))
-            case .quitCompletely: #selector(AppDelegate.quitCompletely(_:))
-            }
-        }
-
-        var keyEquivalentModifierMask: NSEvent.ModifierFlags {
-            usesOptionModifier ? [.command, .option] : [.command]
-        }
-
-        /// Whether `item` is what this model builds — the whole of it, so an
-        /// item AppKit injected or altered never passes for a modeled one.
-        @MainActor func matches(_ item: NSMenuItem) -> Bool {
-            item.title == title && item.action == selector
-                && item.keyEquivalent == keyEquivalent
-                && item.keyEquivalentModifierMask == keyEquivalentModifierMask
-        }
-    }
-
-    /// Decides the app menu's quit-section items, so every state presents an
-    /// honest command.
-    ///
-    /// A process whose ⌘Q would be downgraded to a GUI close gets the honest
-    /// split — "Close All Windows" (⌘Q) plus the true "Quit Kernova" (⌥⌘Q);
-    /// anywhere ⌘Q really quits, it is the single item that says so.
-    nonisolated static func appMenuQuitItems(
-        downgradesQuitToGUIClose: Bool
-    ) -> [AppMenuQuitItem] {
-        if downgradesQuitToGUIClose {
-            return [
-                AppMenuQuitItem(
-                    title: "Close All Windows", keyEquivalent: "q",
-                    usesOptionModifier: false, action: .terminateThroughGate),
-                AppMenuQuitItem(
-                    title: "Quit Kernova", keyEquivalent: "q",
-                    usesOptionModifier: true, action: .quitCompletely),
-            ]
-        }
-        return [
-            AppMenuQuitItem(
-                title: "Quit Kernova", keyEquivalent: "q",
-                usesOptionModifier: false, action: .terminateThroughGate)
-        ]
-    }
-
     // MARK: - Menu Updates
 
     /// AppKit also calls this while it matches a key equivalent against the
@@ -308,7 +239,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             action: #selector(AppDelegate.revertToSnapshot(_:)))
     }
 
-    /// Brings the app menu's quit section to `appMenuQuitItems` for the current
+    /// Brings the app menu's quit section to ``AppMenuQuitItem/items(downgradesQuitToGUIClose:)`` for the current
     /// mode, by the least mutation that gets there.
     ///
     /// The section is swept, not rebuilt: the installed items are walked in
@@ -326,7 +257,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         guard let appMenu, let sectionStart = appMenuQuitSectionStart else { return }
         // The preference is read live here, not captured, so a Settings flip is
         // reflected on the next open.
-        let model = Self.appMenuQuitItems(
+        let model = AppMenuQuitItem.items(
             downgradesQuitToGUIClose: viewModel.keepInMenuBarOnQuit)
 
         let sectionStartIndex = appMenu.index(of: sectionStart)
@@ -757,5 +688,32 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         mainMenu.addItem(helpMenuItem)
 
         return mainMenu
+    }
+}
+
+// MARK: - Quit Section
+
+extension AppMenuQuitItem {
+    /// The selector the built item carries. Both dispatch nil-target:
+    /// `terminate:` so the responder chain resolves it to `NSApp` and the
+    /// `applicationShouldTerminate` gate, `quitCompletely:` so it resolves
+    /// to the app delegate at the chain's tail.
+    @MainActor var selector: Selector {
+        switch action {
+        case .terminateThroughGate: #selector(NSApplication.terminate(_:))
+        case .quitCompletely: #selector(AppDelegate.quitCompletely(_:))
+        }
+    }
+
+    var keyEquivalentModifierMask: NSEvent.ModifierFlags {
+        usesOptionModifier ? [.command, .option] : [.command]
+    }
+
+    /// Whether `item` is what this model builds — the whole of it, so an
+    /// item AppKit injected or altered never passes for a modeled one.
+    @MainActor func matches(_ item: NSMenuItem) -> Bool {
+        item.title == title && item.action == selector
+            && item.keyEquivalent == keyEquivalent
+            && item.keyEquivalentModifierMask == keyEquivalentModifierMask
     }
 }

@@ -9,7 +9,7 @@ enum SidebarNameSheet {
     /// name typed.
     static func newSmartGroup(
         suggestedName: String, conditions: [String], create: @escaping (String) -> Void
-    ) -> AlertConfiguration {
+    ) -> SheetAlert {
         let field = nameField(suggestedName)
         let caption = NSTextField(labelWithString: "Shows VMs where")
         caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
@@ -31,31 +31,33 @@ enum SidebarNameSheet {
         // so the frame has to hold everything the stack's constraints place.
         stack.layoutSubtreeIfNeeded()
         stack.setFrameSize(stack.fittingSize)
-        return AlertConfiguration(
-            title: "New Smart Group",
-            message:
-                "The group stays up to date as VMs change. Edit its conditions from the "
-                + "\(SidebarViewMenu.smartGroupAccessibilityLabel) button on its header.",
-            buttons: [
-                AlertButton("Create", role: .default) { create(field.stringValue) },
-                AlertButton("Cancel", role: .cancel),
-            ],
+        return SheetAlert(
+            AlertConfiguration(
+                title: "New Smart Group",
+                message:
+                    "The group stays up to date as VMs change. Edit its conditions from the "
+                    + "\(SidebarViewMenu.smartGroupAccessibilityLabel) button on its header.",
+                buttons: [
+                    AlertButton("Create", role: .default) { create(field.stringValue) },
+                    AlertButton("Cancel", role: .cancel),
+                ]),
             accessoryView: stack, initialFirstResponder: field)
     }
 
     /// Asks for the name of a new folder, starting from `suggestedName`;
     /// Create hands `create` the name typed.
-    static func newFolder(suggestedName: String, create: @escaping (String) -> Void) -> AlertConfiguration {
+    static func newFolder(suggestedName: String, create: @escaping (String) -> Void) -> SheetAlert {
         let field = nameField(suggestedName)
         let row = nameRow(field)
         row.setFrameSize(row.fittingSize)
-        return AlertConfiguration(
-            title: "New Folder",
-            message: "Drag VMs onto the folder to add them. A VM can be in several folders.",
-            buttons: [
-                AlertButton("Create", role: .default) { create(field.stringValue) },
-                AlertButton("Cancel", role: .cancel),
-            ],
+        return SheetAlert(
+            AlertConfiguration(
+                title: "New Folder",
+                message: "Drag VMs onto the folder to add them. A VM can be in several folders.",
+                buttons: [
+                    AlertButton("Create", role: .default) { create(field.stringValue) },
+                    AlertButton("Cancel", role: .cancel),
+                ]),
             accessoryView: row, initialFirstResponder: field)
     }
 
@@ -63,17 +65,18 @@ enum SidebarNameSheet {
     /// `rename` the name typed.
     static func rename(
         _ kind: VMGroupKind, currentName: String, rename: @escaping (String) -> Void
-    ) -> AlertConfiguration {
+    ) -> SheetAlert {
         let field = nameField(currentName)
         let row = nameRow(field)
         row.setFrameSize(row.fittingSize)
-        return AlertConfiguration(
-            title: kind == .smartGroup ? "Rename Smart Group" : "Rename Folder",
-            message: "",
-            buttons: [
-                AlertButton("Rename", role: .default) { rename(field.stringValue) },
-                AlertButton("Cancel", role: .cancel),
-            ],
+        return SheetAlert(
+            AlertConfiguration(
+                title: kind == .smartGroup ? "Rename Smart Group" : "Rename Folder",
+                message: "",
+                buttons: [
+                    AlertButton("Rename", role: .default) { rename(field.stringValue) },
+                    AlertButton("Cancel", role: .cancel),
+                ]),
             accessoryView: row, initialFirstResponder: field)
     }
 

@@ -40,34 +40,35 @@ enum USBAccessoryPairingAlert {
     /// never returns for that device, and an app-wide suppression would leave a
     /// user with a newly plugged accessory, no prompt, and no cue that the USB
     /// Device menu is where to go.
-    static func configuration(for request: USBAccessoryPairingRequest) -> AlertConfiguration {
+    static func configuration(for request: USBAccessoryPairingRequest) -> SheetAlert {
         let single = request.candidates.count == 1 ? request.candidates[0] : nil
         let chooser = single == nil ? makeChooser(for: request.candidates) : nil
         let candidates = request.candidates
         let answer = request.answer
-        return AlertConfiguration(
-            title: title(accessory: request.accessory.name, vmName: single?.name),
-            message: message(vmName: single?.name),
-            buttons: [
-                AlertButton("Pass Through", role: .default) {
-                    guard let chooser else {
-                        answer(single)
-                        return
-                    }
-                    // Read at click time, and off the selected item's tag
-                    // rather than its row: the tag is the index the item was
-                    // built from, and it survives anything AppKit does to the
-                    // menu's order.
-                    guard let index = chooser.selectedItem?.tag,
-                        candidates.indices.contains(index)
-                    else {
-                        answer(nil)
-                        return
-                    }
-                    answer(candidates[index])
-                },
-                AlertButton("Keep on Mac", role: .cancel) { answer(nil) },
-            ],
+        return SheetAlert(
+            AlertConfiguration(
+                title: title(accessory: request.accessory.name, vmName: single?.name),
+                message: message(vmName: single?.name),
+                buttons: [
+                    AlertButton("Pass Through", role: .default) {
+                        guard let chooser else {
+                            answer(single)
+                            return
+                        }
+                        // Read at click time, and off the selected item's tag
+                        // rather than its row: the tag is the index the item was
+                        // built from, and it survives anything AppKit does to the
+                        // menu's order.
+                        guard let index = chooser.selectedItem?.tag,
+                            candidates.indices.contains(index)
+                        else {
+                            answer(nil)
+                            return
+                        }
+                        answer(candidates[index])
+                    },
+                    AlertButton("Keep on Mac", role: .cancel) { answer(nil) },
+                ]),
             accessoryView: chooser.map(makeChooserRow))
     }
 

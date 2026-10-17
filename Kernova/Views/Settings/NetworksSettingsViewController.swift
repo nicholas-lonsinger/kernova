@@ -167,20 +167,21 @@ final class NetworksSettingsViewController: NSViewController {
         grid.setFrameSize(grid.fittingSize)
 
         presentSheetAlert(
-            AlertConfiguration(
-                title: "New Network",
-                message:
-                    "Its mode is fixed once it is created: every virtual machine on it runs in that mode.",
-                buttons: [
-                    AlertButton("Create", role: .default) { [weak self] in
-                        guard let kind = kindPopUp.selectedItem?.representedObject as? VmnetNetworkKind
-                        else { return }
-                        self?.editor.attempt("Couldn\u{2019}t Create the Network") {
-                            try self?.create(name: nameField.stringValue, kind: kind)
-                        }
-                    },
-                    AlertButton("Cancel", role: .cancel),
-                ],
+            SheetAlert(
+                AlertConfiguration(
+                    title: "New Network",
+                    message:
+                        "Its mode is fixed once it is created: every virtual machine on it runs in that mode.",
+                    buttons: [
+                        AlertButton("Create", role: .default) { [weak self] in
+                            guard let kind = kindPopUp.selectedItem?.representedObject as? VmnetNetworkKind
+                            else { return }
+                            self?.editor.attempt("Couldn\u{2019}t Create the Network") {
+                                try self?.create(name: nameField.stringValue, kind: kind)
+                            }
+                        },
+                        AlertButton("Cancel", role: .cancel),
+                    ]),
                 accessoryView: grid, initialFirstResponder: nameField),
             in: window)
     }

@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppTerminationController.classifyQuit(senderPID:bundleIDResolver:isProcessAlive:)` —
+/// Unit tests for `AppTerminationController.classifyQuit(senderPID:sender:)` —
 /// the pure classifier the termination gate uses to decide whether a quit Apple
 /// Event's sender should leave the resident agent running (a user-facing soft
 /// quit), or terminate it (with or without a post-exit relaunch).
@@ -20,10 +20,19 @@ struct AppTerminationQuitClassificationTests {
     private static let loginwindowBundleID = "com.apple.loginwindow"
     private static let dockBundleID = "com.apple.dock"
 
+    private func classify(
+        senderPID: pid_t?, bundleIDResolver: @escaping (pid_t) -> String?,
+        isProcessAlive: @escaping (pid_t) -> Bool
+    ) -> AppTerminationController.QuitClassification {
+        AppTerminationController.classifyQuit(
+            senderPID: senderPID,
+            sender: .init(isProcessAlive: isProcessAlive, bundleID: bundleIDResolver))
+    }
+
     @Test("No sender PID attribute fails toward terminate-and-save")
     func noSenderPID() {
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: nil,
                 bundleIDResolver: { _ in
                     Issue.record("should not resolve a bundle ID"); return nil
@@ -37,7 +46,7 @@ struct AppTerminationQuitClassificationTests {
     @Test("A non-positive sender PID fails toward terminate-and-save")
     func nonPositiveSenderPID() {
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: 0,
                 bundleIDResolver: { _ in
                     Issue.record("should not resolve a bundle ID"); return nil
@@ -51,7 +60,7 @@ struct AppTerminationQuitClassificationTests {
     @Test("A sender PID that no longer resolves to a live process fails toward terminate-and-save")
     func deadSender() {
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: 999,
                 bundleIDResolver: { _ in
                     Issue.record("should not resolve a bundle ID"); return nil
@@ -65,7 +74,7 @@ struct AppTerminationQuitClassificationTests {
         // `classifyQuit` calls the real (non-injectable) `getpid()` internally, so
         // the sender PID must be this process's actual PID to hit that branch.
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: getpid(),
                 bundleIDResolver: { _ in
                     Issue.record("should not resolve a bundle ID"); return nil
@@ -79,7 +88,7 @@ struct AppTerminationQuitClassificationTests {
         // A programmatic quit is explicit — the accidental-⌘Q protection doesn't
         // apply, so it terminates with the save-suspend path (#624).
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: 999,
                 bundleIDResolver: { _ in nil },
                 isProcessAlive: { _ in true }
@@ -89,7 +98,7 @@ struct AppTerminationQuitClassificationTests {
     @Test("The Dock (a user-facing affordance) stays resident")
     func dock() {
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: 999,
                 bundleIDResolver: { _ in Self.dockBundleID },
                 isProcessAlive: { _ in true }
@@ -99,7 +108,7 @@ struct AppTerminationQuitClassificationTests {
     @Test("An arbitrary other live app is honored: terminate-and-save")
     func otherApp() {
         #expect(
-            AppTerminationController.classifyQuit(
+            classify(
                 senderPID: 999,
                 bundleIDResolver: { _ in "com.example.someApp" },
                 isProcessAlive: { _ in true }
@@ -114,7 +123,7 @@ struct AppTerminationQuitClassificationTests {
         // though every other test's closures ignore their argument. The call is
         // pulled out of the `#expect(...)` argument — nesting `#expect` inside
         // another `#expect`'s captured expression recurses in macro expansion.
-        let classification = AppTerminationController.classifyQuit(
+        let classification = classify(
             senderPID: 999,
             bundleIDResolver: { pid in
                 #expect(pid == 999)
@@ -130,7 +139,7 @@ struct AppTerminationQuitClassificationTests {
 
     @Test("System Settings / TCC revocation terminates and relaunches")
     func tccRevocation() {
-        let classification = AppTerminationController.classifyQuit(
+        let classification = classify(
             senderPID: 999,
             bundleIDResolver: { pid in
                 #expect(pid == 999)

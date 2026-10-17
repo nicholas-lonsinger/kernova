@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import Testing
 
 @testable import Kernova
@@ -7,10 +7,8 @@ import Testing
 /// terminate the agent and which downgrade to a GUI close — and the latch
 /// discipline behind ``AppTerminationController/shouldTerminateOnQuit``.
 ///
-/// Safe in a shared test host because every controller here ends its
-/// termination into an ``EndingSpy`` and reads its quit event from the case, so
-/// neither `NSApp.terminate` nor `reply(toApplicationShouldTerminate:)` reaches
-/// the shared host, and no case delivers a quit Apple Event.
+/// Every controller here ends its termination into an ``EndingSpy`` and reads
+/// its quit event and that event's sender from the case.
 ///
 /// The `.closeGUI` branch is exercised against a spy rather than a real
 /// ``AppResidencyController``, whose `closeGUIForSoftQuit()` reaches
@@ -44,16 +42,11 @@ struct AppTerminationGateTests {
         let controller = AppTerminationController(
             viewModel: viewModel, residency: residency,
             pendingQuitEvent: { quitEvent },
+            // Every sender is alive and no application: the shape of
+            // `osascript`'s quit.
+            senderProbe: .init(isProcessAlive: { _ in true }, bundleID: { _ in nil }),
             endTermination: { ending in endings.record(ending) })
         return (controller, viewModel)
-    }
-
-    /// An Apple event of `eventClass`/`eventID`, as one arrives.
-    private func makeEvent(_ eventClass: AEEventClass, _ eventID: AEEventID) -> NSAppleEventDescriptor {
-        NSAppleEventDescriptor(
-            eventClass: eventClass, eventID: eventID,
-            targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID),
-            transactionID: AETransactionID(kAnyTransactionID))
     }
 
     /// Records how each finished save pass ended, and what the gate would
@@ -65,7 +58,7 @@ struct AppTerminationGateTests {
         /// The controller whose gate is asked from inside each ending, if any.
         weak var gate: AppTerminationController?
         /// The gate's reply, read from inside the ending the pass performs.
-        private(set) var replyWhenEnded: NSApplication.TerminateReply?
+        private(set) var replyWhenEnded: AppTerminationController.TerminationReply?
 
         func record(_ ending: AppTerminationController.TerminationEnding) {
             endings.append(ending)
@@ -90,9 +83,9 @@ struct AppTerminationGateTests {
         // Nothing deferred this quit, so the pass asks for one of its own.
         #expect(spy.endings == [.terminate])
         // The pass has already run, so the gate has nothing to wait for — the
-        // `.terminateLater` reply, and the nested run loop AppKit answers it
-        // with, is what the two phases exist to avoid.
-        #expect(spy.replyWhenEnded == .terminateNow)
+        // `.later` reply, and the nested run loop AppKit answers it with, is
+        // what the two phases exist to avoid.
+        #expect(spy.replyWhenEnded == .now)
     }
 
     @Test("A second full quit joins the pass already running rather than starting another")
@@ -120,8 +113,8 @@ struct AppTerminationGateTests {
         controller.requestFullQuit()
         // A quit Apple Event, a logout, or a TCC revocation landing while the
         // pass is still queued: deferred rather than vetoed, because a
-        // `.terminateCancel` reaches loginwindow as a refusal to shut down.
-        #expect(controller.handleTerminationRequest() == .terminateLater)
+        // `.cancel` reaches loginwindow as a refusal to shut down.
+        #expect(controller.handleTerminationRequest() == .later)
 
         try await spy.ended.wait { spy.endings.count == 1 }
         // AppKit is waiting on that reply, so the pass answers it rather than
@@ -293,7 +286,7 @@ struct AppTerminationGateTests {
         viewModel.keepInMenuBarOnQuit = true
 
         #expect(!controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .terminateCancel)
+        #expect(controller.handleTerminationRequest() == .cancel)
 
         // The close is deferred to a `Task` so it runs after the cancelled
         // termination request settles.
@@ -307,19 +300,18 @@ struct AppTerminationGateTests {
         viewModel.keepInMenuBarOnQuit = false
 
         #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .terminateNow)
+        #expect(controller.handleTerminationRequest() == .now)
         #expect(spy.closeCount == 0)
     }
 
     @Test("A quit a script sent terminates and saves, whichever handler delivered it")
     func scriptedQuitTerminates() {
         let spy = SoftQuitSpy()
-        // launchd: alive, and no application — the shape of `osascript`'s quit.
         let (controller, viewModel) = makeController(
             residency: spy, quitEvent: .init(senderPID: 1))
         viewModel.keepInMenuBarOnQuit = true
 
-        #expect(controller.handleTerminationRequest() == .terminateNow)
+        #expect(controller.handleTerminationRequest() == .now)
         #expect(controller.shouldTerminateOnQuit)
         #expect(spy.closeCount == 0)
     }
@@ -331,17 +323,10 @@ struct AppTerminationGateTests {
             residency: spy, quitEvent: .init(senderPID: getpid()))
         viewModel.keepInMenuBarOnQuit = true
 
-        #expect(controller.handleTerminationRequest() == .terminateCancel)
+        #expect(controller.handleTerminationRequest() == .cancel)
         #expect(!controller.shouldTerminateOnQuit)
 
         try await spy.closed.wait { spy.closeCount == 1 }
-    }
-
-    @Test("Only the Standard Suite's quit is read as one")
-    func onlyAQuitEventIsAQuit() {
-        #expect(AppTerminationController.isQuitEvent(makeEvent(kCoreEventClass, kAEQuitApplication)))
-        #expect(!AppTerminationController.isQuitEvent(makeEvent(kCoreEventClass, kAEOpenApplication)))
-        #expect(!AppTerminationController.isQuitEvent(makeEvent(kAEMiscStandards, kAEQuitApplication)))
     }
 
     @Test("A terminate-and-save classification outranks staying in the menu bar, and never clears")
@@ -357,7 +342,7 @@ struct AppTerminationGateTests {
         // not clear what an external one demanded.
         controller.latchQuitClassification(.stayResident)
         #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .terminateNow)
+        #expect(controller.handleTerminationRequest() == .now)
         #expect(spy.closeCount == 0)
     }
 
@@ -372,7 +357,7 @@ struct AppTerminationGateTests {
 
         controller.latchQuitClassification(.stayResident)
         #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .terminateNow)
+        #expect(controller.handleTerminationRequest() == .now)
         #expect(spy.closeCount == 0)
     }
 }

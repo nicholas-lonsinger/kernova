@@ -2,14 +2,14 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose:)` —
+/// Unit tests for `AppMenuQuitItem.items(downgradesQuitToGUIClose:)` —
 /// the pure helper that decides the app menu's quit section so every mode
 /// presents an *honest* command.
-@Suite("MainMenuController.appMenuQuitItems", .caseScoped)
+@Suite("AppMenuQuitItem.items", .caseScoped)
 struct MainMenuQuitItemsTests {
     /// The single-item presentation every process whose ⌘Q really quits gets:
     /// one "Quit Kernova" ⌘Q routed through the gate.
-    private func expectSingleTrueQuit(_ items: [MainMenuController.AppMenuQuitItem]) {
+    private func expectSingleTrueQuit(_ items: [AppMenuQuitItem]) {
         #expect(items.count == 1)
         let item = items.first
         #expect(item?.title == "Quit Kernova")
@@ -20,7 +20,7 @@ struct MainMenuQuitItemsTests {
 
     @Test("A quit that downgrades to a GUI close shows the honest split")
     func downgradedQuitSplits() {
-        let items = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let items = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
         #expect(items.count == 2)
 
         // "Close All Windows" ⌘Q — the soft quit that downgrades to a GUI close.
@@ -39,6 +39,6 @@ struct MainMenuQuitItemsTests {
     @Test("A quit that really quits shows one item that says so")
     func trueQuitIsSingleItem() {
         expectSingleTrueQuit(
-            MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: false))
+            AppMenuQuitItem.items(downgradesQuitToGUIClose: false))
     }
 }

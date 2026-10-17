@@ -48,47 +48,6 @@ private final class OneShotQuestion<Answer> {
     }
 }
 
-/// The alerts waiting with no window the user can see to show them on — what
-/// the status item reports.
-@MainActor
-@Observable
-final class HeldAlerts {
-    /// One held alert, as the status item counts it.
-    enum Alert: Equatable {
-        /// A report of VMs that did not start, naming them.
-        case startReport(vmIDs: [UUID])
-        /// Any other alert, about the VM `vmID` names or about no VM.
-        case other(vmID: UUID?)
-    }
-
-    private(set) var alerts: [Alert] = []
-
-    /// Replaces what is held, leaving observers unwoken when nothing changed.
-    func update(_ alerts: [Alert]) {
-        guard alerts != self.alerts else { return }
-        self.alerts = alerts
-    }
-
-    /// How many VMs the held start reports name, counting only those
-    /// `isListed` — the ones a report would still name when shown.
-    func undoneStartCount(listing isListed: (UUID) -> Bool) -> Int {
-        alerts.reduce(0) { count, alert in
-            guard case .startReport(let ids) = alert else { return count }
-            return count + ids.count(where: isListed)
-        }
-    }
-
-    /// How many held alerts are not start reports, counting one about a VM
-    /// only while `isListed` holds for it — one about a VM that left the
-    /// library is dropped when it would be shown.
-    func otherAlertCount(listing isListed: (UUID) -> Bool) -> Int {
-        alerts.count { alert in
-            guard case .other(let vmID) = alert else { return false }
-            return vmID.map(isListed) ?? true
-        }
-    }
-}
-
 /// Shows every alert and sheet the view model raises on the window the user is
 /// working in for what it is about, one at a time per window.
 ///
@@ -110,17 +69,13 @@ final class AppAlertPresenter {
 
     let viewModel: VMLibraryViewModel
     private let windows: AppWindowRegistry
+    /// What each alert says and does.
+    private let configurations: AppAlertConfigurations
 
     /// The alerts waiting with no window to show on.
     let held = HeldAlerts()
 
     // MARK: - Queue
-
-    /// A request waiting for its window, numbered in the order it was raised.
-    private struct QueuedAlert {
-        let sequence: Int
-        let request: Request
-    }
 
     /// What a queued alert shows, held as what it is so it can be routed and
     /// re-checked when it comes up rather than when it was raised.
@@ -140,9 +95,8 @@ final class AppAlertPresenter {
         case installerMounted(VMInstance, GuestAgentInstallerPurpose, GuestAgentDiskDelivery)
     }
 
-    /// Every request waiting for its window, in the order raised.
-    private var waiting: [QueuedAlert] = []
-    private var nextSequence = 0
+    /// Every request waiting for its window.
+    private var queue = AlertQueue<Request, NSWindow>()
 
     // MARK: - Windows
 
@@ -174,7 +128,7 @@ final class AppAlertPresenter {
     private enum WindowCloseDisposition {
         /// The alert asks nothing: it goes back to the queue, to be routed
         /// again.
-        case requeue(QueuedAlert)
+        case requeue(AlertQueue<Request, NSWindow>.Entry)
         /// The alert asks something: it is dismissed as a cancel, so nothing
         /// runs without the user saying yes.
         case cancel
@@ -255,6 +209,7 @@ final class AppAlertPresenter {
     init(viewModel: VMLibraryViewModel, windows: AppWindowRegistry) {
         self.viewModel = viewModel
         self.windows = windows
+        self.configurations = AppAlertConfigurations(viewModel: viewModel)
         observeWindowEvents()
     }
 
@@ -264,7 +219,7 @@ final class AppAlertPresenter {
 
     #if DEBUG
     /// Number of requests waiting for a window.
-    var waitingCountForTesting: Int { waiting.count }
+    var waitingCountForTesting: Int { queue.waiting.count }
 
     /// Each delete in flight's disposition — `true` to delete immediately — by
     /// its VM's id.
@@ -422,57 +377,30 @@ final class AppAlertPresenter {
     }
 
     private func enqueue(_ request: Request) {
-        waiting.append(QueuedAlert(sequence: nextSequence, request: settled(request)))
-        nextSequence += 1
+        queue.enqueue(settled(request))
         pump()
-    }
-
-    /// Puts an alert taken off a closing window back among the waiting, in
-    /// the place its raising gave it.
-    private func requeue(_ entry: QueuedAlert) {
-        let index = waiting.firstIndex { $0.sequence > entry.sequence } ?? waiting.endIndex
-        waiting.insert(entry, at: index)
     }
 
     /// Shows every waiting alert whose window is free and first in line for
     /// it, drops every one whose premise lapsed, and publishes what is held.
+    ///
+    /// The windows are read afresh for each alert taken, so a pump re-entered
+    /// from a sheet going up reads the state that sheet left.
     private func pump() {
-        while let (entry, window) = nextToShow() {
+        while !queue.waiting.isEmpty,
+            let (entry, window) = queue.takeNext(
+                destination: { [scene = currentScene()] in destination(of: $0, in: scene) },
+                isFree: isFree,
+                stillHolds: stillHolds,
+                drop: { request in
+                    discard(request)
+                    #log(Self.logger, .notice, "Dropped an alert whose premise lapsed while it waited")
+                })
+        {
             show(entry, on: window)
         }
         let scene = currentScene()
-        held.update(
-            waiting.filter { destination(of: $0.request, in: scene) == nil }
-                .map { heldAlert(for: $0.request) })
-    }
-
-    /// The first waiting alert that can go up now, taken out of the queue.
-    ///
-    /// Recomputed from scratch on each call, so a pump re-entered from a
-    /// sheet going up reads the state that sheet left.
-    private func nextToShow() -> (QueuedAlert, NSWindow)? {
-        guard !waiting.isEmpty else { return nil }
-        let scene = currentScene()
-        var passed: Set<NSWindow> = []
-        var index = 0
-        while index < waiting.count {
-            let entry = waiting[index]
-            guard stillHolds(entry.request) else {
-                waiting.remove(at: index)
-                discard(entry.request)
-                #log(Self.logger, .notice, "Dropped an alert whose premise lapsed while it waited")
-                continue
-            }
-            if let window = destination(of: entry.request, in: scene) {
-                if !passed.contains(window), isFree(window) {
-                    waiting.remove(at: index)
-                    return (entry, window)
-                }
-                passed.insert(window)
-            }
-            index += 1
-        }
-        return nil
+        held.update(queue.held { destination(of: $0, in: scene) }.map(heldAlert(for:)))
     }
 
     private func slot(for window: NSWindow) -> WindowSlot {
@@ -499,14 +427,14 @@ final class AppAlertPresenter {
     private func askableWindow(about vmID: UUID?) -> NSWindow? {
         let scene = currentScene()
         guard let window = scene.destination(about: vmID), isFree(window),
-            !waiting.contains(where: { destination(of: $0.request, in: scene) === window })
+            !queue.isAwaited(window, destination: { destination(of: $0, in: scene) })
         else { return nil }
         return window
     }
 
     // MARK: - Showing
 
-    private func show(_ entry: QueuedAlert, on window: NSWindow) {
+    private func show(_ entry: AlertQueue<Request, NSWindow>.Entry, on window: NSWindow) {
         switch entry.request {
         case .error(let title, let message, _), .startFailure(let title, let message, _):
             showAlert(
@@ -514,7 +442,7 @@ final class AppAlertPresenter {
                 onWindowClose: .requeue(entry))
         case .startFailedAttachment(let failure, let instance):
             showAlert(
-                startFailedAttachmentConfig(failure, instance), on: window,
+                configurations.startFailedAttachmentConfig(failure, instance), on: window,
                 onWindowClose: .requeue(entry))
         case .startSummary(let title, let undone):
             showAlert(
@@ -522,24 +450,24 @@ final class AppAlertPresenter {
                 on: window, onWindowClose: .requeue(entry))
         case .installerMounted(let instance, let purpose, let delivery):
             showAlert(
-                installerMountedConfig(instance.name, purpose: purpose, delivery: delivery),
+                configurations.installerMountedConfig(instance.name, purpose: purpose, delivery: delivery),
                 on: window, onWindowClose: .requeue(entry))
         case .deleteSheet(let delete):
             showDeleteSheet(delete, on: window)
         case .takeSnapshot(let instance, let purpose):
             showTakeSnapshotSheet(for: instance, purpose: purpose, on: window)
         case .revertSnapshot(let snapshot, let instance):
-            showAlert(revertSnapshotConfig(snapshot, instance), on: window, onWindowClose: .cancel)
+            showAlert(configurations.revertSnapshotConfig(snapshot, instance), on: window, onWindowClose: .cancel)
         case .deleteSnapshot(let snapshot, let instance):
-            showAlert(deleteSnapshotConfig(snapshot, instance), on: window, onWindowClose: .cancel)
+            showAlert(configurations.deleteSnapshotConfig(snapshot, instance), on: window, onWindowClose: .cancel)
         case .forceStop(let instance):
-            showAlert(forceStopConfig(instance), on: window, onWindowClose: .cancel)
+            showAlert(configurations.forceStopConfig(instance), on: window, onWindowClose: .cancel)
         case .recoveryBoot(let instance):
-            showAlert(recoveryBootConfig(instance), on: window, onWindowClose: .cancel)
+            showAlert(configurations.recoveryBootConfig(instance), on: window, onWindowClose: .cancel)
         case .stopPaused(let instance):
-            showAlert(pausedStopConfig(instance), on: window, onWindowClose: .cancel)
+            showAlert(configurations.pausedStopConfig(instance), on: window, onWindowClose: .cancel)
         case .cancelPreparing(let prompt, let arrival):
-            showAlert(cancelPreparingConfig(prompt, arrival), on: window, onWindowClose: .cancel)
+            showAlert(configurations.cancelPreparingConfig(prompt, arrival), on: window, onWindowClose: .cancel)
         }
     }
 
@@ -552,6 +480,16 @@ final class AppAlertPresenter {
     @discardableResult
     private func showAlert(
         _ config: AlertConfiguration, on window: NSWindow,
+        onWindowClose: WindowCloseDisposition
+    ) -> ShownAlert {
+        showAlert(SheetAlert(config), on: window, onWindowClose: onWindowClose)
+    }
+
+    /// ``showAlert(_:on:onWindowClose:)`` for an alert drawn with an accessory
+    /// view.
+    @discardableResult
+    private func showAlert(
+        _ config: SheetAlert, on window: NSWindow,
         onWindowClose: WindowCloseDisposition,
         guestAccount: OneShotGuestAccountAnswer? = nil
     ) -> ShownAlert {
@@ -607,7 +545,7 @@ final class AppAlertPresenter {
     private func takeDown(_ shown: ShownAlert, from window: NSWindow) {
         switch shown.onWindowClose {
         case .requeue(let entry):
-            requeue(entry)
+            queue.requeue(entry)
         case .cancel:
             break
         case .unask(let unask):
@@ -686,7 +624,7 @@ final class AppAlertPresenter {
         // (the menu key equivalent stays live under it) is dropped rather than
         // queued behind it, and so is one made while the first waits for its
         // window.
-        let isWaiting = waiting.contains {
+        let isWaiting = queue.waiting.contains {
             if case .takeSnapshot(let waiting, _) = $0.request { waiting.id == instance.id } else { false }
         }
         let isShown = slots.values.contains { $0.occupant?.snapshotSheet?.instance.id == instance.id }

@@ -74,7 +74,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         detailItem.minimumThickness = 400
         splitViewController.addSplitViewItem(detailItem)
 
-        splitViewController.splitView.autosaveName = stage.mainSplit
+        splitViewController.splitView.autosaveName = stage.autosave.mainSplit
 
         let window = stage.makeWindow(
             stableContentSize: NSSize(width: 1200, height: 900),
@@ -99,17 +99,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.delegate = self
         self.shouldCascadeWindows = false
 
-        let toolbar = NSToolbar(identifier: stage.mainToolbar)
+        let toolbar = NSToolbar(identifier: stage.autosave.mainToolbar)
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
         // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = stage.savesState
+        toolbar.autosavesConfiguration = stage.autosave.savesState
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        window.setFrameAutosaveName(stage.mainWindowFrame)
+        window.setFrameAutosaveName(stage.autosave.mainWindowFrame)
 
         // Finder-style snap: while dragging the divider, magnetize it to the
         // width that fully shows the longest VM name.

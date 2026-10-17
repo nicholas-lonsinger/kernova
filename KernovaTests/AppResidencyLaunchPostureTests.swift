@@ -2,17 +2,17 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppResidencyController.launchPosture` — what a launch puts
+/// Unit tests for `AppResidencyPolicy.launchPosture` — what a launch puts
 /// on screen, given what it asked for and the residency preference.
-@Suite("AppResidencyController launch posture", .caseScoped)
+@Suite("AppResidencyPolicy launch posture", .caseScoped)
 struct AppResidencyLaunchPostureTests {
     private func posture(
-        origin: AppResidencyController.LaunchProvenance.Origin = .user,
+        origin: AppResidencyPolicy.LaunchProvenance.Origin = .user,
         isHidden: Bool = false,
         keepInMenuBar: Bool
-    ) -> AppResidencyController.LaunchPosture {
-        AppResidencyController.launchPosture(
-            for: AppResidencyController.LaunchProvenance(origin: origin, isHidden: isHidden),
+    ) -> AppResidencyPolicy.LaunchPosture {
+        AppResidencyPolicy.launchPosture(
+            for: AppResidencyPolicy.LaunchProvenance(origin: origin, isHidden: isHidden),
             keepInMenuBar: keepInMenuBar)
     }
 
@@ -23,7 +23,7 @@ struct AppResidencyLaunchPostureTests {
     func headlessSetIsExhaustive() {
         var headless: [String] = []
         for origin in [
-            AppResidencyController.LaunchProvenance.Origin.user, .loginItem,
+            AppResidencyPolicy.LaunchProvenance.Origin.user, .loginItem,
         ] {
             for isHidden in [true, false] {
                 for keepInMenuBar in [true, false]
