@@ -389,6 +389,7 @@ report_output() {
         fixed() { printf 'fixed: %s\n' "$1"; }
         detail() { printf 'detail: %s\n' "$1"; }
         pretty_path() { printf '%s' "$1"; }
+        disk_size() { printf '1K'; }
         report_abandoned_worktrees "$ab" "$1" "${2:-holder_blocked_lines}" to_fixture_trash
     )
 }
@@ -403,13 +404,13 @@ check "no origin/main: repair removed nothing" "$worktree_paths" "$before"
 git -C "$ab" update-ref "$default_ref" main
 report=$(report_output 0)
 check "with origin/main: report" "$(printf '%s\n' "$report" | sed -n '1p')" \
-    "ghost: Abandoned worktree (clean, content on origin/main): $abw/detached"
+    "ghost: Abandoned worktree (clean, content on origin/main): $abw/detached — 1K"
 check "pushed: report" "$(printf '%s\n' "$report" | grep -F "$abw/pushed")" \
-    "ghost: Abandoned worktree (clean, HEAD on origin/feat/pushed): $abw/pushed"
+    "ghost: Abandoned worktree (clean, HEAD on origin/feat/pushed): $abw/pushed — 1K"
 
 # The process working in `held` is named, and the worktree is not removable.
 check "in use: report" "$(printf '%s\n' "$report" | grep -A2 -F "$abw/held")" \
-    "ghost: Abandoned worktree, but in use: $abw/held
+    "ghost: Abandoned worktree, but in use: $abw/held — 1K
 detail: holding it open: PID $holder (sleep)
 detail: quit it (or reboot), then re-run"
 read_worktree_layout "$ab"

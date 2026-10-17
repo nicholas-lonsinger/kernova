@@ -301,8 +301,8 @@ worktree_admin_dir() {
 # its path against abandoned_worktrees' snapshot, printing why it is held, or
 # nothing — as holder_blocked_lines does) is named with those lines and kept.
 # With <fix> = 1 the rest go through remove_abandoned_worktree. Prints through the
-# caller's pass/warn/ghost/fixed/detail/pretty_path. Without default_ref there
-# is nothing to judge content against, so it warns and names nothing.
+# caller's pass/warn/ghost/fixed/detail/pretty_path/disk_size. Without default_ref
+# there is nothing to judge content against, so it warns and names nothing.
 report_abandoned_worktrees() {
     local checkout=$1 fix=$2 holders_of=$3 dispose=$4 own wt i held line stopped=0 abandoned abandoned_wheres
     if ! own=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || [ -z "$own" ] ||
@@ -323,13 +323,13 @@ report_abandoned_worktrees() {
         wt=${abandoned[$i]}
         held=$("$holders_of" "$wt")
         if [ -n "$held" ]; then
-            ghost "Abandoned worktree, but in use: $(pretty_path "$wt")"
+            ghost "Abandoned worktree, but in use: $(pretty_path "$wt") — $(disk_size "$wt")"
             while IFS= read -r line; do
                 detail "$line"
             done <<<"$held"
             continue
         fi
-        ghost "Abandoned worktree (clean, ${abandoned_wheres[$i]}): $(pretty_path "$wt")"
+        ghost "Abandoned worktree (clean, ${abandoned_wheres[$i]}): $(pretty_path "$wt") — $(disk_size "$wt")"
         [ "$fix" = 1 ] && [ "$stopped" = 0 ] || continue
         remove_abandoned_worktree "$checkout" "$own" "$wt" "$holders_of" "$dispose"
         case $? in
