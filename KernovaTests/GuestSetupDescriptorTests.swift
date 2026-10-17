@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("GuestSetupDescriptor Tests", .caseScoped)
 @MainActor

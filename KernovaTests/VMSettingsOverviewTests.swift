@@ -1,9 +1,9 @@
-import KernovaKit
 import AppKit
+import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("VM Settings Overview Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor

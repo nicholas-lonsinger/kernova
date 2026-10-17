@@ -2,8 +2,8 @@ import AppKit
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Unit tests for `StatusMenuVMSection` — the status-item dropdown's VM rows.
 ///

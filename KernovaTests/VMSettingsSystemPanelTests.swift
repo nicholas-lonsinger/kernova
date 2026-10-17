@@ -4,8 +4,8 @@ import KernovaKit
 import Testing
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// The System panel's own behavior, drilled into through the shell.

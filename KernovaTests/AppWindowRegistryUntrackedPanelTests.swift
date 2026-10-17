@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// Unit tests for `AppWindowRegistry.isUntrackedUserPanel(_:)` — the pure
 /// classifier `hasUserWindow` uses to count AppKit-owned top-level panels (the

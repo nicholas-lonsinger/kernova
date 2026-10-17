@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 @Suite("WindowStage.makeWindow(stableContentSize:) Tests", .caseScoped, .scopedWindows)
 @MainActor

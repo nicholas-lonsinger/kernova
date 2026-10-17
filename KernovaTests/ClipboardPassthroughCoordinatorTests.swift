@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Exercises `ClipboardPassthroughCoordinator` — the automatic-passthrough
 /// driver — over a private `NSPasteboard(name:)` so tests never touch the

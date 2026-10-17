@@ -1,9 +1,9 @@
-import KernovaKit
 import AppKit
+import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Covers the summon an in-app click runs —
 /// ``AppResidencyController/summonUserInterface()`` — and the reopen leg —

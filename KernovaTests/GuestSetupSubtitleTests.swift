@@ -1,8 +1,8 @@
 import AppKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Verifies the guest-setup download-progress subtitle holds a stable
 /// horizontal position as it updates (#555).

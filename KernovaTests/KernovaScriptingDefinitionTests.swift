@@ -3,7 +3,7 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// The scripting dictionary the app ships, against the code it names.
 ///

@@ -1,10 +1,10 @@
-import KernovaKit
 import AVFoundation
 import AppKit
+import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 @testable import KernovaVirtualization
 
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the

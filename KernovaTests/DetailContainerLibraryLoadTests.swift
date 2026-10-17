@@ -1,10 +1,10 @@
 import AppKit
-import Testing
 import Foundation
-import KernovaKit
-@testable import Kernova
 @testable import KernovaCore
+import KernovaKit
+@testable import KernovaUI
 @testable import KernovaVirtualization
+import Testing
 
 /// The detail pane across the library's empty-until-read interval. The app now
 /// presents its window before the library has been read, so the pane has to

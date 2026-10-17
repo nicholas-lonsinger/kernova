@@ -1,8 +1,8 @@
 import AppKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("VMCreationWizardViewController Tests", .caseScoped, .scopedWindows)
 @MainActor

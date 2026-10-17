@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// Unit tests for `HostAgentStatusItemController.iconSymbol(hasUndoneStarts:hasWaitingAlerts:)`
 /// — which glyph the menu-bar item wears.

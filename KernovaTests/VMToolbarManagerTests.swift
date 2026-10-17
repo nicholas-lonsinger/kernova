@@ -2,8 +2,8 @@ import Cocoa
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("VMToolbarManager Tests", .caseScoped, .scopedWindows)
 @MainActor

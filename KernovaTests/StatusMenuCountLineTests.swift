@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-@testable import Kernova
+@testable import KernovaUI
 
 /// Unit tests for `StatusMenuCountLine` — a status-item dropdown line counting
 /// alerts held for want of a window, exercised as the undone-start line.

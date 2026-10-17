@@ -3,10 +3,10 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
-@testable import KernovaVirtualization
 @testable import KernovaKit
+@testable import KernovaUI
+@testable import KernovaVirtualization
 
 /// Fresh per-test "Copy to Mac" harness: a private destination pasteboard, an
 /// isolated provider registry, and an `AsyncGate` already wired to the

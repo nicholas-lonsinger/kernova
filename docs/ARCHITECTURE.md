@@ -52,7 +52,7 @@ their own idiom:
 - `VMIntentGateway` (`KernovaCore/Sources/KernovaCore/Intents/`) — Shortcuts and Spotlight.
 - `VMURLGateway` (`KernovaCore/Sources/KernovaCore/URLs/`) — `kernova:` links, from
   `application(_:open:)`.
-- `VMScriptingGateway` (`Kernova/Scripting/`) — Apple events, through the
+- `VMScriptingGateway` (`KernovaCore/Sources/KernovaUI/Scripting/`) — Apple events, through the
   delegate's `virtualMachines` element.
 
 ## Models
@@ -124,7 +124,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 
 ## Views
 
-`MainWindowController` (`Kernova/App/`) hosts `SidebarViewController` and
+`MainWindowController` (`KernovaCore/Sources/KernovaUI/App/`) hosts `SidebarViewController` and
 `DetailContainerViewController`; the detail side routes through
 `VMDetailRouterViewController` on `DetailRoute`, and a live display is
 `VMDisplayBackingView`, fed only through `VMDisplayHandle`.

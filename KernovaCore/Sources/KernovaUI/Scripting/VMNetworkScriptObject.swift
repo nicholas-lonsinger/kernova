@@ -1,5 +1,6 @@
 import Cocoa
 import CoreServices
+import KernovaCore
 import KernovaKit
 import KernovaLogging
 
@@ -11,7 +12,7 @@ import KernovaLogging
 /// command being answered.
 @MainActor
 @objc(VMNetworkScriptObject)
-final class VMNetworkScriptObject: NSObject {
+package final class VMNetworkScriptObject: NSObject {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMNetworkScriptObject")
 
@@ -50,7 +51,7 @@ final class VMNetworkScriptObject: NSObject {
     ///
     /// Cocoa's own answer allocates the element's class with `init()`, which
     /// ``VMScriptObject`` does not have — so it would trap.
-    nonisolated override func newScriptingObject(
+    package nonisolated override func newScriptingObject(
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
@@ -63,7 +64,7 @@ final class VMNetworkScriptObject: NSObject {
 
     /// How a script names this network back — `network id "…"` of the
     /// application, which no rename invalidates.
-    nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
+    package nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
             #log(Self.logger, .fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")

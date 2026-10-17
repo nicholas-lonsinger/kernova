@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 
 /// AppKit-surface properties derived from a VM's status.
 extension VMInstance {

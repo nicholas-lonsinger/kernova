@@ -1,6 +1,6 @@
-import Testing
 import Cocoa
-@testable import Kernova
+@testable import KernovaUI
+import Testing
 
 @Suite("NSImage.systemSymbol Tests", .caseScoped)
 struct NSImageExtensionsTests {

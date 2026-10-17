@@ -1,8 +1,8 @@
 import AppKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// Covers ``PowerboxSourceAuthority`` with only the panel's display stood in
 /// for.

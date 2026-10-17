@@ -1,8 +1,8 @@
 import Foundation
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 /// ``VMLibraryViewModel/vmNamesSharingMachineIdentity(with:)``: which other VMs
 /// the General section names as holding a VM's machine ID.

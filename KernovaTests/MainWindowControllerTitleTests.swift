@@ -2,8 +2,8 @@ import Foundation
 import KernovaKit
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaUI
 
 @Suite("MainWindowController window title", .caseScoped)
 @MainActor
