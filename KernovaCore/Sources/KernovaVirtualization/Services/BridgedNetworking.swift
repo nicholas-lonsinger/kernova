@@ -6,11 +6,13 @@ import Virtualization
 
 /// Answers from the live host: `VZBridgedNetworkInterface` for the bridgeable
 /// list, the SystemConfiguration dynamic store for the default route.
-struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
+package struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "HostBridgedInterfaceProvider")
 
-    func interfaces() -> [BridgedInterface] {
+    package init() {}
+
+    package func interfaces() -> [BridgedInterface] {
         VZBridgedNetworkInterface.networkInterfaces.map { interface in
             BridgedInterface(
                 identifier: interface.identifier,
@@ -18,7 +20,7 @@ struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
         }
     }
 
-    func primaryInterfaceIdentifier() -> String? {
+    package func primaryInterfaceIdentifier() -> String? {
         guard let store = SCDynamicStoreCreate(nil, "Kernova" as CFString, nil, nil) else {
             #log(Self.logger, .fault, "SCDynamicStoreCreate returned nil — reporting no primary interface")
             assertionFailure("SCDynamicStoreCreate returned nil")

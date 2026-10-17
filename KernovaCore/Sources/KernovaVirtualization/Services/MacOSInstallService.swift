@@ -6,12 +6,12 @@ import Virtualization
 
 /// Manages macOS guest installation using `VZMacOSInstaller`.
 @MainActor
-final class MacOSInstallService {
+package final class MacOSInstallService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MacOSInstallService")
 
     private let configBuilder: ConfigurationBuilder
 
-    init(
+    package init(
         vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
         guestAgent: BundledGuestAgent
@@ -32,7 +32,7 @@ final class MacOSInstallService {
     ///   `VZMacOSRestoreImage` rather than the install intent that named it.
     /// - Throws: ``MacOSInstallError`` if the restore image is missing or
     ///   incompatible with this host, or any error rethrown from `VZMacOSInstaller`.
-    func install(
+    package func install(
         into instance: VMInstance,
         _ context: borrowing VMBringUpContext,
         restoreImageURL: URL,

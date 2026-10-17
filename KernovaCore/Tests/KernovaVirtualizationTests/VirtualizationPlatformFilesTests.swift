@@ -1,8 +1,11 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaVirtualization
+@testable import KernovaVirtualizationTestSupport
 
 @Suite("VirtualizationPlatformFiles Tests", .caseScoped)
 struct VirtualizationPlatformFilesTests {

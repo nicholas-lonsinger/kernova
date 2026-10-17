@@ -93,7 +93,7 @@ help:
 	@printf 'Kernova build targets:\n\n'
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-22s %s\n", $$1, $$2}'
 	@printf '\n'
-	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/ConfigurationBuilderTests or SUITE=KernovaCoreTests/VMConfigurationTests\n'
+	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaVirtualizationTests/ConfigurationBuilderTests or SUITE=KernovaCoreTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
 

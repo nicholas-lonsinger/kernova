@@ -22,8 +22,11 @@ let package = Package(
     ],
     products: [
         .library(name: "KernovaCore", targets: ["KernovaCore"]),
+        .library(name: "KernovaVirtualization", targets: ["KernovaVirtualization"]),
         .library(name: "KernovaUI", targets: ["KernovaUI"]),
         .library(name: "KernovaCoreTestSupport", targets: ["KernovaCoreTestSupport"]),
+        .library(
+            name: "KernovaVirtualizationTestSupport", targets: ["KernovaVirtualizationTestSupport"]),
     ],
     dependencies: [
         .package(path: "../KernovaKit"),
@@ -42,6 +45,19 @@ let package = Package(
             resources: [
                 .copy("Resources/LinuxImageCatalog.json"),
                 .copy("Resources/RestoreImageCatalog.json"),
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The Virtualization adapters. An unhosted test runner lacks the
+        // virtualization entitlement, so a test that validates a configuration
+        // or builds a VZVirtualMachine runs in KernovaUITests, hosted by
+        // KernovaTestHost.
+        .target(
+            name: "KernovaVirtualization",
+            dependencies: [
+                "KernovaCore",
+                .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaLogging", package: "KernovaKit"),
             ],
             swiftSettings: sharedSwiftSettings
         ),
@@ -68,6 +84,20 @@ let package = Package(
             ],
             swiftSettings: sharedSwiftSettings
         ),
+        // The fakes and fixtures both lanes testing the engine share:
+        // KernovaVirtualizationTests, and the tests in KernovaUITests that
+        // need the entitlement.
+        .target(
+            name: "KernovaVirtualizationTestSupport",
+            dependencies: [
+                "KernovaCore",
+                "KernovaCoreTestSupport",
+                "KernovaVirtualization",
+                .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaTestSupport", package: "KernovaKit"),
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
         .testTarget(
             name: "KernovaCoreTests",
             dependencies: [
@@ -77,6 +107,19 @@ let package = Package(
                 .product(name: "KernovaLogging", package: "KernovaKit"),
                 .product(name: "KernovaTestSupport", package: "KernovaKit"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        .testTarget(
+            name: "KernovaVirtualizationTests",
+            dependencies: [
+                "KernovaCore",
+                "KernovaCoreTestSupport",
+                "KernovaVirtualization",
+                "KernovaVirtualizationTestSupport",
+                .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaLogging", package: "KernovaKit"),
+                .product(name: "KernovaTestSupport", package: "KernovaKit"),
             ],
             swiftSettings: sharedSwiftSettings
         ),

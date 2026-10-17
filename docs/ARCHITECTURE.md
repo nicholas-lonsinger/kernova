@@ -95,7 +95,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 
 ## Services
 
-- VZ-facing, the engine: `ConfigurationBuilder` (the one
+- VZ-facing, the engine (`KernovaVirtualization`): `ConfigurationBuilder` (the one
   `VZVirtualMachineConfiguration` translation), `VMSession`,
   `VirtualizationService`, `MacOSInstallService`, `USBAccessoryService` (macOS
   27; optional on `VMLifecycleCoordinator` — `nil` is the capability's
@@ -137,8 +137,11 @@ view-backed item.
 `KernovaKit/Package.swift` names every product and why each is shaped as it is.
 `KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
 Virtualization; the app links it and reaches its `package` declarations, and
-its tests run without the app as host. Its `KernovaUI` target is the AppKit
-layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`.
+its tests run without the app as host. Its `KernovaVirtualization` target is
+the engine, over the core; its tests run without a host too, except those
+needing the virtualization entitlement, which run in `KernovaUITests`. Its
+`KernovaUI` target is the AppKit layer the app links, tested by
+`KernovaUITests` inside `KernovaTestHost`.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
 (`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
 `KernovaUITests` each explain

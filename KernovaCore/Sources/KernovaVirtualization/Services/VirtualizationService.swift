@@ -10,7 +10,7 @@ import Virtualization
 /// `VZVirtualMachine` touch goes through the instance's `VMSession`, the VM's
 /// own isolation domain on its private queue.
 @MainActor
-final class VirtualizationService {
+package final class VirtualizationService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VirtualizationService")
 
     private let configBuilder: ConfigurationBuilder
@@ -20,7 +20,7 @@ final class VirtualizationService {
     /// error.
     private let isProtectedDataAvailable: @MainActor () -> Bool
 
-    init(
+    package init(
         vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
         guestAgent: BundledGuestAgent, isProtectedDataAvailable: @escaping @MainActor () -> Bool
@@ -42,7 +42,7 @@ final class VirtualizationService {
     /// read none, for the reason
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
     /// states.
-    func start(
+    package func start(
         _ instance: VMInstance, _ context: borrowing VMGuestStartContext,
         provisioning: GuestProvisioningCredentials?
     ) async throws -> VMOperationEnding<GuestStartRoute> {
@@ -166,7 +166,7 @@ final class VirtualizationService {
     // MARK: - Stop
 
     /// Sends the live guest the ACPI shutdown request.
-    func requestStop(_ instance: VMInstance) async throws {
+    package func requestStop(_ instance: VMInstance) async throws {
         guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
         do {
             try await session.requestStop()
@@ -181,7 +181,7 @@ final class VirtualizationService {
     }
 
     /// Terminates the live guest where it stands.
-    func forceStop(_ instance: VMInstance) async throws {
+    package func forceStop(_ instance: VMInstance) async throws {
         guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
         do {
             try await session.stop()
@@ -197,7 +197,7 @@ final class VirtualizationService {
 
     // MARK: - Pause / Resume
 
-    func pause(
+    package func pause(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
@@ -222,7 +222,7 @@ final class VirtualizationService {
     }
 
     /// Resumes a live-paused guest from memory.
-    func resume(
+    package func resume(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
@@ -244,7 +244,7 @@ final class VirtualizationService {
 
     /// Writes the guest's state to the bundle's suspend slot (pause, then
     /// save) and ends the session.
-    func save(
+    package func save(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
@@ -255,7 +255,7 @@ final class VirtualizationService {
     /// session — like ``captureWarmSnapshot(_:_:snapshot:session:)``, so the
     /// slot it drops when the write fails or the guest goes away under it is
     /// reachable without a real `VZVirtualMachine`.
-    static func save(
+    package static func save(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
         session: any VMSnapshotSessionOperating
     ) async throws -> VMOperationEnding<Void> {
@@ -313,7 +313,7 @@ final class VirtualizationService {
     /// slot is untouched either way. A failure discards the half-written
     /// snapshot directory and leaves the VM where it was: live, paused at
     /// worst, or at rest.
-    func takeSnapshot(
+    package func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         snapshot request: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot> {
@@ -398,7 +398,7 @@ final class VirtualizationService {
     /// `prepare` lays down the clone's staged bundle, and `copy` copies the
     /// files the guest writes into it inside the pause that writes the
     /// guest's memory to `saveFileURL` first.
-    func copyLive(
+    package func copyLive(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
@@ -498,7 +498,7 @@ final class VirtualizationService {
     /// bringing the VM back up afterwards arrives as
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` — the files are
     /// in place by then, so the caller records the revert as having landed.
-    func revertToSnapshot(
+    package func revertToSnapshot(
         _ instance: VMInstance, _ context: borrowing VMRevertContext,
         commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {

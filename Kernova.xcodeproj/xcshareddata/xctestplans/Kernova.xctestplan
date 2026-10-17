@@ -59,6 +59,14 @@
         "identifier" : "KernovaCoreTests",
         "name" : "KernovaCoreTests"
       }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaCore",
+        "identifier" : "KernovaVirtualizationTests",
+        "name" : "KernovaVirtualizationTests"
+      }
     }
   ],
   "version" : 1

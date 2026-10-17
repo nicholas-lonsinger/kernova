@@ -1,10 +1,13 @@
-import KernovaKit
 import Foundation
+import KernovaKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 
-@testable import Kernova
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaVirtualization
+@testable import KernovaVirtualizationTestSupport
 
 /// The guest-account capability's three answers — whether to offer it, whether
 /// a guest can act on it, and what Virtualization made of an account — plus the

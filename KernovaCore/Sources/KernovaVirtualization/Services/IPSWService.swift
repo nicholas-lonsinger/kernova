@@ -6,10 +6,12 @@ import Virtualization
 
 /// Looks up the newest macOS restore image (IPSW) this host can install, as VZ
 /// reports it; the image itself downloads through ``Downloading``.
-struct IPSWService: Sendable {
+package struct IPSWService: Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "IPSWService")
 
-    func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
+    package init() {}
+
+    package func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
         #log(Self.logger, .info, "Fetching latest supported macOS restore image...")
         let restoreImage = try await VZMacOSRestoreImage.latestSupported
         return LatestRestoreImage(

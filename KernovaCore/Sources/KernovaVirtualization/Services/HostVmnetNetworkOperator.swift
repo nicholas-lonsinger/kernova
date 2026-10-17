@@ -8,7 +8,7 @@ import vmnet
 /// Builds the Virtualization attachment that joins a materialized vmnet
 /// network, abstracted so tests build one without a real vmnet network — the
 /// real attachment retains the network as a vmnet object.
-protocol VmnetAttachmentMaking: Sendable {
+package protocol VmnetAttachmentMaking: Sendable {
     /// A VZ attachment joining `handle`'s network.
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment
 }
@@ -36,10 +36,12 @@ struct VmnetOperationError: Error, LocalizedError {
 
 /// The real `VmnetNetworkOperating` and `VmnetAttachmentMaking`, over the
 /// macOS 26 vmnet network APIs.
-struct HostVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentMaking {
+package struct HostVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentMaking {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HostVmnetNetworkOperator")
 
-    func createNetwork(_ kind: VmnetNetworkKind) throws -> (
+    package init() {}
+
+    package func createNetwork(_ kind: VmnetNetworkKind) throws -> (
         handle: VmnetNetworkHandle, subnet: IPv4Subnet
     ) {
         var status = vmnet_return_t.VMNET_SUCCESS
@@ -63,11 +65,11 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentMaking {
         return (VmnetNetworkHandle(network: network), subnet)
     }
 
-    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
+    package func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
         VZVmnetNetworkDeviceAttachment(network: handle.network)
     }
 
-    func releaseNetwork(_ handle: VmnetNetworkHandle) {
+    package func releaseNetwork(_ handle: VmnetNetworkHandle) {
         releaseVmnetRef(handle.network)
     }
 

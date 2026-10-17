@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// Smart groups as the sidebar lists them: the sections the projection adds,
 /// saving the library's filter as one, the header menu editing one, and the

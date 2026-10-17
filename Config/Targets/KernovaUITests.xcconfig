@@ -1,5 +1,6 @@
 // The KernovaUITests bundle, both configurations: KernovaCore's KernovaUI
-// target, tested inside KernovaTestHost.
+// target, and the engine tests that need the virtualization entitlement,
+// tested inside KernovaTestHost.
 //
 // The bundle links the code under test itself and the host links none of it,
 // so BUNDLE_LOADER stays empty and the test process holds one copy.

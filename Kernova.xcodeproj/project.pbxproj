@@ -24,6 +24,9 @@
 		A200001E /* KernovaUI in Frameworks */ = {isa = PBXBuildFile; productRef = A200001F /* KernovaUI */; };
 		A2000022 /* KernovaCoreTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A2000023 /* KernovaCoreTestSupport */; };
 		A2000020 /* KernovaUI in Frameworks */ = {isa = PBXBuildFile; productRef = A2000021 /* KernovaUI */; };
+		A2000024 /* KernovaVirtualization in Frameworks */ = {isa = PBXBuildFile; productRef = A2000025 /* KernovaVirtualization */; };
+		A2000026 /* KernovaVirtualization in Frameworks */ = {isa = PBXBuildFile; productRef = A2000027 /* KernovaVirtualization */; };
+		A2000028 /* KernovaVirtualizationTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A2000029 /* KernovaVirtualizationTestSupport */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -235,6 +238,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A200001C /* KernovaCore in Frameworks */,
+				A2000024 /* KernovaVirtualization in Frameworks */,
 				A2000020 /* KernovaUI in Frameworks */,
 				A2000001 /* KernovaKit in Frameworks */,
 				A2000012 /* KernovaAppRegistry in Frameworks */,
@@ -296,7 +300,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				A200001E /* KernovaUI in Frameworks */,
+				A2000026 /* KernovaVirtualization in Frameworks */,
 				A2000022 /* KernovaCoreTestSupport in Frameworks */,
+				A2000028 /* KernovaVirtualizationTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -391,6 +397,7 @@
 			name = Kernova;
 			packageProductDependencies = (
 				A200001D /* KernovaCore */,
+				A2000025 /* KernovaVirtualization */,
 				A2000021 /* KernovaUI */,
 				A2000002 /* KernovaKit */,
 				A2000013 /* KernovaAppRegistry */,
@@ -562,7 +569,9 @@
 			name = KernovaUITests;
 			packageProductDependencies = (
 				A200001F /* KernovaUI */,
+				A2000027 /* KernovaVirtualization */,
 				A2000023 /* KernovaCoreTestSupport */,
+				A2000029 /* KernovaVirtualizationTestSupport */,
 			);
 			productName = KernovaUITests;
 			productReference = A1000800 /* KernovaUITests.xctest */;
@@ -1065,6 +1074,18 @@
 		A2000021 /* KernovaUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaUI;
+		};
+		A2000025 /* KernovaVirtualization */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaVirtualization;
+		};
+		A2000027 /* KernovaVirtualization */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaVirtualization;
+		};
+		A2000029 /* KernovaVirtualizationTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaVirtualizationTestSupport;
 		};
 		A2000002 /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;

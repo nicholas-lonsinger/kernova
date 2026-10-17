@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// A group header's Start All, Suspend All and Stop All: what the menu counts
 /// and enables, and what a pick does in the app — one account of what was

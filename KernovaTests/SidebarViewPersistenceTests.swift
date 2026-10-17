@@ -5,6 +5,7 @@ import Testing
 
 @testable import Kernova
 @testable import KernovaCore
+@testable import KernovaVirtualization
 
 /// What the sidebar keeps across a relaunch: its options, its selected row,
 /// and which sections are collapsed — and what it never keeps, the search.

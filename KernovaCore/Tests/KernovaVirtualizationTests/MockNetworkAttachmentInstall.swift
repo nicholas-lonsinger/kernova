@@ -1,6 +1,13 @@
+import Foundation
+import KernovaTestSupport
 import Synchronization
+import Testing
 import Virtualization
-@testable import Kernova
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaVirtualization
+@testable import KernovaVirtualizationTestSupport
 
 /// Scripted stand-in for `NetworkAttachmentInstalling`, so handle tests drive
 /// the queue-side install outcome without the live VM a `VMSession` needs.

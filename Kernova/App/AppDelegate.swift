@@ -3,6 +3,7 @@ import Cocoa
 import KernovaCore
 import KernovaKit
 import KernovaLogging
+import KernovaVirtualization
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {

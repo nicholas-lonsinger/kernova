@@ -3,7 +3,7 @@ import KernovaCore
 import Virtualization
 
 /// This Mac's answers, as Virtualization gives them.
-struct VirtualizationHost: VirtualizationHostProviding {
+package struct VirtualizationHost: VirtualizationHostProviding {
     /// The framework's own bounds, which are the same for every guest.
     static let frameworkResourceLimits = VMResourceLimits(
         cpuCount: InclusiveBounds(
@@ -13,17 +13,19 @@ struct VirtualizationHost: VirtualizationHostProviding {
             lower: VZVirtualMachineConfiguration.minimumAllowedMemorySize,
             upper: VZVirtualMachineConfiguration.maximumAllowedMemorySize))
 
-    var resourceLimits: VMResourceLimits { Self.frameworkResourceLimits }
+    package init() {}
 
-    func makeMacMachineIdentifier() -> Data {
+    package var resourceLimits: VMResourceLimits { Self.frameworkResourceLimits }
+
+    package func makeMacMachineIdentifier() -> Data {
         VZMacMachineIdentifier().dataRepresentation
     }
 
-    func makeGenericMachineIdentifier() -> Data {
+    package func makeGenericMachineIdentifier() -> Data {
         VZGenericMachineIdentifier().dataRepresentation
     }
 
-    func guestAccountRefusal(_ credentials: GuestProvisioningCredentials) -> GuestProvisioningRefusal? {
+    package func guestAccountRefusal(_ credentials: GuestProvisioningCredentials) -> GuestProvisioningRefusal? {
         MacOSGuestProvisioning.validate(credentials)
     }
 }
