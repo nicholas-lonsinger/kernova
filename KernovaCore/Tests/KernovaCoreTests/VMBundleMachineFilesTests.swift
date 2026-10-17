@@ -541,7 +541,8 @@ struct VMBundleMachineFilesTests {
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
 
-        VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()).sweepRestoreStaging(bundleURL: fixture.bundleURL)
+        VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()).sweepRestoreStaging(
+            bundleURL: fixture.bundleURL)
 
         #expect(
             !FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
@@ -552,7 +553,8 @@ struct VMBundleMachineFilesTests {
     func sweepWithoutStagingIsANoOp() throws {
         let fixture = try makeFixture()
 
-        VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()).sweepRestoreStaging(bundleURL: fixture.bundleURL)
+        VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()).sweepRestoreStaging(
+            bundleURL: fixture.bundleURL)
 
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
     }

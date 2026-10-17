@@ -1,4 +1,3 @@
-
 @testable import KernovaCore
 
 extension EntitlementService {

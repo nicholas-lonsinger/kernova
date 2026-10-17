@@ -817,7 +817,8 @@ struct VMCreationViewModelTests {
     func failedLookupKeepsTheFallbackDestination() async {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel.overFakeEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         await vm.loadLatestImageDetails()?.value
 
@@ -1386,7 +1387,8 @@ struct VMCreationViewModelTests {
     @Test("A second lookup joins the first instead of re-fetching")
     func latestImageLookupRunsOnce() async {
         let ipswService = MockIPSWService()
-        let vm = VMCreationViewModel.overFakeEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         let first = vm.loadLatestImageDetails()
         #expect(vm.loadLatestImageDetails() == first)
@@ -1401,7 +1403,8 @@ struct VMCreationViewModelTests {
     func latestImageLookupFailureRetries() async {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel.overFakeEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         await vm.loadLatestImageDetails()?.value
         #expect(vm.latestImage == nil)
@@ -1528,7 +1531,8 @@ struct VMCreationViewModelTests {
     func downloadLatestVersionFollowsTheLookup() async {
         let ipswService = MockIPSWService()
         ipswService.fetchResult = makeLatestImage(version: "27.0", build: "27A100")
-        let vm = VMCreationViewModel.overFakeEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         #expect(vm.selectedImageVersion == nil)
 
@@ -1794,35 +1798,6 @@ struct VMCreationViewModelTests {
 
         #expect(vm.canCreate)
         #expect(vm.validationMessage == nil)
-    }
-}
-
-/// Inspector stand-in that stays inside `inspect` until the test releases it,
-/// the way a multi-gigabyte image keeps the real one busy for seconds.
-final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchecked Sendable {
-    let inspectResult = InspectedRestoreImage(
-        version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
-    private let gate = AsyncGate()
-    private let lock = NSLock()
-    private var isInspecting = false
-    private var isReleased = false
-
-    func inspect(_ url: URL) async throws -> InspectedRestoreImage {
-        lock.withLock { self.isInspecting = true }
-        gate.notify()
-        try? await gate.wait(until: { self.lock.withLock { self.isReleased } })
-        return inspectResult
-    }
-
-    /// Suspends until `inspect` is in flight.
-    func waitUntilInspecting() async throws {
-        try await gate.wait(until: { self.lock.withLock { self.isInspecting } })
-    }
-
-    /// Lets the in-flight inspection finish.
-    func release() {
-        lock.withLock { self.isReleased = true }
-        gate.notify()
     }
 }
 

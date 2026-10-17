@@ -2,6 +2,7 @@ import Darwin
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// Unit tests for `AppTerminationController.classifyQuit(senderPID:sender:)` —
 /// the pure classifier the termination gate uses to decide whether a quit Apple

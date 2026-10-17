@@ -507,7 +507,8 @@ struct VirtualizationServiceTests {
     ) throws -> RevertFixture {
         let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
         let library = makeWiredLibrary(
-            machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()))
+            machineFiles: machineFiles
+                ?? VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()))
         let instance = try library.registerOnDiskFixture(
             name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot])
         ) {

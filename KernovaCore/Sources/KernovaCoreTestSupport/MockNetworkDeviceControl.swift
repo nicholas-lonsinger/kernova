@@ -1,4 +1,3 @@
-
 @testable import KernovaCore
 
 /// Scripted stand-in for `NetworkDeviceControlling`, so coordinator tests drive

@@ -1,8 +1,6 @@
 import Foundation
-import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 extension WindowAutosave {
     /// Names AppKit saves nothing under, with toolbar identifiers minted here

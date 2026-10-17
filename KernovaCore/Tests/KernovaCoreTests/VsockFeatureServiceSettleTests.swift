@@ -37,7 +37,8 @@ struct VsockFeatureServiceSettleTests {
         let label = "settle-\(kind)-\(UUID().uuidString)"
         switch kind {
         case .control:
-            return VsockControlService(channel: channel, label: label, bundledAgentVersion: BundledGuestAgent.testing.version)
+            return VsockControlService(
+                channel: channel, label: label, bundledAgentVersion: BundledGuestAgent.testing.version)
         case .log:
             return VsockGuestLogService(channel: channel, label: label)
         case .drop:

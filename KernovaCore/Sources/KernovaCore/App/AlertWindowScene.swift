@@ -35,7 +35,10 @@ package struct AlertWindowScene<Window: Hashable> {
     /// What each window above reads as; a window missing here takes no alert.
     var states: [Window: AlertWindowState]
 
-    package init(working: [(window: Window, vmIDs: Set<UUID>)], displayWindows: [UUID : Window], library: Window? = nil, states: [Window : AlertWindowState]) {
+    package init(
+        working: [(window: Window, vmIDs: Set<UUID>)], displayWindows: [UUID: Window], library: Window? = nil,
+        states: [Window: AlertWindowState]
+    ) {
         self.working = working
         self.displayWindows = displayWindows
         self.library = library

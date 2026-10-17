@@ -784,7 +784,6 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: agentPath))
     }
 
     // MARK: - Shared directories

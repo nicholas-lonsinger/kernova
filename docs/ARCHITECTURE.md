@@ -136,8 +136,9 @@ view-backed item.
 `KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
 Virtualization; the app links it and reaches its `package` declarations, and
 its tests run without the app as host. Its `KernovaUI` target is the AppKit
-layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`. Its `KernovaCoreTestSupport` holds the
-fakes and fixtures those tests share with the app-hosted `KernovaTests`.
+layer the app links, tested by `KernovaUITests` inside `KernovaTestHost`. Its
+`KernovaCoreTestSupport` holds the fakes and fixtures every bundle testing the
+core shares.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
 (`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
 `KernovaUITests` each explain

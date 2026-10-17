@@ -1,4 +1,3 @@
-
 @testable import KernovaCore
 
 /// Scripted stand-in for `NetworkLinkObserving`; tests fire link-change events

@@ -1,4 +1,3 @@
-
 @testable import KernovaCore
 
 /// Scripted stand-in for `BridgedInterfaceProviding`, so tests resolve a bridged

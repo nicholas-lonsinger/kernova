@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 #if SWIFT_PACKAGE
-    import KernovaTestSupport
+import KernovaTestSupport
 #endif
 
 @testable import KernovaCore

@@ -7,9 +7,9 @@
 #
 # The `KernovaCore` target may import only `core_modules`;
 # `KernovaCoreTestSupport` may also import `support_modules`, and
-# `KernovaCoreTests` `test_modules`. A new entry names a module that re-exports neither AppKit nor
-# Virtualization; what a module merely imports is KernovaCore/Package.swift's
-# MemberImportVisibility setting's concern.
+# `KernovaCoreTests` `test_modules`. A new entry names a module that
+# re-exports neither AppKit nor Virtualization; what a module merely imports
+# is KernovaCore/Package.swift's MemberImportVisibility setting's concern.
 #
 # The compiler's own parser lists each file's imports
 # (`-emit-imported-modules`), so every spelling, comments and string literals,
@@ -47,8 +47,8 @@ core_entries=(
     'UniformTypeIdentifiers # UTType'
 )
 core_modules=$(printf '%s\n' "${core_entries[@]}" | awk '{ print $1 }' | paste -sd ' ' -)
-test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport SwiftProtobuf CoreGraphics'
-support_modules='Testing KernovaCore KernovaTestSupport CoreGraphics'
+test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport SwiftProtobuf CoreGraphics Observation'
+support_modules='Testing KernovaCore KernovaTestSupport CoreGraphics Observation'
 
 sources_root='KernovaCore/Sources/KernovaCore'
 support_root='KernovaCore/Sources/KernovaCoreTestSupport'
@@ -67,7 +67,7 @@ imported() {
     local flags=$1
     shift
     # shellcheck disable=SC2086 # the flags are words by design
-    "$swiftc" -frontend -emit-imported-modules $flags "$@" -o -
+    "$swiftc" -frontend -emit-imported-modules -swift-version 6 -module-name CoreImports $flags "$@" -o -
 }
 
 # off_list <allowed> — the lines of stdin not on the allowlist.

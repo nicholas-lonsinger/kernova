@@ -3,6 +3,7 @@ import KernovaLogging
 import Testing
 
 @testable import Kernova
+@testable import KernovaCore
 
 /// The Settings list editor's inline rename against a list that changes
 /// under it.

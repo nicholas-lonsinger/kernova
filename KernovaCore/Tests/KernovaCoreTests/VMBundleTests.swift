@@ -59,7 +59,8 @@ struct VMBundleTests {
     /// A bundle over `read` whose machine files go through the real file work,
     /// trashing through ``fileSystem``.
     private func makeBundle(_ read: VMBundleRead) -> VMBundle {
-        VMBundle.Factory(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles())).make(read)
+        VMBundle.Factory(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()))
+            .make(read)
     }
 
     /// The bundle's files through `access`, the production access by default.
@@ -85,7 +86,8 @@ struct VMBundleTests {
     /// A VM over the bundle at `url`, read through `access` and registered with
     /// a library — the only writer of a configuration.
     private func makeVM(at url: URL, access: any VMBundleFileAccessing) throws -> (VMLibrary, VMInstance) {
-        let library = makeWiredLibrary(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()))
+        let library = makeWiredLibrary(
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()))
         let instance = library.admitForTesting(
             try files(url, access).read(), phase: .stopped, preferences: makeTestPreferences())
         library.wireHooks(for: instance)
@@ -665,7 +667,8 @@ extension VMBundle {
     /// the bundle's files rather than a verb or the field classes.
     fileprivate func permitted(_ commit: (borrowing VMEditPermit) throws -> Void) throws {
         let instance = VMInstance(
-            bundle: self, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(), guestAgent: .testing)
+            bundle: self, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
+            guestAgent: .testing)
         try instance.activity.performNow(.creatingStorageDisk) { context in
             try commit(context.permit)
             return .rest(.asStarted, ())

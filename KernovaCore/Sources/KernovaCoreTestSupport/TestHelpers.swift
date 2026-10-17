@@ -3,7 +3,7 @@ import KernovaKit
 import Testing
 
 #if SWIFT_PACKAGE
-    import KernovaTestSupport
+import KernovaTestSupport
 #endif
 
 @testable import KernovaCore
@@ -481,7 +481,8 @@ func withOperation<T>(
     on bundle: VMBundle, _ body: (borrowing VMOperationContext) async throws -> T
 ) async throws -> T {
     let instance = VMInstance(
-        bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(), guestAgent: .testing)
+        bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
+        guestAgent: .testing)
     return try await withOperation(on: instance, .deletingSnapshot, body)
 }
 
@@ -736,4 +737,3 @@ extension VMMemorySize {
         VMMemorySize(mebibytes: mebibytes + VMMemorySize.gibibytes(gibibytes).mebibytes)
     }
 }
-

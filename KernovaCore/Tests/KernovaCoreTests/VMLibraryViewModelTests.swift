@@ -482,7 +482,7 @@ struct VMLibraryViewModelTests {
         await viewModel.delete(instance, deletingExternalIDs: [agentID])
 
         #expect(viewModel.instances.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: agentPath))
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
