@@ -7,9 +7,8 @@ nothing here restates one.
 
 ## Composition
 
-`KernovaApp.main()` (`Kernova/App/`) is the composition root and the one
-branch on process mode; the unit-test host takes the arm that builds none of
-it. It reads `Bundle.main` once, into `AppBundleProducts`, builds the production
+`KernovaApp.main()` (`Kernova/App/`) is the composition root. It reads
+`Bundle.main` once, into `AppBundleProducts`, builds the production
 services and the `VMLibraryViewModel` over them, and hands that to
 `AppDelegate.init`, which builds `AppWindowRegistry` (holding
 `VMDisplayPlacementController`), `AppAlertPresenter` (attached to the view
@@ -141,6 +140,6 @@ its tests run without the app as host. Its `KernovaVirtualization` target is
 the engine, over the core, and its `KernovaUI` target is the AppKit layer; the
 app links both.
 `KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
-(`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost` and
-`KernovaUITests` each explain
+(`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost`,
+`KernovaUITests` and `KernovaAppBundleTests` each explain
 themselves in `Config/Targets/<Target>.xcconfig` and their entitlements file.

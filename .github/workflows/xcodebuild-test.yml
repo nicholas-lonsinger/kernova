@@ -49,9 +49,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-
 
       # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
-      # which needs no identity or team, so it embeds the app's sandbox
-      # entitlements and the TEST_HOST-hosted unit tests run sandboxed here
-      # exactly as they do locally.
+      # which needs no identity or team.
       # Raw xcodebuild output throughout this workflow, not xcbeautify: its
       # github-actions renderer condenses errors — on test failures it prints
       # the failing test names alone, dropping the `#expect` text and the

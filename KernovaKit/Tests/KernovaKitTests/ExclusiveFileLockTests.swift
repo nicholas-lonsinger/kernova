@@ -41,6 +41,18 @@ struct ExclusiveFileLockTests {
         #expect(try ExclusiveFileLock.isHeld(at: url) == false)
     }
 
+    /// The shape `ProcessStagingRoot` takes on its staging root.
+    @Test("a locked directory refuses a second lock until the first is released")
+    func directoryLockRefusesSecondUntilReleased() throws {
+        let url = try makeDirectory()
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
+            #expect(try ExclusiveFileLock.tryAcquire(at: url) == nil)
+            withExtendedLifetime(held) {}
+        }
+        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
+    }
+
     @Test("the lock's descriptor is close-on-exec")
     func descriptorIsCloseOnExec() throws {
         let held = try #require(try ExclusiveFileLock.tryAcquire(at: makeDirectory()))

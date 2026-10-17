@@ -236,7 +236,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition both bundles carry, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, and KernovaCore's import allowlist
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, and KernovaCore's import allowlist
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -251,7 +251,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh
 	@bash Tools/check-entitlements.sh
-	@bash Tools/check-scripting-definition.sh
+	@bash Tools/check-test-host-declarations.sh
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-test-plan-allowance.sh
 	@bash Tools/check-test-seams.sh

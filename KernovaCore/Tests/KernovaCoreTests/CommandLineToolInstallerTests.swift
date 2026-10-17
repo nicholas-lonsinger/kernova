@@ -191,6 +191,16 @@ struct CommandLineToolInstallerTests {
         }
     }
 
+    @Test("A process whose signature claims no app group offers no tool, even with one bundled")
+    func noContainerOffersNoTool() throws {
+        // The test runner's signature claims no application group.
+        try #require(KernovaAppGroup.containerURL() == nil)
+        _ = try makeTool("This.app/Contents/Helpers/kernova", in: scratch.url)
+        try #require(FileManager.default.fileExists(atPath: installer.bundledToolURL.path(percentEncoded: false)))
+
+        #expect(!installer.isAvailable)
+    }
+
     @Test("The tool is offered from Contents/Helpers, never from Contents/MacOS")
     func bundledToolLivesInHelpers() {
         let path = installer.bundledToolURL.path(percentEncoded: false)

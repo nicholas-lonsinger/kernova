@@ -144,8 +144,7 @@ enum TestAdmission {
     /// reports so a run shows which mechanism actually delivered the value.
     ///
     /// The environment is the only source. A dropped width *file* was tried and
-    /// removed: `NSHomeDirectory()` is the container only for the sandboxed
-    /// app-hosted bundle, so for the two unsandboxed ones it resolves to the
+    /// removed: no test process is sandboxed, so `NSHomeDirectory()` is the
     /// developer's real home, where a leftover file would silently gate every
     /// later local run — the same failure the world-writable `/tmp` entry was
     /// dropped for.

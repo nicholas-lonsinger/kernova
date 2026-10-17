@@ -11,14 +11,6 @@
 #
 # A remote XCRemoteSwiftPackageReference is untouched.
 #
-# No project target links KernovaKit's `KernovaTestSupport` product directly;
-# a bundle that compiles its folder takes it that way instead. Linked into the
-# app-hosted KernovaTests, the product puts a second KernovaKit in the test
-# process: Xcode then builds KernovaKit as a framework in test builds only, and
-# `-I Products/<config>` resolves the stale static module ahead of it.
-# KernovaUITests compiles no such folder and gets it through KernovaCore's
-# `KernovaCoreTestSupport` product, which the one-copy rule below covers.
-#
 # A hosted test process holds one copy of each package product, so a test
 # bundle and the app its TEST_HOST names never both link package products: the
 # products are static, and each image linking one carries its own copy, so the
@@ -65,10 +57,6 @@ for package in $packages; do
         violation "no PBXFileReference with path = $package — the package is not a top-level peer, so Kernova.xctestplan cannot reach its tests"
     fi
 done
-
-if grep -qE '^[[:space:]]*productName = KernovaTestSupport;' "$pbxproj"; then
-    violation "a target takes the KernovaTestSupport product — add KernovaKit/Sources/KernovaTestSupport to the target's synchronized folders instead"
-fi
 
 # One line per native target: name, product path, xcconfig file name, and how
 # many package products it links (dependencies plus Frameworks-phase entries).
@@ -138,4 +126,4 @@ if [ -n "$violations" ]; then
     exit 1
 fi
 
-pass "package references: $(echo "$packages" | paste -sd ' ' -) are top-level peers, not package dependencies, no project target links KernovaTestSupport directly, and no hosted test bundle links package products alongside its host ($hosted_pairs pairs)"
+pass "package references: $(echo "$packages" | paste -sd ' ' -) are top-level peers, not package dependencies, and no hosted test bundle links package products alongside its host ($hosted_pairs pairs)"
