@@ -48,7 +48,9 @@ struct VMLibraryConfigCheckTests {
         _ name: String, to storage: MockVMStorageService,
         edit: (inout [String: Any]) -> Void = { _ in }
     ) throws -> (url: URL, bytes: Data) {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = try storage.bundleURL(for: config)
         let bytes = try Self.json(of: config, edit: edit)
         storage.files.setData(bytes, atRelativePath: VMBundleLayout.configRelativePath, in: url)
@@ -276,7 +278,9 @@ struct VMLibraryConfigCheckTests {
         harness.storage.files.setData(
             Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
         let snapshotConfig = try Self.json(
-            of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+            of: VMConfiguration(
+                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         ) { $0["displayHiDPI"] = Self.unrecognized }
         let snapshotPath = VMBundleLayout.snapshotConfigRelativePath(id: snapshotID)
         harness.storage.files.setData(snapshotConfig, atRelativePath: snapshotPath, in: url)
@@ -321,7 +325,9 @@ struct VMLibraryConfigCheckTests {
         harness.storage.files.setData(
             Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
         let snapshotConfig = try Self.json(
-            of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+            of: VMConfiguration(
+                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         ) {
             $0["networkMode"] = Self.unrecognized
             $0["displayHiDPI"] = Self.unrecognized
@@ -370,7 +376,10 @@ struct VMLibraryConfigCheckTests {
         let repaired = try #require(harness.library.instances.first { $0.name == "Dev" })
         #expect(
             repaired.configuration.networkMode
-                == VMConfiguration(name: "", guestOS: .linux, bootMode: .efi).networkMode)
+                == VMConfiguration(
+                    name: "", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize
+                ).networkMode)
         #expect(harness.library.selectedID == repaired.id)
         #expect(configBytes(at: repairableURL, in: harness.storage) != repairableBytes)
         #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["Dev \u{2014} config.json"])
@@ -409,7 +418,11 @@ struct VMLibraryConfigCheckTests {
         let files = try await harness.library.checkConfigFiles()
 
         // Another writer changes the file after the user reviewed the check.
-        let changed = try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) {
+        let changed = try Self.json(
+            of: VMConfiguration(
+                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        ) {
             $0["networkMode"] = "another-unrecognized-mode"
         }
         harness.storage.files.setData(changed, atRelativePath: VMBundleLayout.configRelativePath, in: url)
@@ -468,7 +481,11 @@ struct VMLibraryConfigCheckTests {
         let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
 
         // Another copy repairs the file after this one's row was read.
-        let repaired = try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) { _ in }
+        let repaired = try Self.json(
+            of: VMConfiguration(
+                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        ) { _ in }
         harness.storage.files.setData(repaired, atRelativePath: VMBundleLayout.configRelativePath, in: url)
 
         await #expect(throws: ConfigFileRepairRefusal.readsNow) { try await harness.library.moveToTrash(row) }
@@ -483,7 +500,11 @@ struct VMLibraryConfigCheckTests {
         await harness.library.loadVMs()
         let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
 
-        let changed = try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) {
+        let changed = try Self.json(
+            of: VMConfiguration(
+                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        ) {
             $0["networkMode"] = "another-unrecognized-mode"
         }
         harness.storage.files.setData(changed, atRelativePath: VMBundleLayout.configRelativePath, in: url)
@@ -576,7 +597,9 @@ struct VMLibraryConfigCheckTests {
             Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
         storage.files.setData(
             try Self.json(
-                of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi), edit: snapshotConfig),
+                of: VMConfiguration(
+                    name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize), edit: snapshotConfig),
             atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
         if ephemeral {
             var hostState = VMHostState()
@@ -691,7 +714,11 @@ struct VMLibraryConfigCheckTests {
         // An outside edit that makes the baseline readable is read at the
         // start's own admission.
         harness.storage.files.setData(
-            try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) { _ in },
+            try Self.json(
+                of: VMConfiguration(
+                    name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+            ) { _ in },
             atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         try await waitForChange { instance.status == .running }

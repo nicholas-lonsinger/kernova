@@ -2217,7 +2217,9 @@ struct VMLibraryViewModelTests {
     {
         let storage = MockVMStorageService()
         for name in ["First VM", "Second VM"] {
-            var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+            var config = VMConfiguration(
+                name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
             config.macAddress = mac
             storage.bundles[VMInstanceFixture.bundleURL(for: config.id)] = config
         }
@@ -3867,7 +3869,9 @@ struct VMLibraryViewModelTests {
 
     @Test("A pending Linux image download loads as .initialBoot")
     func initialStatusHonorsLinuxContext() {
-        var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Debian", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let layout = VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: config.id))
 
@@ -5023,7 +5027,9 @@ struct VMLibraryViewModelTests {
     func importVMSourceAlreadyInVMsDirectory() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let vmsDir = try storage.vmsDirectory
-        let config = VMConfiguration(name: "Already There", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Already There", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
         let existing = viewModel.library.admitForTesting(
@@ -5311,7 +5317,9 @@ struct VMLibraryViewModelTests {
     func exactCopyCarriedSnapshotKeepsItsCapturedNetwork() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let taken = UUID()
-        var captured = VMConfiguration(name: "Original", guestOS: .linux, bootMode: .efi)
+        var captured = VMConfiguration(
+            name: "Original", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         captured.applyNetworkMode(.hostOnly)
         captured.networkMembership = .isolated
         captured.macAddress = "02:4b:4e:56:0d:01"
@@ -5777,11 +5785,26 @@ struct VMLibraryViewModelTests {
     func loadVMsAppliesCustomOrder() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
-            name: "First", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+            name: "First",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 100))
         let config2 = VMConfiguration(
-            name: "Second", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+            name: "Second",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 200))
         let config3 = VMConfiguration(
-            name: "Third", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 300))
+            name: "Third",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 300))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -5826,9 +5849,19 @@ struct VMLibraryViewModelTests {
     func loadVMsFallsBackToCreatedAt() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
-            name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+            name: "Older",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 100))
         let config2 = VMConfiguration(
-            name: "Newer", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+            name: "Newer",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 200))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
@@ -5846,7 +5879,12 @@ struct VMLibraryViewModelTests {
     func reconcileAppendsNewVMs() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
-            name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+            name: "Existing",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 200))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
@@ -5857,7 +5895,12 @@ struct VMLibraryViewModelTests {
 
         // Simulate a new VM appearing on disk
         let config2 = VMConfiguration(
-            name: "Discovered", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+            name: "Discovered",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            createdAt: Date(timeIntervalSince1970: 100))
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url2] = config2
@@ -5886,7 +5929,9 @@ struct VMLibraryViewModelTests {
     @Test("custom order ignores stale UUIDs not present in loaded VMs")
     func customOrderIgnoresStaleUUIDs() async {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Only VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
@@ -6002,7 +6047,9 @@ struct VMLibraryViewModelTests {
     func onAgentBecameCurrentAutoEjectsInstaller() async throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let storage = MockVMStorageService()
-        var config = VMConfiguration(name: "Wired VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Wired VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.removableMedia = [
             RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         ]

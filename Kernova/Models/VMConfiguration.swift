@@ -350,6 +350,28 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// picked off their own disk.
     var installedImage: InstalledImage?
 
+    // MARK: - Defaults
+
+    /// The value a new VM gets for each field a `config.json` may omit, which
+    /// a decode of a file without the field takes too.
+    enum Defaults {
+        static let displaySizesToWindow: Bool = true
+        static let displayHiDPI: Bool = true
+        static let displayAutoResizes: Bool = true
+        static let networkMode: VMNetworkMode = .nat
+        static let bridgedInterfaceIdentifier: String? = nil
+        static let networkMembership: VMNetworkMembership = .common
+        static let clipboardPassthroughEnabled: Bool = false
+        static let dropFilesEnabled: Bool = true
+        static let serialSocketRelayEnabled: Bool = false
+        static let audioInputEnabled: Bool = false
+        static let audioOutputEnabled: Bool = true
+        static let inputDeviceMode: VMInputDeviceMode = .automatic
+        static let systemKeyForwarding: VMSystemKeyForwarding = .always
+        static let agentLogForwardingEnabled: Bool = false
+        static let kernelCommandLine: String? = nil
+    }
+
     // MARK: - Initializer
 
     init(
@@ -357,29 +379,29 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         name: String,
         guestOS: VMGuestOS,
         bootMode: VMBootMode,
-        cpuCount: Int? = nil,
-        memorySizeInGB: VMMemorySize? = nil,
+        cpuCount: Int,
+        memorySizeInGB: VMMemorySize,
         diskSizeInGB: Int? = nil,
         displayWidth: Int = 1920,
         displayHeight: Int = 1200,
         displayPPI: Int = 144,
-        displaySizesToWindow: Bool = true,
-        displayHiDPI: Bool = true,
-        displayAutoResizes: Bool = true,
+        displaySizesToWindow: Bool = Defaults.displaySizesToWindow,
+        displayHiDPI: Bool = Defaults.displayHiDPI,
+        displayAutoResizes: Bool = Defaults.displayAutoResizes,
         networkEnabled: Bool = true,
-        networkMode: VMNetworkMode = .nat,
-        bridgedInterfaceIdentifier: String? = nil,
-        networkMembership: VMNetworkMembership = .common,
+        networkMode: VMNetworkMode = Defaults.networkMode,
+        bridgedInterfaceIdentifier: String? = Defaults.bridgedInterfaceIdentifier,
+        networkMembership: VMNetworkMembership = Defaults.networkMembership,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
-        clipboardPassthroughEnabled: Bool = false,
-        dropFilesEnabled: Bool = true,
-        serialSocketRelayEnabled: Bool = false,
-        audioInputEnabled: Bool = false,
-        audioOutputEnabled: Bool = true,
-        inputDeviceMode: VMInputDeviceMode = .automatic,
-        systemKeyForwarding: VMSystemKeyForwarding = .always,
-        agentLogForwardingEnabled: Bool = false,
+        clipboardPassthroughEnabled: Bool = Defaults.clipboardPassthroughEnabled,
+        dropFilesEnabled: Bool = Defaults.dropFilesEnabled,
+        serialSocketRelayEnabled: Bool = Defaults.serialSocketRelayEnabled,
+        audioInputEnabled: Bool = Defaults.audioInputEnabled,
+        audioOutputEnabled: Bool = Defaults.audioOutputEnabled,
+        inputDeviceMode: VMInputDeviceMode = Defaults.inputDeviceMode,
+        systemKeyForwarding: VMSystemKeyForwarding = Defaults.systemKeyForwarding,
+        agentLogForwardingEnabled: Bool = Defaults.agentLogForwardingEnabled,
         lastSeenAgentVersion: String? = nil,
         lastSeenGuestOSVersion: String? = nil,
         hardwareModelData: Data? = nil,
@@ -387,7 +409,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         genericMachineIdentifierData: Data? = nil,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
-        kernelCommandLine: String? = nil,
+        kernelCommandLine: String? = Defaults.kernelCommandLine,
         kernelBookmark: Data? = nil,
         initrdBookmark: Data? = nil,
         storageDisks: [StorageDisk]? = nil,
@@ -403,8 +425,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.name = name
         self.guestOS = guestOS
         self.bootMode = bootMode
-        self.cpuCount = cpuCount ?? guestOS.preferredCPUCount
-        self.memorySizeInGB = memorySizeInGB ?? guestOS.preferredMemorySize
+        self.cpuCount = cpuCount
+        self.memorySizeInGB = memorySizeInGB
         self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
@@ -457,7 +479,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         let name = try c.decode(String.self, forKey: .name)
         let guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
         let bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
-        let defaults = VMConfiguration(id: id, name: name, guestOS: guestOS, bootMode: bootMode)
         self.id = id
         self.name = name
         self.guestOS = guestOS
@@ -469,43 +490,43 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displayHeight = try c.decode(Int.self, forKey: .displayHeight)
         self.displayPPI = try c.decode(Int.self, forKey: .displayPPI)
         self.displaySizesToWindow = try c.decode(
-            Bool.self, forKey: .displaySizesToWindow, default: defaults.displaySizesToWindow, in: decoder)
+            Bool.self, forKey: .displaySizesToWindow, default: Defaults.displaySizesToWindow, in: decoder)
         self.displayHiDPI = try c.decode(
-            Bool.self, forKey: .displayHiDPI, default: defaults.displayHiDPI, in: decoder)
+            Bool.self, forKey: .displayHiDPI, default: Defaults.displayHiDPI, in: decoder)
         self.displayAutoResizes = try c.decode(
-            Bool.self, forKey: .displayAutoResizes, default: defaults.displayAutoResizes, in: decoder)
+            Bool.self, forKey: .displayAutoResizes, default: Defaults.displayAutoResizes, in: decoder)
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
         self.networkMode = try c.decode(
-            VMNetworkMode.self, forKey: .networkMode, default: defaults.networkMode, in: decoder)
+            VMNetworkMode.self, forKey: .networkMode, default: Defaults.networkMode, in: decoder)
         self.bridgedInterfaceIdentifier = try c.decode(
-            String?.self, forKey: .bridgedInterfaceIdentifier, default: defaults.bridgedInterfaceIdentifier,
+            String?.self, forKey: .bridgedInterfaceIdentifier, default: Defaults.bridgedInterfaceIdentifier,
             in: decoder)
         self.networkMembership = try c.decode(
-            VMNetworkMembership.self, forKey: .networkMembership, default: defaults.networkMembership,
+            VMNetworkMembership.self, forKey: .networkMembership, default: Defaults.networkMembership,
             in: decoder)
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled = try c.decode(
             Bool.self, forKey: .clipboardPassthroughEnabled,
-            default: defaults.clipboardPassthroughEnabled, in: decoder)
+            default: Defaults.clipboardPassthroughEnabled, in: decoder)
         self.dropFilesEnabled = try c.decode(
-            Bool.self, forKey: .dropFilesEnabled, default: defaults.dropFilesEnabled, in: decoder)
+            Bool.self, forKey: .dropFilesEnabled, default: Defaults.dropFilesEnabled, in: decoder)
         self.serialSocketRelayEnabled = try c.decode(
-            Bool.self, forKey: .serialSocketRelayEnabled, default: defaults.serialSocketRelayEnabled,
+            Bool.self, forKey: .serialSocketRelayEnabled, default: Defaults.serialSocketRelayEnabled,
             in: decoder)
         self.audioInputEnabled = try c.decode(
-            Bool.self, forKey: .audioInputEnabled, default: defaults.audioInputEnabled, in: decoder)
+            Bool.self, forKey: .audioInputEnabled, default: Defaults.audioInputEnabled, in: decoder)
         self.audioOutputEnabled = try c.decode(
-            Bool.self, forKey: .audioOutputEnabled, default: defaults.audioOutputEnabled, in: decoder)
+            Bool.self, forKey: .audioOutputEnabled, default: Defaults.audioOutputEnabled, in: decoder)
         self.inputDeviceMode = try c.decode(
-            VMInputDeviceMode.self, forKey: .inputDeviceMode, default: defaults.inputDeviceMode,
+            VMInputDeviceMode.self, forKey: .inputDeviceMode, default: Defaults.inputDeviceMode,
             in: decoder)
         self.systemKeyForwarding = try c.decode(
             VMSystemKeyForwarding.self, forKey: .systemKeyForwarding,
-            default: defaults.systemKeyForwarding, in: decoder)
+            default: Defaults.systemKeyForwarding, in: decoder)
         self.agentLogForwardingEnabled = try c.decode(
             Bool.self, forKey: .agentLogForwardingEnabled,
-            default: defaults.agentLogForwardingEnabled, in: decoder)
+            default: Defaults.agentLogForwardingEnabled, in: decoder)
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
@@ -514,7 +535,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(
-            String?.self, forKey: .kernelCommandLine, default: defaults.kernelCommandLine, in: decoder)
+            String?.self, forKey: .kernelCommandLine, default: Defaults.kernelCommandLine, in: decoder)
         self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
         self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
         self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)

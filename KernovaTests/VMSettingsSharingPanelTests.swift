@@ -508,7 +508,11 @@ struct VMSettingsSharingPanelTests {
         ])
     func resumeNoteOnlyForMacOS13(guestOS: VMGuestOS, reported: String?, noted: Bool) {
         let configuration = VMConfiguration(
-            name: "Shares", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
+            name: "Shares",
+            guestOS: guestOS,
+            bootMode: guestOS == .macOS ? .macOS : .efi,
+            cpuCount: guestOS.hostCPUCount,
+            memorySizeInGB: guestOS.hostMemorySize,
             lastSeenGuestOSVersion: reported)
         let paragraphs = VMSettingsSharingPanelViewController.sharedDirectoriesInfoParagraphs(
             for: configuration)

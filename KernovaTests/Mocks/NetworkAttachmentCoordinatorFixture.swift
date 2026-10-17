@@ -47,8 +47,14 @@ extension NetworkChoice {
         membership: VMNetworkMembership = .common
     ) {
         let config = VMConfiguration(
-            name: "Choice", guestOS: .linux, bootMode: .efi, networkEnabled: true,
-            networkMode: mode, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier,
+            name: "Choice",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            networkEnabled: true,
+            networkMode: mode,
+            bridgedInterfaceIdentifier: bridgedInterfaceIdentifier,
             networkMembership: membership)
         guard let choice = config.networkChoice else {
             preconditionFailure("A configuration with a network device names a choice")

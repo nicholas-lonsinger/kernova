@@ -827,7 +827,9 @@ struct VMInstanceTests {
 
     @Test("An arrival reads Cancelling… once a cancel is taken")
     func arrivalLabelReadsCancellingOnceCancelled() {
-        let configuration = VMConfiguration(name: "Copy", guestOS: .linux, bootMode: .efi)
+        let configuration = VMConfiguration(
+            name: "Copy", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let arrival = VMArrival.inert(.importing, configuration: configuration)
         #expect(arrival.displayLabel == "Importing\u{2026}")
 

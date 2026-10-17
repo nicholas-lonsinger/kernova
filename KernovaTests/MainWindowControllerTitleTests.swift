@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -21,7 +22,9 @@ struct MainWindowControllerTitleTests {
     func selectedArrivalTitlesTheWindow() {
         let arrival = VMArrival.inert(
             .importing,
-            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi))
+            configuration: VMConfiguration(
+                name: "Arriving", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         #expect(MainWindowController.windowTitle(for: .arriving(arrival)) == "Kernova — Arriving")
     }
 }

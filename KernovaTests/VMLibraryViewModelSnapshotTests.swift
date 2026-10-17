@@ -120,7 +120,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A loaded VM carries the snapshots its bundle holds")
     func loadSeedsTheManifest() async throws {
         let harness = makeHarness()
-        let config = VMConfiguration(name: "Seeded", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Seeded", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
         harness.storage.bundles[bundleURL] = config
         let snapshot = makeSnapshot()
@@ -136,7 +138,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("Launch reclaims the staging directory an interrupted revert left, and a load alone does not")
     func launchSweepsRevertStaging() async throws {
         let harness = makeHarness()
-        let config = VMConfiguration(name: "Interrupted", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
         harness.storage.bundles[bundleURL] = config
 

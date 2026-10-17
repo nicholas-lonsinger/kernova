@@ -66,22 +66,34 @@ struct ConfigurationBuilderTests {
     /// Returns a Linux/EFI config set to bridged networking.
     private func makeBridgedConfig() -> VMConfiguration {
         VMConfiguration(
-            name: "Test Linux", guestOS: .linux, bootMode: .efi,
-            networkEnabled: true, networkMode: .bridged)
+            name: "Test Linux",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            networkEnabled: true,
+            networkMode: .bridged)
     }
 
     /// Returns a Linux/EFI config set to host-only networking.
     private func makeHostOnlyConfig() -> VMConfiguration {
         VMConfiguration(
-            name: "Test Linux", guestOS: .linux, bootMode: .efi,
-            networkEnabled: true, networkMode: .hostOnly)
+            name: "Test Linux",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
+            networkEnabled: true,
+            networkMode: .hostOnly)
     }
 
     /// Returns a Linux/EFI config with optional shared directories.
     private func makeLinuxConfig(
         sharedDirectories: [SharedDirectory]? = nil
     ) -> VMConfiguration {
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.sharedDirectories = sharedDirectories
         return config
     }
@@ -129,7 +141,9 @@ struct ConfigurationBuilderTests {
     func kernelBootWithoutPath() throws {
         let bundleURL = try makeBundle()
 
-        let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        let config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
@@ -145,7 +159,9 @@ struct ConfigurationBuilderTests {
     func macOSBootWithoutHardwareModel() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        let config = VMConfiguration(
+            name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         let builder = makeBuilder()
         #expect(throws: (any Error).self) {
             try builder.build(from: config, bundleURL: bundleURL)
@@ -336,7 +352,9 @@ struct ConfigurationBuilderTests {
     func builderThrowsForNonexistentKernelPath() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = "/nonexistent/\(UUID().uuidString)/vmlinuz"
 
         let builder = makeBuilder()
@@ -358,7 +376,9 @@ struct ConfigurationBuilderTests {
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
         FileManager.default.createFile(atPath: kernelPath, contents: Data([0]))
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = kernelPath
         config.initrdPath = "/nonexistent/\(UUID().uuidString)/initrd.img"
 
@@ -379,7 +399,9 @@ struct ConfigurationBuilderTests {
     func builderThrowsForNonexistentRemovableMediaPath() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [
             RemovableMediaItem(path: "/nonexistent/\(UUID().uuidString)/install.iso", readOnly: true)
         ]
@@ -407,7 +429,9 @@ struct ConfigurationBuilderTests {
         try Data(count: 100).write(to: URL(fileURLWithPath: isoPath))
 
         let itemID = UUID()
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [
             RemovableMediaItem(id: itemID, path: isoPath, readOnly: true, label: "Bad ISO")
         ]
@@ -432,7 +456,9 @@ struct ConfigurationBuilderTests {
         try Data(count: 100).write(to: URL(fileURLWithPath: diskPath))
 
         let diskID = UUID()
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: bundleURL)),
             StorageDisk(
@@ -458,7 +484,9 @@ struct ConfigurationBuilderTests {
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: true)]
 
         let builder = makeBuilder()
@@ -480,7 +508,9 @@ struct ConfigurationBuilderTests {
         try Data().write(to: URL(fileURLWithPath: isoPath))
 
         let configuredUUID = UUID()
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [
             RemovableMediaItem(id: configuredUUID, path: isoPath, readOnly: true)
         ]
@@ -503,7 +533,9 @@ struct ConfigurationBuilderTests {
     func noRemovableMediaReturnsEmpty() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         #expect(result.products.coldRemovableMedia.isEmpty)
@@ -518,7 +550,9 @@ struct ConfigurationBuilderTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: isoPath)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: isoPath) }
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: false)]
 
         let builder = makeBuilder()
@@ -538,7 +572,9 @@ struct ConfigurationBuilderTests {
     func defaultStorageDisksSynthesizesMainDisk() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
@@ -553,7 +589,9 @@ struct ConfigurationBuilderTests {
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(path: isoPath, readOnly: true, label: "Installer"),
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
@@ -587,7 +625,9 @@ struct ConfigurationBuilderTests {
     func builderThrowsForNonexistentStorageDisk() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
             StorageDisk(
@@ -617,7 +657,9 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("disk-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
             StorageDisk(
@@ -649,7 +691,9 @@ struct ConfigurationBuilderTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: diskPath)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: diskPath) }
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
             StorageDisk(path: diskPath, readOnly: false, label: "Data", isInternal: false, kind: .virtio),
@@ -675,7 +719,9 @@ struct ConfigurationBuilderTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: diskPath)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: diskPath) }
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
             StorageDisk(path: diskPath, readOnly: true, label: "Data", isInternal: false, kind: .virtio),
@@ -733,7 +779,9 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = dirPath.path(percentEncoded: false)
 
         let builder = makeBuilder()
@@ -758,7 +806,9 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("initrd-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = kernelPath
         config.initrdPath = dirPath.path(percentEncoded: false)
 
@@ -780,7 +830,9 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("iso-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.removableMedia = [
             RemovableMediaItem(path: dirPath.path(percentEncoded: false), readOnly: true)
         ]
@@ -808,7 +860,9 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(
             atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = symlinkPath
 
         let builder = makeBuilder()
@@ -834,7 +888,9 @@ struct ConfigurationBuilderTests {
         let symlinkPath = bundleURL.appendingPathComponent("link-to-vmlinuz").path(percentEncoded: false)
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realKernel)
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.kernelPath = symlinkPath
 
         let builder = makeBuilder()
@@ -1235,7 +1291,9 @@ struct ConfigurationBuilderTests {
         // `configureMacOSBoot` needs a real `VZMacHardwareModel`, which only a
         // restore image can mint.
         let vz = VZVirtualMachineConfiguration()
-        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.lastSeenGuestOSVersion = "13.5"
         makeBuilder().configureMacOSDevices(vz, config: config)
 
@@ -1248,7 +1306,9 @@ struct ConfigurationBuilderTests {
     @Test("A guest known to predate macOS 13 gets only the USB input devices")
     func macOSInputDevicesUSBPairForOldGuest() {
         let vz = VZVirtualMachineConfiguration()
-        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         makeBuilder().configureMacOSDevices(vz, config: config)
 
@@ -1261,7 +1321,9 @@ struct ConfigurationBuilderTests {
     @Test("macOS display device carries the configured size and pixel density")
     func macOSDisplayMatchesConfiguration() throws {
         let vz = VZVirtualMachineConfiguration()
-        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.displayWidth = 2560
         config.displayHeight = 1600
         config.displayPPI = 220
@@ -1316,7 +1378,9 @@ struct ConfigurationBuilderTests {
         // Marking the entry `isInternal: true` opts into bundle-containment
         // validation. A `..` segment that resolves outside the bundle must
         // be rejected before the framework ever opens the file.
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(
                 path: "../escape/passwd",
@@ -1365,7 +1429,9 @@ struct ConfigurationBuilderTests {
         FileManager.default.createFile(
             atPath: mainDiskURL.path(percentEncoded: false), contents: Data(count: 1_048_576))
 
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         config.storageDisks = [
             StorageDisk(
                 path: "Disk.asif", readOnly: false, label: "Main Disk",
@@ -1399,7 +1465,9 @@ struct ConfigurationBuilderTests {
     /// `guestOS`, while the Mac boot path needs hardware-model data that only a
     /// real restore image can produce.
     private func makeAgentDiskConfig(installedVersion: String?) -> VMConfiguration {
-        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .efi)
+        var config = VMConfiguration(
+            name: "Test macOS", guestOS: .macOS, bootMode: .efi, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         if let installedVersion {
             config.installedImage = .macOSRestoreImage(version: installedVersion, build: "21A559")
         }

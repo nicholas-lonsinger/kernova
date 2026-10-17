@@ -34,7 +34,9 @@ struct VMLibraryAdoptionTests {
     }
 
     private func configuration(_ name: String) -> VMConfiguration {
-        VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        VMConfiguration(
+            name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
     }
 
     /// Writes `configuration` as the whole of a staged bundle, as a create does.

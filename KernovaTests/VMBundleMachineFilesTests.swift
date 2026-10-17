@@ -32,7 +32,9 @@ struct VMBundleMachineFilesTests {
             try Data("aux".utf8).write(to: layout.auxiliaryStorageURL)
         }
 
-        var config = VMConfiguration(name: "Snapshot VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Snapshot VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         var disks = [StorageDisk(path: "Disk.asif", isInternal: true)]
         if let additionalDiskID {
             try FileManager.default.createDirectory(

@@ -50,7 +50,9 @@ struct VsockFeatureCoordinatorTests {
 
     @Test("Each descriptor's install-time gate tracks its own configuration flag")
     func isEnabledTracksItsFlag() {
-        var config = VMConfiguration(name: "Gate VM", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Gate VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.clipboardSharingEnabled = false
         config.agentLogForwardingEnabled = false
         config.dropFilesEnabled = false
@@ -75,8 +77,12 @@ struct VsockFeatureCoordinatorTests {
     /// vsock listeners there would install ports nothing dials.
     @Test("Clipboard applies live only to macOS guests, unlike log and drop")
     func clipboardAppliesLiveOnlyToMacOS() {
-        let linux = VMConfiguration(name: "Linux VM", guestOS: .linux, bootMode: .efi)
-        let macOS = VMConfiguration(name: "macOS VM", guestOS: .macOS, bootMode: .macOS)
+        let linux = VMConfiguration(
+            name: "Linux VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let macOS = VMConfiguration(
+            name: "macOS VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
 
         #expect(!VsockFeatureDescriptor.clipboard.appliesLive(linux))
         #expect(VsockFeatureDescriptor.clipboard.appliesLive(macOS))

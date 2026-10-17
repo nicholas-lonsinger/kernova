@@ -31,7 +31,11 @@ struct GuestAgentDiskDeliveryTests {
         installedVersion: String? = nil
     ) -> VMConfiguration {
         var config = VMConfiguration(
-            name: "Test", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+            name: "Test",
+            guestOS: guestOS,
+            bootMode: guestOS == .macOS ? .macOS : .efi,
+            cpuCount: guestOS.hostCPUCount,
+            memorySizeInGB: guestOS.hostMemorySize)
         config.lastSeenGuestOSVersion = lastSeen
         if let installedVersion {
             config.installedImage = .macOSRestoreImage(version: installedVersion, build: "21A559")

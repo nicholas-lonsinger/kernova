@@ -37,7 +37,9 @@ struct VMStateFieldClassesTests {
     func everyStoredFieldIsClassified() {
         Self.expectExhaustive(
             VMConfiguration.fieldClasses,
-            over: VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS))
+            over: VMConfiguration(
+                name: "VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+                memorySizeInGB: VMGuestOS.macOS.hostMemorySize))
         Self.expectExhaustive(VMHostState.fieldClasses, over: VMHostState())
         Self.expectExhaustive(VMSnapshotManifest.fieldClasses, over: VMSnapshotManifest())
         Self.expectExhaustive(USBAccessoryPairingSet.fieldClasses, over: USBAccessoryPairingSet())
@@ -45,7 +47,9 @@ struct VMStateFieldClassesTests {
 
     @Test("A field is refused only when it moved and no class of the edit may write it")
     func refusalMeetsTheFieldsClasses() {
-        let old = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        let old = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         var new = old
         new.name = "Renamed"
         new.memorySizeInGB = new.memorySizeInGB.adding(gibibytes: 2)
@@ -62,7 +66,9 @@ struct VMStateFieldClassesTests {
 
     @Test("The network fields' writers depend on what they move from and to")
     func networkFieldsAreClassifiedByValue() {
-        var off = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        var off = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         off.networkEnabled = false
         off.macAddress = nil
         var on = off
@@ -85,7 +91,9 @@ struct VMStateFieldClassesTests {
 
     @Test("A membership edit writes the membership and no other network field")
     func membershipEditWritesMembershipAlone() {
-        var common = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        var common = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         common.applyNetworkMode(.nat)
         var isolated = common
         isolated.networkMembership = .isolated
@@ -111,7 +119,9 @@ struct VMStateFieldClassesTests {
         let c = RemovableMediaItem(path: "/tmp/c.iso")
         var renamed = b
         renamed.label = "Renamed"
-        var old = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
+        var old = VMConfiguration(
+            name: "VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         old.removableMedia = [a, b, c]
         let classes = VMConfiguration.fieldClasses
         func refusedToTheRemoval(_ media: [RemovableMediaItem]?) -> Bool {
@@ -134,7 +144,9 @@ struct VMStateFieldClassesTests {
     func clipboardSharingIsClassifiedByGuest() {
         let classes = VMConfiguration.fieldClasses
         for (guestOS, bootMode) in [(VMGuestOS.linux, VMBootMode.efi), (.macOS, .macOS)] {
-            let old = VMConfiguration(name: "VM", guestOS: guestOS, bootMode: bootMode)
+            let old = VMConfiguration(
+                name: "VM", guestOS: guestOS, bootMode: bootMode, cpuCount: guestOS.hostCPUCount,
+                memorySizeInGB: guestOS.hostMemorySize)
             var new = old
             new.clipboardSharingEnabled.toggle()
             let live = classes.refused(from: old, to: new, by: .edit(.liveKeys))
@@ -160,11 +172,15 @@ struct VMStateFieldClassesTests {
         let context = VMConfigurationWriteContext(
             snapshots: VMSnapshotManifest(snapshots: [snapshot]), entitlements: .entitled, networks: .listed([]),
             resourceLimits: VirtualizationHost.frameworkResourceLimits)
-        var networked = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
+        var networked = VMConfiguration(
+            name: "VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         networked.applyNetworkMode(.nat)
         var unaddressed = networked
         unaddressed.macAddress = nil
-        var offline = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        var offline = VMConfiguration(
+            name: "VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         offline.applyNetworkMode(nil)
         offline.macAddress = nil
         let hostStates = [
@@ -219,8 +235,11 @@ struct VMStateFieldClassesTests {
                             SharedDirectory(path: "/Users/Shared/share\($0)")
                         }
                         var old = VMConfiguration(
-                            name: "VM", guestOS: guestOS,
-                            bootMode: guestOS == .macOS ? .macOS : .efi)
+                            name: "VM",
+                            guestOS: guestOS,
+                            bootMode: guestOS == .macOS ? .macOS : .efi,
+                            cpuCount: guestOS.hostCPUCount,
+                            memorySizeInGB: guestOS.hostMemorySize)
                         old.sharedDirectories = shares.isEmpty ? nil : shares
                         var edited = shares
                         switch edit {

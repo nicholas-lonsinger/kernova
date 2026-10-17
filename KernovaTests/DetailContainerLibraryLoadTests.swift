@@ -1,6 +1,7 @@
 import AppKit
 import Testing
 import Foundation
+import KernovaKit
 @testable import Kernova
 
 /// The detail pane across the library's empty-until-read interval. The app now
@@ -73,7 +74,9 @@ struct DetailContainerLibraryLoadTests {
 
     private func storageHoldingOneVM() -> (MockVMStorageService, VMConfiguration) {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Library VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Library VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
@@ -154,7 +157,9 @@ struct DetailContainerLibraryLoadTests {
     /// holds a network mode no mode spells.
     private func storageHoldingAnUnreadableBundle() throws -> MockVMStorageService {
         let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let data = try VMConfiguration.makeJSONEncoder().encode(config)
         var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         object["networkMode"] = "plan9-mode"

@@ -41,11 +41,9 @@ enum VMInstanceFixture {
     /// resources the creation wizard gives one on this Mac — inside the bounds
     /// a configuration write is checked against.
     static func makeConfiguration(name: String, guestOS: VMGuestOS) -> VMConfiguration {
-        let limits = VirtualizationHost.frameworkResourceLimits
-        return VMConfiguration(
+        VMConfiguration(
             name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            cpuCount: guestOS.defaultCPUCount(within: limits),
-            memorySizeInGB: guestOS.defaultMemorySize(within: limits))
+            cpuCount: guestOS.hostCPUCount, memorySizeInGB: guestOS.hostMemorySize)
     }
 
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
@@ -130,4 +128,13 @@ extension VMBundle.Factory {
                 removableMedia: VMRemovableMediaReconciler(lifecycle: makeTestLifecycle()),
                 guestAddresses: guestAddresses))
     }
+}
+
+extension VMGuestOS {
+    /// The CPU count the creation wizard gives a new guest of this OS on this
+    /// Mac.
+    var hostCPUCount: Int { defaultCPUCount(within: VirtualizationHost.frameworkResourceLimits) }
+
+    /// The memory the creation wizard gives a new guest of this OS on this Mac.
+    var hostMemorySize: VMMemorySize { defaultMemorySize(within: VirtualizationHost.frameworkResourceLimits) }
 }

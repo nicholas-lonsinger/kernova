@@ -32,8 +32,11 @@ struct MacOSGuestProvisioningTests {
         guestOS: VMGuestOS = .macOS, installedImage: InstalledImage? = nil
     ) -> VMConfiguration {
         var config = VMConfiguration(
-            name: "Provisioning VM", guestOS: guestOS,
-            bootMode: guestOS == .macOS ? .macOS : .efi)
+            name: "Provisioning VM",
+            guestOS: guestOS,
+            bootMode: guestOS == .macOS ? .macOS : .efi,
+            cpuCount: guestOS.hostCPUCount,
+            memorySizeInGB: guestOS.hostMemorySize)
         config.installedImage = installedImage
         return config
     }

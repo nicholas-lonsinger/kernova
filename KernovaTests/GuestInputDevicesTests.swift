@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -29,7 +30,9 @@ struct GuestInputDevicesTests {
         installedVersion: String? = nil,
         mode: VMInputDeviceMode = .automatic
     ) -> VMConfiguration {
-        var config = VMConfiguration(name: "Test", guestOS: .macOS, bootMode: .macOS)
+        var config = VMConfiguration(
+            name: "Test", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.lastSeenGuestOSVersion = lastSeen
         config.inputDeviceMode = mode
         if let installedVersion {

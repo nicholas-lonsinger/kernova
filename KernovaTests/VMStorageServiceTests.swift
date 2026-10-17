@@ -74,7 +74,9 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(
             name: "Original Name",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
 
         let bundleURL = try makeBundle(config)
@@ -105,7 +107,9 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(
             name: "Immediate Delete VM",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
 
         let bundleURL = try makeBundle(config)
@@ -120,7 +124,9 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(
             name: "Suspended Delete VM",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
 
         let bundleURL = try makeBundle(config)
@@ -147,8 +153,14 @@ struct VMStorageServiceTests {
 
     @Test("A bundle's identity follows the directory across a rename, and a place with no bundle has none")
     func bundleIdentityFollowsTheDirectory() throws {
-        let first = try makeBundle(VMConfiguration(name: "First", guestOS: .linux, bootMode: .efi))
-        let second = try makeBundle(VMConfiguration(name: "Second", guestOS: .linux, bootMode: .efi))
+        let first = try makeBundle(
+            VMConfiguration(
+                name: "First", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
+        let second = try makeBundle(
+            VMConfiguration(
+                name: "Second", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         let moved = first.deletingLastPathComponent()
             .appendingPathComponent("Moved-\(UUID().uuidString).kernova", isDirectory: true)
         let identity = try #require(service.bundleIdentity(at: first))
@@ -166,7 +178,10 @@ struct VMStorageServiceTests {
         "Two spellings a case-insensitive volume folds together name one bundle",
         .enabled(if: TestScratchDirectory.volumeFoldsCase))
     func bundleIdentityIsTheVolumes() throws {
-        let url = try makeBundle(VMConfiguration(name: "Folded", guestOS: .linux, bootMode: .efi))
+        let url = try makeBundle(
+            VMConfiguration(
+                name: "Folded", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         let respelled = url.deletingLastPathComponent()
             .appendingPathComponent(url.lastPathComponent.lowercased(), isDirectory: true)
         #expect(VMBundleIdentity.spelling(respelled) != VMBundleIdentity.spelling(url))
@@ -181,7 +196,9 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(
             name: "Extension Test",
             guestOS: .linux,
-            bootMode: .efi
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
         )
 
         let url = try service.bundleURL(for: config)
@@ -223,7 +240,9 @@ struct VMStorageServiceTests {
     @Test("Listing bundles never admits a config-bearing bundle that is still staged")
     func listIgnoresStagedBundles() throws {
         let staged = try stageBundle(
-            VMConfiguration(name: "Interrupted Write", guestOS: .linux, bootMode: .efi))
+            VMConfiguration(
+                name: "Interrupted Write", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
 
         let configURL = VMBundleLayout(bundleURL: staged).configURL
         #expect(FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)))
@@ -232,7 +251,9 @@ struct VMStorageServiceTests {
 
     @Test("Publishing renames the staged bundle into the library and makes it listable")
     func publishMakesBundleListable() throws {
-        let config = VMConfiguration(name: "Published", guestOS: .linux, bootMode: .efi)
+        let config = VMConfiguration(
+            name: "Published", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         let staged = try stageBundle(config)
         let finalURL = try service.bundleURL(for: config)
@@ -249,7 +270,9 @@ struct VMStorageServiceTests {
         "Of two publishes to one name the loser gets exists, and the winner's bundle is intact",
         arguments: [false, true])
     func ofTwoPublishesToOneNameTheLoserGetsExists(destinationIsEmpty: Bool) throws {
-        let winner = VMConfiguration(name: "Winner", guestOS: .linux, bootMode: .efi)
+        let winner = VMConfiguration(
+            name: "Winner", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let finalURL = try service.bundleURL(for: winner)
         if destinationIsEmpty {
             // An empty directory is still an occupied name: `rename(2)` alone
@@ -258,7 +281,10 @@ struct VMStorageServiceTests {
         } else {
             _ = try makeBundle(winner)
         }
-        let staged = try stageBundle(VMConfiguration(name: "Loser", guestOS: .linux, bootMode: .efi))
+        let staged = try stageBundle(
+            VMConfiguration(
+                name: "Loser", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
 
         let refusal = #expect(throws: VMStorageError.self) {
             try service.publishBundle(from: staged, to: finalURL)
@@ -278,7 +304,9 @@ struct VMStorageServiceTests {
     @Test("Of many concurrent publishes to one name, exactly one wins and every other gets exists")
     func concurrentPublishesToOneNameYieldOneWinner() throws {
         let contenders = (0..<8).map {
-            VMConfiguration(name: "Contender \($0)", guestOS: .linux, bootMode: .efi)
+            VMConfiguration(
+                name: "Contender \($0)", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         }
         let finalURL = try service.bundleURL(for: contenders[0])
         let staged = try contenders.map { try stageBundle($0) }
@@ -308,8 +336,13 @@ struct VMStorageServiceTests {
     func reclaimKeepsBundlesLiveProcessesAreStaging() async throws {
         let other = otherProcess()
         let theirs = try stageBundle(
-            VMConfiguration(name: "Theirs", guestOS: .linux, bootMode: .efi), in: other)
-        let ours = try stageBundle(VMConfiguration(name: "Ours", guestOS: .linux, bootMode: .efi))
+            VMConfiguration(
+                name: "Theirs", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize), in: other)
+        let ours = try stageBundle(
+            VMConfiguration(
+                name: "Ours", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
 
         await service.reclaimStagedBundles().value
 
@@ -324,7 +357,9 @@ struct VMStorageServiceTests {
         do {
             // Deinitializing the root releases its lock, as its process's exit does.
             abandoned = try stageBundle(
-                VMConfiguration(name: "Abandoned", guestOS: .linux, bootMode: .efi), in: otherProcess())
+                VMConfiguration(
+                    name: "Abandoned", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize), in: otherProcess())
         }
 
         await service.reclaimStagedBundles().value
@@ -341,7 +376,9 @@ struct VMStorageServiceTests {
             "\(UUID().uuidString).\(VMBundleFormat.fileExtension)", isDirectory: true)
         try FileManager.default.createDirectory(at: unrooted, withIntermediateDirectories: true)
         try writer(unrooted).writeInitial(
-            VMConfiguration(name: "Unrooted", guestOS: .linux, bootMode: .efi))
+            VMConfiguration(
+                name: "Unrooted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
 
         await service.reclaimStagedBundles().value
 
@@ -351,7 +388,9 @@ struct VMStorageServiceTests {
     @Test("A clone copies only the files it was given, so it inherits no USB pairings")
     func cloneLeavesUSBPairingsBehind() throws {
         let sourceURL = try makeBundle(
-            VMConfiguration(name: "Pairing Source", guestOS: .linux, bootMode: .efi))
+            VMConfiguration(
+                name: "Pairing Source", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         let cloneURL = try service.makeStagedBundleURL()
         try writer(sourceURL).update(.usbPairings) {
             $0 = USBAccessoryPairingSet(pairings: [
@@ -374,7 +413,9 @@ struct VMStorageServiceTests {
     @Test("A clone copies a snapshot directory whole, under the same relative path")
     func cloneCopiesASnapshotDirectory() throws {
         let sourceURL = try makeBundle(
-            VMConfiguration(name: "Snapshot Source", guestOS: .linux, bootMode: .efi))
+            VMConfiguration(
+                name: "Snapshot Source", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
         let cloneURL = try service.makeStagedBundleURL()
         let id = UUID()
         let snapshot = VMBundleLayout(bundleURL: sourceURL).snapshotLayout(id: id)

@@ -56,7 +56,9 @@ struct VMCommandCoreArrivalTests {
         let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("Vanished.\(VMBundleFormat.fileExtension)", isDirectory: true)
         storage.files.seed(
-            VMConfiguration(name: "Vanished", guestOS: .linux, bootMode: .efi),
+            VMConfiguration(
+                name: "Vanished", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize),
             hostState: VMHostState(), snapshots: VMSnapshotManifest(),
             pairings: USBAccessoryPairingSet(), at: url)
         return url
@@ -98,7 +100,9 @@ struct VMCommandCoreArrivalTests {
         try Data("disk".utf8).write(to: disk)
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: disk.path)
         storage.files.seed(
-            VMConfiguration(name: "Locked", guestOS: .linux, bootMode: .efi),
+            VMConfiguration(
+                name: "Locked", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize),
             hostState: VMHostState(), snapshots: VMSnapshotManifest(),
             pairings: USBAccessoryPairingSet(), at: source)
 
@@ -255,7 +259,9 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let hold = DispatchSemaphore(value: 0)
         storage.publishHold = hold
-        let configuration = VMConfiguration(name: "Withdrawn", guestOS: .linux, bootMode: .efi)
+        let configuration = VMConfiguration(
+            name: "Withdrawn", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let destination = try storage.bundleURL(for: configuration)
 
         let row = try harness.core.create(
@@ -284,7 +290,9 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let hold = DispatchSemaphore(value: 0)
         storage.publishHold = hold
-        let configuration = VMConfiguration(name: "Quitting", guestOS: .linux, bootMode: .efi)
+        let configuration = VMConfiguration(
+            name: "Quitting", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         try harness.core.create(
             configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
@@ -311,7 +319,9 @@ struct VMCommandCoreArrivalTests {
             virtualization: virtualization, storage: storage, preferences: preferences)
         let core = wired.core
         let library = wired.library
-        let configuration = VMConfiguration(name: "Fresh", guestOS: .linux, bootMode: .efi)
+        let configuration = VMConfiguration(
+            name: "Fresh", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         try core.create(
             configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
