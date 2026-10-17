@@ -3,30 +3,30 @@ import Foundation
 /// The names AppKit saves the app's window state under — frame, split position
 /// and toolbar layout, in `UserDefaults.standard` whatever store the app's
 /// preferences wrap — as a ``WindowStage`` hands them to its windows.
-struct WindowAutosave: Sendable {
+package struct WindowAutosave: Sendable {
     /// Whether AppKit saves and restores what these names cover.
-    let savesState: Bool
+    package let savesState: Bool
 
-    let mainToolbar: String
+    package let mainToolbar: String
 
     /// Shared by every VM's display window, unlike the per-VM frame name.
     /// "Toolbars with the same identifier are implicitly synchronized so that
     /// they maintain the same state" (NSToolbar.h, `initWithIdentifier:`), so a
     /// customized layout applies to all display windows as one configuration.
-    let displayToolbar: String
+    package let displayToolbar: String
 
     /// The names the app's own windows save under.
-    static let app = WindowAutosave(
+    package static let app = WindowAutosave(
         savesState: true, mainToolbar: "KernovaMainToolbar", displayToolbar: "KernovaVMDisplayToolbar")
 
-    var mainWindowFrame: String { frame("KernovaMainWindow") }
-    var mainSplit: String? { savesState ? "KernovaMainSplit" : nil }
-    var settingsFrame: String { frame("KernovaSettings") }
-    var configCheckFrame: String { frame("KernovaConfigCheck") }
+    package var mainWindowFrame: String { frame("KernovaMainWindow") }
+    package var mainSplit: String? { savesState ? "KernovaMainSplit" : nil }
+    package var settingsFrame: String { frame("KernovaSettings") }
+    package var configCheckFrame: String { frame("KernovaConfigCheck") }
 
-    func displayFrame(for vmID: UUID) -> String { frame("VMDisplay-\(vmID)") }
+    package func displayFrame(for vmID: UUID) -> String { frame("VMDisplay-\(vmID)") }
 
-    func clipboardFrame(for vmID: UUID) -> String {
+    package func clipboardFrame(for vmID: UUID) -> String {
         frame("Clipboard-\(vmID.uuidString)")
     }
 

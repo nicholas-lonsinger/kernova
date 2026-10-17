@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Where the app's window controllers make their windows: the names AppKit
 /// saves their state under, and the window objects themselves.

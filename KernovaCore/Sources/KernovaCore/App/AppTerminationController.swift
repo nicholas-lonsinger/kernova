@@ -1,10 +1,9 @@
 import Foundation
-import KernovaCore
 import KernovaLogging
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.
 @MainActor
-protocol SoftQuitHosting: AnyObject {
+package protocol SoftQuitHosting: AnyObject {
     /// Closes every user-facing window and settles the headless state.
     func closeGUIForSoftQuit()
 }
@@ -15,7 +14,7 @@ protocol SoftQuitHosting: AnyObject {
 ///
 /// The latches that decide a pending quit are read and written nowhere else.
 @MainActor
-final class AppTerminationController {
+package final class AppTerminationController {
     private let viewModel: VMLibraryViewModel
     /// Where a downgraded quit closes the GUI.
     private let residency: any SoftQuitHosting
@@ -71,7 +70,7 @@ final class AppTerminationController {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppTermination")
 
-    init(
+    package init(
         viewModel: VMLibraryViewModel, residency: any SoftQuitHosting,
         pendingQuitEvent: @escaping @MainActor () -> QuitEvent?,
         senderProbe: QuitSenderProbe,
@@ -176,18 +175,27 @@ final class AppTerminationController {
     }
 
     /// A quit Apple Event, as the gate classifies it.
-    struct QuitEvent: Equatable {
+    package struct QuitEvent: Equatable {
         /// The sender's PID, as the event carries it — `nil` when it names none.
         var senderPID: pid_t?
+
+        package init(senderPID: pid_t? = nil) {
+            self.senderPID = senderPID
+        }
     }
 
     /// What the gate can learn about the process that sent a quit Apple Event.
-    struct QuitSenderProbe {
+    package struct QuitSenderProbe {
         /// Whether a process with this PID is running.
         let isProcessAlive: (pid_t) -> Bool
         /// The bundle identifier of the application with this PID, or `nil`
         /// when it is no application that has one.
         let bundleID: (pid_t) -> String?
+
+        package init(isProcessAlive: @escaping (pid_t) -> Bool, bundleID: @escaping (pid_t) -> String?) {
+            self.isProcessAlive = isProcessAlive
+            self.bundleID = bundleID
+        }
     }
 
     /// Latches what the quit Apple Event being handled demands, if the pending
@@ -259,7 +267,7 @@ final class AppTerminationController {
     }
 
     /// The gate's answer to `applicationShouldTerminate(_:)`.
-    enum TerminationReply: Equatable {
+    package enum TerminationReply: Equatable {
         /// The quit does not happen.
         case cancel
         /// Terminate at once.
@@ -306,7 +314,7 @@ final class AppTerminationController {
     ///
     /// `.later` is reached only by a termination AppKit begins on its own, and
     /// is answered by the save pass — see ``requestFullQuit()``.
-    func handleTerminationRequest() -> TerminationReply {
+    package func handleTerminationRequest() -> TerminationReply {
         latchClassificationOfQuitEvent()
         switch Self.terminationOutcome(
             hasCompletedSavePass: hasCompletedTerminationSavePass,
@@ -356,7 +364,7 @@ final class AppTerminationController {
     }
 
     /// Answers `applicationWillTerminate(_:)`.
-    func handleWillTerminate() {
+    package func handleWillTerminate() {
         if relaunchAfterTermination {
             launchRelaunchHelper()
         }
@@ -381,7 +389,7 @@ final class AppTerminationController {
     ///
     /// A second request while the pass runs joins it rather than starting
     /// another: the pass always ends by ending the termination.
-    func requestFullQuit() {
+    package func requestFullQuit() {
         userRequestedAgentQuit = true
         guard !isRunningTerminationSavePass else {
             #log(Self.logger, .notice, "Full quit requested again — joining the save pass already running")
@@ -393,7 +401,7 @@ final class AppTerminationController {
     }
 
     /// How a finished save pass ends the termination it ran for.
-    enum TerminationEnding: Equatable {
+    package enum TerminationEnding: Equatable {
         /// Answer the reply AppKit is waiting on; it resumes the termination it
         /// began and deferred.
         case deferredReply

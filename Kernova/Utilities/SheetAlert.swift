@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// An ``AlertConfiguration`` with the view drawn between its message and its
 /// buttons.

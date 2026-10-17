@@ -8,26 +8,28 @@ import Foundation
 /// premise still holds are read when an alert is about to be taken, from the
 /// closures each call is handed — so routing follows the windows as they
 /// stand then, not as they stood when the alert was raised.
-struct AlertQueue<Request, Window: Hashable> {
+package struct AlertQueue<Request, Window: Hashable> {
     /// A request waiting for its window, numbered in the order it was raised.
-    struct Entry {
+    package struct Entry {
         let sequence: Int
-        let request: Request
+        package let request: Request
     }
 
     /// Every request waiting for its window, in the order raised.
-    private(set) var waiting: [Entry] = []
+    package private(set) var waiting: [Entry] = []
     private var nextSequence = 0
 
+    package init() {}
+
     /// Puts `request` at the back of the queue.
-    mutating func enqueue(_ request: Request) {
+    package mutating func enqueue(_ request: Request) {
         waiting.append(Entry(sequence: nextSequence, request: request))
         nextSequence += 1
     }
 
     /// Puts an entry taken off a window back among the waiting, in the place
     /// its raising gave it.
-    mutating func requeue(_ entry: Entry) {
+    package mutating func requeue(_ entry: Entry) {
         let index = waiting.firstIndex { $0.sequence > entry.sequence } ?? waiting.endIndex
         waiting.insert(entry, at: index)
     }
@@ -38,7 +40,7 @@ struct AlertQueue<Request, Window: Hashable> {
     /// Every entry ahead of it whose premise lapsed — `stillHolds` answers
     /// `false` — is taken out too and handed to `drop`. An entry routed
     /// nowhere stays.
-    mutating func takeNext(
+    package mutating func takeNext(
         destination: (Request) -> Window?,
         isFree: (Window) -> Bool,
         stillHolds: (Request) -> Bool,
@@ -62,13 +64,13 @@ struct AlertQueue<Request, Window: Hashable> {
     }
 
     /// The waiting requests routed to no window — the ones held.
-    func held(destination: (Request) -> Window?) -> [Request] {
+    package func held(destination: (Request) -> Window?) -> [Request] {
         waiting.filter { destination($0.request) == nil }.map(\.request)
     }
 
     /// Whether any waiting request is routed to `window`, so a question asked
     /// there now would go ahead of it.
-    func isAwaited(_ window: Window, destination: (Request) -> Window?) -> Bool {
+    package func isAwaited(_ window: Window, destination: (Request) -> Window?) -> Bool {
         waiting.contains { destination($0.request) == window }
     }
 }

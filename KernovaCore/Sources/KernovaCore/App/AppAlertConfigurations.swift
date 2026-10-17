@@ -1,15 +1,18 @@
 import Foundation
-import KernovaCore
 import KernovaKit
 import KernovaLogging
 
 /// The alerts ``AppAlertPresenter`` shows, built from what each is about, each
 /// button acting on `viewModel`.
 @MainActor
-struct AppAlertConfigurations {
+package struct AppAlertConfigurations {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppAlertPresenter")
 
     let viewModel: VMLibraryViewModel
+
+    package init(viewModel: VMLibraryViewModel) {
+        self.viewModel = viewModel
+    }
 
     /// An alternative the core offered that this alert has no route for — a
     /// live button that would do nothing, which is a programming error the same
@@ -26,7 +29,7 @@ struct AppAlertConfigurations {
 
     /// The cancel confirmation for a create, clone or import, drawn from the
     /// prompt taken when the gesture was made.
-    func cancelPreparingConfig(
+    package func cancelPreparingConfig(
         _ prompt: ConfirmationPrompt, _ arrival: VMArrival
     ) -> AlertConfiguration {
         AlertConfiguration(
@@ -35,7 +38,7 @@ struct AppAlertConfigurations {
     }
 
     /// The revert confirmation.
-    func revertSnapshotConfig(
+    package func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
         AlertConfiguration(
@@ -64,7 +67,7 @@ struct AppAlertConfigurations {
 
     /// The delete-snapshot confirmation; for the VM's Ephemeral baseline, one
     /// that also turns Ephemeral Mode off, which the delete then does first.
-    func deleteSnapshotConfig(
+    package func deleteSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
         let turningOffEphemeralMode = vm.isEphemeralBaseline(snapshot)
@@ -95,7 +98,7 @@ struct AppAlertConfigurations {
             dismissTitle: "Cancel")
     }
 
-    func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
+    package func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
             confirming: VMCommandCore.forceStopPrompt(vm),
             confirm: { [weak viewModel] in
@@ -112,7 +115,7 @@ struct AppAlertConfigurations {
             })
     }
 
-    func recoveryBootConfig(_ vm: VMInstance) -> AlertConfiguration {
+    package func recoveryBootConfig(_ vm: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
             title: "Start “\(vm.name)” in Recovery Mode?",
             message:
@@ -128,7 +131,7 @@ struct AppAlertConfigurations {
 
     /// The Stop a paused VM offers: the guest takes the shutdown request only
     /// awake, so the app resumes it and then stops it, or force stops it.
-    func pausedStopConfig(_ vm: VMInstance) -> AlertConfiguration {
+    package func pausedStopConfig(_ vm: VMInstance) -> AlertConfiguration {
         // Both choices end in a power-off, and an Ephemeral VM's power-off is
         // a revert, so the outcome the mode produces belongs here as much as in
         // the force-stop refusal.
@@ -156,7 +159,7 @@ struct AppAlertConfigurations {
             ])
     }
 
-    func startFailedAttachmentConfig(
+    package func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
         // The heading names the bring-up that failed; the button names what the
@@ -282,7 +285,7 @@ struct AppAlertConfigurations {
         }
     }
 
-    func installerMountedConfig(
+    package func installerMountedConfig(
         _ vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
     ) -> AlertConfiguration {
         let nextStep: String

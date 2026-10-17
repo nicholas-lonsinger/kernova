@@ -4,7 +4,7 @@ import KernovaLogging
 
 /// Semantic role for an ``AlertButton``: which key, if any, activates it, and
 /// whether it is drawn as destructive.
-enum AlertButtonRole {
+package enum AlertButtonRole {
     /// Activated by the Return key. At most one button per alert should
     /// have this role.
     case `default`
@@ -17,12 +17,12 @@ enum AlertButtonRole {
 }
 
 /// One button in an ``AlertConfiguration``.
-struct AlertButton {
-    let title: String
-    let role: AlertButtonRole
-    let action: () -> Void
+package struct AlertButton {
+    package let title: String
+    package let role: AlertButtonRole
+    package let action: () -> Void
 
-    init(_ title: String, role: AlertButtonRole = .standard, action: @escaping () -> Void = {}) {
+    package init(_ title: String, role: AlertButtonRole = .standard, action: @escaping () -> Void = {}) {
         self.title = title
         self.role = role
         self.action = action
@@ -40,14 +40,14 @@ struct AlertButton {
 /// A confirmation the core raised is built with ``init(confirming:confirm:alternative:dismiss:)``
 /// rather than assembled here; the free-form array is for the alerts that
 /// confirm nothing — an acknowledgement, or a question the core never modelled.
-struct AlertConfiguration {
+package struct AlertConfiguration {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AlertConfiguration")
 
-    let title: String
-    let message: String
-    let buttons: [AlertButton]
+    package let title: String
+    package let message: String
+    package let buttons: [AlertButton]
 
-    init(title: String, message: String, buttons: [AlertButton]) {
+    package init(title: String, message: String, buttons: [AlertButton]) {
         self.title = title
         self.message = message
         self.buttons = buttons
@@ -63,7 +63,7 @@ struct AlertConfiguration {
     /// button is never Return, a two-button alert reads Cancel then its action,
     /// and a three-button one lays out as AppKit's own Save / Cancel / Don't
     /// Save does, the destructive action on the leading edge.
-    init(
+    package init(
         confirming prompt: ConfirmationPrompt,
         confirm: @escaping () -> Void,
         alternative: ((ConfirmationAlternative) -> Void)? = nil,
@@ -92,7 +92,7 @@ struct AlertConfiguration {
     /// and then the request it ends with, laid out by the rule
     /// ``init(confirming:confirm:alternative:dismiss:)`` states: a route that
     /// discards a saved state never takes Return.
-    init(
+    package init(
         offering requirement: StepRequirement, then verbTitle: String?,
         choose: @escaping (StepRoute) -> Void,
         dismiss: @escaping () -> Void = {}
@@ -150,7 +150,7 @@ struct AlertConfiguration {
     ///
     /// Return is the standard key for acknowledging one, so its lone button
     /// takes `.default`.
-    static func acknowledgement(title: String, message: String) -> AlertConfiguration {
+    package static func acknowledgement(title: String, message: String) -> AlertConfiguration {
         AlertConfiguration(title: title, message: message, buttons: [AlertButton("OK", role: .default)])
     }
 }

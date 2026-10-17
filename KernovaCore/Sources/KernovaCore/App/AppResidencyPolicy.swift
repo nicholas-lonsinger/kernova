@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the app is presenting, read at the moment a VM comes up.
-enum GUIPosture: Equatable {
+package enum GUIPosture: Equatable {
     /// Status-item-only (`.accessory`): no window may appear.
     case absent
     /// Windows exist but another app is frontmost.
@@ -12,14 +12,14 @@ enum GUIPosture: Equatable {
 
 /// The decisions ``AppResidencyController`` carries out: what a launch, a
 /// reopen, a window close and an unhide do with the resident app.
-enum AppResidencyPolicy {
+package enum AppResidencyPolicy {
     // MARK: - Launch
 
     /// What a launch asked for: who performed it, and whether it asked for the
     /// app hidden.
-    struct LaunchProvenance: Equatable {
+    package struct LaunchProvenance: Equatable {
         /// Who performed the launch.
-        enum Origin: String, Equatable {
+        package enum Origin: String, Equatable {
             /// Anything a person or a launcher did — a double-click, `open`,
             /// the Dock, a Shortcut, the `kernova` tool.
             case user
@@ -37,11 +37,16 @@ enum AppResidencyPolicy {
         /// on 2026-09-04, the system brings such a launch up hidden. The
         /// `kernova` tool asks for the same thing by passing `hides`.
         let isHidden: Bool
+
+        package init(origin: Origin, isHidden: Bool) {
+            self.origin = origin
+            self.isHidden = isHidden
+        }
     }
 
     /// How a launch brings the process up, as decided by
     /// ``launchPosture(for:keepInMenuBar:)``.
-    enum LaunchPosture: Equatable {
+    package enum LaunchPosture: Equatable {
         /// Put the library on screen. A hidden launch still creates it, behind
         /// the hide, so the Dock icon a person clicks has something to show.
         case present
@@ -61,7 +66,7 @@ enum AppResidencyPolicy {
     ///
     /// Either way the auto-start pass runs, as it does on every launch, and the
     /// process stays until somebody quits it.
-    static func launchPosture(
+    package static func launchPosture(
         for provenance: LaunchProvenance, keepInMenuBar: Bool
     ) -> LaunchPosture {
         guard keepInMenuBar else { return .present }
@@ -69,7 +74,7 @@ enum AppResidencyPolicy {
     }
 
     /// Formats the resident-app startup provenance line.
-    static func residentProvenanceLine(
+    package static func residentProvenanceLine(
         bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool,
         launch: LaunchProvenance
     ) -> String {
@@ -82,7 +87,7 @@ enum AppResidencyPolicy {
 
     /// What a reopen (a Dock click, `open`) does to the GUI, as decided by
     /// ``reopenPresentation(hasVisibleUserWindow:)``.
-    enum ReopenPresentation: Equatable {
+    package enum ReopenPresentation: Equatable {
         /// Present the library.
         case library
         /// Do nothing — a user window the app already has owns the presentation.
@@ -97,14 +102,14 @@ enum AppResidencyPolicy {
     ///
     /// A miniaturized window counts: AppKit deminiaturizes it on a reopen the
     /// delegate lets it handle.
-    static func reopenPresentation(hasVisibleUserWindow: Bool) -> ReopenPresentation {
+    package static func reopenPresentation(hasVisibleUserWindow: Bool) -> ReopenPresentation {
         hasVisibleUserWindow ? .nothing : .library
     }
 
     // MARK: - Window Reconcile
 
     /// What the window reconcile does with the resident app.
-    enum ResidencyOutcome: Equatable {
+    package enum ResidencyOutcome: Equatable {
         /// Show the Dock icon — a user window is on screen.
         case showDockIcon
         /// Drop to a status-item-only app; running VMs keep executing.
@@ -144,7 +149,7 @@ enum AppResidencyPolicy {
     ///
     /// A settled `.running` VM does *not* hold the quit back:
     /// `applicationShouldTerminate` save-suspends it.
-    static func residencyOutcome(
+    package static func residencyOutcome(
         hasVisibleUserWindow: Bool,
         isHidden: Bool,
         keepInMenuBar: Bool,
@@ -160,7 +165,7 @@ enum AppResidencyPolicy {
     // MARK: - Unhide
 
     /// What an unhide does with the resident app.
-    enum UnhideOutcome: Equatable {
+    package enum UnhideOutcome: Equatable {
         /// Show the Dock icon — windows came back with the app.
         case showDockIcon
         /// Drop to a status-item-only app: the last window closed during the
@@ -178,7 +183,7 @@ enum AppResidencyPolicy {
     /// person who just asked for it. A window close is what quits this app, and
     /// no close is observable from here: the hide swallowed whichever one
     /// happened, and AppKit's unhide restores the windows that are left.
-    static func unhideOutcome(
+    package static func unhideOutcome(
         hasVisibleUserWindow: Bool, keepInMenuBar: Bool
     ) -> UnhideOutcome {
         if hasVisibleUserWindow { return .showDockIcon }

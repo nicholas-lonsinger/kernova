@@ -2,17 +2,10 @@ import KernovaLogging
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// The document type for Kernova VM bundles (`.kernova` packages).
-    package static let kernovaVM: UTType = {
-        let identifier = "app.kernova.vm"
-        guard let type = UTType(identifier) else {
-            let logger = KernovaLogger(subsystem: "app.kernova", category: "UTType")
-            #log(logger, .fault, "UTType lookup failed for identifier '\(identifier, privacy: .public)'")
-            assertionFailure("UTType lookup failed for identifier: \(identifier)")
-            return .data
-        }
-        return type
-    }()
+    /// The document type for Kernova VM bundles (`.kernova` packages), as the
+    /// app's `Info.plist` exports it — `VMBundleFile.supportedContentTypes`
+    /// writes the same declaration out for the App Intents extractor.
+    package static let kernovaVM = UTType(exportedAs: "app.kernova.vm")
 
     package static let iso: UTType = resolvedFilenameExtension("iso")
 

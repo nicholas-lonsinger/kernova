@@ -4,9 +4,9 @@ import Foundation
 /// the status item reports.
 @MainActor
 @Observable
-final class HeldAlerts {
+package final class HeldAlerts {
     /// One held alert, as the status item counts it.
-    enum Alert: Equatable {
+    package enum Alert: Equatable {
         /// A report of VMs that did not start, naming them.
         case startReport(vmIDs: [UUID])
         /// Any other alert, about the VM `vmID` names or about no VM.
@@ -15,15 +15,17 @@ final class HeldAlerts {
 
     private(set) var alerts: [Alert] = []
 
+    package init() {}
+
     /// Replaces what is held, leaving observers unwoken when nothing changed.
-    func update(_ alerts: [Alert]) {
+    package func update(_ alerts: [Alert]) {
         guard alerts != self.alerts else { return }
         self.alerts = alerts
     }
 
     /// How many VMs the held start reports name, counting only those
     /// `isListed` — the ones a report would still name when shown.
-    func undoneStartCount(listing isListed: (UUID) -> Bool) -> Int {
+    package func undoneStartCount(listing isListed: (UUID) -> Bool) -> Int {
         alerts.reduce(0) { count, alert in
             guard case .startReport(let ids) = alert else { return count }
             return count + ids.count(where: isListed)
@@ -33,7 +35,7 @@ final class HeldAlerts {
     /// How many held alerts are not start reports, counting one about a VM
     /// only while `isListed` holds for it — one about a VM that left the
     /// library is dropped when it would be shown.
-    func otherAlertCount(listing isListed: (UUID) -> Bool) -> Int {
+    package func otherAlertCount(listing isListed: (UUID) -> Bool) -> Int {
         alerts.count { alert in
             guard case .other(let vmID) = alert else { return false }
             return vmID.map(isListed) ?? true
