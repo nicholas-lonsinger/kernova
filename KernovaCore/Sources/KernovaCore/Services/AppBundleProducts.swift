@@ -5,7 +5,7 @@ import KernovaLogging
 /// version and build number, the guest agent it bundles, its blank-disk
 /// templates, the `kernova` tool, and the relaunch helper.
 ///
-/// `AppDelegate` reads the app's once, through ``init(bundle:)``, and hands that
+/// `KernovaApp` reads the app's once, through ``init(bundle:)``, and hands that
 /// value to everything that asks; nothing else reads `Bundle.main` for them.
 package struct AppBundleProducts: Sendable {
     /// The `.app` this process runs from.

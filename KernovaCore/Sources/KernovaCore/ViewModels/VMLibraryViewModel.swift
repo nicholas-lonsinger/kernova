@@ -644,7 +644,7 @@ package final class VMLibraryViewModel {
     /// would hand that state to every test that left it out. Nor does one the
     /// Virtualization engine makes — the host's answers, the bundle machine
     /// files, the restore-image lookups, the removable-media devices, the
-    /// bridged interfaces — which the core cannot build. `AppDelegate`
+    /// bridged interfaces — which the core cannot build. `KernovaApp`
     /// supplies each.
     package init(
         storageService: any VMStorageProviding,
@@ -657,12 +657,12 @@ package final class VMLibraryViewModel {
         localImageInspector: any LocalRestoreImageInspecting,
         removableMediaDeviceService: any RemovableMediaAttaching,
         bridgedInterfaces: any BridgedInterfaceProviding,
-        // Supplied by ``AppDelegate``, the one caller that should claim the
+        // Supplied by `KernovaApp`, the one caller that should claim the
         // user's accessories — registering the listener is a side effect on
         // the whole process, and a default would hand it to every test that
         // builds a view model for something else entirely.
         usbAccessoryService: (any USBAccessoryProviding)? = nil,
-        // Supplied by ``AppDelegate`` for the reason `usbAccessoryService` is:
+        // Supplied by `KernovaApp` for the reason `usbAccessoryService` is:
         // the power registration is a side effect on the whole process.
         systemSleep: SystemSleepWatcher? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),

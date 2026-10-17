@@ -8,7 +8,7 @@ import Testing
 /// as host has.
 @Suite("Command line tool installer, in the app", .caseScoped)
 struct CommandLineToolInstallerHostTests {
-    /// The test host is a built Kernova.app, read as `AppDelegate` reads it.
+    /// The test host is a built Kernova.app, read as `KernovaApp` reads it.
     private let installer = AppBundleProducts(bundle: .main).commandLineTool
 
     @Test("The built app carries the tool the installer links to")
