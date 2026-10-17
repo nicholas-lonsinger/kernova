@@ -13,7 +13,7 @@ import Testing
 /// The specifiers are the ones Cocoa builds for each form a script can write,
 /// evaluated where evaluation is what reads them — against the test host,
 /// whose `virtual machines` element is empty.
-@Suite("VM script selector", .caseScoped, .emptyScriptingLibrary)
+@Suite("VM script selector", .caseScoped)
 @MainActor
 struct VMScriptSelectorTests {
     private func makeContainer() throws -> NSScriptClassDescription {

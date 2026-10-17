@@ -1,18 +1,13 @@
 import AVFoundation
 import AppKit
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
+@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 @testable import KernovaVirtualization
-
-// KernovaTests compiles the test-support folders into its own module;
-// KernovaUITests links them as products.
-#if !TEST_SUPPORT_COMPILED_IN
-import KernovaTestSupport
-@testable import KernovaCoreTestSupport
-#endif
 
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the
 /// shell's own and the six per-panel ones.

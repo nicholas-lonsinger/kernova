@@ -2,13 +2,6 @@ import AppKit
 
 @testable import KernovaUI
 
-// KernovaTests compiles the test-support folders into its own module;
-// KernovaUITests links them as products.
-#if !TEST_SUPPORT_COMPILED_IN
-import KernovaTestSupport
-@testable import KernovaCoreTestSupport
-#endif
-
 /// Stands in for `NSApp`'s activation policy, hidden state and activation,
 /// so no test changes the test host's Dock presence or asks for the front.
 ///

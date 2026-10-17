@@ -2,13 +2,6 @@ import AppKit
 import Foundation
 import Testing
 
-// KernovaTests compiles the test-support folders into its own module;
-// KernovaUITests links them as products.
-#if !TEST_SUPPORT_COMPILED_IN
-import KernovaTestSupport
-@testable import KernovaCoreTestSupport
-#endif
-
 // MARK: - View-tree search
 
 /// The first `T` that `matches` in the subtree rooted at `view`, depth-first.

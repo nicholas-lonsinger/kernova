@@ -15,7 +15,7 @@ import Testing
 /// Driven through the gateway and the element objects, with the command Cocoa
 /// would be answering standing in as ``VMScriptingGateway/answeringCommand``:
 /// the Apple event round trip itself takes a live script.
-@Suite("VM network scripting", .caseScoped, .emptyScriptingLibrary)
+@Suite("VM network scripting", .caseScoped)
 @MainActor
 struct VMNetworkScriptingTests {
     private func makeGateway(_ wired: WiredCommandCore) -> VMScriptingGateway {

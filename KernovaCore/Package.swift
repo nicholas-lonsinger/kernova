@@ -77,9 +77,7 @@ let package = Package(
         ),
         // The fakes and fixtures every bundle testing the core shares.
         // KernovaUITests links the product beside KernovaUI, into the one image
-        // that holds them; the app-hosted KernovaTests compiles this folder
-        // instead, since its host already holds KernovaCore
-        // (Tools/check-package-reference.sh).
+        // that holds them (Tools/check-package-reference.sh).
         .target(
             name: "KernovaCoreTestSupport",
             dependencies: [

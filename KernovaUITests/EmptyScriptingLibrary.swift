@@ -1,7 +1,17 @@
 import AppKit
-import Testing
 
 @testable import KernovaUI
+
+/// The bundle's `NSPrincipalClass`, which XCTest instantiates once when it
+/// loads the bundle, before any test runs: it makes
+/// ``EmptyScriptingLibraryDelegate`` the application's delegate for the whole
+/// process.
+final class TestBundlePrincipal: NSObject {
+    override init() {
+        super.init()
+        MainActor.assumeIsolated { EmptyScriptingLibraryDelegate.install() }
+    }
+}
 
 /// The application element the scripting dictionary resolves `virtual machines`
 /// and `networks` through, answering with an empty library. The shipping app's
@@ -13,11 +23,8 @@ final class EmptyScriptingLibraryDelegate: NSObject, NSApplicationDelegate {
     /// Retained here because `NSApplication.delegate` is weak.
     private static let shared = EmptyScriptingLibraryDelegate()
 
-    /// Makes this the application's delegate; once is enough for the process.
-    static func install() {
-        if NSApplication.shared.delegate !== shared {
-            NSApplication.shared.delegate = shared
-        }
+    fileprivate static func install() {
+        NSApplication.shared.delegate = shared
     }
 
     func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
@@ -27,18 +34,4 @@ final class EmptyScriptingLibraryDelegate: NSObject, NSApplicationDelegate {
     @objc var virtualMachines: [VMScriptObject] { [] }
 
     @objc var networks: [VMNetworkScriptObject] { [] }
-}
-
-/// Installs ``EmptyScriptingLibraryDelegate`` before the suite's tests run.
-struct EmptyScriptingLibraryTrait: SuiteTrait, TestTrait {
-    var isRecursive: Bool { true }
-
-    func prepare(for test: Test) async throws {
-        await EmptyScriptingLibraryDelegate.install()
-    }
-}
-
-extension Trait where Self == EmptyScriptingLibraryTrait {
-    /// Resolves the application's scripting elements to an empty library.
-    static var emptyScriptingLibrary: Self { Self() }
 }
