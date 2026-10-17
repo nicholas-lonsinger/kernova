@@ -37,6 +37,17 @@ enum VMInstanceFixture {
             hostPasteboard: FakePasteboard())
     }
 
+    /// A fresh configuration for a `guestOS` VM named `name`, with the
+    /// resources the creation wizard gives one on this Mac — inside the bounds
+    /// a configuration write is checked against.
+    static func makeConfiguration(name: String, guestOS: VMGuestOS) -> VMConfiguration {
+        let limits = VirtualizationHost.frameworkResourceLimits
+        return VMConfiguration(
+            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
+            cpuCount: guestOS.defaultCPUCount(within: limits),
+            memorySizeInGB: guestOS.defaultMemorySize(within: limits))
+    }
+
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
     /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``
     /// and a library's fixture admission build their bundle from.
@@ -45,8 +56,7 @@ enum VMInstanceFixture {
         pairings: USBAccessoryPairingSet, files: InMemoryVMBundleFiles,
         mutate: (inout VMConfiguration) -> Void
     ) -> VMBundleRead {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+        var config = makeConfiguration(name: name, guestOS: guestOS)
         mutate(&config)
         let url = bundleURL(for: config.id)
         files.seed(config, hostState: hostState, snapshots: snapshots, pairings: pairings, at: url)
@@ -64,8 +74,7 @@ enum VMInstanceFixture {
         name: String, guestOS: VMGuestOS, snapshots: VMSnapshotManifest,
         mutate: (inout VMConfiguration) -> Void
     ) throws -> VMBundleRead {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+        var config = makeConfiguration(name: name, guestOS: guestOS)
         mutate(&config)
         let url = bundleURL(for: config.id)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
