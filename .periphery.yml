@@ -44,4 +44,4 @@ report_exclude:
   # SwiftProtobuf-generated sources include unused symbols (e.g. the
   # `_GeneratedWithProtocGenSwiftVersion` version-check struct) that are
   # part of the generator's contract — not actionable findings.
-  - "**/Generated/**"
+  - "**/*.pb.swift"
