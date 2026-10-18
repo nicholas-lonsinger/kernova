@@ -13,7 +13,7 @@ import KernovaTestSupport
 // `waitForChange` below is here rather than in KernovaTestSupport: it is built
 // on the core's `waitForObservedChange`, and only the core's and the app's
 // tests wait on `@Observable` production state — the GuestAgent/KernovaKit
-// bundles' predicates read `Sendable` boxes (`AtomicInt`, `PolicyBox`) with no
+// bundles' predicates read `Sendable` boxes (`AtomicInt`, `AtomicBox`) with no
 // such observable type to track.
 
 // MARK: - In-memory defaults

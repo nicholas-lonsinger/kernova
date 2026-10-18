@@ -4,6 +4,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 /// Exercises the shared `LazyClipboardDataProvider`.
 ///
@@ -41,48 +42,48 @@ struct LazyClipboardDataProviderTests {
     @Test("provideDataForType is invoked with the exact type requested")
     func passesRequestedTypeThrough() {
         let fileType = NSPasteboard.PasteboardType.fileURL
-        let requested = Box<NSPasteboard.PasteboardType?>(nil)
+        let requested = Locked<NSPasteboard.PasteboardType?>(nil)
         let provider = LazyClipboardDataProvider(
-            provide: {
-                requested.value = $0
+            provide: { type in
+                requested.withLock { $0 = type }
                 return nil
             },
             onFinished: { _ in })
 
         provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: fileType)
-        #expect(requested.value == fileType)
+        #expect(requested.withLock { $0 } == fileType)
     }
 
     @Test("pasteboardFinishedWithDataProvider invokes onFinished with self")
     func finishedFiresOnFinished() {
-        let finished = Box<LazyClipboardDataProvider?>(nil)
+        let finished = Locked<LazyClipboardDataProvider?>(nil)
         let provider = LazyClipboardDataProvider(
             provide: { _ in nil },
-            onFinished: { finished.value = $0 })
+            onFinished: { provider in finished.withLock { $0 = provider } })
 
         provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
-        #expect(finished.value === provider)
+        #expect(finished.withLock { $0 } === provider)
     }
 
     /// A provider whose `provide` runs `insideFire` with the provider itself, the
     /// way a fire's event loop reaches back into it, then serves `bytes`; its
     /// finish releases it from `registry` and counts on `finishes`.
     private func makeRetainedProvider(
-        registry: LazyClipboardProviderRegistry, finishes: Box<Int>, finished: AsyncGate,
+        registry: LazyClipboardProviderRegistry, finishes: Locked<Int>, finished: AsyncGate,
         bytes: Data, insideFire: @escaping @Sendable (LazyClipboardDataProvider) -> Void
     ) -> LazyClipboardDataProvider {
-        let holder = Box<LazyClipboardDataProvider?>(nil)
+        let holder = Locked<LazyClipboardDataProvider?>(nil)
         let provider = LazyClipboardDataProvider(
             provide: { _ in
-                if let provider = holder.value { insideFire(provider) }
+                if let provider = holder.withLock({ $0 }) { insideFire(provider) }
                 return bytes
             },
             onFinished: {
                 registry.release($0)
-                finishes.value += 1
+                finishes.withLock { $0 += 1 }
                 finished.notify()
             })
-        holder.value = provider
+        holder.withLock { $0 = provider }
         registry.retain([provider])
         return provider
     }
@@ -92,8 +93,8 @@ struct LazyClipboardDataProviderTests {
         let bytes = Data("served".utf8)
         let registry = LazyClipboardProviderRegistry()
         let finished = AsyncGate()
-        let finishes = Box(0)
-        let finishesSeenInsideFire = Box(-1)
+        let finishes = Locked(0)
+        let finishesSeenInsideFire = Locked(-1)
         let provider = makeRetainedProvider(
             registry: registry, finishes: finishes, finished: finished, bytes: bytes
         ) { provider in
@@ -101,7 +102,8 @@ struct LazyClipboardDataProviderTests {
             // fire's event loop: the pasteboard finishes with the provider, whose
             // owner — the only strong reference in production — would let go.
             provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
-            finishesSeenInsideFire.value = finishes.value
+            let seen = finishes.withLock { $0 }
+            finishesSeenInsideFire.withLock { $0 = seen }
         }
 
         let item = NSPasteboardItem()
@@ -109,8 +111,8 @@ struct LazyClipboardDataProviderTests {
 
         // The fire ran to completion still owned; the finish came after it.
         #expect(item.data(forType: textType) == bytes)
-        #expect(finishesSeenInsideFire.value == 0)
-        try await finished.wait { finishes.value == 1 }
+        #expect(finishesSeenInsideFire.withLock { $0 } == 0)
+        try await finished.wait { finishes.withLock { $0 } == 1 }
         #expect(registry.countForTesting == 0)
     }
 
@@ -119,19 +121,20 @@ struct LazyClipboardDataProviderTests {
         let bytes = Data("served".utf8)
         let registry = LazyClipboardProviderRegistry()
         let finished = AsyncGate()
-        let finishes = Box(0)
-        let finishesSeenAfterNestedFire = Box(-1)
-        let depth = Box(0)
+        let finishes = Locked(0)
+        let finishesSeenAfterNestedFire = Locked(-1)
+        let depth = Locked(0)
         let provider = makeRetainedProvider(
             registry: registry, finishes: finishes, finished: finished, bytes: bytes
         ) { provider in
-            depth.value += 1
-            defer { depth.value -= 1 }
-            if depth.value == 1 {
+            depth.withLock { $0 += 1 }
+            defer { depth.withLock { $0 -= 1 } }
+            if depth.withLock({ $0 }) == 1 {
                 // The outer fire's event loop runs a sibling flavor's fire, and the
                 // finish lands inside that nested one.
                 provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: .fileURL)
-                finishesSeenAfterNestedFire.value = finishes.value
+                let seen = finishes.withLock { $0 }
+                finishesSeenAfterNestedFire.withLock { $0 = seen }
             } else {
                 provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
             }
@@ -141,8 +144,8 @@ struct LazyClipboardDataProviderTests {
         provider.pasteboard(nil, item: item, provideDataForType: textType)
 
         #expect(item.data(forType: textType) == bytes)
-        #expect(finishesSeenAfterNestedFire.value == 0)
-        try await finished.wait { finishes.value == 1 }
+        #expect(finishesSeenAfterNestedFire.withLock { $0 } == 0)
+        try await finished.wait { finishes.withLock { $0 } == 1 }
         #expect(registry.countForTesting == 0)
     }
 }

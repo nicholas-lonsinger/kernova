@@ -5,6 +5,7 @@ import Darwin
 import KernovaKit
 import KernovaTestSupport
 import UniformTypeIdentifiers
+import KernovaSynchronization
 
 // MARK: - Test Suite
 
@@ -502,10 +503,10 @@ struct VsockGuestClipboardAgentTests {
 
         let folder = try writeTempFolder(name: "Walked", files: [("a.txt", Data("a".utf8))])
         let walked = AsyncGate()
-        let walks = Box(0)
+        let walks = Locked(0)
         await MainActor.run {
             agent.onFileResolveCompletedForTesting = {
-                walks.value += 1
+                walks.withLock { $0 += 1 }
                 walked.notify()
             }
         }
@@ -519,7 +520,7 @@ struct VsockGuestClipboardAgentTests {
             agent.checkClipboardChange()
             agent.handleControlFrameForTesting(makeTextOfferFrame(generation: 31, text: "from host"))
         }
-        try await walked.wait { walks.value == 1 }
+        try await walked.wait { walks.withLock { $0 } == 1 }
         #expect(pasteboard.promisedTypes.contains(.string))
 
         // The next poll finds nothing new: the promise this agent wrote is not
@@ -751,11 +752,11 @@ struct VsockGuestClipboardAgentTests {
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
-        let resolves = Box(0)
+        let resolves = Locked(0)
         let resolved = AsyncGate()
         await MainActor.run {
             agent.onFileResolveCompletedForTesting = {
-                resolves.value += 1
+                resolves.withLock { $0 += 1 }
                 resolved.notify()
             }
         }
@@ -783,7 +784,7 @@ struct VsockGuestClipboardAgentTests {
         // Re-announcing to a host with no record of prior offers is not a
         // gesture anyone just made, and the notice pops the guest's dropdown by
         // itself — so nobody is interrupted for a copy already accounted for.
-        try await resolved.wait { resolves.value == 1 }
+        try await resolved.wait { resolves.withLock { $0 } == 1 }
         #expect(notices.value == 0)
         #expect(await MainActor.run { agent.clipboardActivity } == .offeredToHost)
 

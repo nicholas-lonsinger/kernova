@@ -3,6 +3,7 @@ import Foundation
 import KernovaKit
 import KernovaTestSupport
 import Testing
+import KernovaSynchronization
 
 /// The dialler every clipboard and drop transfer opens its data connection
 /// through: its own gate label, and the socket options a transfer's reads and
@@ -40,13 +41,13 @@ struct VsockGuestDataDialerTests {
             close(far)
         }
 
-        let seen = Box<String?>(nil)
+        let seen = Locked<String?>(nil)
         _ = try VsockGuestDataDialer.connect(port: 49_157) { _, label in
-            seen.value = label
+            seen.withLock { $0 = label }
             return .success(near)
         }
 
-        #expect(seen.value == VsockGuestDataDialer.gateLabel)
+        #expect(seen.withLock { $0 } == VsockGuestDataDialer.gateLabel)
         #expect(VsockGuestDataDialer.gateLabel != "clipboard")
         #expect(VsockGuestDataDialer.gateLabel != "drop")
     }
@@ -59,13 +60,13 @@ struct VsockGuestDataDialerTests {
             close(far)
         }
 
-        let seen = Box<UInt32?>(nil)
+        let seen = Locked<UInt32?>(nil)
         _ = try VsockGuestDataDialer.connect(port: KernovaVsockPort.dropData) { port, _ in
-            seen.value = port
+            seen.withLock { $0 = port }
             return .success(near)
         }
 
-        #expect(seen.value == KernovaVsockPort.dropData)
+        #expect(seen.withLock { $0 } == KernovaVsockPort.dropData)
     }
 
     @Test("a connect that never completes is thrown, not returned as a descriptor")

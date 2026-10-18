@@ -390,18 +390,18 @@ struct ClipboardArchiveStreamTests {
         #expect(payload.count == 4 * quantum)
         try payload.write(to: source.appendingPathComponent("random.bin"))
 
-        let advances = Box(0)
+        let advances = Locked(0)
         let failure = ClipboardArchiveCodec.extract(
             from: ClipboardArchiveDataSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
             into: try makeDestination(in: scratch.url), counted: Locked(0),
-            pacingBytes: quantum, onOutputAdvanced: { _ in advances.value += 1 })
+            pacingBytes: quantum, onOutputAdvanced: { _ in advances.withLock { $0 += 1 } })
 
         #expect(failure == nil)
         // Paced by anything coarser — the whole archive, or the compressed bytes
         // arriving — a payload this size would report once, and the free-space
         // and ceiling checks would run once with it.
-        #expect(advances.value >= payload.count / quantum - 1)
+        #expect(advances.withLock { $0 } >= payload.count / quantum - 1)
     }
 
     @Test("a refusing guard stops the extract, and its reason survives the archive's rewrapping")

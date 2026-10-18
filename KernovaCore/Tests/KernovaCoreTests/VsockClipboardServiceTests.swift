@@ -2417,10 +2417,10 @@ struct VsockClipboardServiceTests {
         // Generous until the first fire has passed its pre-flight, then too small
         // for the second fire's — the one path a fire takes out of
         // `performBlockingPull` before it reaches the coordinator.
-        let freeSpace = Box<Int64>(1 << 40)
+        let freeSpace = SharedMutex<Int64>(1 << 40)
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
-            freeSpaceProvider: { _ in freeSpace.value },
+            freeSpaceProvider: { _ in freeSpace.withLock { $0 } },
             stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
         service.start()
         defer { service.stop() }
@@ -2449,7 +2449,7 @@ struct VsockClipboardServiceTests {
         }
         try await responder.requested.wait { responder.requests.count == 1 }
 
-        freeSpace.value = 1024 * 1024
+        freeSpace.withLock { $0 = 1024 * 1024 }
         let secondFire = await offCooperativePool {
             service.serveFileURL(generation: 45, repIndex: 0)
         }
@@ -2461,7 +2461,7 @@ struct VsockClipboardServiceTests {
         // Capacity back before the first fire's transfer opens: its reply runs
         // the receiver's own capacity check, and only the second fire's
         // pre-flight was meant to see the squeeze.
-        freeSpace.value = 1 << 40
+        freeSpace.withLock { $0 = 1 << 40 }
         responder.releaseReplies()
         #expect(await firstFire.value != nil)
         #expect(responder.requests.count == 1)
@@ -2608,9 +2608,9 @@ struct VsockClipboardServiceTests {
         // Wired once the offer is promised, as a Copy to Mac would leave it: the
         // retract a release performs on the host pasteboard, which in production
         // reaches the very provider whose fire is running.
-        let retracts = Box(0)
+        let retracts = SharedMutex(0)
         service.retractStaleHostWrite = {
-            retracts.value += 1
+            retracts.withLock { $0 += 1 }
             return true
         }
 
@@ -2630,7 +2630,7 @@ struct VsockClipboardServiceTests {
         try await reports.wait {
             reports.failure == .supersededCopyRetracted(hasSuccessor: false)
         }
-        #expect(retracts.value == 1)
+        #expect(retracts.withLock { $0 } == 1)
     }
 
     @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")

@@ -251,7 +251,7 @@ final class TransferHarness: Sendable {
     /// Fires on the sending transfer's own queue, after each block that got
     /// away — so a test pinning an event to "the transfer is under way" pins it
     /// to the transfer rather than to how fast the two ends happen to run.
-    let onSendProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
+    let onSendProgress = Locked<(@Sendable (Int, Int) -> Void)?>(nil)
 
     /// An `isCurrent` for ``pull`` that fires `cancel` on the sender's first
     /// pre-write check and holds every later one until a live receiver has
@@ -273,10 +273,10 @@ final class TransferHarness: Sendable {
     {
         let tornDown = DispatchSemaphore(value: 0)
         inbox.setOnReceiverFinishedForTesting { _ in tornDown.signal() }
-        let cancelled = Box(false)
+        let cancelled = Locked(false)
         return { _ in
-            guard cancelled.value else {
-                cancelled.value = true
+            guard cancelled.withLock({ $0 }) else {
+                cancelled.withLock { $0 = true }
                 cancel()
                 return true
             }
@@ -388,7 +388,7 @@ final class TransferHarness: Sendable {
                 isInline: isInline, isCurrent: isCurrent, link: .accepted(far),
                 onProgress: { bytes, total in
                     collector.sendProgress(bytes, total)
-                    onSendProgress.value?(bytes, total)
+                    onSendProgress.withLock { $0 }?(bytes, total)
                 },
                 onComplete: { collector.sendFinished(request.transferID, success: $0) })
         }
@@ -420,7 +420,7 @@ final class TransferHarness: Sendable {
             },
             onProgress: { bytes, total in
                 collector.sendProgress(bytes, total)
-                onSendProgress.value?(bytes, total)
+                onSendProgress.withLock { $0 }?(bytes, total)
             },
             onComplete: { collector.sendFinished(transferID, success: $0) })
     }

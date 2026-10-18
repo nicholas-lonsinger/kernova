@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 @Suite("ClipboardInboundOffers refusals", .caseScoped)
 @MainActor
@@ -26,10 +27,10 @@ struct ClipboardInboundRefusalTests {
                 staging: staging, dataSocketTimeout: testWaitBackstop),
             reporter: ClipboardTransferReporter(clock: GatedEngineClock()),
             staging: staging, peerName: "guest", maxPasteBytes: { ClipboardPasteLimit.defaultBytes })
-        let recorded = Box<[ClipboardEndpoint.Activity]>([])
+        let recorded = Locked<[ClipboardEndpoint.Activity]>([])
         let changed = AsyncGate()
         inbound.onActivity = { activity in
-            recorded.value.append(activity)
+            recorded.withLock { $0.append(activity) }
             changed.notify()
         }
 
@@ -40,8 +41,8 @@ struct ClipboardInboundRefusalTests {
         // landing proves the stale one has already been handled.
         inbound.recordRefusal(.pasteTooLarge, generation: 36)
         inbound.recordRefusal(.pasteTimeout, generation: 37)
-        try await changed.wait { !recorded.value.isEmpty }
+        try await changed.wait { !recorded.withLock { $0 }.isEmpty }
 
-        #expect(recorded.value == [.pasteRefused(.pasteTimeout, limitBytes: nil)])
+        #expect(recorded.withLock { $0 } == [.pasteRefused(.pasteTimeout, limitBytes: nil)])
     }
 }

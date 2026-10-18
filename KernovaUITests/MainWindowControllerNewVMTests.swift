@@ -123,19 +123,19 @@ struct MainWindowControllerNewVMTests {
 
         #expect(subject.layout == canonical)
 
-        let sheetEnded = Box(false)
+        let sheetEnded = SharedMutex(false)
         let gate = AsyncGate()
         let observer = NotificationCenter.default.addObserver(
             forName: NSWindow.didEndSheetNotification, object: subject.window, queue: .main
         ) { _ in
-            sheetEnded.value = true
+            sheetEnded.withLock { $0 = true }
             gate.notify()
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         let paletteContent = try #require(palette.contentView)
         let done = try #require(findButton(titled: "Done", in: paletteContent))
         done.performClick(nil)
-        try await gate.wait { sheetEnded.value }
+        try await gate.wait { sheetEnded.withLock { $0 } }
 
         #expect(subject.layout == canonical.filter { $0 != newVM })
         #expect(preferences.mainToolbarNewVMCollapseIndex == 1)

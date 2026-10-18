@@ -354,14 +354,14 @@ struct LazyPullCoordinatorTests {
             start: { starts.bump() })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        let resolved = Box<LazyPullOutcome?>(nil)
+        let resolved = Locked<LazyPullOutcome?>(nil)
         let joinResolved = AsyncGate()
         coordinator.join(
             transferID: 21,
             onProgress: { asyncProgress.bump(bytes: $0, total: $1) },
             retire: {}, start: { starts.bump() },
-            onResolve: {
-                resolved.value = $0
+            onResolve: { result in
+                resolved.withLock { $0 = result }
                 joinResolved.notify()
             })
         try await waitUntil { coordinator.waiterCountForTesting(21) == 2 }
@@ -373,8 +373,8 @@ struct LazyPullCoordinatorTests {
             Issue.record("Expected .delivered for the synchronous waiter")
             return
         }
-        try await joinResolved.wait { resolved.value != nil }
-        guard case .delivered(let asyncRep) = resolved.value else {
+        try await joinResolved.wait { resolved.withLock { $0 } != nil }
+        guard case .delivered(let asyncRep) = resolved.withLock({ $0 }) else {
             Issue.record("Expected .delivered for the asynchronous waiter")
             return
         }
@@ -394,14 +394,14 @@ struct LazyPullCoordinatorTests {
         async let held = runPull(coordinator, transferID: 33, retire: { retires.bump() })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        let leftOutcome = Box<LazyPullOutcome?>(nil)
+        let leftOutcome = Locked<LazyPullOutcome?>(nil)
         let waiter = coordinator.join(
             transferID: 33, retire: { retires.bump() }, start: {},
-            onResolve: { leftOutcome.value = $0 })
+            onResolve: { result in leftOutcome.withLock { $0 = result } })
         try await waitUntil { coordinator.waiterCountForTesting(33) == 2 }
 
         #expect(coordinator.leave(waiter))
-        guard case .cancelled = leftOutcome.value else {
+        guard case .cancelled = leftOutcome.withLock({ $0 }) else {
             Issue.record("Expected the departing waiter to resolve .cancelled")
             return
         }
@@ -422,18 +422,18 @@ struct LazyPullCoordinatorTests {
     func lastWaiterOutRetiresThePull() async throws {
         let coordinator = LazyPullCoordinator()
         let retires = Tally()
-        let outcome = Box<LazyPullOutcome?>(nil)
+        let outcome = Locked<LazyPullOutcome?>(nil)
         let resolved = AsyncGate()
         let waiter = coordinator.join(
             transferID: 34, retire: { retires.bump() }, start: {},
-            onResolve: {
-                outcome.value = $0
+            onResolve: { result in
+                outcome.withLock { $0 = result }
                 resolved.notify()
             })
 
         #expect(coordinator.leave(waiter) == false)
-        try await resolved.wait { outcome.value != nil }
-        guard case .cancelled = outcome.value else {
+        try await resolved.wait { outcome.withLock { $0 } != nil }
+        guard case .cancelled = outcome.withLock({ $0 }) else {
             Issue.record("Expected .cancelled for the last waiter out")
             return
         }

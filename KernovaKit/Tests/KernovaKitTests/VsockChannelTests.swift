@@ -4,6 +4,7 @@ import Darwin
 import SwiftProtobuf
 import KernovaTestSupport
 @testable import KernovaKit
+import KernovaSynchronization
 
 @Suite("VsockChannel", .caseScoped)
 struct VsockChannelTests {
@@ -393,9 +394,9 @@ struct VsockChannelTests {
         defer { Darwin.close(rawPeerFd) }
 
         let bigBlob = Data(count: 1024 * 1024)
-        let finished = Box<Bool>(false)
+        let finished = Locked<Bool>(false)
         let writeTask = Task<VsockChannelError?, Never> {
-            defer { finished.value = true }
+            defer { finished.withLock { $0 = true } }
             do {
                 try channel.writeFramed(bigBlob)
                 return nil
@@ -409,7 +410,7 @@ struct VsockChannelTests {
         // Sanity check: the write is genuinely still parked before teardown —
         // not the pass/fail signal (see the courtesy-delay note above).
         try await Task.sleep(for: .milliseconds(200))
-        #expect(finished.value == false)
+        #expect(finished.withLock { $0 } == false)
 
         channel.close()
 

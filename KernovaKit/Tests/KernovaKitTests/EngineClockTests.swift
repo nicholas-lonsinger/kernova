@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 @Suite("EngineInstant arithmetic", .caseScoped)
 struct EngineInstantTests {
@@ -97,14 +98,14 @@ struct EngineClockTests {
     func sleepThrowsWhenCancelledMidFlight(kind: EngineClockKind) async throws {
         let clock = kind.makeClock()
         let started = AsyncGate()
-        let running = Box(false)
+        let running = Locked(false)
         let task = Task {
-            running.value = true
+            running.withLock { $0 = true }
             started.notify()
             // An interval the cancellation must cut short — never waited out.
             try await clock.sleep(for: 3600)
         }
-        try await started.wait { running.value }
+        try await started.wait { running.withLock { $0 } }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
@@ -123,13 +124,13 @@ struct EngineClockTests {
         #expect(clock.schedulable(-1) == 0)
 
         let started = AsyncGate()
-        let running = Box(false)
+        let running = Locked(false)
         let task = Task {
-            running.value = true
+            running.withLock { $0 = true }
             started.notify()
             try await clock.sleep(for: .greatestFiniteMagnitude)
         }
-        try await started.wait { running.value }
+        try await started.wait { running.withLock { $0 } }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
