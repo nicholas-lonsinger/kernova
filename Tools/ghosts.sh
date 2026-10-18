@@ -20,6 +20,9 @@
 #     permanent, LS-registered app copy there that keeps competing in the
 #     version election after the checkout is torn down
 #     (Tools/derived-data-path.sh)
+#   - xcode-build-server caches under ~/Library/Caches/xcode-build-server
+#     named for a checkout of this clone that no longer exists — each holds
+#     that checkout's editor index, and nothing removes it with the checkout
 #   - Running processes executing from a Kernova path that no longer exists
 #     on disk (the file was deleted out from under a still-running process)
 #   - `git worktree list` entries marked `prunable` (administrative metadata
@@ -48,23 +51,28 @@
 #     re-registers it, so trashing costs a rebuild and fixes nothing.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
-# Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]
+# Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir> | --unregister <dir>]
 set -uo pipefail
 
 FIX=0
 SWEEP=0
 EVICT=0
 EVICT_DIR=
+UNREGISTER=0
 # No argument is the report mode, so '' is an arm rather than falling to *).
 # Printed with plain printf, not the lib's helpers: output.sh is sourced below,
 # after this dispatch, so a bad flag can be rejected before anything else runs.
-usage='Usage: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]'
+usage='Usage: Tools/ghosts.sh [--fix | --sweep | --evict <dir> | --unregister <dir>]'
 case "${1:-}" in
     '') ;;
     --fix) FIX=1 ;;
     --sweep) SWEEP=1 ;;
     --evict)
         EVICT=1
+        EVICT_DIR="${2:-}"
+        ;;
+    --unregister)
+        UNREGISTER=1
         EVICT_DIR="${2:-}"
         ;;
     -h | --help)
@@ -143,6 +151,10 @@ kernova_registered_paths() {
 # genuinely nothing to scan.
 XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || XCODE_DD_ROOT=''
 
+# xcode-build-server's per-checkout caches; Tools/lib/worktrees.sh
+# (stale_build_server_caches) says which ones outlived their checkout.
+BUILD_SERVER_CACHE="$HOME/Library/Caches/xcode-build-server"
+
 # Print one arena directory per line whose recorded source checkout is gone.
 # The classification is Tools/arena-label.sh's — this used to re-read each
 # arena's own records and re-derive the .claude/worktrees layout itself, which
@@ -190,11 +202,40 @@ exe_of_pid() {
 # purely regenerable build products of a checkout that no longer exists,
 # with nothing user-authored to recover.
 evict_dd_arena() {
-    local dir=$1 app
+    unregister_apps_in "$1"
+    rm -rf "$1" 2>/dev/null
+}
+
+# Unregister every bundle under <dir> from Launch Services, leaving the files.
+unregister_apps_in() {
+    local app
     while IFS= read -r app; do
         "$LSREGISTER" -u "$app" >/dev/null 2>&1
-    done < <(find "$dir" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
-    rm -rf "$dir" 2>/dev/null
+    done < <(find "$1" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
+}
+
+# --unregister <dir>: unregister the bundles under ONE build arena and exit —
+# `make dead-code` runs it over Periphery's build, which no one launches but
+# Launch Services registers anyway and would otherwise elect. A missing path
+# is a no-op.
+if [ "$UNREGISTER" = 1 ]; then
+    if [ -z "$EVICT_DIR" ]; then
+        printf 'ghosts.sh: --unregister requires a directory argument\n' >&2
+        exit 2
+    fi
+    # Absolute, because Launch Services records bundles by absolute path.
+    case "$EVICT_DIR" in
+        /*) ;;
+        *) EVICT_DIR="$PWD/$EVICT_DIR" ;;
+    esac
+    unregister_apps_in "$EVICT_DIR"
+    exit 0
+fi
+
+# Deleted outright for the same reason as an orphaned arena: a stale cache is
+# regenerable index data for a checkout that no longer exists.
+evict_build_server_cache() {
+    rm -rf "$1" 2>/dev/null
 }
 
 # Out of place, recoverably: an abandoned worktree can still hold ignored files
@@ -210,10 +251,10 @@ dispose_worktree() {
 }
 
 # --sweep: the quiet, non-interactive subset for hooks — unregister dead
-# app.kernova.* Launch Services registrations, evict DerivedData arenas
-# orphaned by removed checkouts, and exit. The post-checkout git hook runs it
-# on every new worktree, so that debris self-heals at the next worktree
-# creation. Best-effort: always exits 0 so a failed sweep can never fail the
+# app.kernova.* Launch Services registrations, evict DerivedData arenas and
+# xcode-build-server caches orphaned by removed checkouts, and exit. The
+# post-checkout git hook runs it on every new worktree, so that debris
+# self-heals at the next worktree creation. Best-effort: always exits 0 so a failed sweep can never fail the
 # checkout that triggered it, skips anything a process is still running from,
 # and skips the fix path's re-dump verification — `make ghosts` still reports
 # anything left behind. Unlike --fix it terminates nothing: --fix kills
@@ -227,7 +268,10 @@ if [ "$SWEEP" = 1 ]; then
         "$LSREGISTER" -u "$path" >/dev/null 2>&1
         printf 'ghosts.sh: swept dead Launch Services registration: %s\n' "$path"
     done < <(kernova_registered_paths)
-    [ -n "$XCODE_DD_ROOT" ] && refresh_holders "$XCODE_DD_ROOT"
+    held_roots=()
+    [ -n "$XCODE_DD_ROOT" ] && held_roots+=("$XCODE_DD_ROOT")
+    [ -d "$BUILD_SERVER_CACHE" ] && held_roots+=("$BUILD_SERVER_CACHE")
+    [ "${#held_roots[@]}" -gt 0 ] && refresh_holders "${held_roots[@]}"
     while IFS= read -r dir; do
         [ -z "$dir" ] && continue
         path_held "$dir" && continue
@@ -235,6 +279,14 @@ if [ "$SWEEP" = 1 ]; then
             printf 'ghosts.sh: evicted orphaned DerivedData arena: %s\n' "$(labeled_path "$dir")"
         fi
     done < <(orphaned_dd_arenas)
+    if read_worktree_layout "$REPO_ROOT"; then
+        while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            path_held "$dir" && continue
+            evict_build_server_cache "$dir" &&
+                printf 'ghosts.sh: evicted stale xcode-build-server cache: %s\n' "$(pretty_path "$dir")"
+        done < <(stale_build_server_caches "$BUILD_SERVER_CACHE")
+    fi
     exit 0
 fi
 
@@ -453,6 +505,44 @@ else
     done
 fi
 
+# ---- stale xcode-build-server caches -----------------------------------------
+
+section 'xcode-build-server caches'
+
+# Re-read: the abandoned-worktree pass above may have removed worktrees, whose
+# caches are stale from that moment.
+if ! read_worktree_layout "$REPO_ROOT"; then
+    warn 'Skipped the xcode-build-server cache check: `git worktree list` could not be read'
+else
+    bsc_stale=()
+    while IFS= read -r dir; do
+        [ -z "$dir" ] && continue
+        bsc_stale+=("$dir")
+    done < <(stale_build_server_caches "$BUILD_SERVER_CACHE")
+
+    if [ "${#bsc_stale[@]}" -eq 0 ]; then
+        pass 'No xcode-build-server caches left by removed checkouts'
+    else
+        refresh_holders "$BUILD_SERVER_CACHE"
+        for dir in "${bsc_stale[@]}"; do
+            ghost "Stale cache: $(pretty_path "$dir") — $(disk_size "$dir")"
+            if path_held "$dir"; then
+                while IFS= read -r blocked; do
+                    detail "$blocked"
+                done < <(holder_blocked_lines "$dir")
+                continue
+            fi
+            if [ "$FIX" = 1 ]; then
+                if evict_build_server_cache "$dir" && [ ! -e "$dir" ]; then
+                    fixed "deleted: $(pretty_path "$dir")"
+                else
+                    detail "delete failed for $(pretty_path "$dir")"
+                fi
+            fi
+        done
+    fi
+fi
+
 # ---- live on-disk copies & Launch Services election --------------------------
 
 section 'On-disk copies & registration election'
@@ -471,23 +561,34 @@ section 'On-disk copies & registration election'
 # path rather than by "has no Info.plist", so that a *registered* bundle which
 # is genuinely malformed still gets surfaced instead of silently dropped.
 kernova_app_copies() {
+    local checkouts=$REPO_ROOT checkout
+    read_worktree_layout "$REPO_ROOT" && checkouts=$worktree_paths
     {
         mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
         find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-        # Same resolved root as the orphan scan above, for the same reason; the
-        # in-checkout DerivedData/ below covers Relative mode, where the
-        # machine-wide root does not exist.
+        # Same resolved root as the orphan scan above, for the same reason.
         if [ -n "$XCODE_DD_ROOT" ]; then
             find "$XCODE_DD_ROOT" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
         fi
-        find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        # Every checkout's in-checkout DerivedData/, not just this one's: it
+        # holds the Relative-mode arena and `make dead-code`'s Periphery build,
+        # and a sibling worktree's copy competes as much as this checkout's.
+        while IFS= read -r checkout; do
+            [ -n "$checkout" ] || continue
+            find "$checkout/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        done <<<"$checkouts"
     } | grep -v '/Index\.noindex/' | sort -u
 }
 
+# Only registered copies enter the election, so only they are listed: a build
+# unregistered after use (`make dead-code`'s) is on disk but cannot be picked,
+# and shows up again the moment Launch Services re-registers it.
+registered_now=$(kernova_registered_paths)
 app_copies=()
 while IFS= read -r path; do
     [ -z "$path" ] && continue
-    [ -e "$path" ] && app_copies+=("$path")
+    [ -e "$path" ] || continue
+    grep -qxF -- "$path" <<<"$registered_now" && app_copies+=("$path")
 done < <(kernova_app_copies)
 
 # Unlike the dead-path ghost check above, this reports the LIVE copies — the

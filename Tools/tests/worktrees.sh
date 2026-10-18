@@ -122,6 +122,26 @@ fi
 check "not a checkout: worktrees_root" "$worktrees_root" ''
 check "not a checkout: scan" "$(orphaned_worktree_dirs)" ''
 
+# ---- stale xcode-build-server caches ---------------------------------------------
+
+# Named the way xcode-build-server names them: the checkout's path, `/` → `-`.
+bsc="$tmp/xcode-build-server"
+bsc_name() { printf '%s/%s' "$bsc" "${1//\//-}"; }
+mkdir -p "$(bsc_name "$main")" "$(bsc_name "$wts/live")" "$(bsc_name "$wts/locked")" \
+    "$(bsc_name "$wts/gone")" "$(bsc_name "$wts/gone-too")" \
+    "$(bsc_name "$main-sibling")" "$(bsc_name "$tmp/elsewhere")"
+touch "$(bsc_name "$wts/stray-file")"
+ln -s "$tmp/elsewhere" "$(bsc_name "$wts/link")"
+
+check "stale caches: unreadable layout" "$(stale_build_server_caches "$bsc")" ''
+read_worktree_layout "$main" || fail "stale caches: layout unreadable from $main"
+check "stale caches: from the primary" "$(stale_build_server_caches "$bsc")" \
+    "$(printf '%s\n' "$(bsc_name "$wts/gone")" "$(bsc_name "$wts/gone-too")")"
+read_worktree_layout "$wts/live" || fail "stale caches: layout unreadable from live"
+check "stale caches: from a linked worktree" "$(stale_build_server_caches "$bsc")" \
+    "$(printf '%s\n' "$(bsc_name "$wts/gone")" "$(bsc_name "$wts/gone-too")")"
+check "stale caches: no cache root" "$(stale_build_server_caches "$tmp/no-such-root")" ''
+
 # ---- abandoned worktrees -----------------------------------------------------------
 
 # expect_abandoned <name> <checkout> [<dir>...] — read from <checkout>, exactly
