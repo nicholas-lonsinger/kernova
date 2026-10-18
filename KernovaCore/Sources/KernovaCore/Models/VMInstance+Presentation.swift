@@ -63,6 +63,36 @@ extension VMInstance {
         vsockDropService?.reportUnreadableDrop()
     }
 
+    /// The guest drag this VM's display may take over when the pointer leaves
+    /// it holding the press, or `nil` when there is none it can.
+    ///
+    /// A `DragOffer` only ever comes from an agent that has the feature, so the
+    /// live channel and the guest's offer decide it; the setting and the VM's
+    /// state still gate it, since neither tears the channel down.
+    package var displayGuestDrag: ClipboardInboundDrag? {
+        guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
+            status == .running, let drop = vsockDropService, drop.isConnected
+        else { return nil }
+        return drop.guestDrag
+    }
+
+    /// Records that a press began on this VM's display.
+    package func displayPressBegan() {
+        vsockDropService?.displayPressBegan()
+    }
+
+    /// Takes over ``displayGuestDrag`` for `display`, or returns `nil` when
+    /// there is none to take.
+    ///
+    /// The take holds only while the VM stays running: a paused guest cannot
+    /// answer the hand-off, and the press goes back to the guest at once.
+    package func takeGuestDrag(display: any GuestDragDisplay) -> (any GuestDragTaking)? {
+        guard let drag = displayGuestDrag, let service = vsockDropService else { return nil }
+        return service.takeGuestDrag(
+            generation: drag.generation, display: display,
+            while: { [weak self] in self?.status == .running })
+    }
+
     /// What a person reads for this VM's status.
     package var statusDisplayName: String {
         status.displayName(heldByAnotherCopy: heldByAnotherCopy)

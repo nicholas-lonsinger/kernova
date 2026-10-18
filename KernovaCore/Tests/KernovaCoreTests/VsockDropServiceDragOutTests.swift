@@ -1,0 +1,629 @@
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Observation
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+/// The host side of dragging files out of a macOS guest: the offer it holds,
+/// the take that withholds the press until the guest's catcher is the drag's
+/// target, the item writes a Mac destination asks for, and the `DragComplete`
+/// that tells the guest it is done.
+///
+/// The guest is a real guest-role endpoint over a socketpair, its data
+/// connections dialled straight into the service, so both ends run the
+/// shipping protocol code.
+@Suite("VsockDropService drag-out", .caseScoped)
+@MainActor
+struct VsockDropServiceDragOutTests {
+    private let scratch = TestScratchDirectory(prefix: "VsockDropServiceDragOutTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
+    // MARK: - Doubles
+
+    /// What a take asked the display to do.
+    enum DisplayCall: Equatable {
+        case nudge(GuestDragNudge)
+        case beginSession
+        case release
+        case resume
+    }
+
+    /// A display that records what the take asks of it.
+    @MainActor
+    final class RecordingDisplay: GuestDragDisplay {
+        private(set) var calls: [DisplayCall] = []
+        let changed = AsyncGate()
+
+        var releaseCount: Int { calls.filter { $0 == .release }.count }
+
+        func injectNudge(_ nudge: GuestDragNudge) { record(.nudge(nudge)) }
+        func injectRelease() { record(.release) }
+        func resumeForwarding() { record(.resume) }
+
+        func beginHostSession(carrying take: any GuestDragTaking) -> Bool {
+            record(.beginSession)
+            return true
+        }
+
+        private func record(_ call: DisplayCall) {
+            calls.append(call)
+            changed.notify()
+        }
+    }
+
+    /// The condition a take holds under, standing in for the VM's status.
+    @MainActor
+    @Observable
+    final class RunningFlag {
+        var isRunning = true
+    }
+
+    /// How one item write ended, as a destination would see it.
+    enum WriteResult: Equatable, Sendable {
+        case landed
+        case cancelled
+        case failed(ClipboardTransferFailure)
+        case other(String)
+    }
+
+    // MARK: - Harness
+
+    @MainActor
+    final class Harness {
+        let service: VsockDropService
+        let guest: ClipboardEndpoint
+        let guestRecorder = EndpointRecorder()
+        /// This VM's transfer report, as every surface reads it.
+        let reports = ClipboardTransferReports()
+        let guestReports = ClipboardTransferReports()
+        /// The hand-off deadline's clock: it passes only when a test releases it.
+        let clock = GatedEngineClock()
+        let display = RecordingDisplay()
+        let running = RunningFlag()
+        /// The guest's data connections, held back from the service for a
+        /// harness whose pulls park.
+        let parked = DialledDataConnections()
+        let guestChannel: VsockChannel
+        private let hostChannel: VsockChannel
+        private let hostStagingRoot = TestStagingRoot()
+        private let guestStaging: ClipboardFileStaging
+
+        init(parksPulls: Bool = false) throws {
+            let (hostFd, guestFd) = try makeRawSocketPair()
+            hostChannel = VsockChannel(fileDescriptor: hostFd)
+            guestChannel = VsockChannel(fileDescriptor: guestFd)
+            hostChannel.start()
+            guestChannel.start()
+            let service = VsockDropService(
+                channel: hostChannel, label: "Drag VM", reporter: reports.reporter,
+                stagingRoot: hostStagingRoot.root, stagingKey: "drag-vm",
+                progressRevealDelay: 0, progressIdleGap: 0, clock: clock)
+            self.service = service
+            guestStaging = ClipboardFileStaging(label: "guest", root: TestStagingRoot().root)
+            let parked = self.parked
+            let dialer: @Sendable (UInt32) throws -> Int32
+            if parksPulls {
+                dialer = parked.dialer
+            } else {
+                dialer = { _ in
+                    // The far end goes straight to the service's accept path —
+                    // the in-process stand-in for the drop data listener.
+                    let (near, far) = try makeRawSocketPair()
+                    service.acceptDataConnection(fd: far)
+                    return near
+                }
+            }
+            guest = ClipboardEndpoint(
+                channel: guestChannel,
+                configuration: ClipboardEndpoint.Configuration(
+                    role: .guest, kind: .drop, label: "guest", peerName: "Mac",
+                    maxPasteBytes: { .max }, staging: guestStaging, progressRevealDelay: 0,
+                    progressIdleGap: 0, dataLink: .dials(port: 0, connect: dialer)),
+                reporter: guestReports.reporter)
+            guest.delegate = guestRecorder
+            service.start()
+            guest.start()
+        }
+
+        func tearDown() {
+            guest.stop()
+            service.stop()
+            guestChannel.close()
+            parked.closeAll()
+            guestStaging.sweep()
+        }
+
+        /// Offers `urls` from the guest as one drag and waits for the host to
+        /// hold it.
+        func offer(_ urls: [URL]) async throws -> ClipboardInboundDrag {
+            let intake = ClipboardPasteboardReader.resolve(filesAt: urls)
+            let outcome = guest.offer(ClipboardContent(representations: intake.representations))
+            guard case .sent(let generation) = outcome else {
+                throw TestFailure("The guest's drag was not offered: \(outcome)")
+            }
+            try await waitForChange { self.service.guestDrag?.generation == generation }
+            return try #require(service.guestDrag)
+        }
+
+        /// Takes `drag` over for the recording display.
+        func take(_ drag: ClipboardInboundDrag) throws -> GuestDragTake {
+            let running = self.running
+            let take = service.takeGuestDrag(
+                generation: drag.generation, display: display, while: { running.isRunning })
+            return try #require(take)
+        }
+
+        /// Offers `urls` and takes the drag, waiting for the guest to hear
+        /// `DragTake`.
+        func offerAndTake(_ urls: [URL]) async throws -> GuestDragTake {
+            let take = try take(try await offer(urls))
+            try await guestRecorder.wait { self.guestRecorder.takes.contains(take.generation) }
+            return take
+        }
+
+        /// Reports one hand-off step from the guest and waits for the take to
+        /// reach `phase`.
+        func handOff(
+            _ step: ClipboardDragHandOffStep, for take: GuestDragTake,
+            reaching phase: GuestDragTake.Phase
+        ) async throws {
+            guest.sendDragHandOff(generation: take.generation, step: step)
+            try await waitForChange { take.phase == phase }
+        }
+
+        /// Takes a drag over and drives it to the guest's catch: armed, targeted,
+        /// released on the next withheld drag, caught.
+        func releasedTake(_ urls: [URL]) async throws -> GuestDragTake {
+            let take = try await offerAndTake(urls)
+            try await handOff(.armed, for: take, reaching: .handingOff(armed: true))
+            try await handOff(.targeted, for: take, reaching: .ready)
+            take.withheldDrag()
+            guest.sendDragHandOff(generation: take.generation, step: .caught)
+            return take
+        }
+
+        /// Waits until the guest has heard `DragComplete` for `generation`.
+        func waitForComplete(_ generation: UInt64) async throws {
+            try await guestRecorder.wait { self.guestRecorder.completedDrags.contains(generation) }
+        }
+
+        /// Waits until the display has recorded `call`.
+        func waitForDisplay(_ call: DisplayCall) async throws {
+            try await display.changed.wait { self.display.calls.contains(call) }
+        }
+
+        /// Sends one host→guest frame after everything already sent, and waits
+        /// for the guest to receive it — so a frame the host would have sent
+        /// before it has arrived by the time this returns.
+        func hostToGuestBarrier(scratch: URL) async throws {
+            let file = scratch.appendingPathComponent("barrier-\(UUID().uuidString).txt")
+            try Data("barrier".utf8).write(to: file)
+            let before = guestRecorder.offers.count
+            #expect(service.startDrop(urls: [file]))
+            try await guestRecorder.wait { self.guestRecorder.offers.count > before }
+        }
+
+        /// Writes item `index` of `take` to `destination` the way a promise
+        /// provider's operation queue does.
+        func write(_ take: GuestDragTake, item index: Int, to destination: URL) async -> WriteResult {
+            await offCooperativePool {
+                do {
+                    try take.writeItem(at: index, to: destination)
+                    return .landed
+                } catch let error as GuestDragWriteError {
+                    guard case .failed(let failure) = error else { return .other("\(error)") }
+                    return .failed(failure)
+                } catch let error as CocoaError where error.code == .userCancelled {
+                    return .cancelled
+                } catch {
+                    return .other("\(error)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Fixtures
+
+    private func makeFile(named name: String, contents: String) throws -> URL {
+        let url = scratch.url.appendingPathComponent(name)
+        try Data(contents.utf8).write(to: url)
+        return url
+    }
+
+    private func makeFolder(named name: String, files: [String: String]) throws -> URL {
+        let url = scratch.url.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        for (file, contents) in files {
+            try Data(contents.utf8).write(to: url.appendingPathComponent(file))
+        }
+        return url
+    }
+
+    /// A directory nothing has written into, standing in for where a Mac
+    /// destination asks for the files.
+    private func makeDestination() throws -> URL {
+        let url = scratch.url.appendingPathComponent("Destination-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    // MARK: - The offer
+
+    @Test("a guest drag is held as the offer the display may take, with its items")
+    func guestDragIsHeld() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let file = try makeFile(named: "notes.txt", contents: "notes")
+
+        let drag = try await harness.offer([file])
+
+        #expect(drag.items.map(\.filename) == ["notes.txt"])
+        #expect(drag.items.map(\.byteCount) == [5])
+        #expect(drag.items.allSatisfy { !$0.isDirectory })
+    }
+
+    @Test("the guest withdrawing its drag clears the offer")
+    func withdrawalClearsTheOffer() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let drag = try await harness.offer([try makeFile(named: "a.txt", contents: "a")])
+
+        #expect(harness.guest.withdraw(generation: drag.generation))
+
+        try await waitForChange { harness.service.guestDrag == nil }
+    }
+
+    @Test("a new press on the display clears the offer the last press left")
+    func newPressClearsTheOffer() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        _ = try await harness.offer([try makeFile(named: "a.txt", contents: "a")])
+
+        harness.service.displayPressBegan()
+
+        #expect(harness.service.guestDrag == nil)
+    }
+
+    @Test("the channel ending clears the offer")
+    func channelEndClearsTheOffer() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        _ = try await harness.offer([try makeFile(named: "a.txt", contents: "a")])
+
+        harness.guestChannel.close()
+
+        try await waitForChange { !harness.service.isConnected }
+        #expect(harness.service.guestDrag == nil)
+    }
+
+    // MARK: - Taking over
+
+    @Test("a take sends DragTake and leaves no offer to take again")
+    func takeSendsDragTake() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let drag = try await harness.offer([try makeFile(named: "a.txt", contents: "a")])
+
+        let take = try harness.take(drag)
+
+        try await harness.guestRecorder.wait { harness.guestRecorder.takes == [drag.generation] }
+        #expect(take.phase == .handingOff(armed: false))
+        #expect(harness.service.guestDrag == nil)
+        let again = harness.service.takeGuestDrag(
+            generation: drag.generation, display: harness.display, while: { true })
+        #expect(again == nil)
+        // Nothing is injected until the guest's catcher is up.
+        #expect(harness.display.calls.isEmpty)
+    }
+
+    @Test("a take names only the drag on offer now")
+    func staleGenerationIsNotTaken() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let drag = try await harness.offer([try makeFile(named: "a.txt", contents: "a")])
+
+        let stale = harness.service.takeGuestDrag(
+            generation: drag.generation + 1, display: harness.display, while: { true })
+        #expect(stale == nil)
+        #expect(harness.service.guestDrag == drag)
+    }
+
+    @Test("ARMED nudges once, and each withheld drag before TARGETED nudges again, alternating")
+    func armedNudgesAlternately() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+
+        // Before the catcher is up, motion has nothing to re-target.
+        take.withheldDrag()
+        #expect(harness.display.calls.isEmpty)
+
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        #expect(harness.display.calls == [.nudge(.center)])
+
+        take.withheldDrag()
+        take.withheldDrag()
+        #expect(harness.display.calls == [.nudge(.center), .nudge(.offset), .nudge(.center)])
+    }
+
+    @Test("TARGETED readies the take, and the next withheld drag begins the session, then releases")
+    func targetedBeginsTheSessionThenReleases() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+
+        try await harness.handOff(.targeted, for: take, reaching: .ready)
+        #expect(harness.display.calls == [.nudge(.center)])
+
+        take.withheldDrag()
+
+        #expect(harness.display.calls == [.nudge(.center), .beginSession, .release])
+        #expect(take.phase == .released(hostSession: true))
+    }
+
+    @Test("the button coming up once the take is ready releases without a session")
+    func mouseUpWhileReadyReleasesWithoutASession() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        try await harness.handOff(.targeted, for: take, reaching: .ready)
+
+        take.withheldMouseUp()
+
+        #expect(harness.display.calls == [.nudge(.center), .release])
+        #expect(take.phase == .released(hostSession: false))
+    }
+
+    @Test("a released take never releases again")
+    func releasesAtMostOnce() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        try await harness.handOff(.targeted, for: take, reaching: .ready)
+        take.withheldDrag()
+
+        take.withheldDrag()
+        take.withheldMouseUp()
+        take.displayAbandoned()
+        harness.guest.sendDragHandOff(generation: take.generation, step: .targeted)
+        harness.guest.sendDragHandOff(generation: take.generation, step: .caught)
+        take.hostSessionEnded(dropped: false)
+        try await harness.waitForComplete(take.generation)
+
+        #expect(harness.display.releaseCount == 1)
+        #expect(!harness.display.calls.contains(.resume))
+    }
+
+    // MARK: - Failing before the release
+
+    /// Every way a take can fail before the guest's catcher is its target.
+    enum EarlyFailure: String, CaseIterable, Sendable {
+        case guestFailed
+        case guestWithdrew
+        case buttonUp
+        case deadline
+        case vmStopped
+        case channelLost
+    }
+
+    @Test(
+        "every failure before TARGETED resumes forwarding, tells a live guest, and never releases",
+        arguments: EarlyFailure.allCases)
+    func earlyFailureAbandons(_ failure: EarlyFailure) async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+
+        switch failure {
+        case .guestFailed:
+            harness.guest.sendDragHandOff(
+                generation: take.generation, step: .failed(.dragTakeRefused, message: "refused"))
+        case .guestWithdrew:
+            #expect(harness.guest.withdraw(generation: take.generation))
+        case .buttonUp:
+            take.withheldMouseUp()
+        case .deadline:
+            try await harness.clock.sleepRequested.wait {
+                harness.clock.parked.contains { $0.seconds == GuestDragTake.handOffDeadline }
+            }
+            let deadline = try #require(
+                harness.clock.parked.first { $0.seconds == GuestDragTake.handOffDeadline })
+            harness.clock.release(deadline)
+        case .vmStopped:
+            harness.running.isRunning = false
+        case .channelLost:
+            harness.guestChannel.close()
+        }
+
+        try await harness.waitForDisplay(.resume)
+        #expect(take.phase == .abandoned)
+        #expect(harness.display.releaseCount == 0)
+        #expect(!harness.display.calls.contains(.beginSession))
+        if failure != .channelLost {
+            try await harness.waitForComplete(take.generation)
+        }
+        // Whatever the guest reports afterwards, an abandoned take stays down.
+        take.withheldDrag()
+        take.withheldMouseUp()
+        #expect(harness.display.releaseCount == 0)
+    }
+
+    @Test(
+        "a failure after TARGETED but before the release also abandons rather than releasing",
+        arguments: [EarlyFailure.guestFailed, .guestWithdrew, .vmStopped])
+    func readyFailureAbandons(_ failure: EarlyFailure) async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        try await harness.handOff(.targeted, for: take, reaching: .ready)
+
+        switch failure {
+        case .guestFailed:
+            harness.guest.sendDragHandOff(
+                generation: take.generation, step: .failed(.dragTakeFailed, message: "exited"))
+        case .guestWithdrew:
+            #expect(harness.guest.withdraw(generation: take.generation))
+        case .vmStopped:
+            harness.running.isRunning = false
+        case .buttonUp, .deadline, .channelLost:
+            Issue.record("Not a ready-state case")
+        }
+
+        try await harness.waitForDisplay(.resume)
+        try await harness.waitForComplete(take.generation)
+        #expect(harness.display.releaseCount == 0)
+        take.withheldDrag()
+        #expect(harness.display.releaseCount == 0)
+    }
+
+    @Test("a hand-off deadline that passes after TARGETED does nothing")
+    func deadlineAfterTargetedIsInert() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        try await harness.handOff(.targeted, for: take, reaching: .ready)
+
+        // The deadline's task was cancelled, so its sleep left the clock.
+        try await harness.clock.parkedChanged.wait {
+            !harness.clock.parked.contains { $0.seconds == GuestDragTake.handOffDeadline }
+        }
+        #expect(take.phase == .ready)
+        #expect(!harness.display.calls.contains(.resume))
+    }
+
+    // MARK: - Garbage collection
+
+    @Test("a release without a session completes the drag only once the guest reports its catch")
+    func completionWaitsForTheCatch() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        try await harness.handOff(.targeted, for: take, reaching: .ready)
+        take.withheldMouseUp()
+
+        // A DragComplete overtaking the injected release would order the
+        // catcher out from under it.
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.completedDrags.isEmpty)
+
+        harness.guest.sendDragHandOff(generation: take.generation, step: .caught)
+        try await harness.waitForComplete(take.generation)
+    }
+
+    @Test("a session that ends with nothing dropped completes the drag")
+    func emptyDropCompletes() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.completedDrags.isEmpty)
+
+        take.hostSessionEnded(dropped: false)
+
+        try await harness.waitForComplete(take.generation)
+    }
+
+    @Test("the next take completes the one before it")
+    func supersessionCompletes() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let first = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        first.hostSessionEnded(dropped: true)
+
+        _ = try await harness.offerAndTake([try makeFile(named: "b.txt", contents: "b")])
+
+        try await harness.waitForComplete(first.generation)
+    }
+
+    // MARK: - Writing items
+
+    @Test("each item lands at exactly the URL asked for — a file, and a folder as its tree")
+    func itemsLandAtTheDestination() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let file = try makeFile(named: "report.txt", contents: "the report")
+        let folder = try makeFolder(named: "Photos", files: ["a.txt": "alpha", "b.txt": "beta"])
+        let take = try await harness.releasedTake([file, folder])
+        #expect(take.items.map(\.typeIdentifier).last == "public.folder")
+        take.hostSessionEnded(dropped: true)
+        let destination = try makeDestination()
+
+        let fileTarget = destination.appendingPathComponent("report.txt")
+        #expect(await harness.write(take, item: 0, to: fileTarget) == .landed)
+        let folderTarget = destination.appendingPathComponent("Photos")
+        #expect(await harness.write(take, item: 1, to: folderTarget) == .landed)
+
+        #expect(try String(contentsOf: fileTarget, encoding: .utf8) == "the report")
+        #expect(
+            try String(contentsOf: folderTarget.appendingPathComponent("a.txt"), encoding: .utf8)
+                == "alpha")
+        #expect(
+            try String(contentsOf: folderTarget.appendingPathComponent("b.txt"), encoding: .utf8)
+                == "beta")
+        // Every item written: nothing will pull from the drag again.
+        try await harness.waitForComplete(take.generation)
+        // One readout for the take, which its own idle gap completes.
+        try await harness.reports.changed.wait {
+            harness.reports.reports.contains { report in
+                guard case .finished(let finish) = report else { return false }
+                return finish.gesture == .dragOut && finish.failure == nil
+            }
+        }
+        #expect(harness.reports.refusals.isEmpty)
+    }
+
+    @Test("the readout's Cancel fails the write in flight as cancelled and completes the drag")
+    func cancelCallsOffTheWrites() async throws {
+        let harness = try Harness(parksPulls: true)
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        take.hostSessionEnded(dropped: true)
+        let destination = try makeDestination().appendingPathComponent("a.txt")
+
+        let write = Task { await harness.write(take, item: 0, to: destination) }
+        // The guest has dialled the item's data connection, which the harness
+        // holds back, so the pull is parked.
+        _ = try await harness.parked.next()
+        try await harness.reports.changed.wait { harness.reports.runningSnapshot != nil }
+        #expect(harness.reports.runningSnapshot?.gesture == .dragOut)
+
+        #expect(harness.reports.cancelShownTransfer())
+
+        #expect(await write.value == .cancelled)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        try await harness.waitForComplete(take.generation)
+        // Asked again after the Cancel, the take refuses without pulling.
+        #expect(await harness.write(take, item: 0, to: destination) == .cancelled)
+    }
+
+    @Test("a write whose transfer is cut off by the guest withdrawing fails, and is reported")
+    func withdrawalDuringAWriteFails() async throws {
+        let harness = try Harness(parksPulls: true)
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        take.hostSessionEnded(dropped: true)
+        let destination = try makeDestination().appendingPathComponent("a.txt")
+
+        let write = Task { await harness.write(take, item: 0, to: destination) }
+        _ = try await harness.parked.next()
+        #expect(harness.guest.withdraw(generation: take.generation))
+
+        #expect(await write.value == .failed(.peerReported(nil)))
+        try await harness.reports.waitForFailure()
+        #expect(harness.reports.finish?.gesture == .dragOut)
+    }
+}

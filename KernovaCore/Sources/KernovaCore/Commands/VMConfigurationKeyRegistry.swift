@@ -739,7 +739,8 @@ package enum VMConfigurationKeyRegistry {
 
     package static let dropFiles = VMConfigurationKey(
         name: "dropFiles",
-        summary: "Send files dropped on the display to the guest's Downloads: true or false.",
+        summary:
+            "Drag files onto the display into the guest's Downloads, and out of it onto this Mac: true or false.",
         gate: .live,
         applies: { $0 == .macOS },
         read: { String($0.dropFilesEnabled) },

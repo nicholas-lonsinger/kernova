@@ -12,15 +12,19 @@ import Testing
 struct VMDisplayBackingViewTests {
     private let stagingRoot = TestStagingRoot()
     private let scratch = TestScratchDirectory(prefix: "VMDisplayBackingViewTests")
+    /// The VM every display in a test moves files through.
+    private let host = FakeTransferHost()
 
     init() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
-    /// A display whose promise staging has a root of its own.
+    /// A display hosted by ``host``, whose promise staging has a root of its own.
     private func makeBacking() -> VMDisplayBackingView {
         let backing = VMDisplayBackingView(frame: .zero)
         backing.staging = DropPromiseStaging(root: stagingRoot.root)
+        let host = self.host
+        backing.transferHost = { host }
         return backing
     }
 
@@ -93,18 +97,21 @@ struct VMDisplayBackingViewTests {
 
     // MARK: - File drop
 
-    /// A dragging info carrying whatever `pasteboard` holds; only the pasteboard
-    /// is read by the drop path.
+    /// A dragging info carrying whatever `pasteboard` holds, from `source`; only
+    /// those two are read by the drop path.
     private final class StubDraggingInfo: NSObject, NSDraggingInfo {
         let draggingPasteboard: NSPasteboard
-        @MainActor init(pasteboard: NSPasteboard) { self.draggingPasteboard = pasteboard }
+        let draggingSource: Any?
+        @MainActor init(pasteboard: NSPasteboard, source: Any? = nil) {
+            self.draggingPasteboard = pasteboard
+            self.draggingSource = source
+        }
 
         var draggingDestinationWindow: NSWindow? { nil }
         var draggingSourceOperationMask: NSDragOperation { .copy }
         var draggingLocation: NSPoint { .zero }
         var draggedImageLocation: NSPoint { .zero }
         var draggedImage: NSImage? { nil }
-        var draggingSource: Any? { nil }
         var draggingSequenceNumber: Int { 0 }
         var animatesToDestination: Bool = false
         var numberOfValidItemsForDrop: Int = 0
@@ -143,17 +150,65 @@ struct VMDisplayBackingViewTests {
         return StubDraggingInfo(pasteboard: pasteboard)
     }
 
-    private func makeTextDrag(_ text: String) -> StubDraggingInfo {
+    private func makeTextDrag(_ text: String, source: Any? = nil) -> StubDraggingInfo {
         let pasteboard = NSPasteboard(name: .init("VMDisplayBackingViewTests-\(UUID().uuidString)"))
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        return StubDraggingInfo(pasteboard: pasteboard)
+        return StubDraggingInfo(pasteboard: pasteboard, source: source)
+    }
+
+    @Test("the display follows its host's availability by itself")
+    func registrationFollowsTheHost() async throws {
+        let backing = makeBacking()
+        #expect(backing.registeredDraggedTypes.isEmpty)
+
+        host.displayDropAvailability = .disconnected
+        // The observation's pass is queued on main by the change itself.
+        await drainMainQueue()
+        #expect(backing.registeredDraggedTypes.contains(.fileURL))
+
+        host.displayDropAvailability = .none
+        await drainMainQueue()
+        #expect(backing.registeredDraggedTypes.isEmpty)
+    }
+
+    // MARK: - Files dragged out of a VM
+
+    @Test("files dragged out of this same VM are refused, with the reject cursor")
+    func refusesItsOwnDragOut() throws {
+        let backing = makeBacking()
+        host.displayDropAvailability = .available
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.txt"])])
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
+        var offered = false
+        host.onDropFiles = { _, _ in
+            offered = true
+            return true
+        }
+        let source = DisplayDragOutSource(vmID: host.id, take: FakeTake(items: []))
+        let drag = makeTextDrag("promise", source: source)
+
+        #expect(backing.draggingEntered(drag) == [])
+        #expect(pushes == [true])
+        #expect(!backing.performDragOperation(drag))
+        #expect(!offered)
+    }
+
+    @Test("files dragged out of another VM take the promise path")
+    func acceptsAnotherVMsDragOut() throws {
+        let backing = makeBacking()
+        host.displayDropAvailability = .available
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.txt"])])
+        let source = DisplayDragOutSource(vmID: UUID(), take: FakeTake(items: []))
+
+        #expect(backing.draggingEntered(makeTextDrag("promise", source: source)) == .copy)
     }
 
     @Test("a VM that never ran the agent is not a drag destination at all")
     func neverConnectedRegistersNothing() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .none }
+        host.displayDropAvailability = .none
 
         backing.applyDropRegistration()
 
@@ -163,8 +218,7 @@ struct VMDisplayBackingViewTests {
     @Test("a VM whose agent has connected before registers, even while disconnected")
     func disconnectedStillRegisters() throws {
         let backing = makeBacking()
-        var availability = DisplayDropAvailability.disconnected
-        backing.dropAvailability = { availability }
+        host.displayDropAvailability = .disconnected
 
         backing.applyDropRegistration()
         #expect(backing.registeredDraggedTypes.contains(.fileURL))
@@ -174,7 +228,7 @@ struct VMDisplayBackingViewTests {
         backing.applyDropRegistration()
         #expect(backing.registeredDraggedTypes == registered)
 
-        availability = .none
+        host.displayDropAvailability = .none
         backing.applyDropRegistration()
         #expect(backing.registeredDraggedTypes.isEmpty)
     }
@@ -182,7 +236,7 @@ struct VMDisplayBackingViewTests {
     @Test("a drag carrying no file URL is refused even when the agent is reachable")
     func refusesNonFileDrags() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         backing.applyDropRegistration()
 
         #expect(backing.draggingEntered(makeTextDrag("hello")) == [])
@@ -191,9 +245,9 @@ struct VMDisplayBackingViewTests {
     @Test("a drop forwards every dragged file URL")
     func dropForwardsTheURLs() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         var received: [URL] = []
-        backing.onDropFiles = { urls, _ in
+        host.onDropFiles = { urls, _ in
             received = urls
             return true
         }
@@ -206,10 +260,9 @@ struct VMDisplayBackingViewTests {
     @Test("a drop re-checks availability, so a session lost mid-drag springs back")
     func dropRechecksAvailability() throws {
         let backing = makeBacking()
-        var availability = DisplayDropAvailability.available
-        backing.dropAvailability = { availability }
+        host.displayDropAvailability = .available
         var forwarded = false
-        backing.onDropFiles = { _, _ in
+        host.onDropFiles = { _, _ in
             forwarded = true
             return true
         }
@@ -217,7 +270,7 @@ struct VMDisplayBackingViewTests {
         #expect(backing.draggingUpdated(drag) == .copy)
 
         // The guest agent goes away between the last pointer move and the release.
-        availability = .disconnected
+        host.displayDropAvailability = .disconnected
         #expect(!backing.performDragOperation(drag))
         #expect(!forwarded)
     }
@@ -225,8 +278,8 @@ struct VMDisplayBackingViewTests {
     @Test("a refused send reports the drop as not taken")
     func reportsARefusedSend() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
-        backing.onDropFiles = { _, _ in false }
+        host.displayDropAvailability = .available
+        host.onDropFiles = { _, _ in false }
 
         #expect(!backing.performDragOperation(makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])))
     }
@@ -234,7 +287,7 @@ struct VMDisplayBackingViewTests {
     @Test("a file promise's types are registered alongside concrete file URLs")
     func registersPromiseTypes() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
 
         backing.applyDropRegistration()
 
@@ -248,7 +301,7 @@ struct VMDisplayBackingViewTests {
     @Test("a refused drag shows the not-allowed cursor, and leaving clears it")
     func refusedDragShowsTheRejectCursor() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .disconnected }
+        host.displayDropAvailability = .disconnected
         var pushes: [Bool] = []
         backing.applyRejectCursor = { pushes.append($0) }
         let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
@@ -267,7 +320,7 @@ struct VMDisplayBackingViewTests {
     @Test("a drag this display accepts pushes no cursor at all")
     func acceptedDragPushesNothing() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         var pushes: [Bool] = []
         backing.applyRejectCursor = { pushes.append($0) }
 
@@ -278,20 +331,19 @@ struct VMDisplayBackingViewTests {
     @Test("availability changing mid-drag flips the cursor on the next update")
     func cursorFollowsAvailabilityMidDrag() throws {
         let backing = makeBacking()
-        var availability = DisplayDropAvailability.disconnected
-        backing.dropAvailability = { availability }
+        host.displayDropAvailability = .disconnected
         var pushes: [Bool] = []
         backing.applyRejectCursor = { pushes.append($0) }
         let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
 
         // A drag that began while the VM was paused, over a VM that then resumes.
         #expect(backing.draggingEntered(drag) == [])
-        availability = .available
+        host.displayDropAvailability = .available
         #expect(backing.draggingUpdated(drag) == .copy)
         #expect(pushes == [true, false])
 
         // …and back, when the agent goes away under the same drag.
-        availability = .disconnected
+        host.displayDropAvailability = .disconnected
         #expect(backing.draggingUpdated(drag) == [])
         #expect(pushes == [true, false, true])
 
@@ -367,7 +419,7 @@ struct VMDisplayBackingViewTests {
     @Test("a drag carrying only promises is accepted")
     func promiseOnlyDragIsAccepted() throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
 
         // The pasteboard holds no file URL at all — a Photos drag's shape.
@@ -380,13 +432,13 @@ struct VMDisplayBackingViewTests {
         let concrete = scratch.url.appendingPathComponent("dropped.txt")
         try Data("a".utf8).write(to: concrete)
 
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         backing.promiseSource = makePromiseSource([
             StubPromiseReceiver(fileNames: ["a.png"]), StubPromiseReceiver(fileNames: ["b.png"]),
         ])
         let gate = AsyncGate()
         var offered: [[URL]] = []
-        backing.onDropFiles = { urls, _ in
+        host.onDropFiles = { urls, _ in
             offered.append(urls)
             gate.notify()
             return true
@@ -409,7 +461,7 @@ struct VMDisplayBackingViewTests {
         arguments: [1, 2])
     func unnamedPromiseIsOffered(promiseCount: Int) async throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         let names = (0..<promiseCount).map { "a\($0).png" }
         backing.promiseSource = makePromiseSource([
             StubPromiseReceiver(fileNames: names, naming: .asFilesLand)
@@ -418,13 +470,13 @@ struct VMDisplayBackingViewTests {
         var offered: [[URL]] = []
         var staged: URL?
         var reported = false
-        backing.onDropFiles = { urls, stagedIn in
+        host.onDropFiles = { urls, stagedIn in
             offered.append(urls)
             staged = stagedIn
             gate.notify()
             return true
         }
-        backing.onDropUnreadable = {
+        host.onDropUnreadable = {
             reported = true
             gate.notify()
         }
@@ -448,14 +500,14 @@ struct VMDisplayBackingViewTests {
         let derivative = scratch.url.appendingPathComponent("derivative.jpeg")
         try Data("b".utf8).write(to: derivative)
 
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         backing.promiseSource = makePromiseSource([
             StubPromiseReceiver(fileNames: ["a.png"], naming: .asFilesLand)
         ])
         let gate = AsyncGate()
         var offered: [URL] = []
         var staged: URL?
-        backing.onDropFiles = { urls, stagedIn in
+        host.onDropFiles = { urls, stagedIn in
             offered = urls
             staged = stagedIn
             gate.notify()
@@ -477,12 +529,12 @@ struct VMDisplayBackingViewTests {
     @Test("a promise drag hands the drop the directory its files were staged in")
     func promiseDragHandsOverItsStagingDirectory() async throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
         let gate = AsyncGate()
         var staged: URL?
         var files: [URL] = []
-        backing.onDropFiles = { urls, stagedIn in
+        host.onDropFiles = { urls, stagedIn in
             files = urls
             staged = stagedIn
             gate.notify()
@@ -507,7 +559,7 @@ struct VMDisplayBackingViewTests {
     @Test("a promise reporting after the drop was taken leaves its staging alone")
     func lateReportLeavesATakenStagingDirectoryAlone() async throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         // A receiver whose names never account for what it writes settles the
         // drop on its first file, so the second reports after the drop was
         // taken — as does any source that answers more often than it names.
@@ -516,7 +568,7 @@ struct VMDisplayBackingViewTests {
         let gate = AsyncGate()
         var offered: [URL] = []
         var staged: URL?
-        backing.onDropFiles = { urls, stagedIn in
+        host.onDropFiles = { urls, stagedIn in
             offered = urls
             staged = stagedIn
             return true
@@ -539,11 +591,11 @@ struct VMDisplayBackingViewTests {
     @Test("a promise drag the VM refuses frees what it staged")
     func refusedPromiseDragReleasesItsStagingDirectory() async throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
         let gate = AsyncGate()
         var staged: URL?
-        backing.onDropFiles = { _, stagedIn in
+        host.onDropFiles = { _, stagedIn in
             staged = stagedIn
             gate.notify()
             return false
@@ -561,17 +613,17 @@ struct VMDisplayBackingViewTests {
         arguments: [1, 2])
     func failedPromiseReleasesItsStagingDirectory(promiseCount: Int) async throws {
         let backing = makeBacking()
-        backing.dropAvailability = { .available }
+        host.displayDropAvailability = .available
         let receiver = StubPromiseReceiver(
             fileNames: (0..<promiseCount).map { "a\($0).png" }, fails: true)
         backing.promiseSource = makePromiseSource([receiver])
         let gate = AsyncGate()
         var reported = false
         var offered = false
-        backing.onDropFiles = { _, _ in
+        host.onDropFiles = { _, _ in
             offered = true; return true
         }
-        backing.onDropUnreadable = { reported = true }
+        host.onDropUnreadable = { reported = true }
 
         #expect(backing.performDragOperation(makeTextDrag("promise")))
         let directory = try #require(receiver.destination)

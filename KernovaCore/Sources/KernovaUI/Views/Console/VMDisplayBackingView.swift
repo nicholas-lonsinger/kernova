@@ -14,35 +14,31 @@ struct VMDisplayViewSettings: Equatable {
     var capturesSystemKeys: Bool
 }
 
-/// Pure AppKit view containing a `VZVirtualMachineView` with built-in pause and transition overlays.
+/// Pure AppKit view containing the VM's screen (``VMDisplayMachineView``) with built-in pause and
+/// transition overlays, and the drag destination files dropped on the display reach.
 ///
 /// Used directly as `window.contentView` in the detached display window, and layered on top of
 /// the inline detail content by `DetailContainerViewController`.
 @MainActor
 final class VMDisplayBackingView: NSView {
-    private(set) var machineView = VZVirtualMachineView()
+    private(set) var machineView = VMDisplayMachineView()
 
     /// Called when the user taps the resume button on the pause overlay.
     var onResume: (() -> Void)?
 
-    /// Whether this VM can take files dropped on its display right now.
+    /// The VM this display moves files to and from, or `nil` when it has none.
     ///
-    /// Read at every drag event rather than cached, so a drag that outlives the
-    /// guest agent's connection stops being accepted mid-gesture.
-    var dropAvailability: () -> DisplayDropAvailability = { .none }
+    /// Resolved at every drag event rather than cached, so a drag that outlives
+    /// the guest agent's connection stops being accepted mid-gesture. Setting it
+    /// starts the display's own observation of the host's availability, which
+    /// registers and unregisters it as a drag destination.
+    var transferHost: () -> (any VMDisplayTransferHosting)? = { nil } {
+        didSet { observeDropAvailability() }
+    }
 
-    /// Sends dropped file URLs to the guest, reporting whether they were taken.
-    ///
-    /// `stagedIn` is the directory a promise drag's files were written into,
-    /// which the receiver owns once it takes the drop — the guest pulls from it
-    /// long after the drag is over.
-    var onDropFiles: (_ urls: [URL], _ stagedIn: URL?) -> Bool = { _, _ in false }
-
-    /// Reports a drag this display took that produced no file to send — a file
-    /// promise whose source failed to write it.
-    ///
-    /// The drag is over by then, so this is the only surface left to say so.
-    var onDropUnreadable: () -> Void = {}
+    /// Keeps the drag registration in step with ``transferHost``'s
+    /// availability.
+    private var dropAvailabilityObservation: ObservationLoop?
 
     /// How the display finds the file promises a drag carries.
     ///
@@ -137,6 +133,8 @@ final class VMDisplayBackingView: NSView {
 
         pauseButton.target = self
         pauseButton.action = #selector(resumeTapped)
+
+        machineView.transferHost = { [weak self] in self?.transferHost() }
     }
 
     required init?(coder: NSCoder) {
@@ -209,10 +207,10 @@ final class VMDisplayBackingView: NSView {
     /// Registration is what separates the two refusals the issue asks for: a VM
     /// that has never run the agent is *not* a destination, so a drag over it is
     /// as if Kernova weren't there, while a registered-but-disconnected one takes
-    /// part and returns an empty operation. Idempotent — hosts call it on every
-    /// observation tick.
+    /// part and returns an empty operation. Idempotent — the display's own
+    /// observation calls it on every change to the host's availability.
     func applyDropRegistration() {
-        let shouldRegister = dropAvailability() != .none
+        let shouldRegister = availability != .none
         guard shouldRegister != isDropRegistered else { return }
         isDropRegistered = shouldRegister
         if shouldRegister {
@@ -230,6 +228,20 @@ final class VMDisplayBackingView: NSView {
         } else {
             unregisterDraggedTypes()
         }
+    }
+
+    /// Whether the host takes drops now; `.none` with no host.
+    private var availability: DisplayDropAvailability {
+        transferHost()?.displayDropAvailability ?? .none
+    }
+
+    /// Registers the display to match its host now, and again whenever what the
+    /// host's availability reads changes.
+    private func observeDropAvailability() {
+        applyDropRegistration()
+        dropAvailabilityObservation = observeRecurring(
+            track: { [weak self] in _ = self?.availability },
+            apply: { [weak self] in self?.applyDropRegistration() })
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -271,10 +283,25 @@ final class VMDisplayBackingView: NSView {
     /// `.copy` when this drag can be sent to the guest, else the empty operation
     /// AppKit renders as "no" — no accept badge, and a release springs back.
     private func dragOperation(for sender: any NSDraggingInfo) -> NSDragOperation {
-        guard dropAvailability() == .available, carriesFiles(sender.draggingPasteboard) else {
+        guard acceptsDrop(of: sender), carriesFiles(sender.draggingPasteboard) else {
             return []
         }
         return .copy
+    }
+
+    /// Whether the guest can take a drop now, from wherever `sender` came.
+    ///
+    /// Files dragged out of this same VM are refused: their promises would be
+    /// written by pulling from the guest that is to receive them. Another VM's
+    /// take the ordinary promise path.
+    private func acceptsDrop(of sender: any NSDraggingInfo) -> Bool {
+        guard let host = transferHost(), host.displayDropAvailability == .available else {
+            return false
+        }
+        if let source = sender.draggingSource as? DisplayDragOutSource, source.vmID == host.id {
+            return false
+        }
+        return true
     }
 
     /// Whether a pasteboard holds anything a drop can send: files, or promises of
@@ -287,13 +314,13 @@ final class VMDisplayBackingView: NSView {
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         // Re-checked here rather than trusted from `draggingUpdated`: the guest
         // agent can go away between the last pointer move and the release.
-        guard dropAvailability() == .available else { return false }
+        guard acceptsDrop(of: sender) else { return false }
         let pasteboard = sender.draggingPasteboard
         let urls = Self.fileURLs(on: pasteboard)
         let receivers = promiseSource.receivers(pasteboard)
         guard !receivers.isEmpty else {
             guard !urls.isEmpty else { return false }
-            return onDropFiles(urls, nil)
+            return sendToGuest(urls, stagedIn: nil)
         }
         receivePromises(receivers, alongside: urls)
         // The promised files are written asynchronously, so the drag ends taken
@@ -330,7 +357,7 @@ final class VMDisplayBackingView: NSView {
         guard let directory = staging.makeDropDirectory() else {
             // Nothing will ever be written, so the drag the display just took has
             // to answer for itself here.
-            onDropUnreadable()
+            transferHost()?.reportUnreadableDropToGuest()
             return
         }
         let collection = PromiseCollection(receiverCount: receivers.count, alongside: urls)
@@ -374,7 +401,7 @@ final class VMDisplayBackingView: NSView {
     ) {
         switch outcome {
         case .ready(let files):
-            guard onDropFiles(files, directory) else {
+            guard sendToGuest(files, stagedIn: directory) else {
                 // The VM stopped taking drops while the source was still
                 // writing; the service that would report it is already gone.
                 Self.logger.log(.warning, "A promise drag's files landed after the VM stopped taking them")
@@ -388,8 +415,17 @@ final class VMDisplayBackingView: NSView {
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
             if collection.canReleaseStaging { DropPromiseStaging.release(directory) }
-            onDropUnreadable()
+            transferHost()?.reportUnreadableDropToGuest()
         }
+    }
+
+    /// Sends dropped files to the guest, reporting whether they were taken.
+    ///
+    /// `stagedIn` is the directory a promise drag's files were written into,
+    /// which the receiver owns once it takes the drop — the guest pulls from it
+    /// long after the drag is over.
+    private func sendToGuest(_ urls: [URL], stagedIn directory: URL?) -> Bool {
+        transferHost()?.sendDroppedFilesToGuest(urls, stagedIn: directory) ?? false
     }
 
     /// Tallies what one drag's promises write, so the drop is offered exactly

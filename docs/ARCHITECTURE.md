@@ -126,7 +126,8 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `MainWindowController` (`KernovaCore/Sources/KernovaUI/App/`) hosts `SidebarViewController` and
 `DetailContainerViewController`; the detail side routes through
 `VMDetailRouterViewController` on `DetailRoute`, and a live display is
-`VMDisplayBackingView`, fed only through `VMDisplayHandle`.
+`VMDisplayBackingView`, fed only through `VMDisplayHandle`, which moves files
+both ways through the `VMDisplayTransferHosting` its host resolves (`VMInstance`).
 `MainWindowController` and `VMDisplayWindowController` each build their
 toolbar through a `VMToolbarManager`; `ClipboardToolbarButton` is the one
 view-backed item.

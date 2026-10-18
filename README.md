@@ -103,7 +103,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 |---|---|
 | **Guest agent** (macOS) | A lightweight in-guest helper installed from an attachable disk. Talks to the host over **vsock**; its own menu bar item shows the connection, what's shared, and when an update is available. |
 | **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress in a clipboard window. Opt-in **Automatic Passthrough** syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
-| **Drag-and-drop** (macOS) | Drop files from Finder onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. |
+| **Drag-and-drop** (macOS) | Drop files from Finder onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. Drag files out of the display onto the Mac and they are copied where you drop them, crossing only once a destination asks. |
 | **Log forwarding** (macOS) | Opt-in, live-toggleable: the guest agent's `os.Logger` records appear in **Console.app** under `app.kernova.guest`. |
 
 <p align="center">

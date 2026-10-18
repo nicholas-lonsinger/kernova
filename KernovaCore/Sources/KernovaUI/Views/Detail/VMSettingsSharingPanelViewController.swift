@@ -315,7 +315,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     "Drag and drop files", control: dropFilesSwitch,
                     info: [
                         .body(
-                            "Lets you drag files and folders from this Mac onto the virtual machine's display; the guest agent saves them to the guest's Downloads folder."
+                            "Lets you drag files and folders between this Mac and the virtual machine's display. Files dropped on the display go to the guest's Downloads folder; files dragged out of it are copied where you drop them."
                         )
                     ]),
                 GroupedFormNotedRow(

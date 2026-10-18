@@ -173,12 +173,14 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Drag and Drop
 
     /// When `true`, files dragged onto this VM's display are sent to the guest
-    /// agent, which writes them into the guest's Downloads folder.
+    /// agent, which writes them into the guest's Downloads folder, and files
+    /// dragged out of the display in the guest are copied where they are dropped
+    /// on the Mac.
     ///
-    /// Independent of `clipboardSharingEnabled` — a drop never touches either
+    /// Independent of `clipboardSharingEnabled` — a drag never touches either
     /// pasteboard — and honored at runtime, so the display stops being a drag
-    /// destination the moment it is switched off. Linux guests have no Kernova
-    /// agent and ignore this flag.
+    /// destination, and stops taking the guest's drags over, the moment it is
+    /// switched off. Linux guests have no Kernova agent and ignore this flag.
     package var dropFilesEnabled: Bool
 
     // MARK: - Serial Console
