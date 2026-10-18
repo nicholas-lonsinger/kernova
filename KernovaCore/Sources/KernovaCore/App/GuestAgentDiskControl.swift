@@ -49,10 +49,14 @@ package enum GuestAgentDiskControl {
     /// `.unresponsive` is treated like `.current` — it persists when the user
     /// disables, uninstalls or kills the agent in the guest, exactly when
     /// re-mounting is wanted — so only the genuinely-transient `.connecting`
-    /// leaves the control disabled.
-    package static func model(status: AgentStatus, isInstallerMounted: Bool) -> Model {
+    /// leaves the control disabled. A `nil` `status` — no session, so no agent
+    /// to install into — disables it under ``unavailableTitle``.
+    package static func model(status: AgentStatus?, isInstallerMounted: Bool) -> Model {
         if isInstallerMounted {
             return Model(title: "Eject Guest Agent Media", isEnabled: true, action: .eject)
+        }
+        guard let status else {
+            return Model(title: unavailableTitle, isEnabled: false, action: .mount(.install))
         }
         switch status {
         case .waiting:

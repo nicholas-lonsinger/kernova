@@ -120,8 +120,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
     public let ipAddress: GuestIPAddress
-    /// The guest agent's install and connectivity state, as its wire name.
-    public let agentStatus: String
+    /// The live session's guest-agent install and connectivity state, as its
+    /// wire name, `nil` when no session is live.
+    public let agentStatus: String?
     /// Whether the bundle holds a suspended session.
     public let hasSavedState: Bool
     /// Whether the VM returns to a baseline snapshot on every power-off.
@@ -156,7 +157,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         networkName: VMNetworkName?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
-        agentStatus: String,
+        agentStatus: String?,
         hasSavedState: Bool,
         isEphemeral: Bool,
         snapshotCount: Int,

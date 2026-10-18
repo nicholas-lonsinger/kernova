@@ -100,6 +100,7 @@ struct SidebarViewControllerTests {
     @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
     func agentWaitingVisibleForRunningMac() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
         #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 
@@ -108,13 +109,14 @@ struct SidebarViewControllerTests {
         let instance = VMInstanceFixture.make(
             guestOS: .macOS, phase: .running(sessionID: UUID()),
             hostState: VMHostState(agentInstallNudgeDismissed: true))
+        instance.beginSessionContextForTesting()
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     @Test("Agent indicator suppressed for a stopped macOS VM")
     func agentSuppressedWhenStopped() {
         // Neither a VM that has never had an agent nor one that has: with no
-        // live control channel, `.waiting` means "unknown", not "not installed".
+        // session, `agentStatus` makes no statement to render.
         let fresh = VMInstanceFixture.make(guestOS: .macOS, phase: .stopped)
         #expect(visibleAgentStatus(for: fresh) == nil)
 
@@ -125,7 +127,7 @@ struct SidebarViewControllerTests {
     }
 
     @Test(
-        "Agent indicator suppressed outside a live session",
+        "Agent indicator suppressed for a VM with no session, whatever its phase",
         arguments: [
             PhaseFixture.operating(
                 .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
@@ -135,9 +137,18 @@ struct SidebarViewControllerTests {
             .settled(.initialBoot),
         ]
     )
-    func agentSuppressedWhenNotInLiveSession(phase: PhaseFixture) {
+    func agentSuppressedWithoutSession(phase: PhaseFixture) {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
+        #expect(instance.sessionContext == nil)
         #expect(visibleAgentStatus(for: instance) == nil)
+    }
+
+    @Test("Agent indicator shows during an operation that holds a session")
+    func agentVisibleDuringOperationHoldingSession() {
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, phase: .operating(.saving, from: .running(sessionID: UUID())))
+        instance.beginSessionContextForTesting()
+        #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 
     /// The live-session gate must not swallow the *louder* agent states — only
@@ -167,6 +178,7 @@ struct SidebarViewControllerTests {
     @Test("The app-wide preference suppresses .waiting without touching the per-VM flag")
     func agentSuppressedWhenPromptDisabledAppWide() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
         #expect(
             SidebarVMRowCellView.visibleAgentStatus(for: instance, installPromptDisabled: true)
                 == nil)

@@ -31,7 +31,7 @@ package enum AgentStatus: Equatable, Sendable {
     /// which has no access to persisted state, never returns it.
     case expectedMissing(expected: String)
 
-    /// Live session for a VM that has had an agent connect before
+    /// A VM that has had an agent connect before
     /// (`VMConfiguration.lastSeenAgentVersion` is set), with no handshaken
     /// control channel right now — the agent has yet to arrive, or arrived and
     /// then went away.
@@ -49,15 +49,14 @@ package enum AgentStatus: Equatable, Sendable {
     /// Resolves an upstream `AgentStatus` plus persisted host-side context into
     /// the final status the UI should render.
     ///
-    /// Precedence: `.expectedMissing` (the watchdog fired) beats `.connecting`
-    /// (live session, agent seen before) beats `upstream` unchanged. Both
-    /// synthesized cases require a non-empty `lastSeenAgentVersion` — with an
-    /// empty one the UI renders "guest agent  didn't reconnect", so upstream
-    /// wins instead.
+    /// Called only inside a session. Precedence: `.expectedMissing` (the
+    /// watchdog fired) beats `.connecting` (agent seen before, no Hello yet)
+    /// beats `upstream` unchanged. Both synthesized cases require a non-empty
+    /// `lastSeenAgentVersion` — with an empty one the UI renders "guest agent
+    /// didn't reconnect", so upstream wins instead.
     static func synthesize(
         upstream: AgentStatus,
         lastSeenAgentVersion: String?,
-        isInLiveSession: Bool,
         agentExpectedButMissing: Bool
     ) -> AgentStatus {
         if agentExpectedButMissing,
@@ -68,8 +67,7 @@ package enum AgentStatus: Equatable, Sendable {
         }
         if case .waiting = upstream,
             let lastSeen = lastSeenAgentVersion,
-            !lastSeen.isEmpty,
-            isInLiveSession
+            !lastSeen.isEmpty
         {
             return .connecting(expected: lastSeen)
         }

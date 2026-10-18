@@ -229,6 +229,7 @@ struct VMScriptingGatewayTests {
             $0.networkMode = .nat
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
+        alpha.beginSessionContextForTesting()
         let beta = wired.register(name: "Beta", phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: beta)
         wired.register(name: "Gamma") {
@@ -257,13 +258,15 @@ struct VMScriptingGatewayTests {
         #expect(vm.networkName == nil)
         #expect(vm.macAddress == "aa:bb:cc:dd:ee:ff")
         #expect(vm.ipAddress == "192.168.64.3")
-        #expect(vm.agentStatus == alpha.agentStatus.wireName)
+        #expect(vm.agentStatus == "waiting")
         #expect(!vm.hasSavedState)
         #expect(vm.ephemeral)
         #expect(vm.snapshotCount == 2)
         #expect(vm.bundlePath == alpha.bundleURL.path(percentEncoded: false))
         #expect(suspended.state == NSNumber(value: VMScriptState.suspended.code))
         #expect(suspended.hasSavedState)
+        // No session, so the agent status reaches a script as missing value.
+        #expect(suspended.agentStatus == nil)
         #expect(!suspended.ephemeral)
         #expect(onLab.networkMembership == lab.id.uuidString)
         #expect(onLab.networkName == "Lab")

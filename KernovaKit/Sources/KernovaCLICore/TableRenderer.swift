@@ -54,7 +54,7 @@ enum TableRenderer {
         if let mac = info.macAddress { fields.append(("MAC Address", mac)) }
         fields.append(("IP Address", render(info.ipAddress)))
         fields.append(contentsOf: [
-            ("Guest Agent", info.agentStatus),
+            ("Guest Agent", info.agentStatus ?? "\u{2013}"),
             ("Saved State", info.hasSavedState ? "Yes" : "No"),
             ("Ephemeral", info.isEphemeral ? "Yes" : "No"),
             ("Snapshots", String(info.snapshotCount)),

@@ -520,20 +520,15 @@ final class SidebarVMRowCellView: NSTableCellView {
 
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.
     ///
-    /// Hidden for Linux guests, during macOS install, when `.current`, when
-    /// `.waiting` was dismissed for this VM or turned off app-wide by
-    /// `installPromptDisabled`, and — the outermost gate — whenever the VM has
-    /// no live session: every state the badge renders is a statement about *this*
-    /// session's control channel. On a stopped or suspended VM `agentStatus`
-    /// degrades to `.waiting`, and the badge would report "guest agent not
-    /// installed" for a VM whose agent state is unknown.
+    /// Hidden for Linux guests, during macOS install, for a VM with no session
+    /// (`agentStatus` is `nil`), when `.current`, and when `.waiting` was
+    /// dismissed for this VM or turned off app-wide by `installPromptDisabled`.
     static func visibleAgentStatus(
         for instance: VMInstance, installPromptDisabled: Bool
     ) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.setupState == nil else { return nil }
-        guard instance.hasLiveSession else { return nil }
-        let status = instance.agentStatus
+        guard let status = instance.agentStatus else { return nil }
         if case .current = status { return nil }
         if case .waiting = status,
             installPromptDisabled || instance.hostState.agentInstallNudgeDismissed

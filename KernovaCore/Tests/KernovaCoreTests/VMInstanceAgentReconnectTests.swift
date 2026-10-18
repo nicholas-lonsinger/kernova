@@ -29,9 +29,8 @@ struct VMInstanceAgentReconnectTests {
         let instance = VMInstanceFixture.make(
             name: "Reconnect VM", guestOS: .macOS, phase: phase,
             mutate: { $0.lastSeenAgentVersion = agentVersion })
-        // `agentStatus` synthesis keys off a live `VZVirtualMachine`, which no
-        // CI host can create — the phase's session identity stands in for one,
-        // not for the session context the control service lives in.
+        // The phase supplies the session identity the control channel's accept
+        // binds to; the context is what the service and `agentStatus` live in.
         instance.beginSessionContextForTesting()
         return instance
     }

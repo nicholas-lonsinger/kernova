@@ -223,25 +223,28 @@ package final class VMInstance {
         return config
     }
 
-    /// The current install/version/liveness state of the guest agent for this VM.
+    /// The guest agent's install/version/liveness state in this VM's session,
+    /// `nil` when the VM has no session — a stopped or suspended VM makes no
+    /// statement about its agent.
     ///
     /// The single read site for the UI. macOS guests source it from the
     /// always-on `VsockControlService`, so it is meaningful whether or not
-    /// clipboard sharing is enabled; `.expectedMissing` is synthesized here
-    /// because that service has no access to persisted host state. Linux guests
-    /// source it from `SpiceClipboardService`, which only ever reaches
-    /// `.waiting` / `.current`.
-    package var agentStatus: AgentStatus {
+    /// clipboard sharing is enabled; `.expectedMissing` and `.connecting` are
+    /// synthesized here because that service has no access to persisted host
+    /// state. Linux guests source it from `SpiceClipboardService`, which only
+    /// ever reaches `.waiting` / `.current`; a Linux session without one
+    /// (clipboard sharing off) has no agent channel and reports `nil`.
+    package var agentStatus: AgentStatus? {
+        guard let context = sessionContext else { return nil }
         switch configuration.guestOS {
         case .macOS:
             return AgentStatus.synthesize(
-                upstream: vsockControlService?.agentStatus ?? .waiting,
+                upstream: context.vsock.control?.agentStatus ?? .waiting,
                 lastSeenAgentVersion: lastSeenAgentVersion,
-                isInLiveSession: hasLiveVirtualMachine,
-                agentExpectedButMissing: agentExpectedButMissing
+                agentExpectedButMissing: context.agentExpectedButMissing
             )
         case .linux:
-            return (clipboardService as? SpiceClipboardService)?.agentStatus ?? .waiting
+            return (context.clipboardService as? SpiceClipboardService)?.agentStatus
         }
     }
 

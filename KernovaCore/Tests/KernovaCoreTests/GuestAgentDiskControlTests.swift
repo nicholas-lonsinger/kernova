@@ -11,9 +11,10 @@ import Testing
 /// the action.
 @Suite("GuestAgentDiskControl.model", .caseScoped)
 struct GuestAgentDiskControlTests {
-    @Test("Attached installer → eject mode, regardless of agent status")
+    @Test("Attached installer → eject mode, regardless of agent status or its absence")
     func attachedEjectsRegardlessOfStatus() {
-        let statuses: [AgentStatus] = [
+        let statuses: [AgentStatus?] = [
+            nil,
             .waiting,
             .outdated(installed: "0.9.0", bundled: "0.9.2"),
             .expectedMissing(expected: "0.9.0"),
@@ -26,6 +27,14 @@ struct GuestAgentDiskControlTests {
                 GuestAgentDiskControl.model(status: status, isInstallerMounted: true)
                     == .init(title: "Eject Guest Agent Media", isEnabled: true, action: .eject))
         }
+    }
+
+    @Test("No session → unavailable title / disabled / mount(.install)")
+    func noSession() {
+        #expect(
+            GuestAgentDiskControl.model(status: nil, isInstallerMounted: false)
+                == .init(
+                    title: GuestAgentDiskControl.unavailableTitle, isEnabled: false, action: .mount(.install)))
     }
 
     @Test(".waiting → Install / enabled / mount(.install)")

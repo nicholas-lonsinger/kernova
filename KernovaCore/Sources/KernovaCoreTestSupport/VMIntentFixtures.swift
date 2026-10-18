@@ -20,7 +20,7 @@ enum VMIntentFixtures {
         networkName: VMNetworkName? = nil,
         macAddress: String? = "aa:bb:cc:dd:ee:ff",
         ipAddress: GuestIPAddress = .unavailable,
-        agentStatus: String = "notInstalled",
+        agentStatus: String? = "notInstalled",
         hasSavedState: Bool = false,
         isEphemeral: Bool = false,
         snapshotCount: Int = 0,

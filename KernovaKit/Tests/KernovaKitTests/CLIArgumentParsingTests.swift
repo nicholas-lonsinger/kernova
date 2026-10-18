@@ -599,6 +599,8 @@ struct CLIArgumentParsingTests {
         for other in ["waiting", "connecting", "outdated", "unresponsive", "expectedMissing"] {
             #expect(WaitCondition.agent.isSatisfied(byAgentStatus: other) == false, "\(other)")
         }
+        // No session, so no agent to have arrived.
+        #expect(WaitCondition.agent.isSatisfied(byAgentStatus: nil) == false)
     }
 
     @Test("Every wait condition is reachable from the command line")

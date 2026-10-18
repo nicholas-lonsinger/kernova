@@ -135,6 +135,19 @@ struct CLIWaitTests {
         #expect(ended.failure == nil)
     }
 
+    @Test("A VM with no session never ends an agent wait")
+    func noSessionDoesNotEndAnAgentWait() throws {
+        // The deadline is what ends this wait, so a small injected timeout is
+        // the value under test.
+        let ended = try outcome(
+            .agent, timeout: 1,
+            answering: [
+                info(status: "stopped", agentStatus: nil),
+                event(.agentStatusChanged(id: alpha, name: "Alpha", status: nil)),
+            ], holdingOpen: true)
+        #expect(ended.failure?.code == .timedOut)
+    }
+
     // MARK: - The Deadline
 
     @Test("The deadline ends a wait nothing else does, naming what was waited for")
@@ -191,7 +204,7 @@ struct CLIWaitTests {
             ]))
     }
 
-    private func info(status: String, agentStatus: String = "absent") -> VMCommandResponse {
+    private func info(status: String, agentStatus: String? = "absent") -> VMCommandResponse {
         VMCommandResponse(
             result: .info(
                 VMInfo(

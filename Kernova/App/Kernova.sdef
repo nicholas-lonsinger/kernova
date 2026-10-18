@@ -91,7 +91,7 @@
 			<property name="IP address" code="KvIP" type="text" access="r" description="The address Kernova last saw the guest use on its network, or missing value when it has seen none.">
 				<cocoa key="ipAddress"/>
 			</property>
-			<property name="agent status" code="KvAg" type="text" access="r" description="The guest agent's install and connectivity state.">
+			<property name="agent status" code="KvAg" type="text" access="r" description="The guest agent's install and connectivity state in the live session, or missing value when none is live.">
 				<cocoa key="agentStatus"/>
 			</property>
 			<property name="has saved state" code="KvSs" type="boolean" access="r" description="Whether the bundle holds a suspended session.">

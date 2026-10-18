@@ -938,12 +938,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Renders the status line, and the guest-agent disk control beside it
     /// whenever `diskControl` is enabled.
-    private func applyStatus(_ status: AgentStatus, diskControl: GuestAgentDiskControl.Model?) {
+    private func applyStatus(_ status: AgentStatus?, diskControl: GuestAgentDiskControl.Model?) {
         if let diskControl, diskControl.isEnabled {
             actionButton.isHidden = false
             actionButton.title = diskControl.title
         } else {
             actionButton.isHidden = true
+        }
+        guard let status else {
+            statusCircle.contentTintColor = StatusColor.inactive
+            statusLabel.stringValue = "Not running"
+            return
         }
         switch status {
         case .waiting:

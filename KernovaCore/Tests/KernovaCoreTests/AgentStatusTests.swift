@@ -5,8 +5,8 @@ import Testing
 @testable import KernovaCoreTestSupport
 
 /// Unit tests for `AgentStatus.synthesize(...)` — the pure function that
-/// folds the upstream service value, persisted host context, and live-
-/// session flag into the final UI-facing `AgentStatus`.
+/// folds the upstream service value and persisted host context into the
+/// final UI-facing `AgentStatus` of a session.
 ///
 /// The function is
 /// extracted from `VMInstance.agentStatus` specifically to make this logic
@@ -20,7 +20,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .current(version: "0.9.2"),
             lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: true,
             agentExpectedButMissing: false
         )
         #expect(result == .current(version: "0.9.2"))
@@ -28,7 +27,7 @@ struct AgentStatusTests {
 
     // MARK: - .waiting → .connecting synthesis
 
-    @Test(".waiting + prior version + live session → .connecting (the gap fix)")
+    @Test(".waiting + prior version → .connecting (the gap fix)")
     func waitingWithPriorVersionInLiveSessionBecomesConnecting() {
         // The motivating case for this synthesis path: VM has a known
         // prior agent (`lastSeenAgentVersion` set) and is in a live
@@ -38,35 +37,18 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: true,
             agentExpectedButMissing: false
         )
         #expect(result == .connecting(expected: "0.9.2"))
     }
 
-    @Test(".waiting + no prior version + live session → .waiting (fresh VM)")
+    @Test(".waiting + no prior version → .waiting (fresh VM)")
     func waitingWithoutPriorVersionStaysWaiting() {
         // Fresh VM that's been started but never had an agent. The
         // install nudge is the right signal here.
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: nil,
-            isInLiveSession: true,
-            agentExpectedButMissing: false
-        )
-        #expect(result == .waiting)
-    }
-
-    @Test(".waiting + prior version + not live → .waiting (stopped VM)")
-    func waitingWithPriorVersionButNotLiveStaysWaiting() {
-        // Stopped VM with a previously-installed agent. The synthesizer
-        // returns `.waiting` here; the VMRowView further suppresses the
-        // sidebar icon for stopped/suspended VMs with a prior agent
-        // so the user doesn't see a nag.
-        let result = AgentStatus.synthesize(
-            upstream: .waiting,
-            lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: false,
             agentExpectedButMissing: false
         )
         #expect(result == .waiting)
@@ -84,7 +66,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .current(version: "0.9.2"),
             lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: true,
             agentExpectedButMissing: true
         )
         #expect(result == .expectedMissing(expected: "0.9.2"))
@@ -100,7 +81,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: nil,
-            isInLiveSession: true,
             agentExpectedButMissing: true
         )
         #expect(result == .waiting)
@@ -114,7 +94,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: true,
             agentExpectedButMissing: true
         )
         #expect(result == .expectedMissing(expected: "0.9.2"))
@@ -133,7 +112,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "",
-            isInLiveSession: true,
             agentExpectedButMissing: true
         )
         #expect(result == .waiting)
@@ -148,7 +126,6 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "",
-            isInLiveSession: true,
             agentExpectedButMissing: false
         )
         #expect(result == .waiting)

@@ -847,11 +847,56 @@ struct VMInstanceTests {
     // These tests lock in the switch so a future refactor can't accidentally
     // fall through to the wrong service per OS.
 
-    @Test("agentStatus is .waiting on a Linux instance with no clipboard service set")
-    func agentStatusLinuxDefaultsToWaiting() {
+    @Test("agentStatus is nil on a Linux instance with no session")
+    func agentStatusLinuxWithoutSessionIsNil() {
         let instance = VMInstanceFixture.make(guestOS: .linux)
+        #expect(instance.sessionContext == nil)
+        #expect(instance.agentStatus == nil)
+    }
+
+    @Test("agentStatus is nil on a Linux session without a SPICE clipboard service")
+    func agentStatusLinuxSessionWithoutSpiceIsNil() {
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
         #expect(instance.clipboardService == nil)
+        #expect(instance.agentStatus == nil)
+    }
+
+    @Test("agentStatus is nil on a macOS VM with no session, even one that has seen an agent")
+    func agentStatusMacOSWithoutSessionIsNil() {
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, mutate: { $0.lastSeenAgentVersion = "0.9.2" })
+        #expect(instance.sessionContext == nil)
+        #expect(instance.agentStatus == nil)
+    }
+
+    @Test("A macOS session with no control channel reports .connecting for a VM that has seen an agent")
+    func agentStatusMacOSSessionWithoutControlIsConnecting() {
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, phase: .running(sessionID: UUID()),
+            mutate: { $0.lastSeenAgentVersion = "0.9.2" })
+        instance.beginSessionContextForTesting()
+        #expect(instance.vsockControlService == nil)
+        #expect(instance.agentStatus == .connecting(expected: "0.9.2"))
+    }
+
+    @Test("A macOS session with no control channel reports .waiting for a VM that has never seen an agent")
+    func agentStatusMacOSSessionWithoutControlNeverSeenIsWaiting() {
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        #expect(instance.vsockControlService == nil)
         #expect(instance.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus returns to nil once the session ends")
+    func agentStatusIsNilAfterTheSessionEnds() {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        #expect(instance.agentStatus == .connecting(expected: "0.9.2"))
+
+        instance.handleSessionEvent(.guestDidStop)
+
+        #expect(instance.sessionContext == nil)
+        #expect(instance.agentStatus == nil)
     }
 
     @Test("agentStatus on macOS does NOT fall through to clipboardService — control is the only source")
