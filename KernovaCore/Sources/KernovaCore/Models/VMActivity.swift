@@ -64,8 +64,8 @@ package final class VMActivity {
     var holdsRunLock: Bool { hold.isThisCopy }
 
     /// Whether this copy last found another copy of Kernova holding the VM's
-    /// run lock — by a lock attempt, a commit's probe, a refused write or a
-    /// ``refreshFromBundle()`` — only ever while the VM is at rest here.
+    /// run lock — by a lock attempt, a probe or a refused write — only ever
+    /// while the VM is at rest here.
     var heldByAnotherCopy: Bool {
         access(keyPath: \.heldByAnotherCopy)
         return hold.isAnotherCopy
@@ -337,10 +337,8 @@ package final class VMActivity {
         identity: VMIdentityOverride, probingOtherCopies: Bool
     ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
-        if probingOtherCopies, !hold.isThisCopy,
-            VMAdmission.isRefusedWhileHeldByAnotherCopy(request, phase: phase)
-        {
-            recordOtherCopyHold(heldElsewhere: owner.bundle.isRunLockedElsewhere())
+        if probingOtherCopies, VMAdmission.isRefusedWhileHeldByAnotherCopy(request, phase: phase) {
+            probeOtherCopyHold()
         }
         var facts = owner.admissionFacts
         if posture == .commit,
@@ -719,9 +717,36 @@ package final class VMActivity {
     /// nothing.
     @discardableResult
     func refreshFromBundle() -> [UnreadableConfigFile]? {
+        guard let bundle = probeOtherCopyHold() else { return nil }
+        return reread(bundle)
+    }
+
+    /// Catches a VM at rest up with whether another copy of Kernova holds its
+    /// bundle, and re-reads the bundle only when that copy does — so the VM
+    /// claims the identity its bundle carries now.
+    ///
+    /// A VM at rest that no copy holds claims nothing whatever its bundle
+    /// says, so its bundle is not read.
+    func refreshClaim() {
+        guard let bundle = probeOtherCopyHold(), hold.isAnotherCopy else { return }
+        reread(bundle)
+    }
+
+    /// Asks the bundle of a VM at rest holding no lock whether another copy
+    /// of Kernova holds it, and records the answer — the bundle it asked,
+    /// `nil` when it asked none.
+    @discardableResult
+    private func probeOtherCopyHold() -> VMBundle? {
         guard phase.isAtRest, !hold.isThisCopy, let owner else { return nil }
         let bundle = owner.bundle
         recordOtherCopyHold(heldElsewhere: bundle.isRunLockedElsewhere())
+        return bundle
+    }
+
+    /// Re-reads `bundle`'s four state files and where the VM rests, answering
+    /// the files the re-read could not read.
+    @discardableResult
+    private func reread(_ bundle: VMBundle) -> [UnreadableConfigFile] {
         do throws(UnreadableConfigFile) {
             try bundle.refresh()
         } catch {
