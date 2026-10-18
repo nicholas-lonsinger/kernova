@@ -19,7 +19,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
 
     /// Where every item's write runs, one at a time: each blocks on its pull
     /// for as long as the item takes to stream.
-    private let writeQueue: OperationQueue = {
+    nonisolated private let writeQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "app.kernova.drag-out-writes"
         queue.maxConcurrentOperationCount = 1
@@ -27,17 +27,20 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         return queue
     }()
 
-    /// What one promise names: which item it is, and the source that writes it.
+    /// What one promise names: which item it is, what it is called, and the
+    /// source that writes it.
     ///
     /// Carried as the provider's `userInfo`, which the provider holds strongly,
     /// because its `delegate` is weak and a destination can ask for the file
     /// after the session that carried it has ended.
     final class PromisedItem: Sendable {
         let index: Int
+        let filename: String
         let source: DisplayDragOutSource
 
-        init(index: Int, source: DisplayDragOutSource) {
+        init(index: Int, filename: String, source: DisplayDragOutSource) {
             self.index = index
+            self.filename = filename
             self.source = source
         }
     }
@@ -56,7 +59,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         return take.items.indices.map { index in
             let item = take.items[index]
             let provider = NSFilePromiseProvider(fileType: item.type.identifier, delegate: self)
-            provider.userInfo = PromisedItem(index: index, source: self)
+            provider.userInfo = PromisedItem(index: index, filename: item.filename, source: self)
             let draggingItem = NSDraggingItem(pasteboardWriter: provider)
             draggingItem.setDraggingFrame(frame, contents: NSWorkspace.shared.icon(for: item.type))
             return draggingItem
@@ -79,13 +82,16 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
 
     // MARK: - NSFilePromiseProviderDelegate
 
-    func filePromiseProvider(
+    // Every method here is `nonisolated`: AppKit asks from whichever queue is
+    // serving the promise, and for a destination in this app — another VM's
+    // display — that is file coordination's own (crash reports 2026-10-18:
+    // `_dispatch_assert_queue_fail` on `com.apple.FileCoordination` under
+    // `-[NSFileProviderXPCMessenger _makeProvider:provideItemAtURL:…]`).
+
+    nonisolated func filePromiseProvider(
         _ filePromiseProvider: NSFilePromiseProvider, fileNameForType fileType: String
     ) -> String {
-        guard let promised = filePromiseProvider.userInfo as? PromisedItem,
-            take.items.indices.contains(promised.index)
-        else { return "File" }
-        return take.items[promised.index].filename
+        (filePromiseProvider.userInfo as? PromisedItem)?.filename ?? "File"
     }
 
     nonisolated func filePromiseProvider(
@@ -104,7 +110,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         }
     }
 
-    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
+    nonisolated func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
         writeQueue
     }
 }

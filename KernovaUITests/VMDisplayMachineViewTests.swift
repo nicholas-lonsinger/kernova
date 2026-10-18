@@ -319,6 +319,24 @@ struct DisplayDragOutSourceTests {
         #expect(code.withLock { $0 } == .userCancelled)
     }
 
+    @Test("a promise's name and queue are answered off the main actor, where file coordination asks")
+    func answersOffTheMainActor() async {
+        let (source, _) = makeSource()
+
+        let answers = await Task.detached {
+            let provider = NSFilePromiseProvider(fileType: "public.plain-text", delegate: source)
+            provider.userInfo = DisplayDragOutSource.PromisedItem(
+                index: 0, filename: "report.txt", source: source)
+            return (
+                source.filePromiseProvider(provider, fileNameForType: provider.fileType),
+                source.operationQueue(for: provider).maxConcurrentOperationCount
+            )
+        }.value
+
+        #expect(answers.0 == "report.txt")
+        #expect(answers.1 == 1)
+    }
+
     @Test("writes run one at a time, off the main queue")
     func writesRunSerially() throws {
         let (source, _) = makeSource()
