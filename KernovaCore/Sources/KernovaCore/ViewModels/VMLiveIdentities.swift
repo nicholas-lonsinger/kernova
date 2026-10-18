@@ -36,10 +36,10 @@ final class VMLiveIdentities {
     /// collides, or when the only collision is a machine identity `override`
     /// waives.
     ///
-    /// Every other VM at rest is first caught up with another copy of
-    /// Kernova (``VMActivity/refreshFromBundle()``), so a VM that copy holds
-    /// claims the identity its bundle carries now. A shared machine identity
-    /// is answered first: waived only by a confirmed override while
+    /// Every other VM's claim is first caught up with another copy of Kernova
+    /// (``VMActivity/refreshClaim()``), so a VM that copy holds claims the
+    /// identity its bundle carries now. A shared machine identity is answered
+    /// first: waived only by a confirmed override while
     /// ``AppPreferences/allowsDuplicateMachineIDOverride`` is on, and offered
     /// for confirmation only to a request that can ask. A MAC address is
     /// never waived, and is answered only once nothing else stands in the way,
@@ -50,7 +50,7 @@ final class VMLiveIdentities {
         override: VMIdentityOverride
     ) -> VMIdentityConflict? {
         for other in instances where other !== instance {
-            other.activity.refreshFromBundle()
+            other.activity.refreshClaim()
         }
         let identityTwin = instances.first {
             $0 !== instance && $0.claimsIdentity && instance.sharesMachineIdentity(with: $0)
