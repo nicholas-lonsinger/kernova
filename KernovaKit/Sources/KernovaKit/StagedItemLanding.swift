@@ -37,17 +37,35 @@ public enum StagedItemLanding {
 
     // MARK: - Seams
 
-    /// ``land(_:at:)`` with the rename injected, so a test can stand in a
-    /// cross-device one.
+    /// ``land(_:at:)`` with the rename, the cross-device copy, and the Trash
+    /// injected, so a test can stand in a cross-device move or a copy that
+    /// fails partway.
+    ///
+    /// A copy that fails partway leaves a truncated item at `destination`
+    /// under the original's name, which is put in the Trash before the error
+    /// is rethrown; the staged item stays where it was.
     static func land(
         _ representation: ClipboardContent.Representation, at destination: URL,
-        move: (URL, URL) throws -> Void
+        move: (URL, URL) throws -> Void,
+        copy: (URL, URL) throws -> Void = FileManager.default.copyItem,
+        trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
     ) throws {
         guard let source = representation.fileURL else { throw CocoaError(.fileNoSuchFile) }
         do {
             try move(source, destination)
         } catch let error as NSError where isCrossDevice(error) {
-            try FileManager.default.copyItem(at: source, to: destination)
+            do {
+                try copy(source, destination)
+            } catch let copyError as CocoaError where copyError.code == .fileWriteFileExists {
+                // The copy refused an item already there, which is not its own.
+                throw copyError
+            } catch {
+                // Anything else at `destination` is the copy's partial: it never
+                // replaces an existing item. The user can see it, so it goes to
+                // the Trash.
+                try? trash(destination)
+                throw error
+            }
             // Staging is app-internal, so its copy is removed outright.
             try? FileManager.default.removeItem(at: source)
         }

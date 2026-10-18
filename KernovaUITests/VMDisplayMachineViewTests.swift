@@ -219,6 +219,30 @@ struct VMDisplayMachineViewTests {
         #expect(take.events.isEmpty)
     }
 
+    @Test("a withheld drag that comes back inside the display tells the take, and reaches the guest")
+    func pointerReturnReachesTheGuest() throws {
+        let view = makeView()
+        let take = makeTake()
+        take.onPointerReturned = { view.resumeForwarding() }
+        host.nextTake = take
+        view.mouseDown(with: try event(.leftMouseDown, x: 50))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
+
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 150))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 140))
+        view.mouseUp(with: try event(.leftMouseUp, x: 140))
+
+        #expect(take.events == [.withheldDrag, .pointerReturned])
+        #expect(
+            view.forwarded == [
+                .init(type: .leftMouseDown, location: NSPoint(x: 50, y: 50)),
+                .init(type: .leftMouseDragged, location: NSPoint(x: 150, y: 50)),
+                .init(type: .leftMouseDragged, location: NSPoint(x: 140, y: 50)),
+                .init(type: .leftMouseUp, location: NSPoint(x: 140, y: 50)),
+            ])
+    }
+
     @Test("a new press over an unsettled take abandons it")
     func newPressAbandonsTheTake() throws {
         let view = makeView()

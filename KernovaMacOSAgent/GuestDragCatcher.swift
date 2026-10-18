@@ -14,15 +14,20 @@ import KernovaLogging
 /// source that forbids a copy — is answered with no operation and `failed`.
 ///
 /// Once `targeted` is out the host may already have released the button, and
-/// that release is a real drop under the guest pointer, so the surface stays up
-/// until the guest's drag ends: a refusal after `targeted`, or the host
-/// completing the drag, leaves it up to refuse whatever drops on it.
+/// that release is a real drop under the guest pointer, so a refusal after
+/// `targeted` leaves the surface up until the guest's drag ends, to refuse
+/// whatever drops on it. The host completing a take this side did not refuse
+/// takes the surface down at once: the host completes a released take only
+/// after this side's `caught` or `failed`, or on supersession, which needs a
+/// newer guest press and so follows the old drop — so a completion before
+/// then means the host gave the press back without releasing, and the user's
+/// drag goes on in the guest.
 ///
 /// The surface covers the screen and takes mouse events, so while it is up the
 /// guest cannot be clicked: every path that shows it ends at ``finish(failing:)``
 /// — the drag concluding or ending, a failure before `targeted`, the host
-/// completing a drag never targeted, the connection ending, or the press
-/// ending while the drag is off the surface.
+/// completing the drag, the connection ending, or the press ending while the
+/// drag is off the surface.
 @MainActor
 final class GuestDragCatcher {
     nonisolated private static let logger = KernovaLogger(
@@ -44,8 +49,8 @@ final class GuestDragCatcher {
         var entered = false
         /// `targeted` went out, so the host may have released the button.
         var targeted = false
-        /// The take was refused, or completed by the host, after `targeted`:
-        /// the surface stays up and refuses the drop.
+        /// The take was refused after `targeted`: the surface stays up and
+        /// refuses the drop.
         var refused = false
         /// The drag ended on the surface; its items stay pullable.
         var caught = false
@@ -100,15 +105,13 @@ final class GuestDragCatcher {
         finish(failing: (.dragTakeFailed, "The press ended before the drag reached the catcher"))
     }
 
-    /// The host is done with `generation`.
+    /// The host is done with `generation`; only a take this side refused
+    /// after `targeted` keeps the surface up, for the drop it must refuse.
     func complete(generation: UInt64) {
-        guard let current = take, current.claim.generation == generation else { return }
-        guard current.targeted else {
-            finish(failing: nil)
+        guard let current = take, current.claim.generation == generation, !current.refused else {
             return
         }
-        // The guest's drag ends on its own, at the surface or past it.
-        take?.refused = true
+        finish(failing: nil)
     }
 
     /// The connection ended; nothing is left to report to.
@@ -119,8 +122,7 @@ final class GuestDragCatcher {
     }
 
     /// Takes the surface down and forgets the take, telling the host first
-    /// when it failed — unless a refusal already told it, or the host already
-    /// completed it.
+    /// when it failed — unless a refusal already told it.
     private func finish(failing failure: (code: ClipboardErrorCode, message: String)?) {
         guard let ended = take else { return }
         take = nil

@@ -596,24 +596,42 @@ struct GuestDragOutTests {
         #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
     }
 
-    @Test("the host completing a targeted drag leaves the surface up to refuse the drop")
-    func completionAfterTargetedLeavesItUp() throws {
+    @Test("the host completing a targeted drag this side did not refuse takes the surface down at once")
+    func completionAfterTargetedTakesItDown() throws {
         let urls = [try file("one.txt")]
         let rig = takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
 
+        // The host gave the press back without releasing: the user's drag goes
+        // on in the guest, past where the surface was.
         rig.dragOut.complete(generation: 1)
 
-        #expect(rig.surface.isShown)
+        #expect(!rig.surface.isShown)
         #expect(catcher.draggingUpdated(caught(urls)) == [])
         #expect(!catcher.performDragOperation())
         catcher.draggingEnded()
-        #expect(!rig.surface.isShown)
         #expect(
             rig.peer.handOffs == [
                 .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
             ])
+    }
+
+    @Test("the host completing a drag this side refused after targeted leaves the surface up")
+    func completionAfterARefusalLeavesItUp() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        #expect(catcher.draggingUpdated(caught(urls, mask: [.move])) == [])
+
+        rig.dragOut.complete(generation: 1)
+
+        #expect(rig.surface.isShown)
+        #expect(!catcher.performDragOperation())
+        catcher.draggingEnded()
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.handOffs.count == 3)
     }
 
     @Test("completing another drag leaves the surface up")

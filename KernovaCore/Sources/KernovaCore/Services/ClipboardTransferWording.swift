@@ -54,13 +54,7 @@ package struct ClipboardTransferWording: Equatable {
             return dragOutWording(for: failure, vm: vm)
 
         case (.diskFull(let needed, let available), let gesture):
-            let detail =
-                [
-                    needed.map { "\(DataFormatters.formatBytes($0)) needed" },
-                    available.map { "\(DataFormatters.formatBytes(UInt64(clamping: $0))) free" },
-                ]
-                .compactMap { $0 }
-                .joined(separator: ", ")
+            let detail = diskFullDetail(needed: needed, available: available)
             let base = "Not enough disk space to receive the clipboard payload"
             return ClipboardTransferWording(
                 headline: headline(for: gesture, vm: vm),
@@ -266,13 +260,7 @@ package struct ClipboardTransferWording: Equatable {
         let menuLine: String
         switch failure {
         case .diskFull(let needed, let available):
-            let detail =
-                [
-                    needed.map { "\(DataFormatters.formatBytes($0)) needed" },
-                    available.map { "\(DataFormatters.formatBytes(UInt64(clamping: $0))) free" },
-                ]
-                .compactMap { $0 }
-                .joined(separator: ", ")
+            let detail = diskFullDetail(needed: needed, available: available)
             let base = "This Mac ran out of disk space receiving the files, so the drag didn't finish"
             message = detail.isEmpty ? "\(base)." : "\(base) (\(detail))."
             menuLine = "Drag: not enough disk space on this Mac"
@@ -297,8 +285,19 @@ package struct ClipboardTransferWording: Equatable {
             menuLine = "Drag: the files didn't reach your Mac"
         }
         return ClipboardTransferWording(
-            headline: "Files not copied from \(vm).", message: message, menuLine: menuLine,
+            headline: headline(for: .dragOut, vm: vm), message: message, menuLine: menuLine,
             mentionsMacClipboardKept: false)
+    }
+
+    /// The needed and free byte counts a disk-full refusal knows, joined, or
+    /// empty when it knows neither.
+    private static func diskFullDetail(needed: UInt64?, available: Int64?) -> String {
+        [
+            needed.map { "\(DataFormatters.formatBytes($0)) needed" },
+            available.map { "\(DataFormatters.formatBytes(UInt64(clamping: $0))) free" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
     }
 
     /// The dropdown line for a failure pulling bytes from the guest.

@@ -10,8 +10,9 @@ import Virtualization
 /// guest's drag over — on every outside drag event, so an offer that lands after
 /// the pointer left still takes over. From then until the take settles, no
 /// physical drag or mouse-up reaches the guest: each is withheld and drives the
-/// take, and the guest sees only what the take injects. A take that fails hands
-/// the rest of the press back.
+/// take, and the guest sees only what the take injects. A take that fails, or
+/// one the pointer comes back inside the display before the release, hands the
+/// rest of the press back.
 ///
 /// `VZVirtualMachineView` receives a press as ordinary `mouseDown`/
 /// `mouseDragged`/`mouseUp` calls and runs no tracking loop of its own, and a
@@ -70,9 +71,13 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
             // forwarded event put it until the take moves it.
             press = .taking(take)
         case .taking(let take):
-            withheldDrag = event
-            take.withheldDrag()
-            withheldDrag = nil
+            if bounds.contains(convert(event.locationInWindow, from: nil)) {
+                take.pointerReturned()
+            } else {
+                withheldDrag = event
+                take.withheldDrag()
+                withheldDrag = nil
+            }
             if case .forwarding = press { forward(event) }
         case .forwarding:
             forward(event)

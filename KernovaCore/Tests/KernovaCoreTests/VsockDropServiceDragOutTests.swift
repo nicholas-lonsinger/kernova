@@ -493,6 +493,51 @@ struct VsockDropServiceDragOutTests {
         #expect(harness.display.releaseCount == 0)
     }
 
+    /// Where the hand-off stands when the pointer comes back over the display.
+    enum ReturnPoint: String, CaseIterable, Sendable {
+        case beforeArmed
+        case armed
+        case ready
+    }
+
+    @Test(
+        "the pointer coming back before the release abandons, resumes forwarding, completes, and never releases",
+        arguments: ReturnPoint.allCases)
+    func pointerReturnAbandons(_ point: ReturnPoint) async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        if point != .beforeArmed {
+            try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
+        }
+        if point == .ready {
+            try await harness.handOff(.targeted, for: take, reaching: .ready)
+        }
+
+        take.pointerReturned()
+
+        #expect(take.phase == .abandoned)
+        #expect(harness.display.calls.last == .resume)
+        #expect(harness.display.releaseCount == 0)
+        #expect(!harness.display.calls.contains(.beginSession))
+        try await harness.waitForComplete(take.generation)
+        take.withheldDrag()
+        take.withheldMouseUp()
+        #expect(harness.display.releaseCount == 0)
+    }
+
+    @Test("the pointer coming back after the release changes nothing")
+    func pointerReturnAfterTheReleaseIsInert() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+
+        take.pointerReturned()
+
+        #expect(take.phase == .released(hostSession: true))
+        #expect(!harness.display.calls.contains(.resume))
+    }
+
     @Test("a hand-off deadline that passes after TARGETED does nothing")
     func deadlineAfterTargetedIsInert() async throws {
         let harness = try Harness()
@@ -667,20 +712,75 @@ struct VsockDropServiceDragOutTests {
         #expect(await harness.write(take, item: 0, to: destination) == .cancelled)
     }
 
-    @Test("a write whose transfer is cut off by the guest withdrawing fails, and is reported")
-    func withdrawalDuringAWriteFails() async throws {
+    @Test("the guest's own Cancel after the release ends the writes as cancelled, not failed")
+    func guestCancelDuringAWriteCancels() async throws {
         let harness = try Harness(parksPulls: true)
         defer { harness.tearDown() }
-        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        let take = try await harness.releasedTake([
+            try makeFile(named: "a.txt", contents: "a"), try makeFile(named: "b.txt", contents: "b"),
+        ])
         take.hostSessionEnded(dropped: true)
-        let destination = try makeDestination().appendingPathComponent("a.txt")
+        let destination = try makeDestination()
 
-        let write = Task { await harness.write(take, item: 0, to: destination) }
+        let write = Task {
+            await harness.write(take, item: 0, to: destination.appendingPathComponent("a.txt"))
+        }
         _ = try await harness.parked.next()
+        try await harness.reports.changed.wait { harness.reports.runningSnapshot != nil }
+        // After the release, a withdrawal is the guest user's Cancel on its
+        // serving readout.
         #expect(harness.guest.withdraw(generation: take.generation))
 
-        #expect(await write.value == .failed(.peerReported(nil)))
+        #expect(await write.value == .cancelled)
+        try await harness.reports.wait {
+            harness.reports.reports.contains { report in
+                guard case .finished(let finish) = report, case .cancelled = finish.outcome else {
+                    return false
+                }
+                return finish.gesture == .dragOut
+            }
+        }
+        #expect(harness.reports.refusals.isEmpty)
+        #expect(
+            await harness.write(take, item: 1, to: destination.appendingPathComponent("b.txt"))
+                == .cancelled)
+    }
+
+    @Test("the channel ending while a destination is still owed items reports them interrupted")
+    func channelEndWithItemsOwedIsReported() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([
+            try makeFile(named: "a.txt", contents: "a"), try makeFile(named: "b.txt", contents: "b"),
+            try makeFile(named: "c.txt", contents: "c"),
+        ])
+        take.hostSessionEnded(dropped: true)
+        let destination = try makeDestination()
+        #expect(
+            await harness.write(take, item: 0, to: destination.appendingPathComponent("a.txt"))
+                == .landed)
+
+        harness.guestChannel.close()
+
         try await harness.reports.waitForFailure()
+        #expect(harness.reports.failure == .interrupted(fileCount: 2))
         #expect(harness.reports.finish?.gesture == .dragOut)
+        #expect(
+            await harness.write(take, item: 1, to: destination.appendingPathComponent("b.txt"))
+                == .failed(.interrupted(fileCount: 2)))
+    }
+
+    @Test("the channel ending once a session dropped nothing reports nothing")
+    func channelEndWithNothingOwedIsQuiet() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        take.hostSessionEnded(dropped: false)
+        try await harness.waitForComplete(take.generation)
+
+        harness.guestChannel.close()
+        try await waitForChange { !harness.service.isConnected }
+
+        #expect(harness.reports.refusals.isEmpty)
     }
 }

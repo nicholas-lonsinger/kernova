@@ -47,6 +47,7 @@ final class FakeTake: GuestDragTaking {
     enum Event: Equatable {
         case withheldDrag
         case withheldMouseUp
+        case pointerReturned
         case displayAbandoned
         case hostSessionEnded(dropped: Bool)
     }
@@ -59,6 +60,8 @@ final class FakeTake: GuestDragTaking {
     var onWithheldDrag: () -> Void = {}
     /// Runs on the withheld mouse-up.
     var onWithheldMouseUp: () -> Void = {}
+    /// Runs when a withheld drag comes back inside the display.
+    var onPointerReturned: () -> Void = {}
 
     /// Every write asked for, by item index and destination.
     nonisolated let writes = Mutex<[(index: Int, destination: URL)]>([])
@@ -77,6 +80,11 @@ final class FakeTake: GuestDragTaking {
     func withheldMouseUp() {
         events.append(.withheldMouseUp)
         onWithheldMouseUp()
+    }
+
+    func pointerReturned() {
+        events.append(.pointerReturned)
+        onPointerReturned()
     }
 
     func displayAbandoned() { events.append(.displayAbandoned) }

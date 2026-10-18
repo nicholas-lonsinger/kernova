@@ -57,6 +57,10 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// The display withheld the press's physical mouse-up.
     func withheldMouseUp()
 
+    /// A withheld drag event came back inside the display: the user means the
+    /// drag for the guest after all.
+    func pointerReturned()
+
     /// The display can no longer carry the press — it left its window, or a
     /// new press began without the last one ending.
     func displayAbandoned()
@@ -87,9 +91,9 @@ package enum GuestDragWriteError: Error, Equatable, Sendable {
 /// The hand-off is a state machine whose one irreversible step — releasing the
 /// guest's button — exists only in ``Phase/ready``, which only `TARGETED`
 /// enters: a release is a real drop under the guest pointer, so it may land
-/// only on the guest's catcher. Every failure before the release abandons the
-/// take and resumes forwarding, so the press ends as an ordinary guest gesture
-/// would. `NSDraggingSession` cannot be withdrawn, so the Mac session also
+/// only on the guest's catcher. Every failure before the release, and the
+/// pointer coming back over the display, abandons the take and resumes
+/// forwarding, so the press ends as an ordinary guest gesture would. `NSDraggingSession` cannot be withdrawn, so the Mac session also
 /// begins only from ``Phase/ready``.
 @MainActor
 @Observable
@@ -243,6 +247,10 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
+    package func pointerReturned() {
+        abandon(because: "the pointer came back over the display", tellingGuest: true)
+    }
+
     package func displayAbandoned() {
         abandon(because: "the display can no longer carry the press", tellingGuest: true)
     }
@@ -292,6 +300,10 @@ package final class GuestDragTake: GuestDragTaking {
 
     /// The guest withdrew the drag (`DragRelease`), which the endpoint has
     /// already retired.
+    ///
+    /// After the release the guest's watcher never withdraws a taken drag, so
+    /// a withdrawal then is the guest user's Cancel on the readout serving it,
+    /// and ends the take's transfers as cancelled.
     func guestWithdrew() {
         switch phase {
         case .handingOff, .ready:
@@ -299,7 +311,7 @@ package final class GuestDragTake: GuestDragTaking {
         case .released(let hostSession):
             guestDragEnded = true
             if hostSession, !hostSessionDroppedNothing, written.count < items.count {
-                fail(.peerReported(nil))
+                cancelWrites()
             }
             retireIfDone()
         case .abandoned:
@@ -327,8 +339,12 @@ package final class GuestDragTake: GuestDragTaking {
         switch phase {
         case .handingOff, .ready:
             abandon(because: "the drop channel closed", tellingGuest: false)
-        case .released:
-            if writesInFlight > 0 { fail(.interrupted(fileCount: nil)) }
+        case .released(let hostSession):
+            // A destination still owed items would otherwise see each later
+            // write fail with nothing on the readout to say why.
+            if hostSession, !hostSessionDroppedNothing, written.count < items.count {
+                fail(.interrupted(fileCount: items.count - written.count))
+            }
             retire(tellingGuest: false)
         case .abandoned:
             break
@@ -392,12 +408,13 @@ package final class GuestDragTake: GuestDragTaking {
     /// Sends the drag's `DragComplete` once nothing will pull from it again and
     /// the guest's own drag is over.
     ///
-    /// The guest's catcher refuses a release that reaches it after
-    /// `DragComplete`, so one that overtook the injected release would turn the
-    /// catch into a refusal — hence a released take waits for the guest to
-    /// report its drag over. A superseded take's guest drag ended with its
-    /// press, long before the next one began, but its destination may still
-    /// have writes queued, so it retires like any other released take.
+    /// The guest's catcher comes down on `DragComplete` for a take it did not
+    /// refuse, so one that overtook the injected release would let that
+    /// release drop on whatever lies under the guest pointer — hence a
+    /// released take waits for the guest to report `CAUGHT` or `FAILED`. A
+    /// superseded take's guest drag ended with its press, before the newer
+    /// guest press the supersession needs, but its destination may still have
+    /// writes queued, so it retires like any other released take.
     private func retireIfDone() {
         guard case .released(let hostSession) = phase, !isRetired else { return }
         let guestDone = guestDragEnded || isSuperseded
@@ -527,17 +544,18 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
-    /// Ends the take's transfers on `failure`: the readout reports it, and no
-    /// further item is pulled.
+    /// Ends the take's transfers on `failure`: the readout reports it — one
+    /// opened for the purpose when none is running — and no further item is
+    /// pulled.
     private func fail(_ failure: ClipboardTransferFailure) {
         guard terminal == nil else { return }
         terminal = .failed(failure)
-        readout?.finish(.failed(failure))
+        liveReadout().finish(.failed(failure))
         endpoint.cancelInbound(generation: generation)
     }
 
-    /// The readout's Cancel: every pending write fails as cancelled, and the
-    /// drag is done with.
+    /// Either side's Cancel — the readout's here, or the guest's on its own —
+    /// fails every pending write as cancelled, and the drag is done with.
     private func cancelWrites() {
         guard terminal == nil else { return }
         terminal = .cancelled
