@@ -21,15 +21,14 @@ import Testing
 struct VMScriptingGatewayTests {
     /// A readiness await the test holds open, so a verb's wait for the first
     /// library read is observable rather than instantaneous.
-    private final class ReadinessGate: @unchecked Sendable {
+    @MainActor
+    private final class ReadinessGate {
         /// Fires when the gateway starts waiting, and again when it is let go.
         private let gate = AsyncGate()
-        private let lock = NSLock()
-        private var waiting = false
         private var isOpen = false
 
         /// Whether the gateway is parked on the readiness await.
-        var isWaiting: Bool { lock.withLock { waiting } }
+        private(set) var isWaiting = false
 
         /// Suspends until ``open()``, as the app's first library read does.
         ///
@@ -39,10 +38,10 @@ struct VMScriptingGatewayTests {
         /// re-issued command reaches Cocoa on the main actor with no Apple
         /// event behind it.
         func wait() async {
-            lock.withLock { waiting = true }
+            isWaiting = true
             gate.notify()
             do {
-                try await gate.wait { self.lock.withLock { self.isOpen } }
+                try await gate.wait { self.isOpen }
             } catch {
                 Issue.record("readiness gate was never opened: \(error)")
                 await VMScriptingGatewayTests.parkForever()
@@ -51,7 +50,7 @@ struct VMScriptingGatewayTests {
 
         /// Lands the library read.
         func open() {
-            lock.withLock { isOpen = true }
+            isOpen = true
             gate.notify()
         }
 
@@ -238,9 +237,9 @@ struct VMScriptingGatewayTests {
             $0.networkMembership = .network(lab.id)
             $0.applyNetworkMode($0.networkMode)
         }
-        wired.arpTable.table = [
+        wired.arpTable.setTable([
             .scripted("192.168.64.3", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)
-        ]
+        ])
         await wired.library.guestAddresses.readForTesting()
 
         let vms = makeGateway(wired).virtualMachines()

@@ -270,7 +270,7 @@ struct VirtualizationServiceTests {
         let instance = VMInstanceFixture.make(
             phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
-        store.captureError = VMSnapshotError.snapshotMissingSavedState
+        store.setCaptureError(VMSnapshotError.snapshotMissingSavedState)
 
         await #expect(throws: VMSnapshotError.self) {
             try await captureWarm(
@@ -467,7 +467,7 @@ struct VirtualizationServiceTests {
         let fixture = try makeRevertFixture(
             phase: .running(sessionID: UUID()), machineFiles: store)
         store.setCapturedConfiguration(fixture.capturedConfiguration, for: fixture.snapshot.id)
-        store.stageError = VMSnapshotError.snapshotMissingFile("Disk.asif")
+        store.setStageError(VMSnapshotError.snapshotMissingFile("Disk.asif"))
 
         await #expect(throws: VMSnapshotError.self) {
             try await revert(fixture)
@@ -1173,7 +1173,7 @@ struct VirtualizationServiceTests {
             $0.kernelBookmark = bookmark
         }
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         var thrown: (any Error)?
         do {

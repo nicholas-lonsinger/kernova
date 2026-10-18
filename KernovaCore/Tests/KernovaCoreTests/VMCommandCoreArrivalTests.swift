@@ -131,7 +131,7 @@ struct VMCommandCoreArrivalTests {
         let source = makeSource(in: harness)
         let (events, recording) = recordFailureEvents(of: harness.core)
         defer { recording.cancel() }
-        storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
+        storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
 
         let row = try await harness.core.clone(
             .id(source.id), outcome: .newMachine, waitForOutcome: false)
@@ -152,13 +152,13 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
-        storage.cloneHold = hold
+        storage.setCloneHold(hold)
 
         let waiter = Task {
             try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
-        storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
+        storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
         waiter.cancel()
         hold.signal()
 
@@ -171,7 +171,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
-        storage.cloneHold = hold
+        storage.setCloneHold(hold)
 
         let waiter = Task {
             try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
@@ -203,7 +203,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
-        storage.cloneHold = hold
+        storage.setCloneHold(hold)
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
@@ -236,7 +236,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
-        storage.cloneHold = hold
+        storage.setCloneHold(hold)
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
@@ -261,7 +261,7 @@ struct VMCommandCoreArrivalTests {
     func aCancelDuringPublishingOfAStartingCreateTrashesItAndStartsNothing() async throws {
         let harness = makeHarness()
         let hold = DispatchSemaphore(value: 0)
-        storage.publishHold = hold
+        storage.setPublishHold(hold)
         let configuration = VMConfiguration(
             name: "Withdrawn", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
@@ -292,7 +292,7 @@ struct VMCommandCoreArrivalTests {
     func aCreatePublishingAtTerminationStartsNothing() async throws {
         let harness = makeHarness()
         let hold = DispatchSemaphore(value: 0)
-        storage.publishHold = hold
+        storage.setPublishHold(hold)
         let configuration = VMConfiguration(
             name: "Quitting", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
@@ -350,7 +350,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
-        storage.publishHold = hold
+        storage.setPublishHold(hold)
 
         let waiter = Task {
             try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
@@ -376,8 +376,8 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
-        storage.publishHold = hold
-        storage.deleteVMBundleError = CocoaError(.fileWriteNoPermission)
+        storage.setPublishHold(hold)
+        storage.setDeleteVMBundleError(CocoaError(.fileWriteNoPermission))
 
         let row = try await harness.core.clone(
             .id(source.id), outcome: .newMachine, waitForOutcome: false)
@@ -550,7 +550,7 @@ struct VMCommandCoreArrivalTests {
         let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
         harness.virtualization.liveCopySession = session
         let hold = DispatchSemaphore(value: 0)
-        storage.cloneHold = hold
+        storage.setCloneHold(hold)
 
         let waiter = Task {
             try await harness.core.clone(.id(source.id), outcome: outcome, waitForOutcome: true)

@@ -3,7 +3,10 @@ import Foundation
 @testable import KernovaCore
 
 /// Scripted stand-in for `RestoreImageProbing`.
-final class MockRestoreImageProbeService: RestoreImageProbing, @unchecked Sendable {
+@MainActor
+final class MockRestoreImageProbeService: RestoreImageProbing {
+    nonisolated init() {}
+
     var probeCallCount = 0
     var lastProbedURL: URL?
     var lastSizedURL: URL?

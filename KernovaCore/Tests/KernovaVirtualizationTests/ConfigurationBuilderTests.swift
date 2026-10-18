@@ -972,7 +972,7 @@ struct ConfigurationBuilderTests {
             from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
-        #expect(devices[0].attachment === attachments.made.last)
+        #expect(devices[0].attachment.map(ObjectIdentifier.init) == attachments.madeIdentities.last)
         #expect(networks.operations.createdKinds == [.nat])
         #expect(networks.service.ipv4Subnet(for: .common(.nat)) != nil)
     }
@@ -982,7 +982,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        networks.operations.createNetworkError = TestFailure("vmnet refused")
+        networks.operations.setCreateNetworkError(TestFailure("vmnet refused"))
         let builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
@@ -1055,7 +1055,7 @@ struct ConfigurationBuilderTests {
             from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
         ).configuration.networkDevices
         #expect(devices.count == 1)
-        #expect(devices[0].attachment === attachments.made.last)
+        #expect(devices[0].attachment.map(ObjectIdentifier.init) == attachments.madeIdentities.last)
         #expect(networks.operations.createdKinds == [.hostOnly])
         #expect(networks.service.ipv4Subnet(for: .common(.hostOnly)) != nil)
     }
@@ -1092,7 +1092,9 @@ struct ConfigurationBuilderTests {
         hostOnly.networkMembership = .isolated
         for (config, kind) in [(nat, VmnetNetworkKind.nat), (hostOnly, .hostOnly)] {
             let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-            #expect(result.configuration.networkDevices[0].attachment === attachments.made.last)
+            #expect(
+                result.configuration.networkDevices[0].attachment.map(ObjectIdentifier.init)
+                    == attachments.madeIdentities.last)
             #expect(result.products.vmnetNetworks.owner == config.id)
             #expect(networks.service.ipv4Subnet(for: VmnetNetworkID(kind: kind, scope: .vm(config.id))) != nil)
         }
@@ -1117,7 +1119,7 @@ struct ConfigurationBuilderTests {
 
             // The build asks the VM's own session view for its own network.
             let networks = ScriptedVmnetNetworks()
-            networks.operations.subnet = .scripted("192.168.70.0")
+            networks.operations.setSubnet(.scripted("192.168.70.0"))
             let result = try ConfigurationBuilder.testing(networks, entitlements: .entitled)
                 .assemble(from: config, bundleURL: bundleURL, validate: false)
             #expect(result.products.vmnetNetworks.owner == config.id)
@@ -1158,7 +1160,7 @@ struct ConfigurationBuilderTests {
     func isolatedModeWithoutItsNetworkBuildsDetached() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let networks = ScriptedVmnetNetworks()
-        networks.operations.createNetworkError = TestFailure("network limit reached")
+        networks.operations.setCreateNetworkError(TestFailure("network limit reached"))
         let builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
         var config = VMConfiguration.testLinux()
         config.networkMembership = .isolated
@@ -1192,7 +1194,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let networks = ScriptedVmnetNetworks()
-        networks.operations.createNetworkError = TestFailure("vmnet refused")
+        networks.operations.setCreateNetworkError(TestFailure("vmnet refused"))
         let builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same

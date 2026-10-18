@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import Synchronization
 import Testing
 
 #if SWIFT_PACKAGE
@@ -697,13 +698,12 @@ func waitForChange(
 /// Records that a `withObservationTracking` `onChange` fired, from the
 /// `@Sendable` closure the API hands it — which no actor-isolated state can be
 /// written from.
-final class ObservationFireRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = false
+final class ObservationFireRecorder: Sendable {
+    private let fired = Mutex(false)
 
-    var didFire: Bool { lock.withLock { value } }
+    var didFire: Bool { fired.withLock { $0 } }
 
-    func record() { lock.withLock { value = true } }
+    func record() { fired.withLock { $0 = true } }
 }
 
 // MARK: - ChannelLostRecorder

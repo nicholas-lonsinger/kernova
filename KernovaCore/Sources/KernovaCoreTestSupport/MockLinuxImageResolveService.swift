@@ -7,7 +7,10 @@ import KernovaTestSupport
 @testable import KernovaCore
 
 /// Scripted stand-in for `LinuxImageResolving`.
-final class MockLinuxImageResolveService: LinuxImageResolving, @unchecked Sendable {
+@MainActor
+final class MockLinuxImageResolveService: LinuxImageResolving {
+    nonisolated init() {}
+
     var resolveCallCount = 0
     var lastResolvedEntry: LinuxImageCatalogEntry?
     var lastResolvedCustomImage: CustomLinuxImage?

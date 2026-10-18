@@ -114,7 +114,7 @@ struct VMLibraryTests {
     @Test("hasLoadedLibrary flips even when the bundle listing fails")
     func hasLoadedLibraryFlipsWhenListingFails() async {
         let storage = MockVMStorageService()
-        storage.listVMBundlesError = VMStorageError.bundleNotFound(scratch.url)
+        storage.setListVMBundlesError(VMStorageError.bundleNotFound(scratch.url))
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -275,7 +275,7 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(
             name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.loadConfigurationFailURLs = [badURL]
+        storage.setConfigurationUnreadable(true, at: badURL)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -320,7 +320,7 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         let instance = library.registerFixture(name: "Before")
         placeRunning(instance)
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         let saved = try library.updateConfiguration(of: instance, as: [.rename, .hotPlugMedia]) {
             $0.name = "After"
@@ -420,7 +420,7 @@ struct VMLibraryTests {
         let queued = [RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)]
         let instance = library.registerFixture { $0.removableMedia = queued }
         placeRunning(instance)
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         try await withOperation(on: instance, .reconcilingMedia) { context in
             library.settleRemovableMedia(context.permit, toLive: nil)
@@ -502,7 +502,7 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         let instance = library.registerFixture()
         let memory = instance.configuration.memorySizeInGB
-        storage.saveHostStateError = NSError(domain: "test", code: 1)
+        storage.setSaveHostStateError(NSError(domain: "test", code: 1))
 
         let outcome = try library.updateSettings(
             of: instance, as: [.machineKeys, .liveKeys],
@@ -731,7 +731,7 @@ struct VMLibraryTests {
         instance.activity.placeForTesting(.suspended)
         // Listed, but its configuration cannot be read this pass.
         storage.bundles[instance.bundleURL] = instance.configuration
-        storage.loadConfigurationFailURLs = [instance.bundleURL]
+        storage.setConfigurationUnreadable(true, at: instance.bundleURL)
 
         library.reconcileWithDisk()
 
@@ -778,7 +778,7 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(
             name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.loadConfigurationFailURLs.insert(badURL)
+        storage.setConfigurationUnreadable(true, at: badURL)
 
         failures.reset()
 
@@ -794,7 +794,7 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         failures.reset()
 
-        storage.listVMBundlesError = VMStorageError.bundleNotFound(scratch.url)
+        storage.setListVMBundlesError(VMStorageError.bundleNotFound(scratch.url))
 
         library.reconcileWithDisk()
 
@@ -811,7 +811,7 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(
             name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.loadConfigurationFailURLs.insert(badURL)
+        storage.setConfigurationUnreadable(true, at: badURL)
 
         // The initial load reports the error and seeds unreadableReports
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -849,7 +849,7 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(
             name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.loadHostStateFailURLs = [badURL]
+        storage.setHostStateUnreadable(true, at: badURL)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -904,7 +904,7 @@ struct VMLibraryTests {
             bootMode: .efi,
             cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.loadHostStateFailURLs.insert(bundleURL)
+        storage.setHostStateUnreadable(true, at: bundleURL)
 
         failures.reset()
         library.reconcileWithDisk()
@@ -916,7 +916,7 @@ struct VMLibraryTests {
         library.reconcileWithDisk()
         #expect(failures.checkRequests == 0)
 
-        storage.loadHostStateFailURLs.remove(bundleURL)
+        storage.setHostStateUnreadable(false, at: bundleURL)
         library.reconcileWithDisk()
         #expect(library.instances.map(\.name) == ["Unreadable VM"])
         #expect(library.entries.compactMap(\.unreadable).isEmpty)
@@ -934,7 +934,7 @@ struct VMLibraryTests {
             name: "Recoverable VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         storage.bundles[bundleURL] = config
-        storage.loadConfigurationFailURLs.insert(bundleURL)
+        storage.setConfigurationUnreadable(true, at: bundleURL)
 
         // First reconciliation reports the error
         failures.reset()
@@ -942,7 +942,7 @@ struct VMLibraryTests {
         #expect(failures.checkRequests == 1)
 
         // "Fix" the bundle by removing it from the fail set
-        storage.loadConfigurationFailURLs.remove(bundleURL)
+        storage.setConfigurationUnreadable(false, at: bundleURL)
 
         // Reconciliation succeeds — no error, and the bundle is cleared from reported set
         failures.reset()
@@ -950,7 +950,7 @@ struct VMLibraryTests {
         #expect(failures.checkRequests == 0)
 
         // Re-corrupt it
-        storage.loadConfigurationFailURLs.insert(bundleURL)
+        storage.setConfigurationUnreadable(true, at: bundleURL)
         // Remove the instance that was added on successful load so reconciliation tries again
         for instance in library.instances where instance.name == "Recoverable VM" {
             library.evict(instance)

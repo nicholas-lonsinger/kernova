@@ -240,7 +240,7 @@ struct AppAlertPresenterTests {
         let h = makeHarness()
         h.viewModel.presenter = h.presenter
         let library = h.showLibrary()
-        h.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        h.fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let lockedID = UUID()
         let vm = h.viewModel.library.admitFixture(name: "Leaving") {
             $0.removableMedia = [

@@ -1,39 +1,41 @@
 import Foundation
+import Synchronization
 
 @testable import KernovaCore
 
 /// Scripted stand-in for `ARPTableReading`, so a test states the table the host
 /// would hold instead of reading the real one. Empty until a test fills it.
-final class ScriptedARPTable: ARPTableReading, @unchecked Sendable {
-    private let lock = NSLock()
-    private var scriptedEntries: [ARPEntry]
-    private var scriptedError: (any Error)?
-    private var reads = 0
+final class ScriptedARPTable: ARPTableReading {
+    private struct State {
+        var entries: [ARPEntry]
+        var error: (any Error)?
+        var reads = 0
+    }
+
+    private let state: Mutex<State>
 
     init(_ entries: [ARPEntry] = []) {
-        scriptedEntries = entries
+        state = Mutex(State(entries: entries))
     }
 
-    /// The entries every later read returns.
-    var table: [ARPEntry] {
-        get { lock.withLock { scriptedEntries } }
-        set { lock.withLock { scriptedEntries = newValue } }
+    /// Sets the entries every later read returns.
+    func setTable(_ entries: [ARPEntry]) {
+        state.withLock { $0.entries = entries }
     }
 
-    /// Thrown by every later read while set.
-    var error: (any Error)? {
-        get { lock.withLock { scriptedError } }
-        set { lock.withLock { scriptedError = newValue } }
+    /// Sets the error every later read throws; `nil` clears it.
+    func setError(_ error: (any Error)?) {
+        state.withLock { $0.error = error }
     }
 
     /// How many reads have run.
-    var readCount: Int { lock.withLock { reads } }
+    var readCount: Int { state.withLock { $0.reads } }
 
     func entries() throws -> [ARPEntry] {
-        try lock.withLock {
-            reads += 1
-            if let scriptedError { throw scriptedError }
-            return scriptedEntries
+        try state.withLock { state in
+            state.reads += 1
+            if let error = state.error { throw error }
+            return state.entries
         }
     }
 }

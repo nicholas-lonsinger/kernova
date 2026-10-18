@@ -187,11 +187,11 @@ struct GuestAddressObserverTests {
         roster.instances = [guest]
         await observer.readForTesting()
 
-        table.error = ARPTableReadError(code: ENOMEM)
+        table.setError(ARPTableReadError(code: ENOMEM))
         await observer.readForTesting()
         #expect(observer.address(for: guest) == .notObserved)
 
-        table.error = nil
+        table.setError(nil)
         await observer.readForTesting()
         #expect(observer.address(for: guest) == .observed("192.168.64.5"))
     }

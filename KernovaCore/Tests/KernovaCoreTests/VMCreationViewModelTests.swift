@@ -1804,40 +1804,35 @@ struct VMCreationViewModelTests {
 /// Inspector whose calls suspend independently and resolve in whatever order
 /// the test releases them by index — models `VZMacOSRestoreImage` ignoring
 /// cancellation, so a superseded pick's read can finish after a newer one's.
-final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting,
-    @unchecked Sendable
-{
+@MainActor
+final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting {
     private final class CallState {
         let gate = AsyncGate()
         var released = false
     }
-    private let lock = NSLock()
     private var calls: [CallState] = []
     /// Notified whenever a new call registers, for ``waitUntilCallCount(_:)``.
     private let callRegisteredGate = AsyncGate()
 
+    nonisolated init() {}
+
     func inspect(_ url: URL) async throws -> InspectedRestoreImage {
-        let (index, gate) = lock.withLock { () -> (Int, AsyncGate) in
-            calls.append(CallState())
-            return (calls.count - 1, calls[calls.count - 1].gate)
-        }
+        let call = CallState()
+        calls.append(call)
         callRegisteredGate.notify()
-        try? await gate.wait(until: { self.lock.withLock { self.calls[index].released } })
+        try? await call.gate.wait(until: { call.released })
         return InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
     }
 
     /// Suspends until `inspect` has been called at least `count` times.
     func waitUntilCallCount(_ count: Int) async throws {
-        try await callRegisteredGate.wait(until: { self.lock.withLock { self.calls.count >= count } })
+        try await callRegisteredGate.wait(until: { self.calls.count >= count })
     }
 
     /// Lets the `callIndex`th call (0-based, in call order) finish.
     func release(callIndex: Int) {
-        let gate = lock.withLock { () -> AsyncGate in
-            calls[callIndex].released = true
-            return calls[callIndex].gate
-        }
-        gate.notify()
+        calls[callIndex].released = true
+        calls[callIndex].gate.notify()
     }
 }

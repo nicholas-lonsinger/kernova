@@ -341,7 +341,7 @@ struct RemindersSettingsViewControllerTests {
         let viewModel = makeViewModel()
         let storage = try #require(viewModel.storageService as? MockVMStorageService)
         let instance = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS, files: storage.files)
-        storage.saveHostStateError = CocoaError(.fileWriteNoPermission)
+        storage.setSaveHostStateError(CocoaError(.fileWriteNoPermission))
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
         controller.viewWillAppear()

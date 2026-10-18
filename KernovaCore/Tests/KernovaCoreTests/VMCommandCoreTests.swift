@@ -170,9 +170,9 @@ struct VMCommandCoreTests {
         #expect(try harness.core.info(.id(instance.id)).ipAddress == .notObserved)
         #expect(try harness.core.ipAddress(of: .id(instance.id)) == .notObserved)
 
-        harness.arpTable.table = [
+        harness.arpTable.setTable([
             .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
-        ]
+        ])
         await harness.library.guestAddresses.readForTesting()
 
         #expect(try harness.core.info(.id(instance.id)).ipAddress == .observed("192.168.64.4"))
@@ -2076,9 +2076,9 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
         let copyHold = DispatchSemaphore(value: 0)
-        harness.storage.cloneHold = copyHold
+        harness.storage.setCloneHold(copyHold)
         let publishHold = DispatchSemaphore(value: 0)
-        harness.storage.publishHold = publishHold
+        harness.storage.setPublishHold(publishHold)
 
         let summary = try await harness.core.clone(
             .id(instance.id), outcome: .newMachine, waitForOutcome: false)
@@ -2110,7 +2110,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
         let hold = DispatchSemaphore(value: 0)
-        harness.storage.cloneHold = hold
+        harness.storage.setCloneHold(hold)
         let clone = try await harness.core.clone(
             .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
@@ -2132,8 +2132,9 @@ struct VMCommandCoreTests {
     @Test("A delete that could not trash the bundle leaves the VM naming its suspend slot")
     func failedDeleteKeepsTheSuspendedPhase() async throws {
         let harness = makeHarness()
-        harness.storage.deleteVMBundleError = VMStorageError.bundleNotFound(
-            URL(filePath: "/tmp/Doomed.kernova"))
+        harness.storage.setDeleteVMBundleError(
+            VMStorageError.bundleNotFound(
+                URL(filePath: "/tmp/Doomed.kernova")))
         let instance = makeInstance(in: harness, name: "Doomed", phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
 
@@ -2250,9 +2251,9 @@ struct VMCommandCoreTests {
         }
         let fail = { (error: CocoaError?) in
             if permanently {
-                harness.fileSystem.removeError = error
+                harness.fileSystem.setRemoveError(error)
             } else {
-                harness.fileSystem.trashError = error
+                harness.fileSystem.setTrashError(error)
             }
         }
 
@@ -2535,7 +2536,7 @@ struct VMCommandCoreTests {
     func cloneFailureReportsFailureThenRemoval() async throws {
         let harness = makeHarness()
         let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
-        harness.storage.cloneVMBundleError = cloneError
+        harness.storage.setCloneVMBundleError(cloneError)
         let instance = makeInstance(in: harness, name: "Source")
         var events = VMLibraryEventReader(harness.core.events())
 
@@ -2919,7 +2920,7 @@ struct VMCommandCoreTests {
         let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
         try harness.core.provideGuestAccountPassword(
             .id(instance.id), password: "analytical-engine")
-        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        harness.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         let failure = try #require(throws: CommandError.self) { try harness.core.skipGuestAccount(.id(instance.id)) }
 
@@ -3012,7 +3013,7 @@ struct VMCommandCoreTests {
         let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
         try harness.core.provideGuestAccountPassword(
             .id(instance.id), password: "analytical-engine")
-        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        harness.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         let failure = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
@@ -3491,7 +3492,7 @@ struct VMCommandCoreTests {
     func failedRenameIsReported() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Before")
-        harness.storage.saveConfigurationError = VMStorageError.bundleNotFound(instance.bundleURL)
+        harness.storage.setSaveConfigurationError(VMStorageError.bundleNotFound(instance.bundleURL))
 
         let error = try #require(throws: CommandError.self) { try harness.core.rename(.id(instance.id), to: "After") }
 

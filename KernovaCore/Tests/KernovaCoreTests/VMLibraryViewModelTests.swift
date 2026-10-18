@@ -204,7 +204,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
         storage.bundles[instance.bundleURL] = instance.configuration
-        storage.deleteVMBundleError = CocoaError(.fileWriteNoPermission)
+        storage.setDeleteVMBundleError(CocoaError(.fileWriteNoPermission))
 
         await viewModel.delete(instance)
 
@@ -852,7 +852,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM swallows missing-file errors for a selected external")
     func deleteVMSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileNoSuchFile)
+        fileSystem.setTrashError(CocoaError(.fileNoSuchFile))
         let ghostID = UUID()
         let ghostPath = scratch.url
             .appendingPathComponent("kernova-ghost.iso")
@@ -871,7 +871,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM permanently swallows missing-file errors for a selected external")
     func deleteVMPermanentlySwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        fileSystem.removeError = CocoaError(.fileNoSuchFile)
+        fileSystem.setRemoveError(CocoaError(.fileNoSuchFile))
         let ghostID = UUID()
         let ghostPath = scratch.url
             .appendingPathComponent("kernova-ghost.iso")
@@ -892,7 +892,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM alerts once, naming the selected external that stayed")
     func deleteVMAlertsOnceForAnExternalThatStayed() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let lockedID = UUID()
         let lockedPath = scratch.url
             .appendingPathComponent("kernova-locked.iso")
@@ -913,7 +913,7 @@ struct VMLibraryViewModelTests {
     @Test("A removable-media removal whose file stayed alerts once, naming the file")
     func removeRemovableMediaAlertsOnceForAFileThatStayed() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let lockedPath = scratch.url
             .appendingPathComponent("kernova-locked.img")
             .path(percentEncoded: false)
@@ -2106,7 +2106,7 @@ struct VMLibraryViewModelTests {
     func setConfigurationForwardLeavesAFailedSaveToTheLibrary() {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = registerConfigurationVM(in: viewModel)
-        storage.saveConfigurationError = CocoaError(.fileWriteNoPermission)
+        storage.setSaveConfigurationError(CocoaError(.fileWriteNoPermission))
         let before = instance.configuration
 
         let outcome = viewModel.setConfiguration(
@@ -2386,7 +2386,7 @@ struct VMLibraryViewModelTests {
         viewModel.displayBootSurface = { _ in Self.retinaSurface }
         let instance = makeMatchWindowInstance(in: viewModel.library, files: storage.files)
         let original = instance.configuration.displayResolution
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await viewModel.start(instance)
 
@@ -3487,8 +3487,9 @@ struct VMLibraryViewModelTests {
     @Test("createVM removes the row and discards the staged tree when the bundle write fails")
     func createVMBundleWriteFailure() async throws {
         let storage = MockVMStorageService()
-        storage.createVMBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setCreateVMBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, virtService, _) = makeViewModel(storageService: storage)
         let wizard = makeCreationWizard(name: "Fail VM")
 
@@ -3636,8 +3637,9 @@ struct VMLibraryViewModelTests {
     @Test("createVM leaves nothing at the bundle URL when publication fails")
     func createVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
-        storage.publishBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setPublishBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let wizard = makeCreationWizard(name: "Unpublishable VM", startAfterCreate: false)
 
@@ -3947,8 +3949,9 @@ struct VMLibraryViewModelTests {
             source: .checksumList(URL(string: "https://checksums.example/SHA256SUMS")!))
         let resolveService = MockLinuxImageResolveService()
         let downloadService = MockDownloadService()
-        downloadService.downloadError = DownloadError.checksumMismatch(
-            filename: "debian.iso", expected: expected, actual: String(repeating: "b", count: 64))
+        downloadService.setDownloadError(
+            DownloadError.checksumMismatch(
+                filename: "debian.iso", expected: expected, actual: String(repeating: "b", count: 64)))
         let (viewModel, _, _, _, _) = makeViewModel(
             linuxImageResolveService: resolveService, downloadService: downloadService,
             downloadsDirectory: scratch.url)
@@ -3978,7 +3981,7 @@ struct VMLibraryViewModelTests {
         resolveService.resolveResult = makeResolvedLinuxImage(sizeBytes: UInt64(contents.count))
         resolveService.manifestSHA256 = digest
         let downloadService = MockDownloadService()
-        downloadService.downloadedContents = contents
+        downloadService.setDownloadedContents(contents)
 
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(
@@ -5084,8 +5087,9 @@ struct VMLibraryViewModelTests {
     @Test("importVM leaves nothing at the destination when publication fails")
     func importVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
-        storage.publishBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setPublishBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let source = try makeImportSource(name: "Unpublishable Import", storage: storage)
 
@@ -5346,7 +5350,7 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM removes its arrival on storage error and selects remaining instance")
     func cloneVMRemovesTheArrivalOnError() async {
         let storage = MockVMStorageService()
-        storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
+        storage.setCloneVMBundleError(VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let instance = viewModel.library.admitFixture(name: "Fail Clone")
         instance.activity.placeForTesting(.stopped)
@@ -5368,8 +5372,9 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM leaves nothing at the clone's bundle URL when publication fails")
     func cloneVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
-        storage.publishBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setPublishBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let instance = viewModel.library.admitFixture(name: "Clone Source")
         instance.activity.placeForTesting(.stopped)

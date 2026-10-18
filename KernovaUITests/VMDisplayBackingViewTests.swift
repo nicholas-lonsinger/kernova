@@ -95,14 +95,9 @@ struct VMDisplayBackingViewTests {
 
     /// A dragging info carrying whatever `pasteboard` holds; only the pasteboard
     /// is read by the drop path.
-    private final class StubDraggingInfo: NSObject, @unchecked Sendable, NSDraggingInfo {
-        // `nonisolated` so the conformance stays outside the main actor:
-        // `NSDraggingInfo` is a nonisolated protocol, and only the drop path's
-        // reads of `draggingPasteboard` matter here. The stub is immutable
-        // apart from the two settable properties AppKit requires, which nothing
-        // in these tests writes.
-        nonisolated(unsafe) let draggingPasteboard: NSPasteboard
-        init(pasteboard: NSPasteboard) { self.draggingPasteboard = pasteboard }
+    private final class StubDraggingInfo: NSObject, NSDraggingInfo {
+        let draggingPasteboard: NSPasteboard
+        @MainActor init(pasteboard: NSPasteboard) { self.draggingPasteboard = pasteboard }
 
         var draggingDestinationWindow: NSWindow? { nil }
         var draggingSourceOperationMask: NSDragOperation { .copy }

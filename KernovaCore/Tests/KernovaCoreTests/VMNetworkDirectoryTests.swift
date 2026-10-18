@@ -103,21 +103,16 @@ struct VMNetworkDirectoryTests {
         for bytes in [Data("not json".utf8), Data(#"{"networks": []}"#.utf8)] {
             try bytes.write(to: fileURL)
             let directory = VMNetworkDirectory(fileURL: fileURL)
-            let changed = Flag()
+            let changed = ObservationFireRecorder()
             withObservationTracking {
                 _ = directory.state
             } onChange: {
-                changed.set()
+                changed.record()
             }
 
             directory.reload()
 
-            #expect(!changed.isSet)
+            #expect(!changed.didFire)
         }
-    }
-
-    private final class Flag: @unchecked Sendable {
-        private(set) var isSet = false
-        func set() { isSet = true }
     }
 }

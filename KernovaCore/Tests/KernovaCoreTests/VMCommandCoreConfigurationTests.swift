@@ -1083,7 +1083,7 @@ struct VMCommandCoreConfigurationTests {
     func aFailedSaveRefuses() throws {
         let harness = makeHarness()
         makeInstance(in: harness)
-        harness.storage.saveConfigurationError = CocoaError(.fileWriteNoPermission)
+        harness.storage.setSaveConfigurationError(CocoaError(.fileWriteNoPermission))
 
         let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(

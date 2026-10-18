@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -17,16 +18,21 @@ import KernovaTestSupport
 ///
 /// Lock-based because production trashes from `Task.detached`, so calls
 /// arrive off the test's isolation.
-final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
+final class MockFileSystem: FileSystemOperating {
     private struct State {
         var trashedURLs: [URL] = []
         var removedURLs: [URL] = []
         var trashError: (any Error)?
         var removeError: (any Error)?
+        /// What a held trash waits on; `nil` while no hold is set.
+        var trashHold: DispatchSemaphore?
+        /// Trashes that took the hold and have not yet been signalled.
+        var unreleasedTrashes = 0
+        /// Trashes still parked, signalled or not.
+        var parkedTrashes = 0
     }
 
-    private let lock = NSLock()
-    private var state = State()
+    private let state = Mutex(State())
 
     /// Fires after each recorded trash or remove, so a test can wait on a
     /// cleanup production runs from a detached task instead of polling for it.
@@ -34,66 +40,68 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
 
     /// URLs passed to `trashItem(at:)`, in call order.
     ///
-    /// Not recorded when the injected `trashError` is thrown instead.
-    var trashedURLs: [URL] { lock.withLock { state.trashedURLs } }
+    /// Not recorded when the error ``setTrashError(_:)`` injected is thrown instead.
+    var trashedURLs: [URL] { state.withLock { $0.trashedURLs } }
 
     /// URLs passed to `removeItem(at:)`, in call order.
     ///
-    /// Not recorded when the injected `removeError` is thrown instead.
-    var removedURLs: [URL] { lock.withLock { state.removedURLs } }
+    /// Not recorded when the error ``setRemoveError(_:)`` injected is thrown instead.
+    var removedURLs: [URL] { state.withLock { $0.removedURLs } }
 
     // MARK: - Error Injection
 
-    var trashError: (any Error)? {
-        get { lock.withLock { state.trashError } }
-        set { lock.withLock { state.trashError = newValue } }
+    /// Sets the error every later `trashItem` throws; `nil` clears it.
+    func setTrashError(_ error: (any Error)?) {
+        state.withLock { $0.trashError = error }
     }
 
-    var removeError: (any Error)? {
-        get { lock.withLock { state.removeError } }
-        set { lock.withLock { state.removeError = newValue } }
+    /// Sets the error every later `removeItem` throws; `nil` clears it.
+    func setRemoveError(_ error: (any Error)?) {
+        state.withLock { $0.removeError = error }
     }
 
     // MARK: - Trash Hold
-
-    /// Guards ``holdsTrash`` and ``isTrashParked``; a parked trash waits on it.
-    private let trashHold = NSCondition()
-    private var holdsTrash = false
-    private var trashIsParked = false
 
     /// Fires once a `trashItem` call has parked, so a test can observe what
     /// holds while the trash is in flight.
     let trashParked = AsyncGate()
 
-    var isTrashParked: Bool { trashHold.withLock { trashIsParked } }
+    var isTrashParked: Bool { state.withLock { $0.parkedTrashes > 0 } }
 
-    /// Parks the next `trashItem` call until ``resumeTrash()``.
+    /// Parks every later `trashItem` call until ``resumeTrash()``.
     ///
-    /// The call blocks the thread it arrives on — production trashes from a
-    /// detached task, never from the main actor a test runs on.
-    func holdTrash() { trashHold.withLock { holdsTrash = true } }
-
-    /// Releases a parked `trashItem` call.
-    func resumeTrash() {
-        trashHold.withLock {
-            holdsTrash = false
-            trashHold.broadcast()
+    /// The call blocks the thread it arrives on, because `trashItem` is
+    /// synchronous — production trashes from a detached task, never from the
+    /// main actor a test runs on.
+    func holdTrash() {
+        state.withLock { state in
+            if state.trashHold == nil { state.trashHold = DispatchSemaphore(value: 0) }
         }
     }
 
-    private func waitOutTrashHold() {
-        trashHold.lock()
-        guard holdsTrash else {
-            trashHold.unlock()
-            return
+    /// Releases every parked `trashItem` call.
+    func resumeTrash() {
+        let (hold, parked) = state.withLock { state in
+            defer {
+                state.trashHold = nil
+                state.unreleasedTrashes = 0
+            }
+            return (state.trashHold, state.unreleasedTrashes)
         }
-        trashIsParked = true
-        trashHold.unlock()
+        for _ in 0..<parked { hold?.signal() }
+    }
+
+    private func waitOutTrashHold() {
+        let hold = state.withLock { state -> DispatchSemaphore? in
+            guard let hold = state.trashHold else { return nil }
+            state.unreleasedTrashes += 1
+            state.parkedTrashes += 1
+            return hold
+        }
+        guard let hold else { return }
         trashParked.notify()
-        trashHold.lock()
-        while holdsTrash { trashHold.wait() }
-        trashIsParked = false
-        trashHold.unlock()
+        hold.wait()
+        state.withLock { $0.parkedTrashes -= 1 }
     }
 
     // MARK: - FileSystemOperating
@@ -104,7 +112,7 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
 
     func trashItem(at url: URL) throws {
         waitOutTrashHold()
-        try lock.withLock {
+        try state.withLock { state in
             if let error = state.trashError { throw error }
             state.trashedURLs.append(url)
         }
@@ -112,7 +120,7 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
     }
 
     func removeItem(at url: URL) throws {
-        try lock.withLock {
+        try state.withLock { state in
             if let error = state.removeError { throw error }
             state.removedURLs.append(url)
         }

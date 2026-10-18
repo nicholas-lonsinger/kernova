@@ -378,7 +378,7 @@ struct VMInstanceTests {
         } onChange: {
             changed.record()
         }
-        machineFiles.platformMachineIdentifier = Data([7, 7, 7])
+        machineFiles.setPlatformMachineIdentifier(Data([7, 7, 7]))
         _ = try await withOperation(on: instance) { context in
             try await context.bundle.createMacPlatformFiles(hardwareModel: Data())
         }
@@ -1360,7 +1360,7 @@ struct VMInstanceTests {
             in: library,
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)", agentInstallNudgeDismissed: true)
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let held = instance.settings
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1498,7 +1498,7 @@ struct VMInstanceTests {
         let library = makeWiredLibrary(storage: storage)
         let instance = library.registerFixture()
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let before = instance.configuration
 
         let outcome = try instance.activity.edit(.machineKeys) {
@@ -1690,7 +1690,7 @@ struct VMInstanceTests {
             in: library,
             lastSeen: "0.9.0", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let held = instance.configuration
 
         instance.recordObservedAgentInfo(

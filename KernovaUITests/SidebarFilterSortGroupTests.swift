@@ -725,7 +725,7 @@ struct SidebarFilterSortGroupTests {
         }
         #expect(title() == "Bridged \u{2013} en7 (unavailable)")
 
-        interfaces.available = [BridgedInterface(identifier: "en7", localizedDisplayName: "Thunderbolt Ethernet")]
+        interfaces.setAvailable([BridgedInterface(identifier: "en7", localizedDisplayName: "Thunderbolt Ethernet")])
 
         #expect(title() == "Bridged \u{2013} Thunderbolt Ethernet (en7)")
     }

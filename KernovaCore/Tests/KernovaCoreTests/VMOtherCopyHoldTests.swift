@@ -18,21 +18,24 @@ struct VMOtherCopyHoldTests {
     /// An in-memory store that counts each run-lock probe made inside a
     /// coordinated write — so a test can tell the in-write check from
     /// admission's probe, which runs before any write.
-    private final class WriteObservingBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
-        let store = InMemoryVMBundleFiles()
-        private let lock = NSLock()
-        private var openWrites = 0
-        private var inside = 0
+    private final class WriteObservingBundleFiles: VMBundleFileAccessing {
+        private struct Writes {
+            var open = 0
+            var probesInside = 0
+        }
 
-        var probesInsideWrite: Int { lock.withLock { inside } }
+        let store = InMemoryVMBundleFiles()
+        private let writes = Mutex(Writes())
+
+        var probesInsideWrite: Int { writes.withLock { $0.probesInside } }
 
         func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
             try store.lockBundle(at: bundleURL)
         }
 
         func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool {
-            lock.withLock {
-                if openWrites > 0 { inside += 1 }
+            writes.withLock {
+                if $0.open > 0 { $0.probesInside += 1 }
             }
             return try store.isBundleLockedElsewhere(at: bundleURL)
         }
@@ -45,8 +48,8 @@ struct VMOtherCopyHoldTests {
             _ bundleURL: URL, _ key: borrowing VMBundleFileWriteKey,
             _ body: (any VMBundleFileWriting) throws -> T
         ) throws -> T {
-            lock.withLock { openWrites += 1 }
-            defer { lock.withLock { openWrites -= 1 } }
+            writes.withLock { $0.open += 1 }
+            defer { writes.withLock { $0.open -= 1 } }
             return try store.writing(bundleURL, key, body)
         }
     }

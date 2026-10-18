@@ -205,17 +205,17 @@ struct RestoreImageURLSheetContentViewControllerTests {
 
 /// Probe stand-in that stays inside `probe` until the test releases it, the way
 /// the real one stays busy across several round trips.
-private final class SuspendingProbeService: RestoreImageProbing, @unchecked Sendable {
+@MainActor
+private final class SuspendingProbeService: RestoreImageProbing {
     private let probeResult = makeProbedImage()
     private let gate = AsyncGate()
-    private let lock = NSLock()
     private var isProbing = false
     private var isReleased = false
 
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
-        lock.withLock { self.isProbing = true }
+        isProbing = true
         gate.notify()
-        try? await gate.wait(until: { self.lock.withLock { self.isReleased } })
+        try? await gate.wait(until: { self.isReleased })
         return probeResult
     }
 
@@ -226,12 +226,12 @@ private final class SuspendingProbeService: RestoreImageProbing, @unchecked Send
 
     /// Suspends until `probe` is in flight.
     func waitUntilProbing() async throws {
-        try await gate.wait(until: { self.lock.withLock { self.isProbing } })
+        try await gate.wait(until: { self.isProbing })
     }
 
     /// Lets the in-flight probe finish.
     func release() {
-        lock.withLock { self.isReleased = true }
+        isReleased = true
         gate.notify()
     }
 }

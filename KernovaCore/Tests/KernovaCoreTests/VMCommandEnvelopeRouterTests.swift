@@ -783,7 +783,7 @@ struct VMCommandEnvelopeRouterTests {
     func waitedCloneThrowsTheCopysFailure() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        harness.storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
+        harness.storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
 
         let response = try await harness.transport.send(
             .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
@@ -802,7 +802,7 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
         let hold = DispatchSemaphore(value: 0)
-        harness.storage.cloneHold = hold
+        harness.storage.setCloneHold(hold)
         defer { hold.signal() }
 
         let response = try await harness.transport.send(
@@ -824,7 +824,7 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
         let hold = DispatchSemaphore(value: 0)
-        harness.storage.cloneHold = hold
+        harness.storage.setCloneHold(hold)
         let waiting = Task {
             try await harness.transport.send(
                 .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
@@ -880,7 +880,8 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A clone whose copy fails crosses the wire as a failure event")
     func cloneFailureCrossesTheWireAsAnEvent() async throws {
         let harness = makeHarness()
-        harness.storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
+        harness.storage.setCloneVMBundleError(
+            VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova")))
         let instance = makeInstance(in: harness, name: "Source")
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 

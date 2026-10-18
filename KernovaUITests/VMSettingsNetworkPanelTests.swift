@@ -129,7 +129,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(copy.isHidden)
         #expect(copy.value == nil)
 
-        arpTable.table = [.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]
+        arpTable.setTable([.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)])
         await readGuestAddresses(viewModel)
 
         #expect(visibleLabel("192.168.64.10", in: vc.view))
@@ -664,7 +664,7 @@ struct VMSettingsNetworkPanelTests {
                 "# Bridged", "  Automatic", "---", "None", "---", Self.editNamedNetworks,
             ])
 
-        provider.available = [Self.wiFi, Self.ethernet]
+        provider.setAvailable([Self.wiFi, Self.ethernet])
         let menu = try #require(popUp.menu)
         menu.delegate?.menuNeedsUpdate?(menu)
 
@@ -765,7 +765,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(!visibleLabel("192.168.64.10", in: vc.view))
         #expect(try natReachText(in: vc).contains("its address on that subnet"))
 
-        arpTable.table = [.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]
+        arpTable.setTable([.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)])
         await readGuestAddresses(viewModel)
 
         #expect(visibleLabel("192.168.64.10", in: vc.view))
@@ -850,7 +850,7 @@ struct VMSettingsNetworkPanelTests {
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         #expect(closedTitle(popUp) == "Bridged \u{2013} en1 (unavailable)")
 
-        provider.available = [Self.wiFi, Self.ethernet]
+        provider.setAvailable([Self.wiFi, Self.ethernet])
         _ = try openModeMenu(in: vc)
 
         let current = try #require(item(.bridged("en1"), in: popUp))

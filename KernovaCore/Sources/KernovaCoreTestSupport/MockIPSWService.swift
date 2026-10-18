@@ -3,7 +3,10 @@ import Foundation
 @testable import KernovaCore
 
 /// Scripted stand-in for `IPSWProviding`.
-final class MockIPSWService: IPSWProviding, @unchecked Sendable {
+@MainActor
+final class MockIPSWService: IPSWProviding {
+    nonisolated init() {}
+
     var fetchCallCount = 0
     var fetchError: (any Error)?
 

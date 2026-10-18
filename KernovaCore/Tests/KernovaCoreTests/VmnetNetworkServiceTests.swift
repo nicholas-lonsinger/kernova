@@ -93,14 +93,14 @@ struct VmnetNetworkServiceTests {
     @Test("A creation failure reaches the caller, and the next request tries again")
     func aFailedCreateIsRetriedByTheNextRequest() throws {
         let operations = MockVmnetNetworkOperator()
-        operations.createNetworkError = TestFailure("daemon unavailable")
+        operations.setCreateNetworkError(TestFailure("daemon unavailable"))
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
         #expect(throws: TestFailure.self) { try view.joinedNetwork(for: .own(.nat)) }
         #expect(view.joinedNetworkIfMaterialized(for: .own(.nat)) == nil)
 
-        operations.createNetworkError = nil
+        operations.setCreateNetworkError(nil)
         _ = try view.joinedNetwork(for: .own(.nat))
         #expect(operations.createdKinds == [.nat, .nat])
     }
@@ -108,12 +108,12 @@ struct VmnetNetworkServiceTests {
     @Test("materializeNetwork reports whether the network exists afterwards")
     func materializeReportsTheOutcome() async {
         let operations = MockVmnetNetworkOperator()
-        operations.createNetworkError = TestFailure("daemon unavailable")
+        operations.setCreateNetworkError(TestFailure("daemon unavailable"))
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
         #expect(await view.materializeNetwork(for: .common(.hostOnly)) == false)
-        operations.createNetworkError = nil
+        operations.setCreateNetworkError(nil)
         #expect(await view.materializeNetwork(for: .common(.hostOnly)))
         #expect(await view.materializeNetwork(for: .common(.hostOnly)))
         #expect(operations.createdKinds == [.hostOnly, .hostOnly])
@@ -136,7 +136,7 @@ struct VmnetNetworkServiceTests {
     @Test("A network's subnet is known exactly while it is held")
     func theSubnetIsTheHeldNetworks() throws {
         let operations = MockVmnetNetworkOperator()
-        operations.subnet = .scripted("192.168.65.0")
+        operations.setSubnet(.scripted("192.168.65.0"))
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
