@@ -53,10 +53,10 @@ public struct ClipboardDraggedItem: Equatable, Sendable {
     public let repIndex: Int
     /// A single path component: never empty, `.`, `..`, or containing `/`.
     public let filename: String
-    /// A type identifier conforming to `public.data` for a file, or to
-    /// `public.directory` for a folder — `NSFilePromiseProvider` raises for a
-    /// file type that conforms to neither.
-    public let typeIdentifier: String
+    /// A type conforming to `public.data` for a file, or to `public.directory`
+    /// for a folder — `NSFilePromiseProvider` raises for a file type that
+    /// conforms to neither.
+    public let type: UTType
     /// Whether the item is a folder (or package), which arrives as its tree.
     public let isDirectory: Bool
     /// The guest's declared size — an estimate for a folder.
@@ -66,7 +66,7 @@ public struct ClipboardDraggedItem: Equatable, Sendable {
     public init(repIndex: Int, declared info: Kernova_V1_ClipboardRepresentationInfo) {
         self.repIndex = repIndex
         self.filename = Self.safeFilename(info.filename, isDirectory: info.isDirectory)
-        self.typeIdentifier = Self.usableTypeIdentifier(info.uti, isDirectory: info.isDirectory)
+        self.type = Self.usableType(info.uti, isDirectory: info.isDirectory)
         self.isDirectory = info.isDirectory
         self.byteCount = info.byteCount
     }
@@ -80,11 +80,11 @@ public struct ClipboardDraggedItem: Equatable, Sendable {
     /// `identifier` when the system knows it as a type an item of this kind can
     /// be — data for a file, a directory for a folder, so a package keeps its
     /// type — otherwise `public.data` or `public.folder`.
-    public static func usableTypeIdentifier(_ identifier: String, isDirectory: Bool) -> String {
+    public static func usableType(_ identifier: String, isDirectory: Bool) -> UTType {
         let required: UTType = isDirectory ? .directory : .data
         guard let type = UTType(identifier), type.conforms(to: required) else {
-            return isDirectory ? UTType.folder.identifier : UTType.data.identifier
+            return isDirectory ? .folder : .data
         }
-        return type.identifier
+        return type
     }
 }

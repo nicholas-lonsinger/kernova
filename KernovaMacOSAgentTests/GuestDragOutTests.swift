@@ -505,6 +505,40 @@ struct GuestDragOutTests {
         #expect(!catcher.performDragOperation())
     }
 
+    @Test(
+        "a refusal after targeted fails the take once and keeps the surface up to refuse the drop",
+        arguments: [false, true])
+    func aRefusalAfterTargetedKeepsTheSurface(otherItems: Bool) throws {
+        let urls = [try file("taken.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        #expect(catcher.draggingEntered(caught(urls)) == .copy)
+
+        let refused =
+            otherItems ? caught([try file("other.txt")]) : caught(urls, mask: [.move, .generic])
+        #expect(catcher.draggingUpdated(refused) == [])
+
+        #expect(rig.surface.isShown)
+        let failures = rig.peer.handOffs.filter {
+            if case .handOff(1, .failed(.dragTakeRefused, _)) = $0 { return true }
+            return false
+        }
+        #expect(failures.count == 1)
+        // A release the host injected before it heard the refusal drops here
+        // and is refused, so nothing moves.
+        #expect(catcher.draggingUpdated(caught(urls)) == [])
+        #expect(!catcher.performDragOperation())
+        // The press ending under the surface leaves it for the drag's end.
+        rig.releaseAndTick()
+        #expect(rig.surface.isShown)
+
+        catcher.draggingEnded()
+
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.handOffs.count == 3)
+        #expect(!rig.peer.handOffs.contains(.handOff(generation: 1, step: .caught)))
+    }
+
     @Test("no screen to cover fails the take")
     func noScreenFailsTheTake() throws {
         let rig = Rig()
@@ -560,6 +594,26 @@ struct GuestDragOutTests {
 
         #expect(!rig.surface.isShown)
         #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
+    }
+
+    @Test("the host completing a targeted drag leaves the surface up to refuse the drop")
+    func completionAfterTargetedLeavesItUp() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+
+        rig.dragOut.complete(generation: 1)
+
+        #expect(rig.surface.isShown)
+        #expect(catcher.draggingUpdated(caught(urls)) == [])
+        #expect(!catcher.performDragOperation())
+        catcher.draggingEnded()
+        #expect(!rig.surface.isShown)
+        #expect(
+            rig.peer.handOffs == [
+                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
+            ])
     }
 
     @Test("completing another drag leaves the surface up")

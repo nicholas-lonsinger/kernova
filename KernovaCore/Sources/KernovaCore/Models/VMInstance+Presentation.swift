@@ -67,8 +67,9 @@ extension VMInstance {
     /// it holding the press, or `nil` when there is none it can.
     ///
     /// A `DragOffer` only ever comes from an agent that has the feature, so the
-    /// live channel and the guest's offer decide it; the setting and the VM's
-    /// state still gate it, since neither tears the channel down.
+    /// live channel and the guest's offer decide it. The setting gates it at
+    /// once, ahead of the live-policy teardown that settles the channel, and a
+    /// pause tears no channel down.
     package var displayGuestDrag: ClipboardInboundDrag? {
         guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
             status == .running, let drop = vsockDropService, drop.isConnected

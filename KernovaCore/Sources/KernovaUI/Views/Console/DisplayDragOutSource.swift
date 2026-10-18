@@ -55,11 +55,10 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         let frame = NSRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
         return take.items.indices.map { index in
             let item = take.items[index]
-            let provider = NSFilePromiseProvider(fileType: item.typeIdentifier, delegate: self)
+            let provider = NSFilePromiseProvider(fileType: item.type.identifier, delegate: self)
             provider.userInfo = PromisedItem(index: index, source: self)
             let draggingItem = NSDraggingItem(pasteboardWriter: provider)
-            let type = UTType(item.typeIdentifier) ?? (item.isDirectory ? .folder : .data)
-            draggingItem.setDraggingFrame(frame, contents: NSWorkspace.shared.icon(for: type))
+            draggingItem.setDraggingFrame(frame, contents: NSWorkspace.shared.icon(for: item.type))
             return draggingItem
         }
     }

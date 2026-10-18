@@ -1,6 +1,7 @@
 import Foundation
 import KernovaTestSupport
 import Testing
+import UniformTypeIdentifiers
 
 @testable import KernovaKit
 
@@ -30,7 +31,7 @@ struct ClipboardEndpointDragTests {
         #expect(drag.generation == 1)
         #expect(drag.items.map(\.filename) == ["one.bin", "two.bin"])
         #expect(drag.items.map(\.repIndex) == [0, 1])
-        #expect(drag.items.allSatisfy { $0.typeIdentifier == "public.data" && !$0.isDirectory })
+        #expect(drag.items.allSatisfy { $0.type.identifier == "public.data" && !$0.isDirectory })
         #expect(pair.host.recorder.offers.isEmpty)
         #expect(pair.host.endpoint.hasLiveInboundOffer(generation: 1))
     }
@@ -98,6 +99,70 @@ struct ClipboardEndpointDragTests {
         #expect(pair.guest.recorder.activityCount(.transferServed) == 2)
     }
 
+    /// Has the guest under `harness` serve the host's pull of `generation`'s
+    /// first item, returning the peer end of the connection it dials — which a
+    /// test that never reads it leaves parked once the socket buffer fills.
+    private func servePull(_ harness: RawPeerHarness, generation: UInt64) async throws -> Int32 {
+        try harness.send(
+            makeRequestFrame(
+                generation: generation,
+                transferID: harness.peerTransferID(generation: generation, repIndex: 0),
+                uti: "public.data"))
+        return try await harness.nextDialledConnection()
+    }
+
+    /// Larger than a connection's send buffer, so a serve the peer does not
+    /// read stays in flight with its readout on screen.
+    private static let parkingPayload = patternedBytes(count: 4 << 20, multiplier: 23, offset: 5)
+
+    @Test("two drags the host pulls at once each keep a drag-out readout of their own")
+    func concurrentDragPullsKeepTheirReadouts() async throws {
+        let harness = try RawPeerHarness(role: .guest, kind: .drop)
+        defer { harness.tearDown() }
+        for name in ["one.bin", "two.bin"] {
+            harness.endpoint.offer(
+                ClipboardContent(representations: [try dragged(name, Self.parkingPayload)]))
+        }
+
+        _ = try await servePull(harness, generation: 1)
+        _ = try await servePull(harness, generation: 2)
+
+        // One readout shows and the other counts behind it; a shared slot would
+        // have finished the first when the second opened.
+        try await harness.side.reports.wait {
+            guard let shown = harness.side.reports.runningSnapshot else { return false }
+            return shown.gesture == .dragOut && shown.pendingBehind == 1
+        }
+        #expect(harness.side.reports.finalSnapshots.isEmpty)
+    }
+
+    @Test("the guest's Cancel on a drag-out readout retires the drag and tells the host")
+    func cancellingAServedDragRetiresIt() async throws {
+        let harness = try RawPeerHarness(role: .guest, kind: .drop)
+        defer { harness.tearDown() }
+        harness.endpoint.offer(
+            ClipboardContent(representations: [try dragged("one.bin", Self.parkingPayload)]))
+        let parked = try await servePull(harness, generation: 1)
+        let reply = try #require(await offCooperativePool { readTransferReply(fd: parked) })
+        #expect(reply.refusalCode.isEmpty)
+        try await harness.side.reports.wait {
+            harness.side.reports.runningSnapshot?.gesture == .dragOut
+        }
+
+        #expect(harness.side.reports.cancelShownTransfer())
+
+        try await harness.recorder.waitForFrames {
+            harness.recorder.frames.contains {
+                if case .dragRelease(let release) = $0.payload { return release.generation == 1 }
+                return false
+            }
+        }
+        #expect(harness.endpoint.outboundContent(generation: 1) == nil)
+        // The serve in flight stops short rather than completing.
+        let stopped = await offCooperativePool { try? receiveTransfer(fd: parked, after: reply) }
+        #expect(try #require(stopped).abortCode != nil)
+    }
+
     @Test("a folder dragged out arrives as its tree")
     func folderArrivesWhole() async throws {
         let pair = try EndpointPair(kind: .drop)
@@ -108,7 +173,7 @@ struct ClipboardEndpointDragTests {
         pair.guest.endpoint.offer(ClipboardContent(representations: [folder.representation]))
         let drag = try await pair.host.recorder.waitForDrag()
         #expect(drag.items.first?.isDirectory == true)
-        #expect(drag.items.first?.typeIdentifier == "public.folder")
+        #expect(drag.items.first?.type.identifier == "public.folder")
 
         let operation = pair.host.makeOperation(gesture: .dragOut, direction: .inbound)
         let outcome = await pair.host.startPull(generation: 1, repIndex: 0, operation: operation)
@@ -253,7 +318,7 @@ struct ClipboardEndpointDragTests {
         let drag = try await harness.side.recorder.waitForDrag()
         #expect(drag.items.map(\.filename) == ["escape.png", "b", "File", "Folder", "Tool.app"])
         #expect(
-            drag.items.map(\.typeIdentifier) == [
+            drag.items.map(\.type.identifier) == [
                 "public.png", "public.data", "public.data", "public.folder",
                 "com.apple.application-bundle",
             ])

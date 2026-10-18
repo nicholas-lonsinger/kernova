@@ -68,9 +68,8 @@ final class SystemGuestDragInput: GuestDragInput {
 /// app window on all spaces, and covering the screen under the pointer.
 @MainActor
 final class GuestDragCatcherPanel: GuestDragCatcherSurface {
-    /// The fill's alpha: the faintest that is not zero, since no AppKit
-    /// header says whether a drag targets a window through fully clear
-    /// pixels.
+    /// The fill's alpha: faint but not zero, since no AppKit header says
+    /// whether a drag targets a window through fully clear pixels.
     private static let fillAlpha: CGFloat = 0.02
 
     private let panel: NSPanel

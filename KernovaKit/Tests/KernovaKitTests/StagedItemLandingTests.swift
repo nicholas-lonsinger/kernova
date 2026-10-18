@@ -1,6 +1,7 @@
 import Foundation
 import KernovaTestSupport
 import Testing
+import UniformTypeIdentifiers
 
 @testable import KernovaKit
 
@@ -164,7 +165,7 @@ struct ClipboardDraggedItemTests {
         ])
     func usableType(declared: String, isDirectory: Bool, expected: String) {
         #expect(
-            ClipboardDraggedItem.usableTypeIdentifier(declared, isDirectory: isDirectory)
+            ClipboardDraggedItem.usableType(declared, isDirectory: isDirectory).identifier
                 == expected)
     }
 
@@ -181,6 +182,6 @@ struct ClipboardDraggedItemTests {
         #expect(item.byteCount == 77)
         #expect(item.isDirectory)
         #expect(item.filename == "Tree")
-        #expect(item.typeIdentifier == "public.folder")
+        #expect(item.type.identifier == "public.folder")
     }
 }

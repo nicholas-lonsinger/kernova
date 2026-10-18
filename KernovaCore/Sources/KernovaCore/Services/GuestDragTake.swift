@@ -126,6 +126,11 @@ package final class GuestDragTake: GuestDragTaking {
     /// How one item write ended, as the main actor settles it.
     private enum WriteEnding: Sendable {
         case landed
+        case failed(WriteFault)
+    }
+
+    /// Why one item write did not land.
+    private enum WriteFault: Sendable {
         case pullEnded(LazyPullOutcome)
         case offerRetired
         case landingFailed
@@ -153,8 +158,8 @@ package final class GuestDragTake: GuestDragTaking {
     // MARK: After the release
 
     /// Whether the guest's drag is over — caught, or reported failed — so a
-    /// `DragComplete` can no longer order its catcher out from under the
-    /// injected release.
+    /// `DragComplete` can no longer reach its catcher ahead of the injected
+    /// release.
     @ObservationIgnored private var guestDragEnded = false
     /// Whether the Mac session ended with no destination taking it.
     @ObservationIgnored private var hostSessionDroppedNothing = false
@@ -302,8 +307,9 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
-    /// A newer take replaced this one, so nothing more will be asked of it once
-    /// what it is writing lands.
+    /// A newer take replaced this one: a take still handing off is abandoned,
+    /// and a released one stops waiting for its guest drag, which ended with
+    /// its press, but still writes what its Mac destination asks for.
     func supersede() {
         isSuperseded = true
         switch phase {
@@ -386,17 +392,18 @@ package final class GuestDragTake: GuestDragTaking {
     /// Sends the drag's `DragComplete` once nothing will pull from it again and
     /// the guest's own drag is over.
     ///
-    /// The guest orders its catcher out on `DragComplete`, so one that overtook
-    /// the injected release would leave the release to drop on whatever is
-    /// under the guest pointer — hence a released take waits for the guest to
+    /// The guest's catcher refuses a release that reaches it after
+    /// `DragComplete`, so one that overtook the injected release would turn the
+    /// catch into a refusal — hence a released take waits for the guest to
     /// report its drag over. A superseded take's guest drag ended with its
-    /// press, long before the next one began.
+    /// press, long before the next one began, but its destination may still
+    /// have writes queued, so it retires like any other released take.
     private func retireIfDone() {
         guard case .released(let hostSession) = phase, !isRetired else { return }
         let guestDone = guestDragEnded || isSuperseded
         let nothingMoreToWrite =
             !hostSession || hostSessionDroppedNothing || written.count == items.count
-            || terminal != nil || isSuperseded
+            || terminal != nil
         guard guestDone, nothingMoreToWrite, writesInFlight == 0 else { return }
         retire(tellingGuest: true)
     }
@@ -443,15 +450,15 @@ package final class GuestDragTake: GuestDragTaking {
                     ending = .landed
                 } catch {
                     landingError = error
-                    ending = .landingFailed
+                    ending = .failed(.landingFailed)
                     discard()
                 }
             } else {
-                ending = .offerRetired
+                ending = .failed(.offerRetired)
                 discard()
             }
         default:
-            ending = .pullEnded(outcome)
+            ending = .failed(.pullEnded(outcome))
         }
         let failure = MainActorBridge.sync { self.endWrite(index, ending: ending) }
         if let landingError { throw landingError }
@@ -480,25 +487,27 @@ package final class GuestDragTake: GuestDragTaking {
     private func endWrite(_ index: Int, ending: WriteEnding) -> GuestDragWriteFailure? {
         writesInFlight -= 1
         defer { retireIfDone() }
-        if case .landed = ending {
+        let fault: WriteFault
+        switch ending {
+        case .landed:
             written.insert(index)
             readout?.finishWhenIdle()
             return nil
+        case .failed(let ended):
+            fault = ended
         }
         if let terminal { return Self.error(for: terminal) }
-        let failure = failure(for: ending)
+        let failure = failure(for: fault)
         fail(failure)
         return GuestDragWriteFailure(GuestDragWriteError.failed(failure))
     }
 
     /// The failure a write that did not land reports, when nothing had already
     /// ended the take's transfers.
-    private func failure(for ending: WriteEnding) -> ClipboardTransferFailure {
+    private func failure(for fault: WriteFault) -> ClipboardTransferFailure {
         let lostOffer: ClipboardTransferFailure =
             endpoint.hasEnded ? .interrupted(fileCount: nil) : .peerReported(nil)
-        switch ending {
-        case .landed:
-            preconditionFailure("A landed write reports no failure")
+        switch fault {
         case .landingFailed:
             return .stagingFailed
         case .offerRetired:

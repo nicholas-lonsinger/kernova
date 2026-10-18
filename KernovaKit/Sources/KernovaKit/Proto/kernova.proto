@@ -476,7 +476,8 @@ message DragOffer {
 
 // Host->guest: the host is done with the drag for `generation` — nothing will
 // pull from it again, or a take that was not caught is abandoned. The guest
-// retires the offer and orders its catcher out if it was armed for it.
+// retires the offer and orders out a catcher armed for it — at once, or, if
+// the drag already targeted it, once the guest's drag ends, refusing its drop.
 message DragComplete {
   uint64 generation = 1;
 }

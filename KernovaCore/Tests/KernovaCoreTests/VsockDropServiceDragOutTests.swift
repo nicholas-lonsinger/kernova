@@ -3,6 +3,7 @@ import KernovaKit
 import KernovaTestSupport
 import Observation
 import Testing
+import UniformTypeIdentifiers
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
@@ -408,6 +409,7 @@ struct VsockDropServiceDragOutTests {
     /// Every way a take can fail before the guest's catcher is its target.
     enum EarlyFailure: String, CaseIterable, Sendable {
         case guestFailed
+        case guestCaught
         case guestWithdrew
         case buttonUp
         case deadline
@@ -428,6 +430,8 @@ struct VsockDropServiceDragOutTests {
         case .guestFailed:
             harness.guest.sendDragHandOff(
                 generation: take.generation, step: .failed(.dragTakeRefused, message: "refused"))
+        case .guestCaught:
+            harness.guest.sendDragHandOff(generation: take.generation, step: .caught)
         case .guestWithdrew:
             #expect(harness.guest.withdraw(generation: take.generation))
         case .buttonUp:
@@ -460,7 +464,7 @@ struct VsockDropServiceDragOutTests {
 
     @Test(
         "a failure after TARGETED but before the release also abandons rather than releasing",
-        arguments: [EarlyFailure.guestFailed, .guestWithdrew, .vmStopped])
+        arguments: [EarlyFailure.guestFailed, .guestCaught, .guestWithdrew, .vmStopped])
     func readyFailureAbandons(_ failure: EarlyFailure) async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
@@ -472,6 +476,8 @@ struct VsockDropServiceDragOutTests {
         case .guestFailed:
             harness.guest.sendDragHandOff(
                 generation: take.generation, step: .failed(.dragTakeFailed, message: "exited"))
+        case .guestCaught:
+            harness.guest.sendDragHandOff(generation: take.generation, step: .caught)
         case .guestWithdrew:
             #expect(harness.guest.withdraw(generation: take.generation))
         case .vmStopped:
@@ -514,8 +520,8 @@ struct VsockDropServiceDragOutTests {
         try await harness.handOff(.targeted, for: take, reaching: .ready)
         take.withheldMouseUp()
 
-        // A DragComplete overtaking the injected release would order the
-        // catcher out from under it.
+        // A DragComplete overtaking the injected release would have the
+        // catcher refuse the release rather than catch it.
         try await harness.hostToGuestBarrier(scratch: scratch.url)
         #expect(harness.guestRecorder.completedDrags.isEmpty)
 
@@ -537,15 +543,66 @@ struct VsockDropServiceDragOutTests {
         try await harness.waitForComplete(take.generation)
     }
 
-    @Test("the next take completes the one before it")
+    @Test("the next take completes one before it whose session dropped nothing, caught or not")
     func supersessionCompletes() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let first = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
-        first.hostSessionEnded(dropped: true)
+        let first = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
+        try await harness.handOff(.armed, for: first, reaching: .handingOff(armed: true))
+        try await harness.handOff(.targeted, for: first, reaching: .ready)
+        first.withheldDrag()
+        first.hostSessionEnded(dropped: false)
+        // Uncaught, so it is still waiting for its guest drag to end.
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.completedDrags.isEmpty)
 
         _ = try await harness.offerAndTake([try makeFile(named: "b.txt", contents: "b")])
 
+        try await harness.waitForComplete(first.generation)
+    }
+
+    @Test("a superseded take still writes what its destination asks for, then completes")
+    func supersededTakeKeepsWriting() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let first = try await harness.releasedTake([
+            try makeFile(named: "a.txt", contents: "a"), try makeFile(named: "b.txt", contents: "b"),
+        ])
+        first.hostSessionEnded(dropped: true)
+        let destination = try makeDestination()
+        #expect(
+            await harness.write(first, item: 0, to: destination.appendingPathComponent("a.txt"))
+                == .landed)
+
+        _ = try await harness.offerAndTake([try makeFile(named: "c.txt", contents: "c")])
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(!harness.guestRecorder.completedDrags.contains(first.generation))
+
+        let queued = destination.appendingPathComponent("b.txt")
+        #expect(await harness.write(first, item: 1, to: queued) == .landed)
+        #expect(try String(contentsOf: queued, encoding: .utf8) == "b")
+        try await harness.waitForComplete(first.generation)
+    }
+
+    @Test("a take superseded mid-write lands that write before it completes")
+    func supersessionWaitsForTheWriteInFlight() async throws {
+        let harness = try Harness(parksPulls: true)
+        defer { harness.tearDown() }
+        let first = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        first.hostSessionEnded(dropped: true)
+        let destination = try makeDestination().appendingPathComponent("a.txt")
+        let write = Task { await harness.write(first, item: 0, to: destination) }
+        let parked = try await harness.parked.next()
+
+        _ = try await harness.offerAndTake([try makeFile(named: "b.txt", contents: "b")])
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(!harness.guestRecorder.completedDrags.contains(first.generation))
+
+        // A duplicate, so the harness's teardown still closes the one it holds.
+        harness.service.acceptDataConnection(fd: dup(parked))
+
+        #expect(await write.value == .landed)
+        #expect(try String(contentsOf: destination, encoding: .utf8) == "a")
         try await harness.waitForComplete(first.generation)
     }
 
@@ -558,7 +615,7 @@ struct VsockDropServiceDragOutTests {
         let file = try makeFile(named: "report.txt", contents: "the report")
         let folder = try makeFolder(named: "Photos", files: ["a.txt": "alpha", "b.txt": "beta"])
         let take = try await harness.releasedTake([file, folder])
-        #expect(take.items.map(\.typeIdentifier).last == "public.folder")
+        #expect(take.items.map(\.type.identifier).last == "public.folder")
         take.hostSessionEnded(dropped: true)
         let destination = try makeDestination()
 

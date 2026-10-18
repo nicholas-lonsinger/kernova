@@ -341,8 +341,9 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     /// guest is offering now.
     ///
     /// The take runs while `holds` stays true; the condition turning false
-    /// abandons it. Any earlier take is superseded, so the guest hears it is
-    /// done with once what that take is writing lands.
+    /// abandons it. Any earlier take is superseded: one still handing off is
+    /// abandoned, and a released one keeps writing what its destination asks
+    /// for.
     func takeGuestDrag(
         generation: UInt64, display: any GuestDragDisplay,
         while holds: @escaping @MainActor () -> Bool
@@ -354,12 +355,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
             drag: drag, endpoint: endpoint, display: display, reporter: reporter, peerName: label,
             progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
             clock: clock, holds: holds,
-            onRetired: { [weak self] take in
-                // Identity-checked: a take outliving its channel must not clear
-                // the next channel's take of the same generation.
-                guard let self, self.takes[take.generation] === take else { return }
-                self.takes[take.generation] = nil
-            })
+            onRetired: { [weak self] take in self?.takes[take.generation] = nil })
         takes[generation] = take
         take.begin()
         return take
