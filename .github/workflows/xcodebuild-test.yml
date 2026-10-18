@@ -15,7 +15,9 @@ permissions:
 jobs:
   build-and-test:
     if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'ci') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ci'))
-    # Job-level, so a run whose job is skipped never cancels the real run.
+    # Job-level, so a run whose job is skipped never cancels the real run:
+    # adding a second label mid-run left the labeled-`ci` run in progress while
+    # the new run's job was skipped (observed 2026-10-18).
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
