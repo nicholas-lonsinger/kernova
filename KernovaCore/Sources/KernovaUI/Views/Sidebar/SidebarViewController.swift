@@ -684,6 +684,16 @@ extension SidebarViewController: NSOutlineViewDelegate {
             // Capture `instance` weakly: the cell stores these closures, so a
             // strong capture would keep a deleted VM alive until the cell is
             // recycled.
+            agentDiskControl: { [weak self, weak instance] in
+                guard let self, let instance else { return nil }
+                return GuestAgentDiskControl.model(for: instance, in: self.viewModel.capabilities)
+            },
+            agentNudgeDismissible: { [weak self, weak instance] in
+                guard let self, let instance else { return false }
+                return self.viewModel.capabilities.isAvailable(
+                    VMConfigurationKeyRegistry.agentInstallReminder, writing: String(false),
+                    on: instance)
+            },
             isBusy: { [weak instance] in
                 instance?.phase.operation != nil
             },

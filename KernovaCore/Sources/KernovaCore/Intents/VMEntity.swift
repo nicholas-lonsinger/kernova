@@ -66,8 +66,8 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "IP Address")
     var ipAddress: String?
 
-    /// The live session's guest-agent status as its wire name, `nil` when no
-    /// session is live.
+    /// The guest-agent status as its wire name, `nil` when the VM has no
+    /// session.
     @Property(title: "Guest Agent Status")
     var agentStatus: String?
 

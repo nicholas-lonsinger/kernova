@@ -425,7 +425,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 _ = clipService?.isConnected
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
-                _ = self.instance.hasGuestAgentInstallerMounted
+                _ = self.diskControl
                 _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
@@ -496,13 +496,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
+    /// The footer's guest-agent disk control, `nil` for a Linux guest: the disk
+    /// carries the macOS agent.
+    private var diskControl: GuestAgentDiskControl.Model? {
+        guard instance.configuration.guestOS == .macOS, let viewModel else { return nil }
+        return GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+    }
+
     private func updateUI() {
         let service = instance.clipboardService
         let status = instance.agentStatus
-        // The disk carries the macOS agent, so a Linux guest is offered no control.
-        let diskControl =
-            instance.configuration.guestOS == .macOS
-            ? GuestAgentDiskControl.model(for: instance) : nil
+        let diskControl = diskControl
 
         textView.isEditable = service != nil
 

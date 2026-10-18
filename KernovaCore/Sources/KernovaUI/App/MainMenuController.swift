@@ -386,13 +386,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             menuItem.title = viewModel.capabilities.stopAction(for: instance).menuTitle
             return viewModel.capabilities.isStopActionAvailable(on: instance)
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
-            // Layered over the capability: a bundled DMG for the VM to hold, and
-            // the mount/eject model that decides both title and enablement. The
-            // unavailable title set above stands unless both hold.
-            guard isAvailable, viewModel.library.bundleProducts.guestAgent.installerDiskImageURL != nil else {
-                return false
-            }
-            let model = GuestAgentDiskControl.model(for: instance)
+            let model = GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
             menuItem.title = model.title
             return model.isEnabled
         case #selector(AppDelegate.togglePopOut(_:)):

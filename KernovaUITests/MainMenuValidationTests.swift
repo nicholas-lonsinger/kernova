@@ -127,7 +127,7 @@ struct MainMenuValidationTests {
         let fixture = makeFixture()
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
-        let model = GuestAgentDiskControl.model(for: instance)
+        let model = GuestAgentDiskControl.model(for: instance, in: fixture.viewModel.capabilities)
 
         #expect(fixture.validate(item) == model.isEnabled)
         #expect(item.title == model.title)

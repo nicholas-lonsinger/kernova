@@ -1,16 +1,60 @@
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// Unit tests for `GuestAgentDiskControl.model(status:isInstallerMounted:)` —
-/// the single source of truth every surface's title and
-/// `VMLibraryViewModel.toggleGuestAgentDisk` read, so no title can disagree with
-/// the action.
+/// Unit tests for `GuestAgentDiskControl` — the resolver every surface's title
+/// and `VMLibraryViewModel.toggleGuestAgentDisk` read, so no title can disagree
+/// with the action, and the status mapping under it.
 @Suite("GuestAgentDiskControl.model", .caseScoped)
+@MainActor
 struct GuestAgentDiskControlTests {
+    private static let withheld = GuestAgentDiskControl.Model(
+        title: GuestAgentDiskControl.unavailableTitle, isEnabled: false, action: .mount(.install))
+
+    /// The affordance takes a settled live session, so an operation holding
+    /// one withholds the control whatever the status would offer.
+    @Test("The resolver withholds the control during an operation that holds a session")
+    func resolverWithholdsDuringOperation() {
+        let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
+        let instance = viewModel.library.admitFixture(
+            guestOS: .macOS, phase: .operating(.saving, from: .running(sessionID: UUID())))
+        instance.beginSessionContextForTesting()
+        #expect(instance.agentStatus == .waiting)
+
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)
+    }
+
+    @Test("The resolver passes the status mapping through while the control is available")
+    func resolverPassesStatusMappingThrough() {
+        let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
+        let instance = viewModel.library.admitFixture(
+            guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+
+        #expect(
+            GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+                == GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false))
+    }
+
+    @Test("The resolver withholds the control from a build with no bundled installer disk")
+    func resolverWithholdsWithoutBundledImage() {
+        let viewModel = makeLibraryViewModel(
+            preferences: makeTestPreferences(),
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: nil)))
+        let instance = viewModel.library.admitFixture(
+            guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        #expect(viewModel.capabilities.isAvailable(.toggleGuestAgentDisk, on: instance))
+
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)
+    }
+
     @Test("Attached installer → eject mode, regardless of agent status or its absence")
     func attachedEjectsRegardlessOfStatus() {
         let statuses: [AgentStatus?] = [
@@ -32,9 +76,7 @@ struct GuestAgentDiskControlTests {
     @Test("No session → unavailable title / disabled / mount(.install)")
     func noSession() {
         #expect(
-            GuestAgentDiskControl.model(status: nil, isInstallerMounted: false)
-                == .init(
-                    title: GuestAgentDiskControl.unavailableTitle, isEnabled: false, action: .mount(.install)))
+            GuestAgentDiskControl.model(status: nil, isInstallerMounted: false) == Self.withheld)
     }
 
     @Test(".waiting → Install / enabled / mount(.install)")

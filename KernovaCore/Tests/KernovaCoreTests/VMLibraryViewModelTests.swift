@@ -5980,7 +5980,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture(guestOS: .macOS)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        #expect(GuestAgentDiskControl.model(for: instance).action == .mount(.install))
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .mount(.install))
 
         viewModel.toggleGuestAgentDisk(on: instance)
 
@@ -6013,7 +6013,7 @@ struct VMLibraryViewModelTests {
         }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        #expect(GuestAgentDiskControl.model(for: instance).action == .eject)
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .eject)
 
         viewModel.toggleGuestAgentDisk(on: instance)
 

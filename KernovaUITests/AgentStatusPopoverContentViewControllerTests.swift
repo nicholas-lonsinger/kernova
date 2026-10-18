@@ -7,10 +7,19 @@ import Testing
 @Suite("AgentStatusPopoverContentViewController Tests", .caseScoped)
 @MainActor
 struct AgentStatusPopoverContentViewControllerTests {
+    private static let install = GuestAgentDiskControl.Model(
+        title: "Install Guest Agent…", isEnabled: true, action: .mount(.install))
+    private static let eject = GuestAgentDiskControl.Model(
+        title: "Eject Guest Agent Media", isEnabled: true, action: .eject)
+    private static let withheld = GuestAgentDiskControl.Model(
+        title: GuestAgentDiskControl.unavailableTitle, isEnabled: false, action: .mount(.install))
+
     @Test("default state — title/body/action-button reflect .waiting")
     func defaultState() {
         let vc = AgentStatusPopoverContentViewController()
-        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
+        vc.update(
+            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         #expect(titleLabel(in: vc.view)?.stringValue == "Set up the Kernova guest agent")
@@ -18,40 +27,44 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(bodyLabel(in: vc.view)?.stringValue.contains("TestVM") == true)
     }
 
-    @Test("update() swaps title, body, and action button per status")
+    @Test("update() swaps title and body per status")
     func updatePerStatus() {
         let vc = AgentStatusPopoverContentViewController()
         vc.loadViewIfNeeded()
 
-        let cases:
-            [(
-                status: AgentStatus, title: String, action: String, bodyContains: String
-            )] = [
-                (.waiting, "Set up the Kernova guest agent", "Install Guest Agent…", "clipboard sync"),
-                (
-                    .outdated(installed: "0.9.1", bundled: "0.9.2"),
-                    "Update available", "Update Guest Agent…", "0.9.1"
-                ),
-                (.current(version: "0.9.2"), "Guest agent connected", "Manage Guest Agent…", "0.9.2"),
-                (
-                    .unresponsive(version: "0.9.2"),
-                    "Guest agent unresponsive", "Manage Guest Agent…", "stopped responding"
-                ),
-                (
-                    .connecting(expected: "0.9.2"),
-                    "Connecting to guest agent", "Done", "Waiting for guest agent"
-                ),
-                (
-                    .expectedMissing(expected: "0.9.2"),
-                    "Guest agent didn't reconnect", "Reinstall Guest Agent…", "isn't connected now"
-                ),
-            ]
+        let cases: [(status: AgentStatus, title: String, bodyContains: String)] = [
+            (.waiting, "Set up the Kernova guest agent", "clipboard sync"),
+            (.outdated(installed: "0.9.1", bundled: "0.9.2"), "Update available", "0.9.1"),
+            (.current(version: "0.9.2"), "Guest agent connected", "0.9.2"),
+            (.unresponsive(version: "0.9.2"), "Guest agent unresponsive", "stopped responding"),
+            (.connecting(expected: "0.9.2"), "Connecting to guest agent", "Waiting for guest agent"),
+            (.expectedMissing(expected: "0.9.2"), "Guest agent didn't reconnect", "isn't connected now"),
+        ]
 
         for testCase in cases {
-            vc.update(status: testCase.status, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: false)
+            vc.update(
+                status: testCase.status, isInstallerMounted: false, diskControl: Self.install,
+                vmName: "TestVM", hasDismissAction: false)
             #expect(titleLabel(in: vc.view)?.stringValue == testCase.title)
-            #expect(actionButton(in: vc.view)?.title == testCase.action)
             #expect(bodyLabel(in: vc.view)?.stringValue.contains(testCase.bodyContains) == true)
+        }
+    }
+
+    @Test("The action button carries the disk control it is handed")
+    func actionButtonFollowsDiskControl() {
+        let vc = AgentStatusPopoverContentViewController()
+        vc.loadViewIfNeeded()
+
+        let cases: [(control: GuestAgentDiskControl.Model, title: String)] = [
+            (Self.install, "Install Guest Agent…"),
+            (Self.eject, "Eject Guest Agent Media"),
+            (Self.withheld, "Done"),
+        ]
+        for (control, title) in cases {
+            vc.update(
+                status: .waiting, isInstallerMounted: false, diskControl: control, vmName: "TestVM",
+                hasDismissAction: false)
+            #expect(actionButton(in: vc.view)?.title == title)
         }
     }
 
@@ -75,16 +88,20 @@ struct AgentStatusPopoverContentViewControllerTests {
         let vc = AgentStatusPopoverContentViewController()
         vc.loadViewIfNeeded()
 
-        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
+        vc.update(
+            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            hasDismissAction: true)
         #expect(dismissButton(in: vc.view)?.isHidden == false)
 
-        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: false)
+        vc.update(
+            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            hasDismissAction: false)
         #expect(dismissButton(in: vc.view)?.isHidden == true)
     }
 
-    /// Clicks the action button for `status` and returns how often each
-    /// callback fired, alongside the title the button carried.
-    private func tapAction(status: AgentStatus, isInstallerMounted: Bool) -> (
+    /// Clicks the action button presenting `diskControl` and returns how often
+    /// each callback fired, alongside the title the button carried.
+    private func tapAction(diskControl: GuestAgentDiskControl.Model) -> (
         title: String?, diskControlCount: Int, doneCount: Int
     ) {
         let vc = AgentStatusPopoverContentViewController()
@@ -93,36 +110,25 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.onDiskControl = { diskControlCount += 1 }
         vc.onDone = { doneCount += 1 }
         vc.update(
-            status: status, isInstallerMounted: isInstallerMounted, vmName: "TestVM",
-            hasDismissAction: false)
+            status: .waiting, isInstallerMounted: diskControl.action == .eject,
+            diskControl: diskControl, vmName: "TestVM", hasDismissAction: false)
         vc.loadViewIfNeeded()
         let button = actionButton(in: vc.view)
         button?.performClick(nil)
         return (button?.title, diskControlCount, doneCount)
     }
 
-    @Test(
-        "With the installer attached the button ejects, whatever the status",
-        arguments: [
-            AgentStatus.waiting,
-            .outdated(installed: "0.9.1", bundled: "0.9.2"),
-            .expectedMissing(expected: "0.9.2"),
-            .unresponsive(version: "0.9.2"),
-            .connecting(expected: "0.9.2"),
-        ])
-    func installerAttachedEjects(status: AgentStatus) {
-        let (title, diskControlCount, doneCount) = tapAction(status: status, isInstallerMounted: true)
+    @Test("An enabled control's button fires the disk control")
+    func enabledControlFires() {
+        let (title, diskControlCount, doneCount) = tapAction(diskControl: Self.eject)
         #expect(title == "Eject Guest Agent Media")
-        #expect(
-            GuestAgentDiskControl.model(status: status, isInstallerMounted: true).action == .eject)
         #expect(diskControlCount == 1)
         #expect(doneCount == 0)
     }
 
     @Test("While the control is disabled the button reads Done and only closes")
     func disabledControlIsDone() {
-        let (title, diskControlCount, doneCount) = tapAction(
-            status: .connecting(expected: "0.9.2"), isInstallerMounted: false)
+        let (title, diskControlCount, doneCount) = tapAction(diskControl: Self.withheld)
         #expect(title == "Done")
         #expect(doneCount == 1)
         #expect(diskControlCount == 0)
@@ -152,7 +158,9 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.onDiskControl = { diskControlCount += 1 }
         vc.onDone = { doneCount += 1 }
         vc.onDismiss = { dismissCount += 1 }
-        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
+        vc.update(
+            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         dismissButton(in: vc.view)?.performClick(nil)

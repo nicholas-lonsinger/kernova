@@ -1511,7 +1511,7 @@ package final class VMLibraryViewModel {
 
     // MARK: - Guest Agent Installer
 
-    /// Performs the action `GuestAgentDiskControl.model(for:)` resolves for
+    /// Performs the action `GuestAgentDiskControl.model(for:in:)` resolves for
     /// `instance` now — the one executor every surface showing that control
     /// calls.
     ///
@@ -1521,7 +1521,7 @@ package final class VMLibraryViewModel {
     /// on two of the verb's three paths — an image already mounted, and a guest
     /// that takes it on virtio for the whole session.
     package func toggleGuestAgentDisk(on instance: VMInstance) {
-        switch GuestAgentDiskControl.model(for: instance).action {
+        switch GuestAgentDiskControl.model(for: instance, in: capabilities).action {
         case .eject:
             runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
         case .mount(let purpose):

@@ -23,7 +23,7 @@ public enum VMLibraryEvent: Codable, Sendable, Hashable {
     /// A VM's runtime status settled at a new value.
     case statusChanged(id: UUID, name: String, from: String, to: String)
     /// A VM's guest-agent connectivity changed; `status` is `nil` once the VM
-    /// has no live session.
+    /// has no session.
     case agentStatusChanged(id: UUID, name: String, status: String?)
     /// Work on a VM did not complete, carrying whatever message it reported.
     ///
