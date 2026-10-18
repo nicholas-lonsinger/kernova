@@ -86,7 +86,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -216,9 +216,17 @@ test-unhosted: ## Run only the unhosted lanes: each local package's tests under 
 	@test -n '$(strip $(PACKAGE_DIRS))' || { echo 'No tracked Package.swift found — not a git checkout?' >&2; exit 1; }
 	@failed=''; \
 	for package in $(PACKAGE_DIRS); do \
-		xcrun swift test --package-path "$$package" || failed="$$failed $$package"; \
+		xcrun swift test $(SWIFT_TEST_FLAGS) --package-path "$$package" || failed="$$failed $$package"; \
 	done; \
 	if [ -n "$$failed" ]; then echo "test-unhosted: tests failed in:$$failed" >&2; exit 1; fi
+
+# TSan drops itself from DYLD_INSERT_LIBRARIES once loaded (its `strip_env`
+# flag, on by default), so an exit test's child — the test host relaunched —
+# loads the instrumented test bundle without the runtime and aborts in
+# `VerifyInterceptorsWorking` before the body runs. strip_env=0 keeps the
+# runtime in that child.
+test-unhosted-tsan: ## Run the unhosted lanes under Thread Sanitizer
+	@TSAN_OPTIONS='strip_env=0 $(TSAN_OPTIONS)' $(MAKE) --no-print-directory test-unhosted SWIFT_TEST_FLAGS=--sanitize=thread
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
