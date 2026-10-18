@@ -57,37 +57,37 @@ final class MockVMStorageService: VMStorageProviding {
 
     var bundleFiles: any VMBundleFileAccessing { files }
 
-    /// Each bundle's `config.json`, as a view over ``files``: setting an entry
-    /// seeds the file, and dropping one drops the bundle.
+    /// Each bundle's `config.json`, read from one ``InMemoryVMBundleFiles/snapshot()``.
     var bundles: [URL: VMConfiguration] {
-        get {
-            Dictionary(
-                uniqueKeysWithValues: files.bundleURLs.compactMap { url in
-                    files.configuration(at: url).map { (url, $0) }
-                })
-        }
-        set {
-            let old = bundles
-            for url in old.keys where newValue[url] == nil { files.removeBundle(at: url) }
-            for (url, config) in newValue where old[url] != config {
-                files.setConfiguration(config, at: url)
-            }
-        }
+        let snapshot = files.snapshot()
+        return Dictionary(
+            uniqueKeysWithValues: snapshot.bundleURLs.compactMap { url in
+                snapshot.configuration(at: url).map { (url, $0) }
+            })
     }
 
-    /// Each bundle's `host-state.json`, as a view over ``files``.
+    /// Each bundle's `host-state.json`, read from one ``InMemoryVMBundleFiles/snapshot()``.
     var hostStates: [URL: VMHostState] {
-        get {
-            Dictionary(
-                uniqueKeysWithValues: files.bundleURLs.compactMap { url in
-                    files.hostState(at: url).map { (url, $0) }
-                })
-        }
-        set {
-            for (url, hostState) in newValue where files.hostState(at: url) != hostState {
-                files.setHostState(hostState, at: url)
-            }
-        }
+        let snapshot = files.snapshot()
+        return Dictionary(
+            uniqueKeysWithValues: snapshot.bundleURLs.compactMap { url in
+                snapshot.hostState(at: url).map { (url, $0) }
+            })
+    }
+
+    /// Seeds the bundle at `url` with `configuration` as its `config.json`.
+    func setConfiguration(_ configuration: VMConfiguration, at url: URL) {
+        files.setConfiguration(configuration, at: url)
+    }
+
+    /// Seeds the bundle at `url` with `hostState` as its `host-state.json`.
+    func setHostState(_ hostState: VMHostState, at url: URL) {
+        files.setHostState(hostState, at: url)
+    }
+
+    /// Drops every file the store holds for the bundle at `url`.
+    func removeBundle(at url: URL) {
+        files.removeBundle(at: url)
     }
     private let scratch: TestScratchDirectory
     private var baseDirectory: URL { scratch.url }

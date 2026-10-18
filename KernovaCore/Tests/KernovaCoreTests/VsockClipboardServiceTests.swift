@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Synchronization
 import Testing
@@ -2417,7 +2418,7 @@ struct VsockClipboardServiceTests {
         // Generous until the first fire has passed its pre-flight, then too small
         // for the second fire's — the one path a fire takes out of
         // `performBlockingPull` before it reaches the coordinator.
-        let freeSpace = SharedMutex<Int64>(1 << 40)
+        let freeSpace = Locked<Int64>(1 << 40)
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
             freeSpaceProvider: { _ in freeSpace.withLock { $0 } },
@@ -2608,7 +2609,7 @@ struct VsockClipboardServiceTests {
         // Wired once the offer is promised, as a Copy to Mac would leave it: the
         // retract a release performs on the host pasteboard, which in production
         // reaches the very provider whose fire is running.
-        let retracts = SharedMutex(0)
+        let retracts = Locked(0)
         service.retractStaleHostWrite = {
             retracts.withLock { $0 += 1 }
             return true

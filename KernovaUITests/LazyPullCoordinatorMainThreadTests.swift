@@ -1,5 +1,5 @@
 import Foundation
-import KernovaCoreTestSupport
+import KernovaSynchronization
 import Testing
 
 @testable import KernovaKit
@@ -54,7 +54,7 @@ struct LazyPullCoordinatorMainThreadTests {
     @Test("nested main-thread waits both resolve, and the outer is not stranded by the inner (#860)")
     func nestedWaitsBothResolve() {
         let coordinator = LazyPullCoordinator()
-        let innerResolved = SharedMutex(false)
+        let innerResolved = Locked(false)
         let clock = ContinuousClock()
         let started = clock.now
 

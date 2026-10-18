@@ -35,6 +35,9 @@ final class ClipboardTransferInbox: Sendable {
         var live: [UInt64: ClipboardTransferReceiver] = [:]
         #if DEBUG
         var receiverFinishedHook: (@Sendable (UInt64) -> Void)?
+        var finishedHook: (@Sendable (UInt64) -> Void)? { receiverFinishedHook }
+        #else
+        var finishedHook: (@Sendable (UInt64) -> Void)? { nil }
         #endif
     }
 
@@ -216,21 +219,12 @@ final class ClipboardTransferInbox: Sendable {
 
     /// Delivers one transfer's terminal to its awaiter, exactly once.
     private func finish(_ transferID: UInt64, _ deliver: (Awaiter) -> Void) {
-        #if DEBUG
         let (awaiter, finishedHook) = state.withLock { state in
             state.live[transferID] = nil
-            return (state.awaiters.removeValue(forKey: transferID), state.receiverFinishedHook)
+            return (state.awaiters.removeValue(forKey: transferID), state.finishedHook)
         }
-        #else
-        let awaiter = state.withLock { state in
-            state.live[transferID] = nil
-            return state.awaiters.removeValue(forKey: transferID)
-        }
-        #endif
         if let awaiter { deliver(awaiter) }
-        #if DEBUG
         finishedHook?(transferID)
-        #endif
     }
 
     private func awaiter(_ transferID: UInt64) -> Awaiter? {

@@ -357,7 +357,7 @@ struct VMOtherCopyHoldTests {
             name: "Held", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = try storage.bundleURL(for: config)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
         storage.files.holdElsewhere(url)
 
         await library.startLibrary()
@@ -377,8 +377,8 @@ struct VMOtherCopyHoldTests {
             name: "Unmarked", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let markedURL = try storage.bundleURL(for: marked)
-        storage.bundles[markedURL] = marked
-        storage.bundles[try storage.bundleURL(for: unmarked)] = unmarked
+        storage.setConfiguration(marked, at: markedURL)
+        storage.setConfiguration(unmarked, at: try storage.bundleURL(for: unmarked))
         storage.files.setHostState(VMHostState(startsAutomaticallyOnLaunch: true), at: markedURL)
         let reads = storage.files.readCount(of: VMBundleLayout.configRelativePath)
 

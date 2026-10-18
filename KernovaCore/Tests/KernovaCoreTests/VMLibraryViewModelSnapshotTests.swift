@@ -128,7 +128,7 @@ struct VMLibraryViewModelSnapshotTests {
             name: "Seeded", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
-        harness.storage.bundles[bundleURL] = config
+        harness.storage.setConfiguration(config, at: bundleURL)
         let snapshot = makeSnapshot()
         harness.storage.files.setManifest(
             VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id), at: bundleURL)
@@ -146,7 +146,7 @@ struct VMLibraryViewModelSnapshotTests {
             name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
-        harness.storage.bundles[bundleURL] = config
+        harness.storage.setConfiguration(config, at: bundleURL)
 
         await harness.viewModel.loadVMs()
         #expect(harness.snapshots.sweptStagingBundleURLs.isEmpty)

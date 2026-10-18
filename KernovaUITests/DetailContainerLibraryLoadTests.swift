@@ -85,7 +85,7 @@ struct DetailContainerLibraryLoadTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
         return (storage, config)
     }
 

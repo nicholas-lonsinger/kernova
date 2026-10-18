@@ -241,11 +241,9 @@ package final class VMCommandSocketListener {
 
 /// One client on the command socket, from accept to close.
 ///
-/// Isolated to the listener's private queue, which is its executor:
-/// `send(_:)`, `close()` and `follow(_:)` are the three entry points a
-/// main-actor caller uses, and each hops to that queue in order. The main
-/// actor is reached only to run a verb — parsing and serialization stay off
-/// it.
+/// Isolated to the listener's private queue, which is its executor. Every
+/// `nonisolated` method hops onto that queue, in call order; only a verb runs
+/// on the main actor — parsing and serialization stay off it.
 actor VMCommandConnection {
     /// How long a connection may stay silent before it is closed.
     ///

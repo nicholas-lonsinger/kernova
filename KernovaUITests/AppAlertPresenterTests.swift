@@ -248,7 +248,7 @@ struct AppAlertPresenterTests {
                     id: lockedID, path: "/tmp/kernova-locked-\(UUID().uuidString).iso", readOnly: true)
             ]
         }
-        h.storage.bundles[vm.bundleURL] = vm.configuration
+        h.storage.setConfiguration(vm.configuration, at: vm.bundleURL)
 
         await h.viewModel.delete(vm, deletingExternalIDs: [lockedID])
 

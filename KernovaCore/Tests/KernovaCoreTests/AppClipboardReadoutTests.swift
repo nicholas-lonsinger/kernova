@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -27,8 +28,8 @@ struct AppClipboardReadoutTests {
     /// cancel.
     private func runTransfer(
         on instance: VMInstance, gesture: ClipboardTransferGesture, since: Date
-    ) -> (operation: ClipboardTransferOperation, cancelled: SharedMutex<Bool>) {
-        let cancelled = SharedMutex(false)
+    ) -> (operation: ClipboardTransferOperation, cancelled: Locked<Bool>) {
+        let cancelled = Locked(false)
         let operation = ClipboardTransferOperation(
             gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
             clock: GatedEngineClock(), onCancelRequested: { cancelled.withLock { $0 = true } },

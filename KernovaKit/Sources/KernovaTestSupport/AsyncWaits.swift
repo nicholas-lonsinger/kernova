@@ -182,7 +182,9 @@ public final class AsyncGate: Sendable {
     ///
     /// Returns the moment the predicate holds, whichever step made it hold and
     /// whether or not this gate has fired — so the predicate names the state
-    /// the caller acts on next, never an earlier step's.
+    /// the caller acts on next, never an earlier step's. The first evaluation
+    /// that returns `true` ends the wait and none follows it, so a predicate
+    /// may take what it checks for in the same critical section.
     public func wait(
         timeout: TimeInterval = testWaitBackstop,
         isolation: isolated (any Actor)? = #isolation,
@@ -195,16 +197,19 @@ public final class AsyncGate: Sendable {
                     "Condition not met within \(timeout) s",
                     stopwatch: stopwatch, timeout: timeout)
             }
-            await armOnce(
+            if await armOnce(
                 stopwatch: stopwatch, timeout: timeout,
                 isolation: isolation, predicate: predicate)
+            {
+                return
+            }
         }
     }
 
     /// Suspends until the next `notify()`, an immediate hit (the predicate
     /// already holds at arm time, closing the arm-vs-notify race), or the
     /// deadline backstop (`timeout` after the stopwatch's start) — whichever
-    /// comes first.
+    /// comes first. Returns whether the arm-time check held.
     // `isolation` uses the Swift `isolated` keyword to pin this helper to the
     // caller's actor, so it is never referenced by name.
     // periphery:ignore:parameters isolation
@@ -213,10 +218,11 @@ public final class AsyncGate: Sendable {
         timeout: TimeInterval,
         isolation: isolated (any Actor)?,
         predicate: () -> Bool
-    ) async {
+    ) async -> Bool {
         // Cancelled once the wait resolves, so a happy-path arm doesn't leak a
         // Task sleeping until `deadline`.
         var backstop: Task<Void, Never>?
+        var heldAtArm = false
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let id = UUID()
             let once = ResumeOnce()
@@ -224,6 +230,7 @@ public final class AsyncGate: Sendable {
             // Close the arm-vs-notify race: a notify may have landed before we
             // registered, so re-check now instead of blocking.
             if predicate() {
+                heldAtArm = true
                 waiters.withLock { _ = $0.removeValue(forKey: id) }
                 once.fire { cont.resume() }
                 return
@@ -237,6 +244,7 @@ public final class AsyncGate: Sendable {
             }
         }
         backstop?.cancel()
+        return heldAtArm
     }
 }
 

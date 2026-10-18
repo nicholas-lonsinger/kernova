@@ -1359,7 +1359,7 @@ struct SidebarViewControllerTests {
         // landing on disk (the mock now creates it, matching production) —
         // doesn't mistake the never-persisted source for a bundle that vanished
         // and reconcile it away.
-        storage.bundles[source.bundleURL] = source.configuration
+        storage.setConfiguration(source.configuration, at: source.bundleURL)
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()

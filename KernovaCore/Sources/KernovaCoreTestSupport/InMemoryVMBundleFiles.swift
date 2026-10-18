@@ -124,6 +124,16 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         return state.withLock { Array($0.bundles.keys) }
     }
 
+    /// A new store holding a copy of every file this one holds, taken in one
+    /// hold, so reads from it never see a seed or a write part-way.
+    func snapshot() -> InMemoryVMBundleFiles {
+        if let target { return target.snapshot() }
+        let bundles = state.withLock { $0.bundles }
+        let copy = InMemoryVMBundleFiles()
+        copy.state.withLock { $0.bundles = bundles }
+        return copy
+    }
+
     func holds(_ url: URL) -> Bool {
         if let target { return target.holds(url) }
         return state.withLock { $0.bundles[Self.key(url)] != nil }

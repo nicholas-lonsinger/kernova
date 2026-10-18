@@ -1,4 +1,5 @@
 import AppKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -123,7 +124,7 @@ struct MainWindowControllerNewVMTests {
 
         #expect(subject.layout == canonical)
 
-        let sheetEnded = SharedMutex(false)
+        let sheetEnded = Locked(false)
         let gate = AsyncGate()
         let observer = NotificationCenter.default.addObserver(
             forName: NSWindow.didEndSheetNotification, object: subject.window, queue: .main

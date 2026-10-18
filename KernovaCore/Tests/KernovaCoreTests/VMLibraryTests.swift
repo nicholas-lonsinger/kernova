@@ -61,7 +61,7 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
 
@@ -88,7 +88,7 @@ struct VMLibraryTests {
             name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
-        storage.bundles[bundleURL] = config
+        storage.setConfiguration(config, at: bundleURL)
         let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
@@ -135,7 +135,7 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(onDisk.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = onDisk
+        storage.setConfiguration(onDisk, at: url)
         let (library, _, _, _) = makeLibrary(storageService: storage)
 
         let load = Task { @MainActor in await library.loadVMs() }
@@ -174,8 +174,8 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url1] = config1
-        storage.bundles[url2] = config2
+        storage.setConfiguration(config1, at: url1)
+        storage.setConfiguration(config2, at: url2)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -197,8 +197,8 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url1] = config1
-        storage.bundles[url2] = config2
+        storage.setConfiguration(config1, at: url1)
+        storage.setConfiguration(config2, at: url2)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -246,8 +246,8 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url1] = config1
-        storage.bundles[url2] = config2
+        storage.setConfiguration(config1, at: url1)
+        storage.setConfiguration(config2, at: url2)
 
         // Seed preferences before the load, which is what consults them
         preferences.sidebarSelection = .library(config2.id)
@@ -267,14 +267,15 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let goodURL = scratch.url
             .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[goodURL] = goodConfig
+        storage.setConfiguration(goodConfig, at: goodURL)
 
         let badURL = scratch.url
             .appendingPathComponent("bad-bundle.kernova", isDirectory: true)
         // Register the URL so listVMBundles returns it, but mark it to fail on load
-        storage.bundles[badURL] = VMConfiguration(
-            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.setConfiguration(
+            VMConfiguration(
+                name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize), at: badURL)
         storage.setConfigurationUnreadable(true, at: badURL)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -296,7 +297,7 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
 
         // Seed preferences with a UUID that doesn't match any VM
         preferences.sidebarSelection = .library(UUID())
@@ -621,7 +622,7 @@ struct VMLibraryTests {
         let config = VMConfiguration(
             name: "Hand Copied", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.bundles[try storage.bundleURL(for: config)] = config
+        storage.setConfiguration(config, at: try storage.bundleURL(for: config))
         activation.post()
 
         try await waitForChange { library.instances.map(\.name) == ["Hand Copied"] }
@@ -714,8 +715,8 @@ struct VMLibraryTests {
         emptied.activity.placeForTesting(.suspended)
         // Both bundles are on disk, so the pass has read them and what it found
         // inside them stands.
-        storage.bundles[holding.bundleURL] = holding.configuration
-        storage.bundles[emptied.bundleURL] = emptied.configuration
+        storage.setConfiguration(holding.configuration, at: holding.bundleURL)
+        storage.setConfiguration(emptied.configuration, at: emptied.bundleURL)
 
         library.reconcileWithDisk()
 
@@ -730,7 +731,7 @@ struct VMLibraryTests {
         let instance = library.admitFixture(name: "Bundle out of sight")
         instance.activity.placeForTesting(.suspended)
         // Listed, but its configuration cannot be read this pass.
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
         storage.setConfigurationUnreadable(true, at: instance.bundleURL)
 
         library.reconcileWithDisk()
@@ -752,7 +753,7 @@ struct VMLibraryTests {
         // Only keep the remaining instance's bundle on disk
         let bundleURL = scratch.url
             .appendingPathComponent("\(remaining.id.uuidString).kernova", isDirectory: true)
-        storage.bundles = [bundleURL: remaining.configuration]
+        storage.setConfiguration(remaining.configuration, at: bundleURL)
 
         library.reconcileWithDisk()
 
@@ -767,7 +768,7 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let goodURL = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[goodURL] = config
+        storage.setConfiguration(config, at: goodURL)
 
         // Create library first (no bad bundles yet)
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -775,9 +776,10 @@ struct VMLibraryTests {
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(
-            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.setConfiguration(
+            VMConfiguration(
+                name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize), at: badURL)
         storage.setConfigurationUnreadable(true, at: badURL)
 
         failures.reset()
@@ -808,9 +810,10 @@ struct VMLibraryTests {
         let storage = MockVMStorageService()
         let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(
-            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.setConfiguration(
+            VMConfiguration(
+                name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize), at: badURL)
         storage.setConfigurationUnreadable(true, at: badURL)
 
         // The initial load reports the error and seeds unreadableReports
@@ -843,12 +846,13 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let goodURL = scratch.url
             .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[goodURL] = goodConfig
+        storage.setConfiguration(goodConfig, at: goodURL)
         let badURL = scratch.url
             .appendingPathComponent("unreadable-host-state.kernova", isDirectory: true)
-        storage.bundles[badURL] = VMConfiguration(
-            name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.setConfiguration(
+            VMConfiguration(
+                name: "Bad VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize), at: badURL)
         storage.setHostStateUnreadable(true, at: badURL)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -871,7 +875,7 @@ struct VMLibraryTests {
             name: "Paired VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
-        storage.bundles[bundleURL] = config
+        storage.setConfiguration(config, at: bundleURL)
         let unreadable = Data("{ not json".utf8)
         storage.files.setData(
             unreadable, atRelativePath: VMBundleLayout.usbPairingsRelativePath, in: bundleURL)
@@ -898,12 +902,13 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
         let bundleURL = scratch.url
             .appendingPathComponent("unreadable-sidecar.kernova", isDirectory: true)
-        storage.bundles[bundleURL] = VMConfiguration(
-            name: "Unreadable VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        storage.setConfiguration(
+            VMConfiguration(
+                name: "Unreadable VM",
+                guestOS: .linux,
+                bootMode: .efi,
+                cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize), at: bundleURL)
         storage.setHostStateUnreadable(true, at: bundleURL)
 
         failures.reset()
@@ -933,7 +938,7 @@ struct VMLibraryTests {
         let config = VMConfiguration(
             name: "Recoverable VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.bundles[bundleURL] = config
+        storage.setConfiguration(config, at: bundleURL)
         storage.setConfigurationUnreadable(true, at: bundleURL)
 
         // First reconciliation reports the error
@@ -975,7 +980,7 @@ struct VMLibraryTests {
         )
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -992,7 +997,7 @@ struct VMLibraryTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -1077,7 +1082,7 @@ struct VMLibraryTests {
             name: "Paired VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
-        storage.bundles[bundleURL] = config
+        storage.setConfiguration(config, at: bundleURL)
         storage.files.setPairings(USBAccessoryPairingSet(pairings: [pairing(key: "k")]), at: bundleURL)
 
         await library.loadVMs()
@@ -1120,7 +1125,7 @@ struct VMLibraryTests {
         let config = VMConfiguration(
             name: "Fresh VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        storage.bundles[try storage.bundleURL(for: config)] = config
+        storage.setConfiguration(config, at: try storage.bundleURL(for: config))
 
         await library.loadVMs()
 
