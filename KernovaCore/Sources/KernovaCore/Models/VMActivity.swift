@@ -470,8 +470,7 @@ package final class VMActivity {
         _ body: (borrowing Context) async throws -> VMOperationEnding<T>
     ) async throws -> T {
         let outcome = VMOutcome()
-        let owner = try admit(kind, origin: origin, outcome: outcome)
-        let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
+        let context = makeContext(try admit(kind, origin: origin, outcome: outcome))
         let ending: VMOperationEnding<T>
         do {
             ending = try await body(context)
@@ -577,12 +576,11 @@ package final class VMActivity {
         _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
         identity: VMIdentityOverride = .unavailable, outcome: VMOutcome,
         whenEnded: WhenEnded?,
-        _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
+        _ makeContext: (consuming VMOperationContext) -> Context,
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let owner = try admit(kind, origin: origin, identity: identity, outcome: outcome)
+        let context = makeContext(try admit(kind, origin: origin, identity: identity, outcome: outcome))
         outcome.task = Task { @MainActor in
-            let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
             let ending: VMOperationEnding<Void>
             do {
                 ending = try await body(context)
@@ -601,8 +599,7 @@ package final class VMActivity {
     ) throws -> T {
         let kind = nonBringUp.operationKind
         let outcome = VMOutcome()
-        let owner = try admit(kind, origin: .newWork, outcome: outcome)
-        let context = VMOperationContext(activity: self, kind: kind, owner: owner)
+        let context = try admit(kind, origin: .newWork, outcome: outcome)
         let ending: VMOperationEnding<T>
         do {
             ending = try body(context)
@@ -621,8 +618,7 @@ package final class VMActivity {
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func delete<T>(_ body: (borrowing VMOperationContext) async throws -> T) async throws -> T {
         let outcome = VMOutcome()
-        let owner = try admit(.deleting, origin: .newWork, outcome: outcome)
-        let context = VMOperationContext(activity: self, kind: .deleting, owner: owner)
+        let context = try admit(.deleting, origin: .newWork, outcome: outcome)
         let value: T
         do {
             value = try await body(context)
@@ -642,7 +638,8 @@ package final class VMActivity {
     /// The one admission step every operation takes, in one synchronous step:
     /// takes the run lock of a VM at rest and re-reads its bundle, decides
     /// against what that read found, reserves what `kind` claims beyond this
-    /// VM, and commits.
+    /// VM, and commits — answering the context the committed operation's body
+    /// acts with.
     ///
     /// The committed operation resolves `outcome`.
     ///
@@ -652,7 +649,7 @@ package final class VMActivity {
     private func admit(
         _ kind: VMOperationKind, origin: VMRequestOrigin,
         identity: VMIdentityOverride = .unavailable, outcome: VMOutcome
-    ) throws -> VMInstance {
+    ) throws -> VMOperationContext {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
         let tookLock = try takeRunLock(on: owner)
@@ -667,7 +664,7 @@ package final class VMActivity {
             throw error
         }
         commitOperation(kind, outcome: outcome)
-        return owner
+        return VMOperationContext(activity: self, kind: kind, owner: owner)
     }
 
     /// Takes the run lock of a VM at rest that holds none, then re-reads its
@@ -1291,8 +1288,8 @@ enum VMRunLockHold: ~Copyable {
 /// The authority an operation's body acts with, minted only by ``VMActivity``
 /// for the operation holding the VM.
 ///
-/// Non-copyable and passed borrowed, so it cannot be stored, captured by a
-/// task, or used after its operation ended.
+/// Non-copyable and passed to the body borrowed, so the body cannot store it,
+/// capture it in a task, or use it after its operation ended.
 package struct VMOperationContext: ~Copyable, Sendable {
     private let activity: VMActivity
     let kind: VMOperationKind
@@ -1312,6 +1309,9 @@ package struct VMOperationContext: ~Copyable, Sendable {
         fileprivate init() {}
     }
 
+    /// `owner` is a reference the caller owns: given a copy of a borrowed one,
+    /// the Swift 6.4 optimizer leaks that copy in `SILCombine` and the `-O`
+    /// build crashes (https://github.com/swiftlang/swift/issues/93409).
     @MainActor
     fileprivate init(activity: VMActivity, kind: VMOperationKind, owner: VMInstance) {
         self.activity = activity
