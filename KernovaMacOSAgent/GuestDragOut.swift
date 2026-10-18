@@ -20,13 +20,10 @@ import KernovaKit
 final class GuestDragOut {
     private let watcher: GuestDragWatcher
     private let catcher: GuestDragCatcher
-    private let grants: GuestDropGrants
 
     init(peer: any GuestDragOutPeer, system: GuestDragOutSystem) {
         watcher = GuestDragWatcher(input: system.makeInput(), peer: peer)
-        grants = GuestDropGrants(scope: system.makeDropAccess())
-        catcher = GuestDragCatcher(
-            peer: peer, grants: grants, makeSurface: system.makeCatcherSurface)
+        catcher = GuestDragCatcher(peer: peer, makeSurface: system.makeCatcherSurface)
         watcher.onPressEnded = { [weak catcher] press in catcher?.pressEnded(press) }
     }
 
@@ -46,23 +43,16 @@ final class GuestDragOut {
     }
 
     /// The host is done with the drag under `generation`; the endpoint has
-    /// already retired it, so nothing pulls its files again.
-    ///
-    /// The host's `DragComplete` is the one settle a caught drag has on a live
-    /// connection: the watcher never withdraws a claimed offer, and a Cancel
-    /// on its readout sends a `DragRelease` the host answers with this.
+    /// already retired it.
     func complete(generation: UInt64) {
         watcher.forget(generation: generation)
         catcher.complete(generation: generation)
-        grants.release(generation: generation)
     }
 
-    /// Ends everything this connection's drag-out holds, on screen and on the
-    /// dropped files.
+    /// Ends everything this connection's drag-out holds on screen.
     func stop() {
         watcher.stop()
         catcher.stop()
-        grants.releaseAll()
     }
 
     #if DEBUG
@@ -148,15 +138,10 @@ struct GuestDragOutSystem: Sendable {
     /// its drag callbacks to the catcher it is given.
     var makeCatcherSurface: @MainActor @Sendable (GuestDragCatcher) -> any GuestDragCatcherSurface
 
-    /// Builds what starts and stops access to dropped files, once per
-    /// connection.
-    var makeDropAccess: @MainActor @Sendable () -> any GuestDropAccessScope
-
-    /// The guest's own event stream, drag pasteboard, screen and file access.
+    /// The guest's own event stream, drag pasteboard and screen.
     static let live = GuestDragOutSystem(
         makeInput: { SystemGuestDragInput() },
-        makeCatcherSurface: { GuestDragCatcherPanel(catcher: $0) },
-        makeDropAccess: { SecurityScopedDropAccess() })
+        makeCatcherSurface: { GuestDragCatcherPanel(catcher: $0) })
 }
 
 // MARK: - Which drags carry files
@@ -186,14 +171,6 @@ enum GuestDraggedFiles {
             urls.append(url)
         }
         return urls
-    }
-
-    /// The file URLs a drop delivers, read as the URL objects that carry the
-    /// drop's access to them — never rebuilt from a string, which carries none.
-    static func droppedFileURLs(on pasteboard: NSPasteboard) -> [URL] {
-        let objects = pasteboard.readObjects(
-            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
-        return objects?.compactMap { $0 as? URL } ?? []
     }
 
     /// The content to offer for `urls`, or `nil` unless every one of them

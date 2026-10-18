@@ -57,18 +57,15 @@ final class GuestDragCatcher {
     }
 
     private let peer: any GuestDragOutPeer
-    private let grants: GuestDropGrants
     private let makeSurface: @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
     private var surface: (any GuestDragCatcherSurface)?
     private var take: Take?
 
     init(
         peer: any GuestDragOutPeer,
-        grants: GuestDropGrants,
         makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
     ) {
         self.peer = peer
-        self.grants = grants
         self.makeSurface = makeSurface
     }
 
@@ -195,12 +192,10 @@ final class GuestDragCatcher {
         take?.entered = false
     }
 
-    /// The drag ended on the surface, delivering `dropped`: the URL objects
-    /// the drop read, whose access is held before `caught` lets the host pull.
-    func performDragOperation(dropped: [URL]) -> Bool {
+    /// The drag ended on the surface.
+    func performDragOperation() -> Bool {
         guard let current = take, current.entered, !current.caught, !current.refused else { return false }
         take?.caught = true
-        grants.hold(dropped, for: current.claim.generation)
         send(.caught, for: current.claim.generation)
         return true
     }

@@ -172,38 +172,17 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
     }
 }
 
-/// Access to dropped files, recording each start and stop.
-@MainActor
-final class FakeDropAccess: GuestDropAccessScope {
-    /// URLs whose access does not start, as for a URL no drop granted.
-    var refusing: Set<URL> = []
-    private(set) var started: [URL] = []
-    private(set) var stopped: [URL] = []
-
-    func start(_ url: URL) -> Bool {
-        guard !refusing.contains(url) else { return false }
-        started.append(url)
-        return true
-    }
-
-    func stop(_ url: URL) {
-        stopped.append(url)
-    }
-}
-
 extension GuestDragOutSystem {
     /// A system whose every piece is the fake given.
     static func faked(
-        input: FakeGuestDragInput, surface: FakeCatcherSurface,
-        access: FakeDropAccess = FakeDropAccess()
+        input: FakeGuestDragInput, surface: FakeCatcherSurface
     ) -> GuestDragOutSystem {
         GuestDragOutSystem(
             makeInput: {
                 input.connected()
                 return input
             },
-            makeCatcherSurface: { _ in surface },
-            makeDropAccess: { access })
+            makeCatcherSurface: { _ in surface })
     }
 }
 
