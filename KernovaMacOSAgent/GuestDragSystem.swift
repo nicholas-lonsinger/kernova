@@ -153,7 +153,8 @@ private final class CatcherView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        catcher?.performDragOperation() ?? false
+        catcher?.performDragOperation(
+            dropped: GuestDraggedFiles.droppedFileURLs(on: sender.draggingPasteboard)) ?? false
     }
 
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {

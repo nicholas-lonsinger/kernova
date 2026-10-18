@@ -19,10 +19,12 @@ struct GuestDragOutTests {
         let input = FakeGuestDragInput()
         let surface = FakeCatcherSurface()
         let peer = FakeGuestDragPeer()
+        let access = FakeDropAccess()
         let dragOut: GuestDragOut
 
         init(watching: Bool = true) {
-            dragOut = GuestDragOut(peer: peer, system: .faked(input: input, surface: surface))
+            dragOut = GuestDragOut(
+                peer: peer, system: .faked(input: input, surface: surface, access: access))
             dragOut.setWatching(watching)
         }
 
@@ -425,7 +427,7 @@ struct GuestDragOutTests {
 
         #expect(catcher.draggingEntered(caught(urls)) == .copy)
         #expect(catcher.draggingUpdated(caught(urls)) == .copy)
-        #expect(catcher.performDragOperation())
+        #expect(catcher.performDragOperation(dropped: urls))
         // The drop's release is the host's; the press ending before the drop
         // concludes leaves the surface for the conclusion to take down.
         rig.releaseAndTick()
@@ -502,7 +504,7 @@ struct GuestDragOutTests {
         #expect(!rig.surface.isShown)
         // Nothing is left armed to answer a later callback with anything at all.
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(dropped: urls))
     }
 
     @Test(
@@ -527,7 +529,7 @@ struct GuestDragOutTests {
         // A release the host injected before it heard the refusal drops here
         // and is refused, so nothing moves.
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(dropped: urls))
         // The press ending under the surface leaves it for the drag's end.
         rig.releaseAndTick()
         #expect(rig.surface.isShown)
@@ -578,7 +580,7 @@ struct GuestDragOutTests {
         let rig = takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
-        _ = catcher.performDragOperation()
+        _ = catcher.performDragOperation(dropped: urls)
 
         catcher.draggingEnded()
 
@@ -609,7 +611,7 @@ struct GuestDragOutTests {
 
         #expect(!rig.surface.isShown)
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(dropped: urls))
         catcher.draggingEnded()
         #expect(
             rig.peer.handOffs == [
@@ -628,7 +630,7 @@ struct GuestDragOutTests {
         rig.dragOut.complete(generation: 1)
 
         #expect(rig.surface.isShown)
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(dropped: urls))
         catcher.draggingEnded()
         #expect(!rig.surface.isShown)
         #expect(rig.peer.handOffs.count == 3)
@@ -697,5 +699,133 @@ struct GuestDragOutTests {
             return
         }
         #expect(last.last == .handOff(generation: 2, step: .armed))
+    }
+
+    // MARK: - The drop's access to the dropped files
+
+    @Test("the drop reads its file URLs off the dragging pasteboard as URL objects")
+    func theDropReadsURLObjects() throws {
+        let urls = [try file("one.txt"), try file("two.txt")]
+        let pasteboard = NSPasteboard(name: .init("GuestDragOutTests-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        #expect(pasteboard.writeObjects(urls.map { $0 as NSURL }))
+
+        #expect(GuestDraggedFiles.droppedFileURLs(on: pasteboard) == urls)
+    }
+
+    /// A rig whose taken drag of `urls` the drop caught, delivering `dropped`.
+    private func caughtRig(_ urls: [URL], dropped: [URL]? = nil) -> Rig {
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        #expect(catcher.performDragOperation(dropped: dropped ?? urls))
+        catcher.concludeDragOperation()
+        return rig
+    }
+
+    @Test("a catch starts access on each dropped URL and holds it past the drop's conclusion")
+    func aCatchStartsAccess() throws {
+        let urls = [try file("one.txt"), try file("two.txt")]
+
+        let rig = caughtRig(urls)
+
+        #expect(rig.access.started == urls)
+        #expect(rig.access.stopped.isEmpty)
+        #expect(!rig.surface.isShown)
+    }
+
+    @Test("the host's DragComplete stops exactly the access that started, once")
+    func dragCompleteStopsAccessOnce() throws {
+        let urls = [try file("one.txt"), try file("two.txt")]
+        let rig = takenRig(urls)
+        rig.access.refusing = [urls[1]]
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        _ = catcher.performDragOperation(dropped: urls)
+        catcher.concludeDragOperation()
+        rig.releaseAndTick()
+
+        rig.dragOut.complete(generation: 7)
+        #expect(rig.access.stopped.isEmpty)
+        rig.dragOut.complete(generation: 1)
+        rig.dragOut.complete(generation: 1)
+        rig.dragOut.stop()
+
+        #expect(rig.access.started == [urls[0]])
+        #expect(rig.access.stopped == [urls[0]])
+    }
+
+    @Test("the connection ending stops the access of every caught drag, once")
+    func teardownStopsAccessOnce() throws {
+        let first = [try file("one.txt")]
+        let rig = caughtRig(first)
+        rig.releaseAndTick()
+        let second = [try file("two.txt")]
+        rig.pressAndDrag(second.map(fileItem))
+        rig.dragOut.take(generation: 2)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(second))
+        _ = catcher.performDragOperation(dropped: second)
+        catcher.concludeDragOperation()
+
+        rig.dragOut.stop()
+        rig.dragOut.complete(generation: 1)
+        rig.dragOut.stop()
+
+        #expect(rig.access.started == first + second)
+        #expect(Set(rig.access.stopped) == Set(first + second))
+        #expect(rig.access.stopped.count == 2)
+    }
+
+    @Test("a newer catch leaves an older catch's access held until its own DragComplete")
+    func accessIsHeldPerGeneration() throws {
+        let first = [try file("one.txt")]
+        let rig = caughtRig(first)
+        rig.releaseAndTick()
+        let second = [try file("two.txt")]
+        rig.pressAndDrag(second.map(fileItem))
+        rig.dragOut.take(generation: 2)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(second))
+        _ = catcher.performDragOperation(dropped: second)
+        catcher.concludeDragOperation()
+
+        rig.dragOut.complete(generation: 2)
+        #expect(rig.access.stopped == second)
+        rig.dragOut.complete(generation: 1)
+
+        #expect(rig.access.stopped == second + first)
+    }
+
+    @Test("a take that is refused, or fails before the drop, starts no access")
+    func aTakeWithoutACatchStartsNothing() throws {
+        let urls = [try file("one.txt")]
+
+        // Refused after targeted: the drop lands on the surface and is refused.
+        let refused = takenRig(urls)
+        let refusedCatcher = refused.dragOut.catcherForTesting
+        _ = refusedCatcher.draggingEntered(caught(urls))
+        _ = refusedCatcher.draggingUpdated(caught(urls, mask: [.move]))
+        #expect(!refusedCatcher.performDragOperation(dropped: urls))
+        refusedCatcher.draggingEnded()
+
+        // Failed: the drag never entered the surface.
+        let failed = takenRig(urls)
+        #expect(!failed.dragOut.catcherForTesting.performDragOperation(dropped: urls))
+        failed.releaseAndTick()
+
+        // The host completing before any drop.
+        let completed = takenRig(urls)
+        let completedCatcher = completed.dragOut.catcherForTesting
+        _ = completedCatcher.draggingEntered(caught(urls))
+        completed.dragOut.complete(generation: 1)
+        #expect(!completedCatcher.performDragOperation(dropped: urls))
+
+        for rig in [refused, failed, completed] {
+            rig.dragOut.stop()
+            #expect(rig.access.started.isEmpty)
+            #expect(rig.access.stopped.isEmpty)
+        }
     }
 }
