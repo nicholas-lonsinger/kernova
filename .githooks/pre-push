@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Run `make lint` before pushing — the only lint that runs on its own before a
-# merge, since CI's lint job (.github/workflows/lint.yml) runs on `main` after
-# it. Bypass with `git push --no-verify`.
+# Run `make lint` before pushing. CI's lint job (.github/workflows/lint.yml)
+# runs only on `main` and on PRs labeled `ci`. Bypass with
+# `git push --no-verify`.
 
 set -euo pipefail
 

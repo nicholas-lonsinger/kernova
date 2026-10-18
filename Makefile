@@ -69,6 +69,7 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh \
                  Tools/tests/checkout-lock.sh \
+                 Tools/tests/attest.sh \
                  Tools/tests/arena-label.sh \
                  Tools/tests/check-config-decoding.sh \
                  Tools/tests/check-self-activation.sh
@@ -85,7 +86,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-without-building test-suite test-unhosted clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -192,8 +193,11 @@ locked-clean:
 		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
 
-test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan)
-	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) test
+test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan); a passing run is recorded for `make attest`
+	$(LOCKED) Tools/attest.sh record -- xcodebuild $(XCODEBUILD_FLAGS) test
+
+attest: check-hooks ## Post the `tests` status on the pushed HEAD, reusing a passing `make test` of the same content or running one
+	@Tools/attest.sh
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild
 # refuses a -resultBundlePath that already exists, and outside CI this target
