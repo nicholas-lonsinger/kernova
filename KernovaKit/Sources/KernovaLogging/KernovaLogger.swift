@@ -10,8 +10,8 @@ import KernovaSynchronization
 /// The `#log` macro is the only way to emit through one: it hands the message
 /// literal straight to `osLogger`, so `logd`-side laziness, per-value privacy
 /// and `format:`/`align:` all behave exactly as they do at a bare `os.Logger`
-/// call site, and renders the interpolations a second time only when there is
-/// a sink to forward to — the logger's own `sink`, or else the `processSink`.
+/// call site, and renders the interpolations a second time only when the
+/// logger has a `forwardingSink`.
 public struct KernovaLogger: Sendable {
     /// The `os.Logger` subsystem, also tagged on each forwarded record.
     public let subsystem: String
@@ -23,13 +23,12 @@ public struct KernovaLogger: Sendable {
     /// and nothing else — a direct call would bypass the forwarding sink.
     public let osLogger: os.Logger
 
-    /// Where this logger forwards in place of the `processSink`, or `nil` to
-    /// forward to the `processSink`.
+    /// This logger's own sink, which `forwardingSink` prefers over the
+    /// `processSink`.
     public let sink: ForwardingSink?
 
-    /// Creates a logger for a subsystem and category, forwarding to `sink`
-    /// when one is given — how a test captures what the component it builds
-    /// logs — and to the `processSink` otherwise.
+    /// Creates a logger for a subsystem and category with `sink` as its own
+    /// sink — how a test captures what the component it builds logs.
     public init(subsystem: String, category: String, sink: ForwardingSink? = nil) {
         self.subsystem = subsystem
         self.category = category
@@ -48,6 +47,12 @@ public struct KernovaLogger: Sendable {
             _ category: String,
             _ segments: [LogSegment]
         ) -> Void
+
+    /// Where `#log` forwards this logger's records: its own `sink`, or else
+    /// the `processSink`; `nil` when there is neither.
+    public var forwardingSink: ForwardingSink? {
+        sink ?? Self.processSink
+    }
 
     private static let processSinkStorage = Locked<ForwardingSink?>(nil)
 

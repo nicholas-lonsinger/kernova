@@ -23,7 +23,8 @@ import KernovaLogging
 @MainActor
 @Observable
 package final class VMLibrary: VMAdmissionPeers {
-    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
+    /// What the library's own records go to.
+    let logger: KernovaLogger
 
     // MARK: - Services
 
@@ -135,13 +136,11 @@ package final class VMLibrary: VMAdmissionPeers {
     /// ``bundleFactory`` as every VM's is.
     @discardableResult
     func admitForTesting(
-        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences,
-        activityLogger: KernovaLogger = VMActivity.defaultLogger
+        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences
     ) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts,
-            activityLogger: activityLogger)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink)
         entries.append(.vm(instance))
         return instance
     }
@@ -414,7 +413,7 @@ package final class VMLibrary: VMAdmissionPeers {
         guard selectedID == nil || !entries.contains(where: { $0.id == selectedID }) else { return }
         if let saved = preferences.sidebarSelection, let row = sidebarLayout.resolve(saved) {
             selection = row
-            #log(Self.logger, .debug, "Restored the last-selected sidebar row for \(row.entryID.uuidString)")
+            #log(logger, .debug, "Restored the last-selected sidebar row for \(row.entryID.uuidString)")
         } else {
             selection = firstShownRow
         }
@@ -509,6 +508,10 @@ package final class VMLibrary: VMAdmissionPeers {
     /// The host pasteboard every VM's clipboard publishes to and polls.
     let hostPasteboard: any ClipboardPasteboard
 
+    /// Where the library's records, and those of every VM it builds, are
+    /// forwarded — `nil` forwards them to the process sink.
+    let logSink: KernovaLogger.ForwardingSink?
+
     /// What the app bundle ships, which every VM the library builds is
     /// handed.
     package let bundleProducts: AppBundleProducts
@@ -531,8 +534,11 @@ package final class VMLibrary: VMAdmissionPeers {
         bridgedInterfaces: any BridgedInterfaceProviding,
         appActivation: HostNotification,
         hostPasteboard: any ClipboardPasteboard,
-        bundleProducts: AppBundleProducts
+        bundleProducts: AppBundleProducts,
+        logSink: KernovaLogger.ForwardingSink?
     ) {
+        self.logSink = logSink
+        self.logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary", sink: logSink)
         self.bundleProducts = bundleProducts
         self.storageService = storageService
         self.virtualizationHost = virtualizationHost
@@ -642,7 +648,7 @@ package final class VMLibrary: VMAdmissionPeers {
                 return reportDuplicate(at: url, holderName: instance.name, existing: instance)
             }
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
             )
             instance.rebind(to: bundleFactory.make(scanned.read))
@@ -700,7 +706,7 @@ package final class VMLibrary: VMAdmissionPeers {
         let bundleName = url.deletingPathExtension().lastPathComponent
         if reportedDuplicateBundles.insert(bundleName).inserted {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "\(url.lastPathComponent, privacy: .public) carries the identifier of '\(holderName, privacy: .public)', which the library already holds — left out"
             )
             surfaceError(
@@ -714,7 +720,7 @@ package final class VMLibrary: VMAdmissionPeers {
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink)
         wireHooks(for: instance)
         recordUnreadable(of: scanned.read)
         return instance
@@ -725,7 +731,7 @@ package final class VMLibrary: VMAdmissionPeers {
     private func recordUnreadable(of read: VMBundleRead) {
         for unreadable in read.unreadableFiles {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "'\(read.configuration.name, privacy: .public)' left \(unreadable.fileName, privacy: .public) in place: \(String(describing: unreadable.problems), privacy: .public)"
             )
         }
@@ -773,7 +779,7 @@ package final class VMLibrary: VMAdmissionPeers {
     func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
         entries.moveSubranges(RangeSet(source.rangeView), to: destination)
         persistOrder()
-        #log(Self.logger, .notice, "Reordered VMs in sidebar")
+        #log(logger, .notice, "Reordered VMs in sidebar")
     }
 
     /// Sorts rows by custom order, falling back to `createdAt` for unordered
@@ -832,7 +838,7 @@ package final class VMLibrary: VMAdmissionPeers {
         let outcome = updateConfiguration(permit) { $0.pendingGuestAccount = nil }
         guard case .saved = outcome else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Kept the guest account for '\(instance.name, privacy: .public)': the retraction did not land"
             )
             return outcome
@@ -1037,7 +1043,7 @@ package final class VMLibrary: VMAdmissionPeers {
         } catch {
             if let mutateFailure { throw mutateFailure }
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to save the configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let failure = SettingsWriteFailure(
@@ -1054,7 +1060,7 @@ package final class VMLibrary: VMAdmissionPeers {
         _ refused: VMStateFieldRefusal, on instance: VMInstance
     ) -> SettingsRefusal {
         #log(
-            Self.logger, .error,
+            logger, .error,
             "Refused a write to '\(instance.name, privacy: .public)' that moved \(refused.fields.joined(separator: ", "), privacy: .public) outside its permit"
         )
         return .outsidePermit(refused)
@@ -1112,7 +1118,7 @@ package final class VMLibrary: VMAdmissionPeers {
             return .refused(.heldByAnotherCopy)
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let failure = SettingsWriteFailure(
@@ -1141,7 +1147,7 @@ package final class VMLibrary: VMAdmissionPeers {
             try permit.bundle.commitConfiguration { $0.removableMedia = media }
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to settle the removable media config for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             presentError(error, about: .vm(instance))
@@ -1149,7 +1155,7 @@ package final class VMLibrary: VMAdmissionPeers {
         }
         guard instance.bundle.configuration.removableMedia != old else { return }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Settled the removable media config for '\(instance.name, privacy: .public)' on its live state after a reconcile error"
         )
     }
@@ -1186,7 +1192,7 @@ package final class VMLibrary: VMAdmissionPeers {
             throw refused
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to save the USB accessory pairings for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error

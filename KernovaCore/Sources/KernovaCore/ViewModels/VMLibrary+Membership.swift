@@ -85,7 +85,7 @@ extension VMLibrary {
     private func reclaimRestoreStaging() async {
         let storage = storageService
         let bundleFactory = bundleFactory
-        await Task.detached(priority: .userInitiated) {
+        await Task.detached(priority: .userInitiated) { [logger] in
             let bundles: [URL]
             do {
                 bundles = try storage.listVMBundles()
@@ -93,7 +93,7 @@ extension VMLibrary {
                 // The load that follows lists the directory again and reports
                 // it to the user.
                 #log(
-                    Self.logger, .warning,
+                    logger, .warning,
                     "Could not list the VM bundles to reclaim revert staging: \(error.localizedDescription, privacy: .public)"
                 )
                 return
@@ -166,23 +166,28 @@ extension VMLibrary {
     /// ``VMActivity/refreshFromBundle()`` asks and reads in.
     ///
     /// Nonisolated so the disk work can run off the main actor; it touches no
-    /// library state and reports failures through the returned scan.
-    nonisolated static func scanLibrary(using reader: BundleReader) throws -> LibraryScan {
+    /// library state, reports failures through the returned scan, and logs
+    /// each unreadable bundle to `logger`.
+    nonisolated static func scanLibrary(
+        using reader: BundleReader, logger: KernovaLogger
+    ) throws -> LibraryScan {
         var scan = LibraryScan()
         for bundleURL in try reader.storage.listVMBundles().sorted(by: bundleNameOrder) {
             if reader.files(at: bundleURL).isRunLockedElsewhere() { scan.heldElsewhere.insert(bundleURL) }
             do {
                 scan.bundles.append(try reader.bundle(at: bundleURL))
             } catch {
-                logUnreadable(bundleURL, error)
+                logUnreadable(bundleURL, error, to: logger)
                 scan.unreadable.append(UnreadableBundle(url: bundleURL, file: error))
             }
         }
         return scan
     }
 
-    /// Logs what kept the bundle at `url` out, coding path and all.
-    nonisolated private static func logUnreadable(_ url: URL, _ file: UnreadableConfigFile) {
+    /// Logs to `logger` what kept the bundle at `url` out, coding path and all.
+    nonisolated private static func logUnreadable(
+        _ url: URL, _ file: UnreadableConfigFile, to logger: KernovaLogger
+    ) {
         #log(
             logger, .error,
             "Failed to load VM from \(url.lastPathComponent, privacy: .public): \(file.fileName, privacy: .public) \(String(describing: file.problems), privacy: .public)"
@@ -208,16 +213,17 @@ extension VMLibrary {
         unreadableReports = UnreadableFileReports()
         reportedDuplicateBundles.removeAll()
         let reader = bundleReader
+        let logger = self.logger
         // Whatever the read returns, it is over: a listing that failed answers
         // "no VMs" too, and UI must not go on waiting for a load that finished.
         defer { hasLoadedLibrary = true }
         do {
             let scan = try await Task.detached(priority: .userInitiated) {
-                try Self.scanLibrary(using: reader)
+                try Self.scanLibrary(using: reader, logger: logger)
             }.value
             return apply(scan)
         } catch {
-            #log(Self.logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
+            #log(logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error, about: .library)
             return []
         }
@@ -243,15 +249,15 @@ extension VMLibrary {
 
         if let savedOrder = preferences.vmOrder {
             customOrder = savedOrder
-            #log(Self.logger, .debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
+            #log(logger, .debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
         } else {
-            #log(Self.logger, .debug, "No custom VM order found — using default createdAt sort")
+            #log(logger, .debug, "No custom VM order found — using default createdAt sort")
         }
         sortEntries()
         customOrder = entries.map(\.id)
 
         restoreSelection()
-        #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
+        #log(logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
         return marked
     }
 
@@ -263,7 +269,7 @@ extension VMLibrary {
             vmsDir = try storageService.vmsDirectory
         } catch {
             #log(
-                Self.logger, .warning,
+                logger, .warning,
                 "Could not resolve VMs directory for file system watcher: \(error.localizedDescription, privacy: .public)"
             )
             return
@@ -286,7 +292,7 @@ extension VMLibrary {
     /// which the listing never admits, so nothing an arrival is writing can be
     /// adopted early.
     func reconcileWithDisk() {
-        #log(Self.logger, .debug, "reconcileWithDisk: starting")
+        #log(logger, .debug, "reconcileWithDisk: starting")
         do {
             let diskBundles = try storageService.listVMBundles().sorted(by: Self.bundleNameOrder)
             let reader = bundleReader
@@ -298,7 +304,7 @@ extension VMLibrary {
             // holds.
             var confirmedIDs: Set<UUID> = []
             func noteUnreadable(_ bundleURL: URL, _ file: UnreadableConfigFile) {
-                Self.logUnreadable(bundleURL, file)
+                Self.logUnreadable(bundleURL, file, to: logger)
                 // A VM already built from the bundle keeps its row, for the
                 // reason the eviction below is keyed on the listing, and its
                 // bundle is reported as ``refreshFromOtherCopies(only:)``
@@ -338,7 +344,7 @@ extension VMLibrary {
                     switch adopt(try reader.bundle(at: bundleURL)) {
                     case .adopted(let instance):
                         #log(
-                            Self.logger, .info,
+                            logger, .info,
                             "Discovered VM '\(instance.name, privacy: .public)' on disk — added to library")
                         confirmedIDs.insert(instance.id)
                         didChange = true
@@ -371,7 +377,7 @@ extension VMLibrary {
                 guard (try? instance.activity.remove()) != nil else { continue }
                 evict(instance)
                 #log(
-                    Self.logger, .info,
+                    logger, .info,
                     "VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
@@ -396,11 +402,11 @@ extension VMLibrary {
             refreshFromOtherCopies(only: confirmedIDs)
 
             #log(
-                Self.logger, .debug,
+                logger, .debug,
                 "reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
         } catch {
             #log(
-                Self.logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
+                logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
             presentError(error, about: .library)
         }
     }
@@ -496,7 +502,7 @@ extension VMLibrary {
             throw arrival.isCancelling ? CancellationError() : error
         }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' published at \(destination.lastPathComponent, privacy: .public)"
         )
         let scanned: Result<ScannedBundle, any Error>
@@ -531,7 +537,7 @@ extension VMLibrary {
             try await Task.detached { try storage.deleteVMBundle(at: destination) }.value
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Could not move the cancelled \(arrival.kind.displayNoun.lowercased(), privacy: .public) of '\(arrival.name, privacy: .public)' to the Trash: \(error.localizedDescription, privacy: .public)"
             )
             if case .success(let bundle) = scanned {
@@ -541,7 +547,7 @@ extension VMLibrary {
                 name: arrival.name, reason: error.localizedDescription)
         }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' cancelled during its publication — moved to the Trash"
         )
         throw CancellationError()
@@ -573,7 +579,7 @@ extension VMLibrary {
             try await Task.detached { try storage.discardStagedBundle(at: url) }.value
         } catch {
             #log(
-                Self.logger, .warning,
+                logger, .warning,
                 "Could not discard the staged bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -629,14 +635,14 @@ extension VMLibrary {
         for arrival in arrivals where arrival.stage == .writing || arrival.stage == .cancelling {
             _ = arrival.requestCancel()
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Terminating: abandoning \(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)'"
             )
             do {
                 try storageService.discardStagedBundle(at: arrival.staged.url)
             } catch {
                 #log(
-                    Self.logger, .warning,
+                    logger, .warning,
                     "Failed to discard the staged bundle for '\(arrival.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                 )
             }

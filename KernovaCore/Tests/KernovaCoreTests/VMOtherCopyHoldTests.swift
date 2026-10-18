@@ -62,7 +62,7 @@ struct VMOtherCopyHoldTests {
             bundle: VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: access.store))
                 .make(VMInstanceFixture.read(url, from: access)),
             phase: .stopped, preferences: makeTestPreferences(),
-            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil)
     }
 
     // MARK: - Edits
@@ -528,15 +528,14 @@ struct VMOtherCopyHoldTests {
 
     // MARK: - Records
 
-    /// Every record the loggers it builds receive — the loggers a test builds
-    /// the core and the VM under test with.
+    /// Every record its `sink` receives — the log sink a test builds the core
+    /// and the library under test with.
     private final class LogCapture: Sendable {
         private let recorded = Mutex<[String]>([])
 
-        /// A logger labelled like `base`, whose records land here.
-        func logger(like base: KernovaLogger) -> KernovaLogger {
-            KernovaLogger(subsystem: base.subsystem, category: base.category) {
-                [self] _, _, _, segments in
+        /// The sink whose records land here.
+        var sink: KernovaLogger.ForwardingSink {
+            { [self] _, _, _, segments in
                 recorded.withLock { $0.append(segments.map(\.text).joined()) }
             }
         }
@@ -560,8 +559,7 @@ struct VMOtherCopyHoldTests {
         let capture = LogCapture()
         let harness = makeCore(loggingTo: capture)
         let name = "Held set"
-        let instance = harness.library.registerFixture(
-            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger))
+        let instance = harness.library.registerFixture(name: name)
         harness.storage.files.holdElsewhere(instance.bundleURL)
 
         #expect(throws: CommandError.self) {
@@ -584,8 +582,7 @@ struct VMOtherCopyHoldTests {
         let name = "Held revert"
         let snapshot = VMSnapshot(name: "Only", kind: .cold, macAddress: nil)
         let instance = harness.library.registerFixture(
-            name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]),
-            activityLogger: capture.logger(like: VMActivity.defaultLogger))
+            name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
         harness.storage.files.holdElsewhere(instance.bundleURL)
 
         await #expect(throws: CommandError.self) {
@@ -604,8 +601,7 @@ struct VMOtherCopyHoldTests {
         let capture = LogCapture()
         let harness = makeCore(loggingTo: capture)
         let name = "Held delete"
-        let instance = harness.library.registerFixture(
-            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger))
+        let instance = harness.library.registerFixture(name: name)
         harness.storage.files.holdElsewhere(instance.bundleURL)
 
         await #expect(throws: CommandError.self) {
@@ -627,8 +623,7 @@ struct VMOtherCopyHoldTests {
             config.macAddress = Self.sharedMAC
         }
         let source = harness.library.registerFixture(name: "Source", mutate: twin)
-        let copy = harness.library.registerFixture(
-            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger), mutate: twin)
+        let copy = harness.library.registerFixture(name: name, mutate: twin)
         harness.storage.files.holdElsewhere(source.bundleURL)
 
         await #expect(throws: CommandError.self) {
@@ -642,11 +637,10 @@ struct VMOtherCopyHoldTests {
     @Test("Only a change of another copy's hold is recorded, not a probe that finds it unchanged")
     func unchangedHoldRecordsNothing() {
         let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let name = "Probed"
         let capture = LogCapture()
-        let instance = library.registerFixture(
-            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger))
+        let library = makeWiredLibrary(storage: storage, logSink: capture.sink)
+        let name = "Probed"
+        let instance = library.registerFixture(name: name)
 
         storage.files.holdElsewhere(instance.bundleURL)
         library.refreshFromOtherCopies()
@@ -697,8 +691,8 @@ struct VMOtherCopyHoldTests {
         WiredCommandCore()
     }
 
-    /// A core whose verbs log to `capture`.
+    /// A core whose verbs, library and VMs log to `capture`.
     private func makeCore(loggingTo capture: LogCapture) -> WiredCommandCore {
-        WiredCommandCore(logger: capture.logger(like: VMCommandCore.defaultLogger))
+        WiredCommandCore(logSink: capture.sink)
     }
 }

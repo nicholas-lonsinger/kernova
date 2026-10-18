@@ -71,14 +71,13 @@ package final class VMActivity {
         return hold.isAnotherCopy
     }
 
-    /// What a VM's activity logs to unless its builder passes another logger.
-    nonisolated static let defaultLogger = KernovaLogger(subsystem: "app.kernova", category: "VMActivity")
-
     private let logger: KernovaLogger
 
-    init(phase: VMLifecyclePhase, logger: KernovaLogger = VMActivity.defaultLogger) {
+    /// An activity resting at `phase`, whose records forward to `logSink` —
+    /// `nil` forwards to the process sink.
+    init(phase: VMLifecyclePhase, logSink: KernovaLogger.ForwardingSink?) {
         self.phase = phase
-        self.logger = logger
+        self.logger = KernovaLogger(subsystem: "app.kernova", category: "VMActivity", sink: logSink)
     }
 
     private var name: String { owner?.name ?? "" }

@@ -12,7 +12,7 @@ private let bufferFullMarker = "Log forward buffer full"
 private let droppedCountMarker = "buffered log record(s) while the host channel was behind"
 private let channelEndMarker = "record(s) for the next connection"
 
-/// Captures what one `VsockHostConnection` logs, through the logger the
+/// Captures what one `VsockHostConnection` logs, through the log sink the
 /// fixture builds that connection with, and optionally feeds each record back
 /// through `forwardLog` the way `AgentAppDelegate`'s process sink does.
 ///
@@ -28,10 +28,9 @@ private final class AgentLogSink: Sendable {
     private let state = Locked(State())
     let changed = AsyncGate()
 
-    /// The logger to build the observed connection with.
-    var logger: KernovaLogger {
-        KernovaLogger(subsystem: "app.kernova.macosagent", category: "VsockHostConnection") {
-            [self] level, subsystem, category, segments in
+    /// The log sink to build the observed connection with.
+    var sink: KernovaLogger.ForwardingSink {
+        { [self] level, subsystem, category, segments in
             let target = state.withLock { state in
                 state.recorded.append(segments.map(\.text).joined())
                 return state.forwardTarget
@@ -128,7 +127,7 @@ struct VsockHostConnectionTests {
         }
         let log = AgentLogSink()
         return DialledConnection(
-            conn: VsockHostConnection(client: client, logger: log.logger), client: client,
+            conn: VsockHostConnection(client: client, logSink: log.sink), client: client,
             hostFds: pairs.map(\.host), dialled: dialled, log: log)
     }
 

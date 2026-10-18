@@ -83,18 +83,16 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Production init — forwards on `KernovaVsockPort.log`.
     convenience init() {
-        self.init(client: VsockGuestClient(port: KernovaVsockPort.log, label: "log"))
+        self.init(client: VsockGuestClient(port: KernovaVsockPort.log, label: "log"), logSink: nil)
     }
 
-    /// Designated init; tests inject a socketpair-backed client, and a logger
-    /// whose own sink captures what this connection logs.
-    init(
-        client: VsockGuestClient,
-        logger: KernovaLogger = KernovaLogger(
-            subsystem: "app.kernova.macosagent", category: "VsockHostConnection")
-    ) {
+    /// Designated init; tests inject a socketpair-backed client, and a
+    /// `logSink` that captures what this connection logs — `nil` forwards to
+    /// the process sink.
+    init(client: VsockGuestClient, logSink: KernovaLogger.ForwardingSink?) {
         self.client = client
-        self.logger = logger
+        self.logger = KernovaLogger(
+            subsystem: "app.kernova.macosagent", category: "VsockHostConnection", sink: logSink)
         // Default-disabled: no connect attempts until the host's first
         // `PolicyUpdate(logForwardingEnabled: true)`.
         self.client.pause()

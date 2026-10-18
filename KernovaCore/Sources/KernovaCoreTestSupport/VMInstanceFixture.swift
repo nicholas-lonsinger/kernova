@@ -39,7 +39,7 @@ enum VMInstanceFixture {
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
-            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil)
     }
 
     /// A fresh configuration for a `guestOS` VM named `name`, with the

@@ -53,10 +53,6 @@ package enum VMBringUpPresence: Sendable, Equatable {
 /// which one suspension point between them would break.
 @MainActor
 package final class VMCommandCore {
-    /// What every verb's record goes to unless the core's builder passes
-    /// another logger.
-    nonisolated static let defaultLogger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
-
     /// What this core's verbs log to.
     let logger: KernovaLogger
 
@@ -190,6 +186,8 @@ package final class VMCommandCore {
 
     // MARK: - Initialization
 
+    /// A core over `library`, whose verbs' records forward to `logSink` —
+    /// `nil` forwards them to the process sink.
     init(
         library: VMLibrary,
         lifecycle: VMLifecycleCoordinator,
@@ -198,9 +196,9 @@ package final class VMCommandCore {
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
         clock: any EngineClock = makePlatformEngineClock(),
-        logger: KernovaLogger = VMCommandCore.defaultLogger
+        logSink: KernovaLogger.ForwardingSink?
     ) {
-        self.logger = logger
+        self.logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore", sink: logSink)
         self.library = library
         self.lifecycle = lifecycle
         self.storageService = storageService

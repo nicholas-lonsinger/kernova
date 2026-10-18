@@ -4,8 +4,7 @@ import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
 /// Expands `#log(logger, level, "…")` into the local `os.Logger` emission plus,
-/// when the logger has a sink of its own or the process has one, the same
-/// message as wire segments.
+/// when the logger has a `forwardingSink`, the same message as wire segments.
 ///
 /// The message literal reaches `os.Logger` byte for byte, which is what keeps
 /// the compiler's `os_log` constant-folding — and with it `logd`-side laziness,
@@ -35,7 +34,7 @@ struct LogMacro: ExpressionMacro {
                 let __logger = \(raw: logger)
                 let __level: KernovaLogLevel = \(raw: level)
                 __logger.osLogger.log(level: __level.osLogType, \(raw: literal.trimmedDescription))
-                if let __sink = __logger.sink ?? KernovaLogger.processSink {
+                if let __sink = __logger.forwardingSink {
                     __sink(__level, __logger.subsystem, __logger.category, [\(raw: segments)])
                 }
             }()

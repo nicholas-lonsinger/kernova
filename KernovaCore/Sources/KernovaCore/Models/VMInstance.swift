@@ -296,16 +296,17 @@ package final class VMInstance {
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk, whose clipboard publishes to and polls
-    /// `hostPasteboard`, and whose ``activity`` logs to `activityLogger`.
+    /// `hostPasteboard`, and whose ``activity`` forwards its records to
+    /// `logSink`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
         hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts,
-        activityLogger: KernovaLogger = VMActivity.defaultLogger
+        logSink: KernovaLogger.ForwardingSink?
     ) {
         self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
-        self.activity = VMActivity(phase: phase, logger: activityLogger)
+        self.activity = VMActivity(phase: phase, logSink: logSink)
         self.preferences = preferences
         self.hostClipboardPublisher = HostClipboardPublisher(
             pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)

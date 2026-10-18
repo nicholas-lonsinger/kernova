@@ -81,10 +81,7 @@ let package = Package(
             dependencies: ["KernovaLoggingMacros", "KernovaSynchronization"],
             swiftSettings: sharedSwiftSettings
         ),
-        // `Locked<Value>`, the lock for state reached synchronously from
-        // several threads in code that deploys below `Synchronization.Mutex`'s
-        // macOS 15. A leaf, so `KernovaLogging` can hold its process sink in
-        // one.
+        // A leaf, so `KernovaLogging` can hold its process sink in a `Locked`.
         .target(
             name: "KernovaSynchronization",
             swiftSettings: sharedSwiftSettings

@@ -59,10 +59,11 @@ func makeTestLifecycle(
 /// A real `VMLibrary` over mocks: the test target's one construction of a
 /// library, and what a test changes a VM's configuration through once the VM
 /// exists, since only the library writes it. Its VMs come from
-/// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:activityLogger:mutate:)``.
+/// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
-/// reaches it weakly.
+/// reaches it weakly. The library and its VMs forward their records to
+/// `logSink`.
 @MainActor
 func makeWiredLibrary(
     storage: MockVMStorageService = MockVMStorageService(),
@@ -80,7 +81,8 @@ func makeWiredLibrary(
     appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive,
     hostPasteboard: any ClipboardPasteboard = FakePasteboard(),
     bundleProducts: AppBundleProducts = .testing,
-    virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost()
+    virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
+    logSink: KernovaLogger.ForwardingSink? = nil
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
@@ -97,7 +99,8 @@ func makeWiredLibrary(
         bridgedInterfaces: bridgedInterfaces,
         appActivation: appActivation,
         hostPasteboard: hostPasteboard,
-        bundleProducts: bundleProducts)
+        bundleProducts: bundleProducts,
+        logSink: logSink)
     return library
 }
 
@@ -169,8 +172,7 @@ extension VMLibrary {
     /// ``admitFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``,
     /// wired as a load would have left it and with its bundle's files in this
     /// library's storage: a `files` the test passes hands what it holds to
-    /// that storage and writes through it from then on. Its activity logs to
-    /// `activityLogger`.
+    /// that storage and writes through it from then on.
     @discardableResult
     func registerFixture(
         name: String = "Test VM",
@@ -181,7 +183,6 @@ extension VMLibrary {
         snapshots: VMSnapshotManifest = VMSnapshotManifest(),
         pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
         files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
-        activityLogger: KernovaLogger = VMActivity.defaultLogger,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         guard let storage = storageService as? MockVMStorageService else {
@@ -191,8 +192,7 @@ extension VMLibrary {
             name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
             pairings: pairings, files: files, mutate: mutate)
         files.forward(to: storage.files)
-        let instance = admitForTesting(
-            read, phase: phase, preferences: preferences, activityLogger: activityLogger)
+        let instance = admitForTesting(read, phase: phase, preferences: preferences)
         wireHooks(for: instance)
         return instance
     }
@@ -486,7 +486,7 @@ func withOperation<T>(
 ) async throws -> T {
     let instance = VMInstance(
         bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
-        bundleProducts: .testing)
+        bundleProducts: .testing, logSink: nil)
     return try await withOperation(on: instance, .deletingSnapshot, body)
 }
 
