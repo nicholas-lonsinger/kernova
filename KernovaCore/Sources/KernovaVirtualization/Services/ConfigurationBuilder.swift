@@ -8,21 +8,29 @@ import Virtualization
 /// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, disk image,
 /// additional disks, shared directories) before passing them to Virtualization.framework.
 struct ConfigurationBuilder: Sendable {
-    struct BuildResult: @unchecked Sendable {
+    /// Not `Sendable`: `configuration` crosses to the VM's queue only as a
+    /// `sending` value, so nothing else can still hold it once it does.
+    struct BuildResult {
         let configuration: VZVirtualMachineConfiguration
         /// What the session context adopts. The cold-attached media carry the
         /// UUIDs `configuration`'s `VZUSBMassStorageDeviceConfiguration`s were
         /// given, and the vmnet view is the one an attachment in
         /// `configuration` joins.
         let products: VMSessionBuildProducts
-        /// The answer `configuration`'s network attachment was chosen by — the
-        /// one the session's attachment recovery must realize NAT by.
+        let attachmentRecovery: AttachmentRecoverySources
+    }
+
+    /// What the session's attachment recovery must act by: the same sources
+    /// `configuration`'s network attachment was built from.
+    struct AttachmentRecoverySources: Sendable {
+        /// The answer the network attachment was chosen by — the one recovery
+        /// must realize NAT by.
         let entitlements: EntitlementService
-        /// What `configuration`'s vmnet attachment was built by — the one the
-        /// session's attachment recovery must attach by.
+        /// What the vmnet attachment was built by — the one recovery must
+        /// attach by.
         let vmnetAttachments: any VmnetAttachmentMaking
-        /// The host state `configuration`'s bridged interface was chosen from —
-        /// the one the session's attachment recovery must choose from.
+        /// The host state the bridged interface was chosen from — the one
+        /// recovery must choose from.
         let bridgedInterfaces: any BridgedInterfaceProviding
     }
 
@@ -42,8 +50,11 @@ struct ConfigurationBuilder: Sendable {
     /// Whose installer image a guest that takes it over virtio is given.
     let guestAgent: BundledGuestAgent
 
-    /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
-    func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
+    /// Builds a validated `VZVirtualMachineConfiguration` from the given VM
+    /// configuration and bundle URL, off the caller's actor: the build reads
+    /// files and can block on a vmnet network's materialization.
+    @concurrent
+    func build(from config: VMConfiguration, bundleURL: URL) async throws -> sending BuildResult {
         try assemble(from: config, bundleURL: bundleURL, validate: true)
     }
 
@@ -116,9 +127,10 @@ struct ConfigurationBuilder: Sendable {
                 coldRemovableMedia: coldRemovableMedia,
                 directoryShare: directoryShare,
                 vmnetNetworks: sessionNetworks),
-            entitlements: entitlements,
-            vmnetAttachments: vmnetAttachments,
-            bridgedInterfaces: bridgedInterfaces
+            attachmentRecovery: AttachmentRecoverySources(
+                entitlements: entitlements,
+                vmnetAttachments: vmnetAttachments,
+                bridgedInterfaces: bridgedInterfaces)
         )
     }
 

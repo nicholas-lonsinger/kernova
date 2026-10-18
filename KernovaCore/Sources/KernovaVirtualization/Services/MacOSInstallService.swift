@@ -65,7 +65,7 @@ package final class MacOSInstallService {
         }.get()
 
         instance.beginSessionContext(context)
-        let result = try configBuilder.build(
+        let result = try await configBuilder.build(
             from: instance.effectiveConfiguration,
             bundleURL: context.operation.bundle.url
         )
