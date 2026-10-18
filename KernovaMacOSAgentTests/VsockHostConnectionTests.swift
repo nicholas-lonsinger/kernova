@@ -1,4 +1,5 @@
 import KernovaLogging
+import KernovaSynchronization
 import Testing
 import Foundation
 import Darwin
@@ -11,54 +12,51 @@ private let bufferFullMarker = "Log forward buffer full"
 private let droppedCountMarker = "buffered log record(s) while the host channel was behind"
 private let channelEndMarker = "record(s) for the next connection"
 
-/// Captures `VsockHostConnection`'s own log records for the length of one test,
-/// and optionally feeds them back through `forwardLog` the way
-/// `AgentAppDelegate` wires the real sink.
+/// Captures what one `VsockHostConnection` logs, through the log sink the
+/// fixture builds that connection with, and optionally feeds each record back
+/// through `forwardLog` the way `AgentAppDelegate`'s process sink does.
 ///
-/// `KernovaLogger.forwardingSink` is process-wide, so the sink is narrowed to
-/// the one category under test and the suite runs `.serialized`. `changed`
-/// fires after each record has been forwarded, which is the connection's only
-/// signal — it reports its outcomes by logging and nothing else.
-private final class AgentLogSink: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recorded: [String] = []
+/// `changed` fires after each record has been forwarded, which is the
+/// connection's only signal — it reports its outcomes by logging and nothing
+/// else.
+private final class AgentLogSink: Sendable {
+    private struct State {
+        var recorded: [String] = []
+        weak var forwardTarget: VsockHostConnection?
+    }
+
+    private let state = Locked(State())
     let changed = AsyncGate()
 
-    private let forwardTarget: VsockHostConnection?
-
-    init(forwardingTo conn: VsockHostConnection? = nil) {
-        self.forwardTarget = conn
-    }
-
-    var messages: [String] { lock.withLock { recorded } }
-
-    func count(matching marker: String) -> Int {
-        messages.filter { $0.contains(marker) }.count
-    }
-
-    func install() {
-        KernovaLogger.forwardingSink = { [self] level, subsystem, category, segments in
-            guard category == "VsockHostConnection" else { return }
-            lock.withLock { recorded.append(segments.map(\.text).joined()) }
-            forwardTarget?.forwardLog(
+    /// The log sink to build the observed connection with.
+    var sink: KernovaLogger.ForwardingSink {
+        { [self] level, subsystem, category, segments in
+            let target = state.withLock { state in
+                state.recorded.append(segments.map(\.text).joined())
+                return state.forwardTarget
+            }
+            target?.forwardLog(
                 level: level, subsystem: subsystem, category: category, segments: segments)
             changed.notify()
         }
     }
 
-    func uninstall() {
-        KernovaLogger.forwardingSink = nil
+    var messages: [String] { state.withLock { $0.recorded } }
+
+    func count(matching marker: String) -> Int {
+        messages.filter { $0.contains(marker) }.count
+    }
+
+    /// Forwards every record from here on into `conn`.
+    func forward(into conn: VsockHostConnection) {
+        state.withLock { $0.forwardTarget = conn }
     }
 }
 
 /// Tests that seed the ring directly call `bufferFrameUnlessDisabled` on a
 /// fresh connection, whose policy is `.undecided` — the state that buffers, so
 /// they run through the in-lock policy re-check on its appending branch.
-///
-/// Serialized because `KernovaLogger.forwardingSink` is process-wide: a second
-/// `VsockHostConnection` running concurrently would emit into whichever ring
-/// the installed sink points at.
-@Suite("VsockHostConnection log buffer", .serialized, .caseScoped)
+@Suite("VsockHostConnection log buffer", .caseScoped)
 struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
 
@@ -90,6 +88,8 @@ struct VsockHostConnectionTests {
         let hostFds: [Int32]
         /// Connect attempts the client has made.
         let dialled: AtomicInt
+        /// What `conn` logs.
+        let log: AgentLogSink
     }
 
     /// Builds a connection dialling `attempts` socketpairs.
@@ -125,16 +125,14 @@ struct VsockHostConnectionTests {
             guard n <= agentFds.count else { return .failure(.transient("test: no fd for attempt \(n)")) }
             return .success(agentFds[n - 1])
         }
+        let log = AgentLogSink()
         return DialledConnection(
-            conn: VsockHostConnection(client: client), client: client,
-            hostFds: pairs.map(\.host), dialled: dialled)
+            conn: VsockHostConnection(client: client, logSink: log.sink), client: client,
+            hostFds: pairs.map(\.host), dialled: dialled, log: log)
     }
 
     /// Runs `body` against a connection dialling `attempts` socketpairs, and
-    /// returns only once that connection's loop task has exited, whatever
-    /// `body` did. The channel-end record is logged from that task, and one
-    /// landing after the return reaches the next test's sink instead: counted
-    /// there, or forwarded into that test's ring as one more frame.
+    /// stops that connection's loop whatever `body` did.
     private func withDialledConnection(
         label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil,
         _ body: (DialledConnection) async throws -> Void
@@ -147,8 +145,7 @@ struct VsockHostConnectionTests {
         } catch {
             failure = error
         }
-        let loop = dialled.conn.stop()
-        await loop?.value
+        dialled.conn.stop()
         if let failure { throw failure }
     }
 
@@ -235,10 +232,7 @@ struct VsockHostConnectionTests {
             // The host end is never wrapped in a channel and never read, so the
             // socket fills and the worker parks in `write(2)` for good.
             let hostFd = dialled.hostFds[0]
-
-            let sink = AgentLogSink()
-            sink.install()
-            defer { sink.uninstall() }
+            let sink = dialled.log
 
             conn.start()
             conn.setEnabled(true)
@@ -291,12 +285,10 @@ struct VsockHostConnectionTests {
             host.start()
             defer { host.close() }
 
-            // Enabled before the sink is installed, so its policy notice is not
-            // one of the records under count.
+            // Enabled before the sink forwards, so its policy notice is not one
+            // of the records under count.
             conn.setEnabled(true)
-            let sink = AgentLogSink(forwardingTo: conn)
-            sink.install()
-            defer { sink.uninstall() }
+            dialled.log.forward(into: conn)
 
             let cap = VsockHostConnection.logBufferLimit
             let extra = 10
@@ -326,7 +318,7 @@ struct VsockHostConnectionTests {
         }
     }
 
-    // MARK: - Re-entrancy through the process-wide sink
+    // MARK: - Re-entrancy through the sink
 
     /// The conversion of this class to `KernovaLogger` turns its own records
     /// into `forwardLog` calls that re-enter it, so a channel's end has to be
@@ -337,15 +329,14 @@ struct VsockHostConnectionTests {
         try await withDialledConnection(label: "log-reentrancy-test", socketBufferBytes: 8192) { dialled in
             let conn = dialled.conn
             let hostFd = dialled.hostFds[0]
-
-            conn.start()
-            conn.setEnabled(true)
+            let sink = dialled.log
 
             // Mirrors `AgentAppDelegate`: every record this class emits is
             // forwarded straight back into the connection emitting it.
-            let sink = AgentLogSink(forwardingTo: conn)
-            sink.install()
-            defer { sink.uninstall() }
+            sink.forward(into: conn)
+
+            conn.start()
+            conn.setEnabled(true)
 
             // Far more than the socket takes, so most of it is still held when
             // the channel ends, wherever the drain has got to by then.

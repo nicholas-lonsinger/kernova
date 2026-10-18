@@ -119,12 +119,12 @@ extension VMLibrary {
         }.value
         for failure in failures {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Use Defaults left \(failure.file.url.path(percentEncoded: false), privacy: .public) as it was: \(failure.reason, privacy: .public)"
             )
         }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Use Defaults rewrote \(repairable.count - failures.count, privacy: .public) of \(repairable.count, privacy: .public) repairable config file(s)"
         )
         reconcileWithDisk()
@@ -153,7 +153,7 @@ extension VMLibrary {
             }
         }.value
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Moved the unreadable bundle \(url.lastPathComponent, privacy: .public) to the Trash")
         reconcileWithDisk()
     }

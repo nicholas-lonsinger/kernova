@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -10,6 +11,8 @@ import KernovaTestSupport
 /// A real ``VMCommandCore`` over a wired library and mock services, with the
 /// adapter hooks that put things in front of the user recorded rather than
 /// presented — what a front door's tests drive in place of the AppKit adapter.
+/// The core, the library and its VMs forward their records to the one
+/// `logSink` it is built with.
 ///
 /// A test overriding one of those hooks replaces its recording.
 @MainActor
@@ -70,7 +73,8 @@ final class WiredCommandCore {
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
         preferences: AppPreferences = makeTestPreferences(),
         virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
-        clock: any EngineClock = makePlatformEngineClock()
+        clock: any EngineClock = makePlatformEngineClock(),
+        logSink: KernovaLogger.ForwardingSink? = nil
     ) {
         let machineFiles = MockVMBundleMachineFiles(files: storage.files, fileSystem: fileSystem)
         let vmnet = ScriptedVmnetNetworks()
@@ -94,7 +98,8 @@ final class WiredCommandCore {
             networks: networks,
             organization: organization,
             guestAccountPasswords: passwords,
-            virtualizationHost: virtualizationHost)
+            virtualizationHost: virtualizationHost,
+            logSink: logSink)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -102,7 +107,8 @@ final class WiredCommandCore {
             diskImageService: diskImages,
             fileSystem: fileSystem,
             preferences: preferences,
-            clock: clock)
+            clock: clock,
+            logSink: logSink)
         let authority = MockSandboxSourceAuthority()
         core.sourceAuthority = authority
 

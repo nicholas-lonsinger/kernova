@@ -15,7 +15,7 @@
 # bundle and the app its TEST_HOST names never both link package products: the
 # products are static, and each image linking one carries its own copy, so the
 # process would hold two sets of type metadata and two
-# `KernovaLogger.forwardingSink`s. A bundle with a BUNDLE_LOADER reaches the
+# `KernovaLogger.processSink`s. A bundle with a BUNDLE_LOADER reaches the
 # code through its host; one without links the code itself, and its host links
 # none. The pairs come from each test target's xcconfig, and a link is either
 # a packageProductDependencies entry or a package product in the Frameworks

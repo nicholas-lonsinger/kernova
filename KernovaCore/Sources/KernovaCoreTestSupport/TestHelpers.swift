@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Testing
 
 #if SWIFT_PACKAGE
@@ -61,7 +62,8 @@ func makeTestLifecycle(
 /// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
-/// reaches it weakly.
+/// reaches it weakly. The library and its VMs forward their records to
+/// `logSink`.
 @MainActor
 func makeWiredLibrary(
     storage: MockVMStorageService = MockVMStorageService(),
@@ -79,7 +81,8 @@ func makeWiredLibrary(
     appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive,
     hostPasteboard: any ClipboardPasteboard = FakePasteboard(),
     bundleProducts: AppBundleProducts = .testing,
-    virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost()
+    virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
+    logSink: KernovaLogger.ForwardingSink? = nil
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
@@ -96,7 +99,8 @@ func makeWiredLibrary(
         bridgedInterfaces: bridgedInterfaces,
         appActivation: appActivation,
         hostPasteboard: hostPasteboard,
-        bundleProducts: bundleProducts)
+        bundleProducts: bundleProducts,
+        logSink: logSink)
     return library
 }
 
@@ -482,7 +486,7 @@ func withOperation<T>(
 ) async throws -> T {
     let instance = VMInstance(
         bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
-        bundleProducts: .testing)
+        bundleProducts: .testing, logSink: nil)
     return try await withOperation(on: instance, .deletingSnapshot, body)
 }
 

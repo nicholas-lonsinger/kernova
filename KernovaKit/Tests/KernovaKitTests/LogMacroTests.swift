@@ -17,7 +17,7 @@ struct LogMacroTests {
                     let __logger = Self.logger
                     let __level: KernovaLogLevel = .notice
                     __logger.osLogger.log(level: __level.osLogType, "started")
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: "started", isPrivate: false)])
                     }
                 }()
@@ -34,7 +34,7 @@ struct LogMacroTests {
                     let __logger = logger
                     let __level: KernovaLogLevel = .info
                     __logger.osLogger.log(level: __level.osLogType, "a \(x, privacy: .public) b \(y, privacy: .private)")
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: "a ", isPrivate: false), LogWire.segment(x, isPrivate: false), LogSegment(text: " b ", isPrivate: false), LogWire.segment(y, isPrivate: true)])
                     }
                 }()
@@ -51,7 +51,7 @@ struct LogMacroTests {
                     let __logger = logger
                     let __level: KernovaLogLevel = .debug
                     __logger.osLogger.log(level: __level.osLogType, "n=\(count)")
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: "n=", isPrivate: false), LogWire.segment(count)])
                     }
                 }()
@@ -68,7 +68,7 @@ struct LogMacroTests {
                     let __logger = logger
                     let __level: KernovaLogLevel = .error
                     __logger.osLogger.log(level: __level.osLogType, "\(secret, privacy: .sensitive)")
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogWire.segment(secret, isPrivate: true)])
                     }
                 }()
@@ -85,7 +85,7 @@ struct LogMacroTests {
                     let __logger = logger
                     let __level: KernovaLogLevel = .info
                     __logger.osLogger.log(level: __level.osLogType, "id=\(value, format: .hex, privacy: .public)")
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: "id=", isPrivate: false), LogWire.segment(value, isPrivate: false)])
                     }
                 }()
@@ -114,7 +114,7 @@ struct LogMacroTests {
                     second
                     third
                     """)
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: "first ", isPrivate: false), LogWire.segment(a, isPrivate: false), LogSegment(text: ", ", isPrivate: false), LogSegment(text: "second\n", isPrivate: false), LogSegment(text: "third", isPrivate: false)])
                     }
                 }()
@@ -131,7 +131,7 @@ struct LogMacroTests {
                     let __logger = logger
                     let __level: KernovaLogLevel = .notice
                     __logger.osLogger.log(level: __level.osLogType, #"say "hi"\#n\#(name, privacy: .public)"#)
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: #"say \#"hi\#"\#n"#, isPrivate: false), LogWire.segment(name, isPrivate: false)])
                     }
                 }()
@@ -148,7 +148,7 @@ struct LogMacroTests {
                     let __logger = Self.logger
                     let __level: KernovaLogLevel = action == .none ? .debug : .info
                     __logger.osLogger.log(level: __level.osLogType, "decided")
-                    if let __sink = KernovaLogger.forwardingSink {
+                    if let __sink = __logger.forwardingSink {
                         __sink(__level, __logger.subsystem, __logger.category, [LogSegment(text: "decided", isPrivate: false)])
                     }
                 }()

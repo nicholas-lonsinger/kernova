@@ -83,12 +83,11 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Registered with `VsockLogBridge` before the startup banner, so the
-        // banner itself buffers into the pre-connect ring.
+        // Bootstrapped before the startup banner, so the banner itself buffers
+        // into the pre-connect ring.
         let vsockConnection = VsockHostConnection()
-        VsockLogBridge.connection = vsockConnection
-        KernovaLogger.forwardingSink = { level, subsystem, category, segments in
-            VsockLogBridge.connection?.forwardLog(
+        KernovaLogger.bootstrapProcessSink { level, subsystem, category, segments in
+            vsockConnection.forwardLog(
                 level: level, subsystem: subsystem, category: category, segments: segments)
         }
         #log(

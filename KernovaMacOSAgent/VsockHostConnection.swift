@@ -11,8 +11,7 @@ import KernovaLogging
 /// `KernovaLogger` forwards through, so its own records re-enter `forwardLog`,
 /// which takes that same non-reentrant lock.
 final class VsockHostConnection: @unchecked Sendable {
-    private static let logger = KernovaLogger(
-        subsystem: "app.kernova.macosagent", category: "VsockHostConnection")
+    private let logger: KernovaLogger
 
     /// Maximum number of `LogRecord` frames held between the logging thread
     /// and the host channel — waiting or in flight — oldest dropped first.
@@ -84,12 +83,16 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Production init — forwards on `KernovaVsockPort.log`.
     convenience init() {
-        self.init(client: VsockGuestClient(port: KernovaVsockPort.log, label: "log"))
+        self.init(client: VsockGuestClient(port: KernovaVsockPort.log, label: "log"), logSink: nil)
     }
 
-    /// Designated init; tests inject a socketpair-backed client.
-    init(client: VsockGuestClient) {
+    /// Designated init; tests inject a socketpair-backed client, and a
+    /// `logSink` that captures what this connection logs — `nil` forwards to
+    /// the process sink.
+    init(client: VsockGuestClient, logSink: KernovaLogger.ForwardingSink?) {
         self.client = client
+        self.logger = KernovaLogger(
+            subsystem: "app.kernova.macosagent", category: "VsockHostConnection", sink: logSink)
         // Default-disabled: no connect attempts until the host's first
         // `PolicyUpdate(logForwardingEnabled: true)`.
         self.client.pause()
@@ -104,14 +107,9 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Discards the buffered log records, then stops the loop and tears down
     /// any active channel.
-    ///
-    /// - Returns: the client's cancelled loop task, still winding down — see
-    ///   `VsockGuestClient.stop()`. Only this call has it: the client's own
-    ///   `stop` is one-shot.
-    @discardableResult
-    func stop() -> Task<Void, Never>? {
+    func stop() {
         lock.withLock { discardPendingLocked() }
-        return client.stop()
+        client.stop()
     }
 
     /// Applies a host policy update for log forwarding.
@@ -134,10 +132,10 @@ final class VsockHostConnection: @unchecked Sendable {
         if enabled { client.resume() }
         guard needsTransition else { return }
         if enabled {
-            #log(Self.logger, .notice, "Log forwarding enabled by host policy")
+            #log(logger, .notice, "Log forwarding enabled by host policy")
         } else {
             client.pause()
-            #log(Self.logger, .notice, "Log forwarding disabled by host policy")
+            #log(logger, .notice, "Log forwarding disabled by host policy")
         }
     }
 
@@ -240,7 +238,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// one frame deep.
     private func reportDroppingStarted() {
         #log(
-            Self.logger, .warning,
+            logger, .warning,
             "Log forward buffer full at \(Self.logBufferLimit, privacy: .public) records — dropping the oldest until the host channel drains"
         )
     }
@@ -306,7 +304,7 @@ final class VsockHostConnection: @unchecked Sendable {
                 // `drainScheduled` still stands here, so this line's own record
                 // rides the run reporting it rather than scheduling another.
                 #log(
-                    Self.logger, .warning,
+                    logger, .warning,
                     "Dropped \(dropped, privacy: .public) buffered log record(s) while the host channel was behind"
                 )
             case .send(let framed, let channel):
@@ -350,13 +348,13 @@ final class VsockHostConnection: @unchecked Sendable {
             for try await frame in channel.incoming {
                 guard frame.protocolVersion == 1 else {
                     #log(
-                        Self.logger, .warning,
+                        logger, .warning,
                         "Dropping inbound frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
                     )
                     continue
                 }
                 #log(
-                    Self.logger, .debug,
+                    logger, .debug,
                     "Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
         } catch {
@@ -374,12 +372,12 @@ final class VsockHostConnection: @unchecked Sendable {
         }
         if let failure {
             #log(
-                Self.logger, .warning,
+                logger, .warning,
                 "Vsock channel ended with error, holding \(held, privacy: .public) record(s) for the next connection: \(failure.localizedDescription, privacy: .public)"
             )
         } else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Vsock channel closed by host, holding \(held, privacy: .public) record(s) for the next connection"
             )
         }
