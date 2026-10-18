@@ -56,6 +56,13 @@ struct ClipboardTransferWordingTests {
             (.itemsUnreadable, .drop),
             (.sendFailed, .drop),
             (.unclaimed, .drop),
+            (.diskFull(needed: 4096, available: 1024), .dragOut),
+            (.interrupted(fileCount: nil), .dragOut),
+            (.timedOut, .dragOut),
+            (.transferFailed, .dragOut),
+            (.unpackFailed, .dragOut),
+            (.stagingFailed, .dragOut),
+            (.peerReported(nil), .dragOut),
         ]
     }
 
@@ -223,6 +230,23 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.peerReported(.dropFailed), .drop)).message
                 == "The drop didn't finish — some files may not be in the VM's Downloads folder.")
+    }
+
+    @Test("a drag out reads as files not copied from the VM, never as a paste or a drop")
+    func dragOutWording() throws {
+        for (failure, gesture) in everyArm where gesture == .dragOut {
+            let copy = try #require(wording(failure, gesture), "\(failure)")
+            #expect(copy.headline == "Files not copied from \(quotedVM).", "\(failure)")
+            #expect(copy.menuLine.hasPrefix("Drag: "), "\(failure)")
+            #expect(!copy.message.contains("paste"), "\(failure)")
+            #expect(!copy.message.contains("clipboard"), "\(failure)")
+        }
+        #expect(
+            try #require(wording(.diskFull(needed: nil, available: nil), .dragOut)).message
+                == "This Mac ran out of disk space receiving the files, so the drag didn't finish.")
+        #expect(
+            try #require(wording(.stagingFailed, .dragOut)).message
+                == "The files couldn't be saved where you dropped them, so the drag didn't finish.")
     }
 
     @Test("a passthrough forward shows the intake's own note")

@@ -47,7 +47,8 @@ struct VsockFeatureServiceSettleTests {
             return (VsockGuestLogService(channel: channel, label: label), nil)
         case .drop:
             let service = VsockDropService(
-                channel: channel, label: label, reporter: ClipboardTransferReporter())
+                channel: channel, label: label, reporter: ClipboardTransferReporter(),
+                stagingRoot: stagingRoot.root, stagingKey: label)
             return (service, { service.isConnected })
         case .clipboard:
             let service = VsockClipboardService(

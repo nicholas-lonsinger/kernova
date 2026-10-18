@@ -40,6 +40,11 @@ struct ClipboardProgressFormatTests {
             ClipboardProgressFormat.headline(
                 direction: .inbound, peerName: "macOS TEST", gesture: .paste)
                 == "Receiving from “macOS TEST”…")
+        // Serving a drag out is the guest copying files onto the Mac, never a
+        // paste into it.
+        #expect(
+            ClipboardProgressFormat.headline(direction: .outbound, peerName: "Mac", gesture: .dragOut)
+                == "Copying to “Mac”…")
     }
 
     @Test("the file counter shows the file being worked on, and is absent for a single file")

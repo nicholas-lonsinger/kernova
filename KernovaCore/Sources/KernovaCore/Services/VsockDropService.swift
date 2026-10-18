@@ -5,12 +5,13 @@ import KernovaLogging
 /// Streams files dropped on the VM display to the guest agent, which writes them
 /// into the guest's Downloads folder.
 ///
-/// One instance serves one accepted channel on `KernovaVsockPort.drop`, and the
-/// drop is send-only: that channel carries the `DropOffer` announcing the items
-/// and the guest's `DropComplete` closing the batch, never a payload byte. The
-/// guest pulls each item on a vsock data connection of its own, dialled to the
-/// drop data port and opened with a `ClipboardTransferRequest` — the transfer
-/// engine a paste runs on.
+/// One instance serves one accepted channel on `KernovaVsockPort.drop`. That
+/// channel carries the `DropOffer` announcing the items and the guest's
+/// `DropComplete` closing the batch, never a payload byte. The guest pulls each
+/// item on a vsock data connection of its own, dialled to the drop data port
+/// and opened with a `ClipboardTransferRequest` — the transfer engine a paste
+/// runs on. The same channel carries the guest's drags out the other way, which
+/// is why the endpoint has a staging of its own.
 ///
 /// Drops are **independent jobs**, not a supersession chain: dropping a second
 /// batch while the first is still streaming leaves both running under their own
@@ -94,6 +95,8 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
 
     init(
         channel: VsockChannel, label: String, reporter: ClipboardTransferReporter,
+        stagingRoot: ProcessStagingRoot, stagingKey: String,
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         directoryByteCount: @escaping @Sendable (URL) -> Int = {
@@ -108,10 +111,16 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         self.reporter = reporter
         self.directoryByteCount = directoryByteCount
         self.runOffMainActor = runOffMainActor
+        let staging = ClipboardFileStaging(
+            label: "host-drag-\(stagingKey)", root: stagingRoot,
+            freeSpaceProvider: freeSpaceProvider)
         self.endpoint = ClipboardEndpoint(
             channel: channel,
             configuration: ClipboardEndpoint.Configuration(
                 role: .host, kind: .drop, label: label, peerName: label,
+                // A dragged item is written where the user drops it, never on a
+                // pasteboard, so no OS paste deadline bounds it.
+                maxPasteBytes: { .max }, staging: staging,
                 progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
                 clock: clock),
             reporter: reporter)

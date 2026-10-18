@@ -374,28 +374,11 @@ final class VsockGuestDropAgent: Sendable {
     /// Moves a delivered representation out of staging and into the Downloads
     /// folder, naming it the way Finder would.
     ///
-    /// A rename, not a copy: staging and Downloads share the guest's data volume,
-    /// so nothing payload-scaled happens here. A cross-device move falls back to
-    /// copy-and-delete, which is the only case where it can.
+    /// Staging and Downloads share the guest's data volume, so this is a rename.
     private func land(_ representation: ClipboardContent.Representation, named filename: String)
         throws -> URL
     {
-        guard let source = representation.fileURL else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(
-            at: downloadsDirectory, withIntermediateDirectories: true)
-        let destination = NameUniquing.uniqueDestination(
-            in: downloadsDirectory,
-            filename: filename.isEmpty ? source.lastPathComponent : filename)
-        do {
-            try fileManager.moveItem(at: source, to: destination)
-        } catch let error as NSError where Self.isCrossDevice(error) {
-            try fileManager.copyItem(at: source, to: destination)
-            try? fileManager.removeItem(at: source)
-        }
-        return destination
+        try StagedItemLanding.land(representation, inDirectory: downloadsDirectory, named: filename)
     }
 
     /// Throws away a file that arrived for a job the user had already called
@@ -404,11 +387,6 @@ final class VsockGuestDropAgent: Sendable {
     private static func discard(_ representation: ClipboardContent.Representation) {
         guard let url = representation.fileURL else { return }
         try? FileManager.default.removeItem(at: url)
-    }
-
-    private static func isCrossDevice(_ error: NSError) -> Bool {
-        (error.userInfo[NSUnderlyingErrorKey] as? NSError)?.code == Int(EXDEV)
-            || error.code == Int(EXDEV)
     }
 
     /// Maps a filesystem failure to the code the host renders a sentence from.

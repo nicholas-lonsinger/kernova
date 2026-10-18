@@ -5,7 +5,8 @@ public enum ClipboardProgressFormat {
     /// Headline naming the operation and the machine on the other end.
     ///
     /// `gesture` names what outbound bytes are for: under `.peerPaste` an app on
-    /// the peer is blocked on them right now. Inbound reads the same for every
+    /// the peer is blocked on them right now, and under `.dragOut` they are
+    /// files the user dragged onto the peer. Inbound reads the same for every
     /// gesture — a paste this side performs parks the thread that would repaint
     /// it, so one never shows a readout at all.
     ///
@@ -19,8 +20,11 @@ public enum ClipboardProgressFormat {
         switch direction {
         case .inbound: return "Receiving from “\(peerName)”…"
         case .outbound:
-            return gesture == .peerPaste
-                ? "Pasting into “\(peerName)”…" : "Sending to “\(peerName)”…"
+            switch gesture {
+            case .peerPaste: return "Pasting into “\(peerName)”…"
+            case .dragOut: return "Copying to “\(peerName)”…"
+            case .paste, .preview, .copy, .forward, .drop: return "Sending to “\(peerName)”…"
+            }
         }
     }
 

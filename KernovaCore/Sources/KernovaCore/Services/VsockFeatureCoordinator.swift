@@ -229,7 +229,9 @@ extension VsockFeatureDescriptor {
         // `isConnected == false` already refuses the display gesture.
         make: { instance, channel in
             VsockDropService(
-                channel: channel, label: instance.name, reporter: instance.clipboardTransfers)
+                channel: channel, label: instance.name, reporter: instance.clipboardTransfers,
+                stagingRoot: ClipboardFileStaging.processRoot,
+                stagingKey: instance.instanceID.uuidString)
         })
 
     /// Builds the clipboard service for one accepted channel, wired to the VM's

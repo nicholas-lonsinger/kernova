@@ -51,4 +51,16 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// A dropped file did not reach the guest's Downloads folder, for a reason
     /// with no more specific code.
     case dropFailed = "clipboard.drop.failed"
+
+    /// The guest could not hand a drag over because the take named a drag that
+    /// is not its current one, or the press that carried it is over.
+    case dragTakeStale = "clipboard.drag.take.stale"
+
+    /// The guest's drag manager brought the catcher something other than the
+    /// taken drag, or a drag that does not allow a copy.
+    case dragTakeRefused = "clipboard.drag.take.refused"
+
+    /// The guest could not hand a drag over, for a reason with no more specific
+    /// code.
+    case dragTakeFailed = "clipboard.drag.take.failed"
 }

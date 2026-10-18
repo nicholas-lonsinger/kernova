@@ -39,6 +39,7 @@ struct VsockDropServiceTests {
         let clock = GatedEngineClock()
         /// The service's end, for a FIFO marker sent behind what the service wrote.
         let host: VsockChannel
+        private let stagingRoot = TestStagingRoot()
 
         init(
             // Zeroed so a transfer's readout is on screen while it runs; a test
@@ -59,6 +60,7 @@ struct VsockDropServiceTests {
             recorder = FrameRecorder(channel: guest)
             service = VsockDropService(
                 channel: host, label: "Drop VM", reporter: reports.reporter,
+                stagingRoot: stagingRoot.root, stagingKey: "drop-vm",
                 progressRevealDelay: progressRevealDelay, progressIdleGap: 0,
                 directoryByteCount: directoryByteCount,
                 runOffMainActor: runOffMainActor, clock: clock)

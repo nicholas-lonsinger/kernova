@@ -75,9 +75,9 @@ public final class ClipboardEndpoint {
         /// The ceiling an inbound paste's file set is measured against, read at
         /// each gate check so a change reaches a live connection.
         public var maxPasteBytes: @MainActor () -> Int
-        /// Where an inbound payload lands; `nil` only for a send-only
-        /// connection.
-        public var staging: ClipboardFileStaging?
+        /// Where an inbound payload lands. Every connection has one: both
+        /// channels carry offers both ways.
+        public var staging: ClipboardFileStaging
         /// How long a pull waits without progress before giving up.
         public var lazyPullTimeout: TimeInterval
         /// How long a transfer runs before its readout surfaces.
@@ -98,7 +98,7 @@ public final class ClipboardEndpoint {
         /// outliving the channel is never reused.
         public var firstGeneration: UInt64
 
-        /// Describes one connection; every field past `peerName` has the
+        /// Describes one connection; every field past `staging` has the
         /// production default.
         public init(
             role: Role,
@@ -106,7 +106,7 @@ public final class ClipboardEndpoint {
             label: String,
             peerName: String,
             maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
-            staging: ClipboardFileStaging? = nil,
+            staging: ClipboardFileStaging,
             lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
             progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
             progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
@@ -166,8 +166,8 @@ public final class ClipboardEndpoint {
     private let outbound: ClipboardOutboundOffers
 
     /// `nonisolated` so a paste-time provider fire can serve from whichever
-    /// thread the pasteboard server fired on; `nil` for a send-only connection.
-    nonisolated private let inbound: ClipboardInboundOffers?
+    /// thread the pasteboard server fired on.
+    nonisolated private let inbound: ClipboardInboundOffers
 
     nonisolated private let reporter: ClipboardTransferReporter
     nonisolated private let label: String
@@ -199,27 +199,27 @@ public final class ClipboardEndpoint {
             progressIdleGap: configuration.progressIdleGap,
             clock: configuration.clock,
             firstGeneration: configuration.firstGeneration)
-        // A send-only connection has no staging and never receives a byte; the
-        // session raises the fault for any other combination.
-        self.inbound = configuration.staging.map { staging in
-            ClipboardInboundOffers(
-                session: session, reporter: reporter, staging: staging,
-                peerName: configuration.peerName, maxPasteBytes: configuration.maxPasteBytes,
-                lazyPullTimeout: configuration.lazyPullTimeout,
-                progressRevealDelay: configuration.progressRevealDelay,
-                progressIdleGap: configuration.progressIdleGap, clock: configuration.clock)
-        }
+        self.inbound = ClipboardInboundOffers(
+            session: session, reporter: reporter, staging: configuration.staging,
+            peerName: configuration.peerName, maxPasteBytes: configuration.maxPasteBytes,
+            lazyPullTimeout: configuration.lazyPullTimeout,
+            progressRevealDelay: configuration.progressRevealDelay,
+            progressIdleGap: configuration.progressIdleGap, clock: configuration.clock)
         outbound.onActivity = { [weak self] activity in self?.record(activity) }
-        inbound?.onOfferReceived = { [weak self] offer in
+        inbound.onOfferReceived = { [weak self] offer in
             guard let self else { return }
             self.delegate?.endpoint(self, didReceiveOffer: offer)
         }
-        inbound?.onOfferRetracted = { [weak self] generation, reason in
+        inbound.onDragReceived = { [weak self] drag in
+            guard let self else { return }
+            self.delegate?.endpoint(self, didReceiveDrag: drag)
+        }
+        inbound.onOfferRetracted = { [weak self] generation, reason in
             guard let self else { return }
             self.delegate?.endpoint(self, didRetractOffer: generation, reason: reason)
         }
-        inbound?.onActivity = { [weak self] activity in self?.record(activity) }
-        inbound?.onRefusal = { [weak self] gesture, failure in
+        inbound.onActivity = { [weak self] activity in self?.record(activity) }
+        inbound.onRefusal = { [weak self] gesture, failure in
             guard let self else { return }
             self.delegate?.endpoint(self, didRefuse: gesture, failure: failure)
         }
@@ -238,7 +238,7 @@ public final class ClipboardEndpoint {
             onEnded: { [weak self] in
                 // Off the main actor and before anything hops to it: a pull
                 // parked on the main thread is what would block that hop.
-                self?.inbound?.endSession()
+                self?.inbound.endSession()
                 MainActorBridge.async { self?.channelDidEnd() }
             })
         guard started else { return }
@@ -264,7 +264,7 @@ public final class ClipboardEndpoint {
     /// "Pay on consume".
     public func stop() {
         session.stop()
-        inbound?.endSession()
+        inbound.endSession()
         outbound.endSession()
     }
 
@@ -332,6 +332,18 @@ public final class ClipboardEndpoint {
         outbound.release()
     }
 
+    /// Withdraws the drag this side offered under `generation`, telling the
+    /// peer with a `DragRelease`, and reports whether one was live and the
+    /// withdrawal went out.
+    ///
+    /// The guest's drag out only: a drag that ended inside the guest, or one a
+    /// newer drag of the same press replaced. Does nothing on any other
+    /// connection. Idempotent.
+    @discardableResult
+    public func withdraw(generation: UInt64) -> Bool {
+        outbound.withdraw(generation: generation)
+    }
+
     /// Calls off what the peer is pulling for `generation`, because the user
     /// cancelled its readout.
     public func cancelOutbound(generation: UInt64) {
@@ -341,7 +353,7 @@ public final class ClipboardEndpoint {
     // MARK: - Inbound (the peer offers, this side pulls)
 
     /// The clipboard offer the peer currently holds here, or `nil`.
-    public var inboundOffer: InboundOffer? { inbound?.inboundOffer }
+    public var inboundOffer: InboundOffer? { inbound.inboundOffer }
 
     /// Whether `generation` still names an offer this side may pull from.
     ///
@@ -349,38 +361,38 @@ public final class ClipboardEndpoint {
     /// retires the offer *before* waking the pulls it aborts, so this is how a
     /// blocking caller tells a cancellation from a transfer that failed.
     nonisolated public func hasLiveInboundOffer(generation: UInt64) -> Bool {
-        inbound?.hasLiveOffer(generation: generation) ?? false
+        inbound.hasLiveOffer(generation: generation)
     }
 
     /// Forgets the live offer without telling the peer — the buffer it was
     /// published into holds something else now.
     public func discardInboundOffer() {
-        inbound?.discardInboundOffer()
+        inbound.discardInboundOffer()
     }
 
     /// The representation already pulled for `(generation, repIndex)`, or `nil`.
     public func materialized(
         generation: UInt64, repIndex: Int
     ) -> ClipboardContent.Representation? {
-        inbound?.materialized(generation: generation, repIndex: repIndex)
+        inbound.materialized(generation: generation, repIndex: repIndex)
     }
 
     /// How many representations of `generation` have been cached, so an owner
     /// hashing off its actor can tell one landed while it worked.
     public func materializationEpoch(generation: UInt64) -> Int {
-        inbound?.materializationEpoch(generation: generation) ?? 0
+        inbound.materializationEpoch(generation: generation)
     }
 
     /// The offer's paste-bound total against the ceiling in force, or `nil` when
     /// `generation` names no live offer.
     public func pasteBudget(generation: UInt64) -> ClipboardPromisePolicy.PasteBudget? {
-        inbound?.pasteBudget(generation: generation)
+        inbound.pasteBudget(generation: generation)
     }
 
     /// The pasteboard items to promise for `generation`, or `nil` when it names
     /// no live offer.
     public func promisePlan(generation: UInt64) -> ClipboardPasteboardItemPlan? {
-        inbound?.promisePlan(generation: generation)
+        inbound.promisePlan(generation: generation)
     }
 
     /// Starts or joins the pull for one representation without holding a thread,
@@ -388,16 +400,17 @@ public final class ClipboardEndpoint {
     public func join(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
-        await inbound?.join(generation: generation, repIndex: repIndex, operation: operation)
+        await inbound.join(generation: generation, repIndex: repIndex, operation: operation)
     }
 
     /// Starts or joins the pull for one representation, holding the calling
-    /// thread until it resolves. The caller owns `operation` and the outcome.
+    /// thread until it resolves — see
+    /// ``ClipboardInboundOffers/pull(generation:repIndex:operation:)``. The
+    /// caller owns `operation` and the outcome.
     nonisolated public func pull(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) -> LazyPullOutcome {
-        inbound?.pull(generation: generation, repIndex: repIndex, operation: operation)
-            ?? .cancelled
+        inbound.pull(generation: generation, repIndex: repIndex, operation: operation)
     }
 
     /// Serves the pasteboard `.fileURL` for a promised representation at paste
@@ -405,7 +418,7 @@ public final class ClipboardEndpoint {
     /// event-loop wait is unavailable there it serves nothing rather than
     /// parking (`LazyPullCoordinator`).
     nonisolated public func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-        inbound?.serveFileURL(generation: generation, repIndex: repIndex)
+        inbound.serveFileURL(generation: generation, repIndex: repIndex)
     }
 
     /// Serves an inline pasteboard flavor's bytes for a promised representation
@@ -413,24 +426,24 @@ public final class ClipboardEndpoint {
     /// event-loop wait is unavailable there it serves nothing rather than
     /// parking (`LazyPullCoordinator`).
     nonisolated public func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-        inbound?.serveData(generation: generation, repIndex: repIndex, uti: uti)
+        inbound.serveData(generation: generation, repIndex: repIndex, uti: uti)
     }
 
     /// Stops the pulls an owner's readout started for `generation`, leaving one
     /// another gesture is also waiting on.
     public func cancelJoinedPulls(generation: UInt64) {
-        inbound?.cancelJoinedPulls(generation: generation)
+        inbound.cancelJoinedPulls(generation: generation)
     }
 
     /// Calls off everything `generation` has in flight and retires it.
     public func cancelInbound(generation: UInt64) {
-        inbound?.cancelInbound(generation: generation)
+        inbound.cancelInbound(generation: generation)
     }
 
     /// Forgets one inbound offer and everything it holds, telling the peer
     /// nothing — the gesture it belonged to is over.
     public func retireInbound(generation: UInt64) {
-        inbound?.retire(generation: generation)
+        inbound.retire(generation: generation)
     }
 
     /// Reports how the drop for `generation` ended. Best-effort: a channel that
@@ -441,6 +454,37 @@ public final class ClipboardEndpoint {
     ) {
         session.sendDropComplete(
             generation: generation, outcome: outcome, code: code, message: message)
+    }
+
+    // MARK: - Dragging out (guest offers, host takes over and pulls)
+
+    /// Retires the drag the guest offered under `generation` and tells the
+    /// guest with a `DragComplete`; any pull still parked on it wakes cancelled.
+    ///
+    /// The host's garbage collection of a drag: nothing will pull from it
+    /// again, or a take that failed before the guest caught it is abandoned.
+    /// Sent whether or not this side still holds the drag, since the guest
+    /// retires by generation — a call on any connection but the host's drop
+    /// channel does nothing. Best-effort.
+    public func completeDrag(generation: UInt64) {
+        guard role == .host, kind == .drop else { return }
+        inbound.completeDrag(generation: generation)
+    }
+
+    /// Asks the guest to hand the drag for `generation` over, once the pointer
+    /// left the VM display holding it. Host drop channel only; best-effort.
+    nonisolated public func sendDragTake(generation: UInt64) {
+        guard role == .host, kind == .drop else { return }
+        session.sendDragTake(generation: generation)
+    }
+
+    /// Reports one step of handing the drag for `generation` to the host. Guest
+    /// drop channel only; best-effort.
+    nonisolated public func sendDragHandOff(
+        generation: UInt64, step: ClipboardDragHandOffStep
+    ) {
+        guard role == .guest, kind == .drop else { return }
+        session.sendDragHandOff(generation: generation, step: step)
     }
 
     // MARK: - Data connections
@@ -491,10 +535,7 @@ public final class ClipboardEndpoint {
             // or modal loop, which runs nothing queued to main until it returns
             // — and what would let it return is this very connection. [M1]
             if case .clipboardTransferReply(let reply) = frame.payload {
-                guard let inbound = self.inbound else {
-                    return self.refuseDataConnection(fd: fd, saying: "a transfer reply")
-                }
-                inbound.adoptDataConnection(fd: fd, reply: reply)
+                self.inbound.adoptDataConnection(fd: fd, reply: reply)
                 return
             }
             // A request opens a transfer this side has to look up an offer and a
@@ -505,17 +546,15 @@ public final class ClipboardEndpoint {
 
     /// Hands one accepted data connection to the outbound half.
     ///
-    /// A frame outside this `(role, kind)` pair's vocabulary closes the
-    /// connection alone: it is one transfer's peer crossing wires, not the
-    /// control channel's, so the session it belongs to keeps running.
+    /// A frame outside the data connection's vocabulary closes the connection
+    /// alone: it is one transfer's peer crossing wires, not the control
+    /// channel's, so the session it belongs to keeps running.
     private func handleDataRequest(_ frame: Frame, fd: Int32) {
         guard !session.hasStopped else {
             ClipboardDataConnection.end(fd: fd)
             return
         }
-        guard case .clipboardTransferRequest(let request) = frame.payload,
-            ClipboardControlSession.sends(role: role, kind: kind)
-        else {
+        guard case .clipboardTransferRequest(let request) = frame.payload else {
             return refuseDataConnection(fd: fd, saying: "a payload this side cannot answer")
         }
         outbound.handleRequest(ClipboardPullRequest(request), link: .accepted(fd))
@@ -535,8 +574,10 @@ public final class ClipboardEndpoint {
     ///
     /// A payload outside this `(role, kind)` pair's vocabulary is a peer that
     /// crossed wires: the connection ends, and a conformant agent reconnects.
-    /// No payload byte arrives here — each transfer carries its own on a data
-    /// connection of its own.
+    /// Every drop-channel frame travels one way only, so each case names the
+    /// role that receives it — never inferred from which halves exist, since
+    /// both exist on every connection. No payload byte arrives here — each
+    /// transfer carries its own on a data connection of its own.
     ///
     /// A frame the peer sent and then closed on is still delivered; one the
     /// consume loop queued to main before a local ``stop()`` is not, because
@@ -547,40 +588,48 @@ public final class ClipboardEndpoint {
         guard !session.hasStopped else { return }
         switch frame.payload {
         case .clipboardOffer(let offer):
-            guard kind == .clipboard, let inbound else { return closeOnWrongPort() }
+            guard kind == .clipboard else { return closeOnWrongPort() }
             inbound.handleOffer(offer)
         case .clipboardRelease(let release):
-            guard kind == .clipboard, let inbound else { return closeOnWrongPort() }
+            guard kind == .clipboard else { return closeOnWrongPort() }
             inbound.handleRelease(release)
         case .clipboardRequest(let request):
             // Only a side that cannot dial ever asks over the control channel,
             // and only the guest can answer, so this frame travels host→guest
-            // on the clipboard channel and nowhere else.
-            guard role == .guest, ClipboardControlSession.sends(role: role, kind: kind),
-                let dial = session.dataDialer
-            else {
+            // — a paste on the clipboard channel, a drag-out pull on the drop
+            // channel.
+            guard role == .guest, let dial = session.dataDialer else {
                 return closeOnWrongPort()
             }
             outbound.handleRequest(ClipboardPullRequest(request), link: .dial(dial))
         case .dropOffer(let offer):
-            guard kind == .drop, let inbound else { return closeOnWrongPort() }
+            guard kind == .drop, role == .guest else { return closeOnWrongPort() }
             inbound.handleDropOffer(offer)
         case .dropRelease(let release):
-            guard kind == .drop, let inbound else { return closeOnWrongPort() }
-            inbound.handleDropRelease(release)
+            guard kind == .drop, role == .guest else { return closeOnWrongPort() }
+            inbound.handleWithdrawal(generation: release.generation)
         case .dropComplete(let complete):
             guard kind == .drop, role == .host else { return closeOnWrongPort() }
             outbound.handleDropComplete(complete)
+        case .dragOffer(let offer):
+            guard kind == .drop, role == .host else { return closeOnWrongPort() }
+            inbound.handleDragOffer(offer)
+        case .dragRelease(let release):
+            guard kind == .drop, role == .host else { return closeOnWrongPort() }
+            inbound.handleWithdrawal(generation: release.generation)
+        case .dragComplete(let complete):
+            guard kind == .drop, role == .guest else { return closeOnWrongPort() }
+            outbound.handleDragComplete(complete)
+            delegate?.endpoint(self, didCompleteDrag: complete.generation)
+        case .dragTake(let take):
+            guard kind == .drop, role == .guest else { return closeOnWrongPort() }
+            delegate?.endpoint(self, didReceiveDragTake: take.generation)
+        case .dragHandOff(let handOff):
+            guard kind == .drop, role == .host else { return closeOnWrongPort() }
+            delegate?.endpoint(
+                self, didReceiveDragHandOff: ClipboardDragHandOffStep(handOff),
+                generation: handOff.generation)
         case .error(let error):
-            guard let inbound else {
-                // A send-only connection has no inbound gesture to refuse, so
-                // the peer's account of one is only ever news for the log.
-                Self.logger.log(
-                    .warning,
-                    "Peer error on the \(self.channelWord, privacy: .public) channel for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)): \(error.code, privacy: .public) — \(error.message, privacy: .public)"
-                )
-                return
-            }
             inbound.handlePeerError(error)
         case .hello, .heartbeat, .policyUpdate, .logRecord:
             // Control-plane and log payloads have their own channels.
@@ -630,8 +679,8 @@ public final class ClipboardEndpoint {
     /// Test seam: awaited between a join's pull resolving and the supersession
     /// re-check that decides whether to cache it.
     var afterInboundPullForTesting: (@MainActor () async -> Void)? {
-        get { inbound?.afterInboundPullForTesting }
-        set { inbound?.afterInboundPullForTesting = newValue }
+        get { inbound.afterInboundPullForTesting }
+        set { inbound.afterInboundPullForTesting = newValue }
     }
 
     /// Test seam: how many inbound pulls this connection has started.
@@ -670,12 +719,34 @@ extension ClipboardEndpoint: ClipboardPromiseServing {}
 
 /// What one ``ClipboardEndpoint`` reports to its owner.
 ///
-/// Every method is optional: a send-only connection receives no offer, and only
-/// a surface that renders one implements the reporting pair.
+/// Every method is optional: each connection hears only the frames its
+/// `(role, kind)` receives, and only a surface that renders one implements the
+/// reporting pair.
 @MainActor
 public protocol ClipboardEndpointDelegate: AnyObject {
-    /// The peer has offered content, metadata only — nothing has been pulled.
+    /// The peer has offered clipboard content or a drop, metadata only —
+    /// nothing has been pulled.
     func endpoint(_ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer)
+
+    /// The guest has offered a drag in progress, metadata only — nothing has
+    /// been pulled. Host drop channel only; a `DragRelease` for it arrives as
+    /// ``endpoint(_:didRetractOffer:reason:)`` with `.released`.
+    func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDrag drag: ClipboardInboundDrag)
+
+    /// The host asks for the drag offered under `generation` to be handed over:
+    /// the pointer left the VM display holding it. Guest drop channel only.
+    func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64)
+
+    /// The guest reports one step of handing over the drag under `generation`.
+    /// Host drop channel only.
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragHandOff step: ClipboardDragHandOffStep,
+        generation: UInt64)
+
+    /// The host is done with the drag offered under `generation`, which this
+    /// side has already retired. Raised for every `DragComplete`, whether or not
+    /// the drag was still live here. Guest drop channel only.
+    func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64)
 
     /// An offer this side was holding stopped being servable. `generation` is
     /// `nil` when there was none, which is still the moment to withdraw whatever
@@ -703,6 +774,21 @@ extension ClipboardEndpointDelegate {
     public func endpoint(
         _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
     ) {}
+
+    /// Does nothing.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDrag drag: ClipboardInboundDrag) {}
+
+    /// Does nothing.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64) {}
+
+    /// Does nothing.
+    public func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragHandOff step: ClipboardDragHandOffStep,
+        generation: UInt64
+    ) {}
+
+    /// Does nothing.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {}
 
     /// Does nothing.
     public func endpoint(

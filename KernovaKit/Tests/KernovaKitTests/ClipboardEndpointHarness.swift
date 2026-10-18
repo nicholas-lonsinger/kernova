@@ -16,7 +16,7 @@ final class EndpointSide {
     let endpoint: ClipboardEndpoint
     let recorder = EndpointRecorder()
     let reports = ClipboardTransferReports()
-    let staging: ClipboardFileStaging?
+    let staging: ClipboardFileStaging
     /// The refusal-burst window's and the drop deadline's clock: its reading
     /// moves only when a test advances it, and a deadline armed on it never
     /// passes unless a test releases it.
@@ -31,7 +31,6 @@ final class EndpointSide {
         kind: ClipboardEndpoint.Kind,
         label: String,
         peerName: String,
-        receives: Bool,
         pasteLimit: Int,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider?,
         lazyPullTimeout: TimeInterval,
@@ -43,12 +42,8 @@ final class EndpointSide {
         self.pasteLimit = Locked(pasteLimit)
         let clock = GatedEngineClock()
         self.clock = clock
-        if receives {
-            staging = ClipboardFileStaging(
-                label: label, root: TestStagingRoot().root, freeSpaceProvider: freeSpaceProvider)
-        } else {
-            staging = nil
-        }
+        staging = ClipboardFileStaging(
+            label: label, root: TestStagingRoot().root, freeSpaceProvider: freeSpaceProvider)
         let limit = self.pasteLimit
         var configuration = ClipboardEndpoint.Configuration(
             role: role, kind: kind, label: label, peerName: peerName,
@@ -72,7 +67,7 @@ final class EndpointSide {
     func tearDown() {
         endpoint.stop()
         channel.close()
-        staging?.sweep()
+        staging.sweep()
     }
 
     /// Fires a blocking `.fileURL` serve off the test's main actor, as the
@@ -158,7 +153,7 @@ final class EndpointPair {
         let (a, b) = try makeStartedChannelPair()
         host = EndpointSide(
             channel: a, role: .host, kind: kind, label: "host", peerName: "Guest",
-            receives: kind == .clipboard, pasteLimit: hostPasteLimit,
+            pasteLimit: hostPasteLimit,
             freeSpaceProvider: hostFreeSpace, lazyPullTimeout: lazyPullTimeout,
             firstGeneration: hostFirstGeneration, dataLink: .accepts)
         // The guest's dial is a socketpair whose far end goes straight to the
@@ -167,7 +162,7 @@ final class EndpointPair {
         let hostEndpoint = host.endpoint
         guest = EndpointSide(
             channel: b, role: .guest, kind: kind, label: "guest", peerName: "Mac",
-            receives: true, pasteLimit: guestPasteLimit, freeSpaceProvider: guestFreeSpace,
+            pasteLimit: guestPasteLimit, freeSpaceProvider: guestFreeSpace,
             lazyPullTimeout: lazyPullTimeout, firstGeneration: guestFirstGeneration,
             dataLink: .dials(port: 0) { _ in
                 let (near, far) = try makeRawSocketPair()
@@ -202,7 +197,6 @@ final class RawPeerHarness {
     init(
         role: ClipboardEndpoint.Role = .host,
         kind: ClipboardEndpoint.Kind = .clipboard,
-        receives: Bool = true,
         pasteLimit: Int = ClipboardPasteLimit.defaultBytes,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
@@ -219,7 +213,7 @@ final class RawPeerHarness {
         side = EndpointSide(
             channel: local, role: role, kind: kind,
             label: role == .host ? "host" : "guest",
-            peerName: role == .host ? "Guest" : "Mac", receives: receives,
+            peerName: role == .host ? "Guest" : "Mac",
             pasteLimit: pasteLimit, freeSpaceProvider: freeSpaceProvider,
             lazyPullTimeout: lazyPullTimeout, firstGeneration: firstGeneration,
             dataLink: role == .host ? .accepts : .dials(port: 0, connect: dialled.dialer),

@@ -21,8 +21,28 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
         public let failure: ClipboardTransferFailure
     }
 
+    /// One `didReceiveDragHandOff` call.
+    public struct HandOff: Equatable, Sendable {
+        /// The drag being handed over.
+        public let generation: UInt64
+        /// The step the guest reported.
+        public let step: ClipboardDragHandOffStep
+    }
+
     /// Every offer the peer made, in arrival order.
     public private(set) var offers: [ClipboardEndpoint.InboundOffer] = []
+
+    /// Every drag the guest offered, in arrival order.
+    public private(set) var drags: [ClipboardInboundDrag] = []
+
+    /// Every generation the host asked to take, in arrival order.
+    public private(set) var takes: [UInt64] = []
+
+    /// Every hand-off step the guest reported, in arrival order.
+    public private(set) var handOffs: [HandOff] = []
+
+    /// Every generation the host said it is done with, in arrival order.
+    public private(set) var completedDrags: [UInt64] = []
 
     /// Every retraction, in order.
     public private(set) var retractions: [Retraction] = []
@@ -55,6 +75,19 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
         try await changed.wait { self.offers.count >= count }
         guard let offer = offers.last else { throw TestFailure("No offer recorded") }
         return offer
+    }
+
+    /// Suspends until at least `count` drags have arrived, returning the last.
+    @discardableResult
+    public func waitForDrag(count: Int = 1) async throws -> ClipboardInboundDrag {
+        try await changed.wait { self.drags.count >= count }
+        guard let drag = drags.last else { throw TestFailure("No drag recorded") }
+        return drag
+    }
+
+    /// Suspends until `predicate` holds over what has been recorded.
+    public func wait(until predicate: () -> Bool) async throws {
+        try await changed.wait(until: predicate)
     }
 
     /// Suspends until at least `count` retractions have arrived, returning the
@@ -118,6 +151,33 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
         _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
     ) {
         offers.append(offer)
+        changed.notify()
+    }
+
+    /// Records a drag the guest offered.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDrag drag: ClipboardInboundDrag) {
+        drags.append(drag)
+        changed.notify()
+    }
+
+    /// Records the host asking to take a drag.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64) {
+        takes.append(generation)
+        changed.notify()
+    }
+
+    /// Records one hand-off step.
+    public func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragHandOff step: ClipboardDragHandOffStep,
+        generation: UInt64
+    ) {
+        handOffs.append(HandOff(generation: generation, step: step))
+        changed.notify()
+    }
+
+    /// Records the host being done with a drag.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {
+        completedDrags.append(generation)
         changed.notify()
     }
 

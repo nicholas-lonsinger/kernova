@@ -17,6 +17,9 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     case forward
     /// Files dropped on the VM display — the host sends, the guest receives.
     case drop
+    /// Files dragged out of the VM display onto the Mac — the guest sends, the
+    /// host receives.
+    case dragOut
 
     /// Whether the user owed the message is on this side.
     ///
@@ -28,22 +31,22 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// Whether someone is waiting in front of a screen for this gesture to end,
     /// which is what earns its readout the surfaces that interrupt.
     ///
-    /// A peer's paste holds the app it is pasting into; a drop leaves the files
-    /// out of the guest until it lands. The rest run behind whatever the user is
-    /// doing.
-    public var isAwaited: Bool { self == .peerPaste || self == .drop }
+    /// A peer's paste holds the app it is pasting into; a drop or a drag out
+    /// leaves the files missing where the user put them until it lands. The rest
+    /// run behind whatever the user is doing.
+    public var isAwaited: Bool { self == .peerPaste || self == .drop || self == .dragOut }
 
     /// Which of several concurrent readouts a single-value surface shows —
     /// higher wins, ties settled by which opened its bar last.
     ///
     /// The order ``isAwaited`` implies, with the paste that holds an app ahead
-    /// of the drop whose files are not in the guest yet: a drop started
+    /// of the drop or drag whose files have not landed yet: a drop started
     /// mid-paste never takes the bar off the transfer someone is sitting in
     /// front of, and a preview fetch never takes it off either.
     public var readoutRank: Int {
         switch self {
         case .peerPaste: 2
-        case .drop: 1
+        case .drop, .dragOut: 1
         case .paste, .preview, .copy, .forward: 0
         }
     }

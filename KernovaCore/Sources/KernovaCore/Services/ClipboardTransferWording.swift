@@ -50,6 +50,9 @@ package struct ClipboardTransferWording: Equatable {
         let vm = quoted(vmName)
 
         switch (failure, finish.gesture) {
+        case (_, .dragOut):
+            return dragOutWording(for: failure, vm: vm)
+
         case (.diskFull(let needed, let available), let gesture):
             let detail =
                 [
@@ -244,9 +247,58 @@ package struct ClipboardTransferWording: Equatable {
         case .copy: return "Clipboard not copied from \(vm)."
         case .forward: return "Clipboard not copied to \(vm)."
         case .drop: return "Files not copied to \(vm)."
+        case .dragOut: return "Files not copied from \(vm)."
         case .peerPaste: return "Clipboard not pasted into \(vm)."
         case .paste: return "Clipboard not pasted from \(vm)."
         }
+    }
+
+    /// The wording for files dragged out of the VM display that did not reach
+    /// where they were dropped on this Mac.
+    ///
+    /// Says the drag did not finish rather than that nothing arrived: a
+    /// destination asks for each item in turn, so the items before the failure
+    /// may already be there.
+    private static func dragOutWording(
+        for failure: ClipboardTransferFailure, vm: String
+    ) -> ClipboardTransferWording {
+        let message: String
+        let menuLine: String
+        switch failure {
+        case .diskFull(let needed, let available):
+            let detail =
+                [
+                    needed.map { "\(DataFormatters.formatBytes($0)) needed" },
+                    available.map { "\(DataFormatters.formatBytes(UInt64(clamping: $0))) free" },
+                ]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+            let base = "This Mac ran out of disk space receiving the files, so the drag didn't finish"
+            message = detail.isEmpty ? "\(base)." : "\(base) (\(detail))."
+            menuLine = "Drag: not enough disk space on this Mac"
+        case .interrupted:
+            message = "The files stopped transferring when the VM disconnected."
+            menuLine = "Drag: the files didn't reach your Mac"
+        case .timedOut:
+            message = "The VM stopped sending the files, so the drag was called off."
+            menuLine = "Drag: the VM stopped sending the files"
+        case .unpackFailed:
+            message = "A dragged folder couldn't be unpacked, so the drag didn't finish."
+            menuLine = "Drag: the files didn't reach your Mac"
+        case .stagingFailed:
+            message = "The files couldn't be saved where you dropped them, so the drag didn't finish."
+            menuLine = "Drag: the files couldn't be saved"
+        case .peerReported:
+            message = "The VM couldn't send the files, so the drag didn't finish."
+            menuLine = "Drag: the files didn't reach your Mac"
+        case .tooLarge, .supersededCopyRetracted, .incompleteFileSet, .transferFailed,
+            .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed:
+            message = "The transfer from the VM failed, so the drag didn't finish."
+            menuLine = "Drag: the files didn't reach your Mac"
+        }
+        return ClipboardTransferWording(
+            headline: "Files not copied from \(vm).", message: message, menuLine: menuLine,
+            mentionsMacClipboardKept: false)
     }
 
     /// The dropdown line for a failure pulling bytes from the guest.

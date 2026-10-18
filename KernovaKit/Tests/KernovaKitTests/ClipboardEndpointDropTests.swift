@@ -4,8 +4,8 @@ import Testing
 
 @testable import KernovaKit
 
-/// The drop channel: independent jobs rather than a supersession chain, a
-/// send-only host end, and a verdict that crosses back as a `DropComplete`.
+/// The drop channel's host→guest direction: independent jobs rather than a
+/// supersession chain, and a verdict that crosses back as a `DropComplete`.
 @Suite("ClipboardEndpoint drops", .caseScoped)
 @MainActor
 struct ClipboardEndpointDropTests {
@@ -99,7 +99,7 @@ struct ClipboardEndpointDropTests {
 
     @Test("a failed verdict is rendered from its code, not the peer's sentence")
     func failedDropCompleteReportsThePeersCode() async throws {
-        let harness = try RawPeerHarness(kind: .drop, receives: false)
+        let harness = try RawPeerHarness(kind: .drop)
         defer { harness.tearDown() }
         harness.endpoint.offer(
             ClipboardContent(representations: [try dropRep("one.bin", Data("one".utf8))]))
@@ -147,7 +147,7 @@ struct ClipboardEndpointDropTests {
 
     @Test("cancelling the drop releases it to the peer and stops its readout")
     func hostCancelReleasesTheDrop() async throws {
-        let harness = try RawPeerHarness(kind: .drop, receives: false)
+        let harness = try RawPeerHarness(kind: .drop)
         defer { harness.tearDown() }
         // Incompressible and larger than the connection's send buffer, so the
         // item is still streaming when the Cancel lands: a peer that opens the
@@ -281,7 +281,7 @@ struct ClipboardEndpointDropTests {
 
     @Test("a session ending under live drops owes each job its own file count")
     func endingTheSessionInterruptsEachJobSeparately() async throws {
-        let harness = try RawPeerHarness(kind: .drop, receives: false)
+        let harness = try RawPeerHarness(kind: .drop)
         defer { harness.tearDown() }
 
         harness.endpoint.offer(
@@ -302,7 +302,7 @@ struct ClipboardEndpointDropTests {
 
     @Test("an interrupted drop counts the items its offer left out")
     func interruptedDropCountsWhatTheOfferLeftOut() async throws {
-        let harness = try RawPeerHarness(kind: .drop, receives: false)
+        let harness = try RawPeerHarness(kind: .drop)
         defer { harness.tearDown() }
 
         // Two of the three dragged items were unreadable before the offer, and

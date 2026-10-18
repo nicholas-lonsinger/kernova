@@ -17,6 +17,7 @@ struct VMInstanceDisplayDropTests {
     private final class Harness {
         let instance: VMInstance
         private var channels: [VsockChannel] = []
+        private let stagingRoot = TestStagingRoot()
 
         @MainActor
         init(
@@ -52,7 +53,8 @@ struct VMInstanceDisplayDropTests {
         func attachDrop() throws {
             let (_, host) = try makePair()
             let service = VsockDropService(
-                channel: host, label: "Drop VM", reporter: instance.clipboardTransfers)
+                channel: host, label: "Drop VM", reporter: instance.clipboardTransfers,
+                stagingRoot: stagingRoot.root, stagingKey: "drop-vm")
             instance.sessionContext?.vsock.drop = service
             service.start()
         }
