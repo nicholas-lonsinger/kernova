@@ -178,7 +178,7 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
             windowNumber: window?.windowNumber ?? 0, context: nil, eventNumber: 0,
             clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
         if event == nil {
-            #log(Self.logger, .fault, "Could not construct a \(type.rawValue, privacy: .public) mouse event")
+            Self.logger.log(.fault, "Could not construct a \(type.rawValue, privacy: .public) mouse event")
             assertionFailure("NSEvent.mouseEvent returned nil for a left-button event")
         }
         return event

@@ -397,8 +397,8 @@ extension VsockDropService: ClipboardEndpointDelegate {
         generation: UInt64
     ) {
         guard let take = takes[generation] else {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Hand-off step for gen=\(generation, privacy: .public) with no take running (conn=\(self.connectionTag, privacy: .public)) — ignored"
             )
             return

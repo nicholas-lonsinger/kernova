@@ -56,7 +56,7 @@ struct VsockGuestDropAgentTests {
                 freeSpaceProvider: freeSpaceProvider,
                 dataDialer: dialled.dialer,
                 revealInFinder: { urls in revealed.set(urls) })
-            agent.applyHostCapability(supportsDrop: true)
+            agent.applyHostCapabilities(.init(supportsDropFiles: true, supportsDragOut: false))
         }
 
         /// Starts the agent, enables it the way the control agent's capability
@@ -469,7 +469,7 @@ struct VsockGuestDropAgentTests {
     func staysPausedWithoutTheCapability() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        harness.agent.applyHostCapability(supportsDrop: false)
+        harness.agent.applyHostCapabilities(.unadvertised)
 
         harness.agent.start()
         harness.agent.applyPolicy(enabled: true)
@@ -481,7 +481,7 @@ struct VsockGuestDropAgentTests {
         #expect(harness.agent.liveChannelForTesting == nil)
 
         // The capability arriving is what starts the client.
-        harness.agent.applyHostCapability(supportsDrop: true)
+        harness.agent.applyHostCapabilities(.init(supportsDropFiles: true, supportsDragOut: false))
         try await waitUntil { harness.agent.liveChannelForTesting != nil }
     }
 

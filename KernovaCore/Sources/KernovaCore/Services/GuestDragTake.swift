@@ -207,8 +207,8 @@ package final class GuestDragTake: GuestDragTaking {
                 guard let self, !self.holds() else { return }
                 self.abandon(because: "the VM stopped running", tellingGuest: true)
             })
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Taking over the guest drag gen=\(self.generation, privacy: .public) of \(self.items.count, privacy: .public) item(s) from '\(self.peerName, privacy: .public)'"
         )
     }
@@ -258,8 +258,8 @@ package final class GuestDragTake: GuestDragTaking {
         case (.handingOff, .targeted):
             phase = .ready
             deadline?.cancel()
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "The guest's catcher is the target of drag gen=\(self.generation, privacy: .public)")
         case (.handingOff, .caught), (.ready, .caught):
             // Nothing here released the button, so the guest dropped on its
@@ -273,8 +273,8 @@ package final class GuestDragTake: GuestDragTaking {
             guestDragEnded = true
             retireIfDone()
         case (.released, .failed(let code, let message)):
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "The guest reported drag gen=\(self.generation, privacy: .public) failed after its release (\(code?.rawValue ?? "unknown", privacy: .public)): \(message, privacy: .public)"
             )
             guestDragEnded = true
@@ -351,8 +351,8 @@ package final class GuestDragTake: GuestDragTaking {
         phase = .released(hostSession: hostSession)
         stopBounds()
         display?.injectRelease()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Released the guest's button over its catcher for drag gen=\(self.generation, privacy: .public) (Mac session: \(hostSession, privacy: .public))"
         )
         retireIfDone()
@@ -366,8 +366,8 @@ package final class GuestDragTake: GuestDragTaking {
         }
         phase = .abandoned
         stopBounds()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Abandoned the take of guest drag gen=\(self.generation, privacy: .public): \(reason, privacy: .public)"
         )
         retire(tellingGuest: tellingGuest)

@@ -69,7 +69,7 @@ struct VsockGuestControlAgentTests {
         terminateAfter: TimeInterval? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
-        onHostCapabilitiesChanged: (@Sendable (Bool) -> Void)? = nil
+        onHostCapabilitiesChanged: (@Sendable (HostDropCapabilities) -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let provider: VsockSocketProvider = { _, _ in
@@ -422,24 +422,24 @@ struct VsockGuestControlAgentTests {
         #expect(policy.clipboardSharingEnabled == false)
     }
 
-    // MARK: - Display drops
+    // MARK: - Display drops and drags out
 
-    /// Collects every drop capability `onHostCapabilitiesChanged` reports, in
-    /// order.
+    /// Collects every drop-channel capability set `onHostCapabilitiesChanged`
+    /// reports, in order.
     private func recordingDropCapability(
-        into reported: AtomicBox<[Bool]>
-    ) -> @Sendable (Bool) -> Void {
-        { supportsDrop in reported.update { $0 = ($0 ?? []) + [supportsDrop] } }
+        into reported: AtomicBox<[HostDropCapabilities]>
+    ) -> @Sendable (HostDropCapabilities) -> Void {
+        { capabilities in reported.update { $0 = ($0 ?? []) + [capabilities] } }
     }
 
-    @Test("the host's drop capability is reported from its Hello")
+    @Test("the host's drop and drag-out capabilities are reported from its Hello")
     func hostDropCapabilityObservedFromHello() async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
         let host = VsockChannel(fileDescriptor: hostFd)
         host.start()
         defer { host.close() }
 
-        let reported = AtomicBox<[Bool]>()
+        let reported = AtomicBox<[HostDropCapabilities]>()
         let agent = makeAgent(
             agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
         agent.start()
@@ -449,11 +449,34 @@ struct VsockGuestControlAgentTests {
         // The connection itself clears the previous host's capabilities, which
         // is a change the drop client has to hear about too.
         try await reported.changed.wait { (reported.value?.count ?? 0) >= 1 }
-        #expect(reported.value == [false])
+        #expect(reported.value == [.unadvertised])
 
         try host.send(makeHostHelloFrame())
         try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
-        #expect(reported.value == [false, true])
+        #expect(
+            reported.value == [.unadvertised, HostDropCapabilities(supportsDropFiles: true, supportsDragOut: true)])
+    }
+
+    @Test("a host that takes drops but not drags out leaves drag-out off")
+    func hostWithoutDragOutCapability() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let reported = AtomicBox<[HostDropCapabilities]>()
+        let agent = makeAgent(
+            agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host)  // drain outbound Hello
+        var hello = makeHostHelloFrame()
+        hello.hello.capabilities.removeAll { $0 == KernovaCapability.dragOutFilesV1 }
+        try host.send(hello)
+        try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
+
+        #expect(reported.value?.last == HostDropCapabilities(supportsDropFiles: true, supportsDragOut: false))
     }
 
     @Test("a host that advertises no drop capability leaves it off")
@@ -463,7 +486,7 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let reported = AtomicBox<[Bool]>()
+        let reported = AtomicBox<[HostDropCapabilities]>()
         let agent = makeAgent(
             agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
         agent.start()
@@ -473,7 +496,7 @@ struct VsockGuestControlAgentTests {
         try host.send(makeHostHelloFrame(streamingCapable: false))
         try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
 
-        #expect(reported.value == [false, false])
+        #expect(reported.value == [.unadvertised, .unadvertised])
     }
 
     @Test("A stop() taken inside onPolicy drops the policy buffered behind it")
