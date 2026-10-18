@@ -124,7 +124,10 @@ package final class GuestDragTake: GuestDragTaking {
     /// How the take's transfers ended early.
     private enum Terminal {
         case cancelled
-        case failed(ClipboardTransferFailure)
+        /// `reported` once the readout has said so. A failure no write has met
+        /// is reported by the first write that asks, so a destination that
+        /// never asks for the rest is told nothing.
+        case failed(ClipboardTransferFailure, reported: Bool)
     }
 
     /// How one item write ended, as the main actor settles it.
@@ -340,10 +343,14 @@ package final class GuestDragTake: GuestDragTaking {
         case .handingOff, .ready:
             abandon(because: "the drop channel closed", tellingGuest: false)
         case .released(let hostSession):
-            // A destination still owed items would otherwise see each later
-            // write fail with nothing on the readout to say why.
-            if hostSession, !hostSessionDroppedNothing, written.count < items.count {
-                fail(.interrupted(fileCount: items.count - written.count))
+            let owed = items.count - written.count
+            if writesInFlight > 0 {
+                fail(.interrupted(fileCount: owed))
+            } else if hostSession, !hostSessionDroppedNothing, owed > 0 {
+                // Kernova's own clipboard window takes only a drop's first
+                // promise, so an accepted drop can leave items no destination
+                // will ever ask for.
+                endTransfers(on: .interrupted(fileCount: owed), reported: false)
             }
             retire(tellingGuest: false)
         case .abandoned:
@@ -490,7 +497,13 @@ package final class GuestDragTake: GuestDragTaking {
         guard items.indices.contains(index) else {
             return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
         }
-        if let terminal { return .failure(Self.error(for: terminal)) }
+        if let terminal {
+            if case .failed(let failure, reported: false) = terminal {
+                self.terminal = .failed(failure, reported: true)
+                liveReadout().finish(.failed(failure))
+            }
+            return .failure(Self.error(for: terminal))
+        }
         guard case .released = phase, !isRetired else {
             // The drag was already garbage-collected: every item was written,
             // or the session ended with nothing dropped.
@@ -544,13 +557,18 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
-    /// Ends the take's transfers on `failure`: the readout reports it — one
-    /// opened for the purpose when none is running — and no further item is
-    /// pulled.
+    /// Ends the take's transfers on `failure` and has the readout report it —
+    /// one opened for the purpose when none is running.
     private func fail(_ failure: ClipboardTransferFailure) {
+        endTransfers(on: failure, reported: true)
+    }
+
+    /// Ends the take's transfers on `failure`, so no further item is pulled,
+    /// reporting it now only when `reported`.
+    private func endTransfers(on failure: ClipboardTransferFailure, reported: Bool) {
         guard terminal == nil else { return }
-        terminal = .failed(failure)
-        liveReadout().finish(.failed(failure))
+        terminal = .failed(failure, reported: reported)
+        if reported { liveReadout().finish(.failed(failure)) }
         endpoint.cancelInbound(generation: generation)
     }
 
@@ -588,7 +606,7 @@ package final class GuestDragTake: GuestDragTaking {
     private static func error(for terminal: Terminal) -> GuestDragWriteFailure {
         switch terminal {
         case .cancelled: GuestDragWriteFailure(CocoaError(.userCancelled))
-        case .failed(let failure): GuestDragWriteFailure(GuestDragWriteError.failed(failure))
+        case .failed(let failure, _): GuestDragWriteFailure(GuestDragWriteError.failed(failure))
         }
     }
 }

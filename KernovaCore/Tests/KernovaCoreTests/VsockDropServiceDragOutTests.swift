@@ -746,7 +746,7 @@ struct VsockDropServiceDragOutTests {
                 == .cancelled)
     }
 
-    @Test("the channel ending while a destination is still owed items reports them interrupted")
+    @Test("the channel ending while a destination is still owed items reports them interrupted when one is asked for")
     func channelEndWithItemsOwedIsReported() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
@@ -761,13 +761,17 @@ struct VsockDropServiceDragOutTests {
                 == .landed)
 
         harness.guestChannel.close()
+        try await waitForChange { !harness.service.isConnected }
 
-        try await harness.reports.waitForFailure()
-        #expect(harness.reports.failure == .interrupted(fileCount: 2))
-        #expect(harness.reports.finish?.gesture == .dragOut)
+        // A destination that never asks for the rest is told nothing.
+        #expect(harness.reports.failure == nil)
+
         #expect(
             await harness.write(take, item: 1, to: destination.appendingPathComponent("b.txt"))
                 == .failed(.interrupted(fileCount: 2)))
+        try await harness.reports.waitForFailure()
+        #expect(harness.reports.failure == .interrupted(fileCount: 2))
+        #expect(harness.reports.finish?.gesture == .dragOut)
     }
 
     @Test("the channel ending once a session dropped nothing reports nothing")
