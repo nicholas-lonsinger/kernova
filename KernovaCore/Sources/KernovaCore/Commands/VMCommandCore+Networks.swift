@@ -41,7 +41,7 @@ extension VMCommandCore {
         }
         let network = try library.networks.create(name: name, kind: kind, verb: .createNetwork)
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Created the \(kind.rawValue, privacy: .public) network \(network.id.uuidString, privacy: .public)"
         )
         return summary(network)
@@ -53,7 +53,7 @@ extension VMCommandCore {
         library.networks.reload()
         let network = try library.networks.requireNetwork(named: network, verb: .renameNetwork)
         try library.networks.rename(network.id, to: newName, verb: .renameNetwork)
-        #log(Self.logger, .notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
+        #log(logger, .notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
     }
 
     /// Stops listing the network `network` names.
@@ -118,7 +118,7 @@ extension VMCommandCore {
         // ``VMLibraryFilter/Network/unlisted``, never on the network itself.
         try library.networks.remove(network.id, verb: .deleteNetwork)
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Deleted the network \(network.id.uuidString, privacy: .public)"
         )
     }

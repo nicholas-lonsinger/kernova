@@ -2,6 +2,7 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -11,7 +12,7 @@ import Testing
 /// it rests here: an edit is refused inside its coordinated write, the VM
 /// claims its identity against every bring-up, and each event-driven refresh
 /// marks the hold, clears it, and re-reads what the other copy wrote.
-@Suite("Another copy's hold", .serialized, .caseScoped)
+@Suite("Another copy's hold", .caseScoped)
 @MainActor
 struct VMOtherCopyHoldTests {
     /// An in-memory store that counts each run-lock probe made inside a
@@ -527,33 +528,20 @@ struct VMOtherCopyHoldTests {
 
     // MARK: - Records
 
-    /// Every log record naming `vmName` while installed, through the logger's
-    /// forwarding sink.
-    ///
-    /// The sink is process-wide, so this suite runs `.serialized` and each test
-    /// names its VM uniquely: a record another suite emits meanwhile names a
-    /// VM of its own.
-    private final class LogCapture: @unchecked Sendable {
-        private let lock = NSLock()
-        private var recorded: [String] = []
-        private let vmName: String
+    /// Every record the loggers it builds receive — the loggers a test builds
+    /// the core and the VM under test with.
+    private final class LogCapture: Sendable {
+        private let recorded = Mutex<[String]>([])
 
-        init(naming vmName: String) {
-            self.vmName = vmName
-            KernovaLogger.forwardingSink = { [self] _, subsystem, _, segments in
-                let text = segments.map(\.text).joined()
-                guard subsystem.hasPrefix("app.kernova"), text.contains("'\(self.vmName)'") else {
-                    return
-                }
-                lock.withLock { recorded.append(text) }
+        /// A logger labelled like `base`, whose records land here.
+        func logger(like base: KernovaLogger) -> KernovaLogger {
+            KernovaLogger(subsystem: base.subsystem, category: base.category) {
+                [self] _, _, _, segments in
+                recorded.withLock { $0.append(segments.map(\.text).joined()) }
             }
         }
 
-        func uninstall() {
-            KernovaLogger.forwardingSink = nil
-        }
-
-        var messages: [String] { lock.withLock { recorded } }
+        var messages: [String] { recorded.withLock { $0 } }
 
         /// The records a refused verb leaves.
         var refusals: [String] { messages.filter { $0.hasPrefix("Refused ") } }
@@ -561,24 +549,20 @@ struct VMOtherCopyHoldTests {
         /// The records a change of another copy's hold leaves.
         var holdTransitions: [String] {
             messages.filter {
-                $0.hasPrefix("Found '\(vmName)' held by another copy")
+                ($0.hasPrefix("Found '") && $0.hasSuffix("' held by another copy of Kernova"))
                     || $0.hasPrefix("Another copy of Kernova no longer holds")
             }
         }
     }
 
-    private static func uniqueName(_ base: String) -> String {
-        "\(base) \(UUID().uuidString.prefix(8))"
-    }
-
     @Test("A refused set records one refusal, naming the verb, and the hold it found once")
     func refusedSetRecordsOnce() throws {
-        let harness = makeCore()
-        let name = Self.uniqueName("Held set")
-        let instance = harness.library.registerFixture(name: name)
+        let capture = LogCapture()
+        let harness = makeCore(loggingTo: capture)
+        let name = "Held set"
+        let instance = harness.library.registerFixture(
+            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger))
         harness.storage.files.holdElsewhere(instance.bundleURL)
-        let capture = LogCapture(naming: name)
-        defer { capture.uninstall() }
 
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
@@ -595,14 +579,14 @@ struct VMOtherCopyHoldTests {
 
     @Test("A refused revert records one refusal, and names no snapshot")
     func refusedRevertRecordsOnce() async throws {
-        let harness = makeCore()
-        let name = Self.uniqueName("Held revert")
+        let capture = LogCapture()
+        let harness = makeCore(loggingTo: capture)
+        let name = "Held revert"
         let snapshot = VMSnapshot(name: "Only", kind: .cold, macAddress: nil)
         let instance = harness.library.registerFixture(
-            name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
+            name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]),
+            activityLogger: capture.logger(like: VMActivity.defaultLogger))
         harness.storage.files.holdElsewhere(instance.bundleURL)
-        let capture = LogCapture(naming: name)
-        defer { capture.uninstall() }
 
         await #expect(throws: CommandError.self) {
             try await harness.core.revertToSnapshot(
@@ -617,12 +601,12 @@ struct VMOtherCopyHoldTests {
 
     @Test("A refused delete records one refusal")
     func refusedDeleteRecordsOnce() async throws {
-        let harness = makeCore()
-        let name = Self.uniqueName("Held delete")
-        let instance = harness.library.registerFixture(name: name)
+        let capture = LogCapture()
+        let harness = makeCore(loggingTo: capture)
+        let name = "Held delete"
+        let instance = harness.library.registerFixture(
+            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger))
         harness.storage.files.holdElsewhere(instance.bundleURL)
-        let capture = LogCapture(naming: name)
-        defer { capture.uninstall() }
 
         await #expect(throws: CommandError.self) {
             try await harness.core.delete(
@@ -635,17 +619,17 @@ struct VMOtherCopyHoldTests {
 
     @Test("A start refused for a twin's identity records one refusal")
     func refusedTwinStartRecordsOnce() async throws {
-        let harness = makeCore()
-        let name = Self.uniqueName("Twin")
+        let capture = LogCapture()
+        let harness = makeCore(loggingTo: capture)
+        let name = "Twin"
         func twin(_ config: inout VMConfiguration) {
             config.networkEnabled = true
             config.macAddress = Self.sharedMAC
         }
-        let source = harness.library.registerFixture(name: Self.uniqueName("Source"), mutate: twin)
-        let copy = harness.library.registerFixture(name: name, mutate: twin)
+        let source = harness.library.registerFixture(name: "Source", mutate: twin)
+        let copy = harness.library.registerFixture(
+            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger), mutate: twin)
         harness.storage.files.holdElsewhere(source.bundleURL)
-        let capture = LogCapture(naming: name)
-        defer { capture.uninstall() }
 
         await #expect(throws: CommandError.self) {
             try await harness.core.start(.id(copy.id), recovery: false, consent: .none)
@@ -659,10 +643,10 @@ struct VMOtherCopyHoldTests {
     func unchangedHoldRecordsNothing() {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let name = Self.uniqueName("Probed")
-        let instance = library.registerFixture(name: name)
-        let capture = LogCapture(naming: name)
-        defer { capture.uninstall() }
+        let name = "Probed"
+        let capture = LogCapture()
+        let instance = library.registerFixture(
+            name: name, activityLogger: capture.logger(like: VMActivity.defaultLogger))
 
         storage.files.holdElsewhere(instance.bundleURL)
         library.refreshFromOtherCopies()
@@ -711,5 +695,10 @@ struct VMOtherCopyHoldTests {
 
     private func makeCore() -> WiredCommandCore {
         WiredCommandCore()
+    }
+
+    /// A core whose verbs log to `capture`.
+    private func makeCore(loggingTo capture: LogCapture) -> WiredCommandCore {
+        WiredCommandCore(logger: capture.logger(like: VMCommandCore.defaultLogger))
     }
 }

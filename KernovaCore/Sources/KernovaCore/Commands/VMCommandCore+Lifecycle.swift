@@ -184,7 +184,7 @@ extension VMCommandCore {
     /// `instance`, which answers it with what it answers its own caller.
     private func logJoin(_ instance: VMInstance) {
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Joining the bring-up already in flight for '\(instance.name, privacy: .public)'")
     }
 
@@ -241,7 +241,7 @@ extension VMCommandCore {
         _ account: GuestAccountIntent, on instance: VMInstance
     ) -> CommandError {
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Refused to start '\(instance.name, privacy: .public)': nobody has answered for the account '\(account.username, privacy: .public)' it was set up with"
         )
         return .guestAccountPasswordRequired(
@@ -305,14 +305,14 @@ extension VMCommandCore {
         let credentials = GuestProvisioningCredentials(intent: account, password: password)
         if let refusal = library.virtualizationHost.guestAccountRefusal(credentials) {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "macOS turned down the password for the account '\(account.username, privacy: .public)' on '\(configuration.name, privacy: .public)'"
             )
             throw CommandError.invalidArgument(refusal.message)
         }
         library.holdGuestAccountPassword(GuestAccountPassword(password), for: id)
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Holding the password for the account '\(account.username, privacy: .public)' '\(configuration.name, privacy: .public)' was set up with"
         )
     }
@@ -331,7 +331,7 @@ extension VMCommandCore {
             )
         }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Skipping the account '\(account.username, privacy: .public)' '\(instance.name, privacy: .public)' was set up with — macOS asks for one in Setup Assistant instead"
         )
         let write = try edit(.liveKeys, on: instance, verb: .start) { permit in
@@ -378,7 +378,7 @@ extension VMCommandCore {
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
         guard let surface = displayBootSurface?(instance) else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
             )
             return
@@ -394,12 +394,12 @@ extension VMCommandCore {
             break
         case .notSaved:
             #log(
-                Self.logger, .warning,
+                logger, .warning,
                 "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"
             )
         case .refused(let refusal):
             #log(
-                Self.logger, .warning,
+                logger, .warning,
                 "The window-fitted resolution for '\(instance.name, privacy: .public)' was refused — booting at the previously saved resolution: \(refusal.localizedDescription, privacy: .public)"
             )
         }
@@ -426,7 +426,7 @@ extension VMCommandCore {
             return failure(error, verb: verb, on: instance)
         }
         #log(
-            Self.logger, .error,
+            logger, .error,
             "Failed to \(verb.rawValue, privacy: .public) '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
         )
         return ranAndFailed(error, verb: verb, on: instance)
@@ -575,7 +575,7 @@ extension VMCommandCore {
         switch result {
         case .failure(is CancellationError):
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
             )
             return []
@@ -621,7 +621,7 @@ extension VMCommandCore {
         else { return }
         let image = instance.configuration.installedImage?.displayName ?? "the installed image"
         #log(
-            Self.logger, .warning,
+            logger, .warning,
             "Dropping the guest account for '\(instance.name, privacy: .public)': \(image, privacy: .public) does not run the guest provisioning protocol"
         )
         try instance.activity.edit(.observations) { try library.retractGuestAccount($0).get() }
@@ -639,7 +639,7 @@ extension VMCommandCore {
         guard consent.covers(.cancelGuestSetup) else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
         }
-        #log(Self.logger, .info, "Cancelling setup for '\(instance.name, privacy: .public)'")
+        #log(logger, .info, "Cancelling setup for '\(instance.name, privacy: .public)'")
         do {
             // The setup operation's own ending owns the status transition and
             // the `setupState` cleanup.
@@ -809,7 +809,7 @@ extension VMCommandCore {
             }
         case .revertsToBaseline(let baseline):
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
             )
             try await awaitRevert(instance, startRevert(instance, to: baseline))
@@ -938,7 +938,7 @@ extension VMCommandCore {
             try await lifecycle.pause(instance)
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to pause '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .pause, on: instance)
@@ -1014,7 +1014,7 @@ extension VMCommandCore {
             try await lifecycle.save(instance, origin: origin)
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to save '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .suspend, on: instance)
@@ -1136,7 +1136,7 @@ extension VMCommandCore {
             until: isOff, before: ObservedChangeDeadline(seconds: seconds, clock: clock))
         guard settled else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "'\(instance.name, privacy: .public)' had not powered off \(seconds, privacy: .public)s after the shutdown request"
             )
             throw CommandError.timedOut(vm: summary(instance), verb: verb, seconds: seconds)
@@ -1211,9 +1211,9 @@ extension VMCommandCore {
     /// going down — a client left reading a socket that simply closed cannot
     /// tell success from a crash.
     func quit() {
-        #log(Self.logger, .notice, "Quit requested from a command front door")
+        #log(logger, .notice, "Quit requested from a command front door")
         guard let requestQuit else {
-            #log(Self.logger, .fault, "No adapter is wired to take the app down")
+            #log(logger, .fault, "No adapter is wired to take the app down")
             assertionFailure("No adapter is wired to take the app down")
             return
         }

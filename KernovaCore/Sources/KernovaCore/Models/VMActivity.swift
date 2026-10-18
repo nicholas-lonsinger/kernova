@@ -71,10 +71,14 @@ package final class VMActivity {
         return hold.isAnotherCopy
     }
 
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMActivity")
+    /// What a VM's activity logs to unless its builder passes another logger.
+    nonisolated static let defaultLogger = KernovaLogger(subsystem: "app.kernova", category: "VMActivity")
 
-    init(phase: VMLifecyclePhase) {
+    private let logger: KernovaLogger
+
+    init(phase: VMLifecyclePhase, logger: KernovaLogger = VMActivity.defaultLogger) {
         self.phase = phase
+        self.logger = logger
     }
 
     private var name: String { owner?.name ?? "" }
@@ -222,7 +226,7 @@ package final class VMActivity {
         else { return false }
         running.forward(to: followUp.outcome)
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "A follow-up on '\(self.name, privacy: .public)' joined the \(String(describing: holder.kind), privacy: .public) holding it"
         )
         return true
@@ -239,7 +243,7 @@ package final class VMActivity {
         else { return false }
         queued.outcome.forward(to: followUp.outcome)
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "A follow-up on '\(self.name, privacy: .public)' joined the queued one making the same request"
         )
         return true
@@ -259,7 +263,7 @@ package final class VMActivity {
         _ reason: VMAdmission.Refusal, for followUp: VMFollowUp
     ) -> VMAdmissionRefusal {
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Dropped a follow-up scoped to \(String(describing: followUp.scope), privacy: .public) on '\(self.name, privacy: .public)': \(String(describing: reason), privacy: .public)"
         )
         return VMAdmissionRefusal(refusal: reason)
@@ -751,7 +755,7 @@ package final class VMActivity {
             try bundle.refresh()
         } catch {
             #log(
-                Self.logger, .warning,
+                logger, .warning,
                 "Could not re-read the bundle of '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -759,7 +763,7 @@ package final class VMActivity {
         reconcileRest()
         if phase != before {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Re-read '\(self.name, privacy: .public)' from its bundle: it now rests \(String(describing: self.phase), privacy: .public)"
             )
         }
@@ -775,11 +779,11 @@ package final class VMActivity {
         guard hold.isAnotherCopy != wasHeldByAnotherCopy else { return }
         if hold.isAnotherCopy {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Found '\(self.name, privacy: .public)' held by another copy of Kernova")
         } else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Another copy of Kernova no longer holds '\(self.name, privacy: .public)'")
         }
         withMutation(keyPath: \.heldByAnotherCopy) {}
@@ -817,7 +821,7 @@ package final class VMActivity {
     private func endingOperation(_ outcome: VMOutcome) -> VMOperation? {
         guard case .operating(let operation) = phase, operation.outcome === outcome else {
             #log(
-                Self.logger, .fault,
+                logger, .fault,
                 "Operation on '\(self.name, privacy: .public)' ended while the VM was \(self.status.rawValue, privacy: .public)"
             )
             assertionFailure("An operation ended without holding its VM")
@@ -1074,13 +1078,13 @@ package final class VMActivity {
         switch event {
         case .guestDidStop:
             if let sessionID = liveSessionID { sessionEnded(.poweredOff, from: sessionID) }
-            #log(Self.logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
+            #log(logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
             if let sessionID = liveSessionID {
                 sessionEnded(.stoppedWithError(message: error.localizedDescription), from: sessionID)
             }
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
             )
         case .networkAttachmentDisconnected(let error):
@@ -1091,7 +1095,7 @@ package final class VMActivity {
             // disconnects every assigned accessory too — so it never alerts.
             guard let gone = accessoryLeftGuest(deviceID: deviceID) else { break }
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "USB accessory \(gone.accessory.displayName, privacy: .public) disconnected from VM '\(self.name, privacy: .public)'"
             )
         }
@@ -1210,7 +1214,7 @@ package final class VMActivity {
     ) {
         guard let sessionContext else {
             #log(
-                Self.logger, .fault,
+                logger, .fault,
                 "No session context to adopt a build result for '\(self.name, privacy: .public)'")
             assertionFailure("adoptBuildProducts without beginSessionContext for '\(name)'")
             return
@@ -1239,7 +1243,7 @@ package final class VMActivity {
             operation.kind == context.operation.kind
         else {
             #log(
-                Self.logger, .fault,
+                logger, .fault,
                 "No bring-up and session context to attach a session to for '\(self.name, privacy: .public)'"
             )
             assertionFailure("beginSession outside the bring-up that holds '\(name)'")

@@ -135,11 +135,13 @@ package final class VMLibrary: VMAdmissionPeers {
     /// ``bundleFactory`` as every VM's is.
     @discardableResult
     func admitForTesting(
-        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences
+        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences,
+        activityLogger: KernovaLogger = VMActivity.defaultLogger
     ) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts,
+            activityLogger: activityLogger)
         entries.append(.vm(instance))
         return instance
     }

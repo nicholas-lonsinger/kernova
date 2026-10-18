@@ -56,7 +56,7 @@ extension VMCommandCore {
         }
         if let baselineFailure {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Took a snapshot of '\(instance.name, privacy: .public)' but could not make it the Ephemeral baseline: \(baselineFailure.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(
@@ -82,7 +82,7 @@ extension VMCommandCore {
                 phase: instance.phase, facts: instance.admissionFacts)
         else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
             )
             throw invalidState(instance)
@@ -99,7 +99,7 @@ extension VMCommandCore {
             }
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .takeSnapshot, on: instance)
@@ -214,7 +214,7 @@ extension VMCommandCore {
     ) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
             )
             throw CommandError.operationFailed(
@@ -254,7 +254,7 @@ extension VMCommandCore {
             try await outcome.value()
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .revertToSnapshot, on: instance)
@@ -275,7 +275,7 @@ extension VMCommandCore {
         return VMFollowUp(scope: .vm, rank: .restoration) { [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
             )
             try self.launchRevert(
@@ -316,7 +316,7 @@ extension VMCommandCore {
             throw failure
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             guard unlisted else { throw failure(error, verb: .deleteSnapshot, on: instance) }
@@ -327,7 +327,7 @@ extension VMCommandCore {
             )
         }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
     }
@@ -340,7 +340,7 @@ extension VMCommandCore {
     ) throws {
         guard instance.isEphemeralBaseline(snapshot) else { return }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
         )
         throw CommandError.stepRequired(ephemeralBaselineDeleteRefusal(snapshot, on: instance))
@@ -448,7 +448,7 @@ extension VMCommandCore {
             throw admissionRefusal(refused.refusal, on: instance, verb: verb)
         } catch {
             #log(
-                Self.logger, .error,
+                logger, .error,
                 "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: verb, error: error)

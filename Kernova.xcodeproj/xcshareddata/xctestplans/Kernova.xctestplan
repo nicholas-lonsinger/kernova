@@ -29,7 +29,7 @@
       }
     },
     {
-      "parallelizable" : false,
+      "parallelizable" : true,
       "target" : {
         "containerPath" : "container:Kernova.xcodeproj",
         "identifier" : "A1000303",

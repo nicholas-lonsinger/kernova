@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 // A `#log` expansion calls `os` members at its call site, so a module built
 // with MemberImportVisibility resolves them only if `os` comes in with this one.
@@ -9,8 +10,8 @@ import Foundation
 /// The `#log` macro is the only way to emit through one: it hands the message
 /// literal straight to `osLogger`, so `logd`-side laziness, per-value privacy
 /// and `format:`/`align:` all behave exactly as they do at a bare `os.Logger`
-/// call site, and renders the interpolations a second time only when a
-/// `forwardingSink` is installed.
+/// call site, and renders the interpolations a second time only when there is
+/// a sink to forward to — the logger's own `sink`, or else the `processSink`.
 public struct KernovaLogger: Sendable {
     /// The `os.Logger` subsystem, also tagged on each forwarded record.
     public let subsystem: String
@@ -22,11 +23,18 @@ public struct KernovaLogger: Sendable {
     /// and nothing else — a direct call would bypass the forwarding sink.
     public let osLogger: os.Logger
 
-    /// Creates a logger for a subsystem and category.
-    public init(subsystem: String, category: String) {
+    /// Where this logger forwards in place of the `processSink`, or `nil` to
+    /// forward to the `processSink`.
+    public let sink: ForwardingSink?
+
+    /// Creates a logger for a subsystem and category, forwarding to `sink`
+    /// when one is given — how a test captures what the component it builds
+    /// logs — and to the `processSink` otherwise.
+    public init(subsystem: String, category: String, sink: ForwardingSink? = nil) {
         self.subsystem = subsystem
         self.category = category
         self.osLogger = os.Logger(subsystem: subsystem, category: category)
+        self.sink = sink
     }
 
     // MARK: - Forwarding sink
@@ -41,12 +49,26 @@ public struct KernovaLogger: Sendable {
             _ segments: [LogSegment]
         ) -> Void
 
-    // `nonisolated(unsafe)`: assign this once during synchronous startup, before
-    // any background `Task` can fire a log line, and treat it as read-only
-    // thereafter — nothing here guards a concurrent write.
-    /// Process-wide forwarding sink the guest agent installs to relay each
-    /// emission to the host over vsock; the host app leaves it `nil`.
-    nonisolated(unsafe) public static var forwardingSink: ForwardingSink?
+    private static let processSinkStorage = Locked<ForwardingSink?>(nil)
+
+    /// The sink every logger without its own forwards to: what
+    /// `bootstrapProcessSink(_:)` installed, or `nil` before that and in any
+    /// process that never calls it.
+    public static var processSink: ForwardingSink? {
+        processSinkStorage.withLock { $0 }
+    }
+
+    /// Installs the process's one `processSink`.
+    ///
+    /// Traps when called a second time. A test never calls it: it captures
+    /// through a logger built with its own `sink`, injected into the component
+    /// under test.
+    public static func bootstrapProcessSink(_ sink: @escaping ForwardingSink) {
+        processSinkStorage.withLock { installed in
+            precondition(installed == nil, "KernovaLogger.bootstrapProcessSink called more than once")
+            installed = sink
+        }
+    }
 }
 
 /// Logs `message` through `logger` at `level`.

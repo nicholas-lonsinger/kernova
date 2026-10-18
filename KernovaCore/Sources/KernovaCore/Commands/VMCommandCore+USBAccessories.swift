@@ -91,7 +91,7 @@ extension VMCommandCore {
             )
         }
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(key, privacy: .public) back automatically"
         )
     }
@@ -126,7 +126,7 @@ extension VMCommandCore {
                 }
             }
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
             )
         } catch {
@@ -164,7 +164,7 @@ extension VMCommandCore {
                 }
             }
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
             )
         } catch {

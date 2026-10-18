@@ -140,7 +140,7 @@ extension VMCommandCore {
         }
         if !moved.isEmpty {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Changed \(moved.map(\.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
             )
         }

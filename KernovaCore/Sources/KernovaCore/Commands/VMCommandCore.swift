@@ -53,7 +53,12 @@ package enum VMBringUpPresence: Sendable, Equatable {
 /// which one suspension point between them would break.
 @MainActor
 package final class VMCommandCore {
-    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
+    /// What every verb's record goes to unless the core's builder passes
+    /// another logger.
+    nonisolated static let defaultLogger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
+
+    /// What this core's verbs log to.
+    let logger: KernovaLogger
 
     // MARK: - Collaborators
 
@@ -192,8 +197,10 @@ package final class VMCommandCore {
         diskImageService: any DiskImageProviding,
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
-        clock: any EngineClock = makePlatformEngineClock()
+        clock: any EngineClock = makePlatformEngineClock(),
+        logger: KernovaLogger = VMCommandCore.defaultLogger
     ) {
+        self.logger = logger
         self.library = library
         self.lifecycle = lifecycle
         self.storageService = storageService
@@ -352,7 +359,7 @@ package final class VMCommandCore {
     ) -> CommandError {
         let error = commandError(for: reason, on: instance, verb: verb)
         #log(
-            Self.logger, .notice,
+            logger, .notice,
             "Refused \(verb?.rawValue ?? "an affordance", privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
         )
         return error
@@ -485,7 +492,7 @@ package final class VMCommandCore {
     func requireSourceAuthority(_ verb: VMVerb) throws -> any SandboxSourceAuthorizing {
         guard let sourceAuthority else {
             #log(
-                Self.logger, .fault,
+                logger, .fault,
                 "No sandbox source authority is wired; \(String(describing: verb), privacy: .public) cannot reach a named path"
             )
             assertionFailure("No sandbox source authority is wired for \(verb)")
@@ -542,7 +549,7 @@ package final class VMCommandCore {
     ) throws -> T {
         guard let classes = capability.editClasses else {
             #log(
-                Self.logger, .fault,
+                logger, .fault,
                 "\(String(describing: capability), privacy: .public) names no edit class")
             assertionFailure("\(capability) names no edit class")
             throw invalidState(instance)
@@ -866,7 +873,7 @@ package final class VMCommandCore {
     func report(_ failure: CommandError, on instance: VMInstance?) {
         guard failure != .terminating else {
             #log(
-                Self.logger, .notice,
+                logger, .notice,
                 "Not reporting a refusal on '\(instance?.name ?? "", privacy: .public)': the app is terminating"
             )
             return

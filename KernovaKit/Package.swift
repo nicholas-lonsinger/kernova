@@ -39,11 +39,15 @@ let package = Package(
         // Static for the same reasons as `KernovaAppRegistry` above, and read
         // that comment before changing this one: two command-line tools linking
         // one dynamic product collide in `Products/<config>/Frameworks`, and a
-        // binary holding two copies of this module would hold two
-        // `KernovaLogger.forwardingSink` variables — the guest agent installs
-        // exactly one and every forwarded record would go to whichever copy the
-        // logging call site resolved.
-        .library(name: "KernovaLogging", type: .static, targets: ["KernovaLogging"]),
+        // binary holding two copies of this module would hold two process
+        // sinks (`KernovaLogger.processSink`) — the guest agent bootstraps
+        // exactly one, and a record logged through the other copy would not
+        // be forwarded.
+        //
+        // `KernovaSynchronization` ships inside this product, so every image
+        // linking `KernovaLogging` can import it without a project edit.
+        .library(
+            name: "KernovaLogging", type: .static, targets: ["KernovaLogging", "KernovaSynchronization"]),
         .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
         .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
     ],
@@ -61,6 +65,7 @@ let package = Package(
             name: "KernovaKit",
             dependencies: [
                 "KernovaLogging",
+                "KernovaSynchronization",
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ],
             swiftSettings: sharedSwiftSettings,
@@ -73,7 +78,15 @@ let package = Package(
         // carries, and `VsockHostConnection` maps it to the proto enum.
         .target(
             name: "KernovaLogging",
-            dependencies: ["KernovaLoggingMacros"],
+            dependencies: ["KernovaLoggingMacros", "KernovaSynchronization"],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // `Locked<Value>`, the lock for state reached synchronously from
+        // several threads in code that deploys below `Synchronization.Mutex`'s
+        // macOS 15. A leaf, so `KernovaLogging` can hold its process sink in
+        // one.
+        .target(
+            name: "KernovaSynchronization",
             swiftSettings: sharedSwiftSettings
         ),
         .macro(
@@ -116,7 +129,7 @@ let package = Package(
             name: "KernovaKitTests",
             dependencies: [
                 "KernovaKit", "KernovaAppRegistry", "KernovaCLICore", "KernovaTestSupport",
-                "KernovaLogging", "KernovaLoggingMacros",
+                "KernovaLogging", "KernovaLoggingMacros", "KernovaSynchronization",
                 .product(name: "SwiftSyntaxMacrosGenericTestSupport", package: "swift-syntax"),
             ],
             swiftSettings: sharedSwiftSettings

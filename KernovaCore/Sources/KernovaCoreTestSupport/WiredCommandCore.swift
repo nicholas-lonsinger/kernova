@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -70,7 +71,8 @@ final class WiredCommandCore {
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
         preferences: AppPreferences = makeTestPreferences(),
         virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
-        clock: any EngineClock = makePlatformEngineClock()
+        clock: any EngineClock = makePlatformEngineClock(),
+        logger: KernovaLogger = VMCommandCore.defaultLogger
     ) {
         let machineFiles = MockVMBundleMachineFiles(files: storage.files, fileSystem: fileSystem)
         let vmnet = ScriptedVmnetNetworks()
@@ -102,7 +104,8 @@ final class WiredCommandCore {
             diskImageService: diskImages,
             fileSystem: fileSystem,
             preferences: preferences,
-            clock: clock)
+            clock: clock,
+            logger: logger)
         let authority = MockSandboxSourceAuthority()
         core.sourceAuthority = authority
 
