@@ -261,18 +261,6 @@ fi
 
 section 'Optional tooling'
 
-# Only needed to regenerate kernova.pb.swift after editing the .proto; the
-# generated files are checked in, so a normal build/test loop doesn't need it.
-# protoc is the whole requirement: Tools/regen-proto.sh builds the generator,
-# protoc-gen-swift, from the pinned swift-protobuf revision itself.
-if command -v protoc >/dev/null 2>&1; then
-    pass "protoc $(protoc --version 2>/dev/null | awk '{print $2}') — Tools/regen-proto.sh"
-    detail 'the script builds protoc-gen-swift from the swift-protobuf revision in Package.resolved'
-else
-    warn "protoc absent — only needed to regenerate .pb.swift from kernova.proto"
-    detail "Install with: make setup"
-fi
-
 # gh drives `gh workflow run`, issue filing, and PR merges throughout the docs.
 if command -v gh >/dev/null 2>&1; then
     pass "gh $(gh --version 2>/dev/null | sed -n 's/^gh version \([0-9][0-9.]*\).*/\1/p') — workflow runs, issues, PR merges"

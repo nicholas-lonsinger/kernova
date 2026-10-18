@@ -20,15 +20,13 @@ ifneq ($(strip $(CI)),)
 # different arena identity in the build description, and every CLI↔GUI switch
 # then rebuilds the whole graph both ways (measured in Relative mode).
 DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
-# Plugin validation is an interactive trust prompt no runner can answer; the
-# index store serves an editor CI does not have. The compilation cache is on
+# The index store serves an editor CI does not have. The compilation cache is on
 # project-wide in Config/Base.xcconfig and repeated here because a package
 # target never reads a project xcconfig. The limit is below any build's
 # output, so every build rolls the store over into a fresh generation that
 # holds exactly what that build produced or looked up — the workflow prunes
 # the generation left behind and saves the rest.
-CI_FLAGS           := -skipPackagePluginValidation \
-                      COMPILER_INDEX_STORE_ENABLE=NO \
+CI_FLAGS           := COMPILER_INDEX_STORE_ENABLE=NO \
                       COMPILATION_CACHE_ENABLE_CACHING=YES \
                       COMPILATION_CACHE_LIMIT_SIZE=1M
 RESULT_BUNDLE_FLAG := -resultBundlePath $(RESULT_BUNDLE)
@@ -39,11 +37,13 @@ endif
 # Release, e.g. `make build CONFIGURATION=Release`.
 CONFIGURATION ?= Debug
 
+# Plugin validation is an interactive trust prompt no terminal build can answer.
 XCODEBUILD_FLAGS = -project $(PROJECT) \
                    -scheme $(SCHEME) \
                    -destination '$(DESTINATION)' \
                    $(DERIVED_DATA_FLAG) \
                    -configuration $(CONFIGURATION) \
+                   -skipPackagePluginValidation \
                    $(CI_FLAGS)
 
 # Every command that runs xcodebuild against this checkout — Periphery's
@@ -102,7 +102,7 @@ help:
 # idempotent, so rerun it whenever the environment drifts. It ends with
 # `doctor`, which reports the state the run produced.
 setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Periphery, then doctor
-	@Tools/brew-install.sh shellcheck gh protoc:protobuf xcode-build-server
+	@Tools/brew-install.sh shellcheck gh xcode-build-server
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 	@Tools/install-periphery.sh >/dev/null
 	@Tools/doctor.sh

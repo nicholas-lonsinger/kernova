@@ -63,7 +63,8 @@ let package = Package(
                 "KernovaLogging",
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ],
-            swiftSettings: sharedSwiftSettings
+            swiftSettings: sharedSwiftSettings,
+            plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
         ),
         // The one logging spelling: `KernovaLogger` plus the `#log` macro that
         // is the only way to emit through it. Its own target so the relaunch
