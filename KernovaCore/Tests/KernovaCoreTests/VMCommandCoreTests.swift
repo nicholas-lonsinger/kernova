@@ -144,6 +144,14 @@ struct VMCommandCoreTests {
         #expect(info.networkMode == nil)
     }
 
+    @Test("info reports no agent status for a stopped VM, even one that has seen an agent")
+    func infoReportsNoAgentStatusWithoutSession() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) { $0.lastSeenAgentVersion = "0.9.2" }
+
+        #expect(try harness.core.info(.id(instance.id)).agentStatus == nil)
+    }
+
     @Test("A running VM's observed address answers info and the ip verb alike")
     func theObservedAddressAnswersEveryHeadlessRead() async throws {
         let harness = makeHarness()
@@ -2376,6 +2384,27 @@ struct VMCommandCoreTests {
         #expect(name == "Watched")
         #expect(from == "stopped")
         #expect(to == "running")
+    }
+
+    @Test("A session's end reports the agent status going absent")
+    func eventsReportTheAgentStatusEndingWithTheSession() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Watched", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting()
+        #expect(instance.agentStatus == .waiting)
+
+        var events = VMLibraryEventReader(harness.core.events())
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.agentStatus == nil)
+
+        while let event = await events.next() {
+            guard case .agentStatusChanged(let id, _, let status) = event else { continue }
+            #expect(id == instance.id)
+            #expect(status == nil)
+            return
+        }
+        Issue.record("the stream ended without an agent status change")
     }
 
     @Test("A VM joining and leaving the library is reported")

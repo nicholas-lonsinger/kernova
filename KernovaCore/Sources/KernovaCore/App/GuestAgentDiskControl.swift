@@ -2,12 +2,12 @@ import Foundation
 
 /// The guest-agent disk control every surface offers — the Virtual Machine menu
 /// item, the sidebar agent popover, the Clipboard window's footer — and the one
-/// place that maps (agent status, whether the installer disk is attached) to a
-/// title, enabled state, and action.
+/// place that resolves a VM's title, enabled state, and action for it.
 ///
-/// Models only the status→control mapping: the hard gates that withhold the
-/// menu item regardless of status (no live VM for USB hot-plug, missing bundled
-/// DMG) stay in `MainMenuController.validate`.
+/// Every surface resolves through ``model(for:in:)``, which withholds the
+/// control wherever admission refuses ``VMCapability/toggleGuestAgentDisk`` or
+/// the build bundles no installer disk, so no surface offers a click the verb
+/// refuses.
 package enum GuestAgentDiskControl {
     /// What clicking the control does in its current mode.
     enum Action: Equatable {
@@ -34,10 +34,24 @@ package enum GuestAgentDiskControl {
     /// "Eject Guest Agent Media" on a VM that can never have it.
     package static let unavailableTitle = "Install Guest Agent…"
 
-    /// Resolves the control for `instance`'s current state.
+    /// The control while the command is withheld.
+    private static let withheld = Model(
+        title: unavailableTitle, isEnabled: false, action: .mount(.install))
+
+    /// Resolves the control for `instance` now: disabled under
+    /// ``unavailableTitle`` while `capabilities` refuses the command or no
+    /// installer disk is bundled, and otherwise the status mapping of
+    /// ``model(status:isInstallerMounted:)``.
     @MainActor
-    package static func model(for instance: VMInstance) -> Model {
-        model(
+    package static func model(
+        for instance: VMInstance, in capabilities: VMCapabilityCatalog
+    ) -> Model {
+        guard capabilities.isAvailable(.toggleGuestAgentDisk, on: instance),
+            instance.bundleProducts.guestAgent.installerDiskImageURL != nil
+        else {
+            return withheld
+        }
+        return model(
             status: instance.agentStatus,
             isInstallerMounted: instance.hasGuestAgentInstallerMounted)
     }
@@ -49,11 +63,13 @@ package enum GuestAgentDiskControl {
     /// `.unresponsive` is treated like `.current` — it persists when the user
     /// disables, uninstalls or kills the agent in the guest, exactly when
     /// re-mounting is wanted — so only the genuinely-transient `.connecting`
-    /// leaves the control disabled.
-    package static func model(status: AgentStatus, isInstallerMounted: Bool) -> Model {
+    /// leaves the control disabled. A `nil` `status` — no session, so no agent
+    /// to install into — disables it under ``unavailableTitle``.
+    static func model(status: AgentStatus?, isInstallerMounted: Bool) -> Model {
         if isInstallerMounted {
             return Model(title: "Eject Guest Agent Media", isEnabled: true, action: .eject)
         }
+        guard let status else { return withheld }
         switch status {
         case .waiting:
             return Model(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install))

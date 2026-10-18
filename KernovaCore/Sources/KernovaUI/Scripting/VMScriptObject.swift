@@ -86,7 +86,7 @@ package final class VMScriptObject: NSObject {
 
     @objc var ipAddress: String? { info.ipAddress.address }
 
-    @objc var agentStatus: String { info.agentStatus }
+    @objc var agentStatus: String? { info.agentStatus }
 
     @objc var hasSavedState: Bool { info.hasSavedState }
 

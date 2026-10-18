@@ -61,6 +61,7 @@ struct VMIntentGatewayTests {
         #expect(entity.macAddress == info.macAddress)
         #expect(entity.ipAddress == info.ipAddress.address)
         #expect(entity.agentStatus == info.agentStatus)
+        #expect(VMEntity(VMIntentFixtures.info(agentStatus: nil)).agentStatus == nil)
         #expect(entity.hasSavedState == info.hasSavedState)
         #expect(entity.isEphemeral == info.isEphemeral)
         #expect(entity.snapshotCount == 3)

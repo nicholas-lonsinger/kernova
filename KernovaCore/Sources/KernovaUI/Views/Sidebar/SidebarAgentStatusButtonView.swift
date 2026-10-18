@@ -27,6 +27,7 @@ final class SidebarAgentStatusButtonView: NSView {
 
     private(set) var status: AgentStatus = .waiting
     private(set) var isInstallerMounted = false
+    private(set) var diskControl: GuestAgentDiskControl.Model?
     private(set) var vmName: String = ""
     private(set) var hasDismissAction: Bool = false
 
@@ -65,16 +66,18 @@ final class SidebarAgentStatusButtonView: NSView {
         fatalError("SidebarAgentStatusButtonView does not support NSCoder")
     }
 
-    /// Applies a new status / installer state / VM name / dismiss-availability
-    /// snapshot.
+    /// Applies a new status / installer state / disk control / VM name /
+    /// dismiss-availability snapshot.
     ///
     /// An open popover is updated in place, so an in-flight change doesn't
     /// dismiss it.
     func configure(
-        status: AgentStatus, isInstallerMounted: Bool, vmName: String, hasDismissAction: Bool
+        status: AgentStatus, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
+        vmName: String, hasDismissAction: Bool
     ) {
         self.status = status
         self.isInstallerMounted = isInstallerMounted
+        self.diskControl = diskControl
         self.vmName = vmName
         self.hasDismissAction = hasDismissAction
 
@@ -82,8 +85,8 @@ final class SidebarAgentStatusButtonView: NSView {
         applyVisualState()
 
         contentVC.update(
-            status: status, isInstallerMounted: isInstallerMounted, vmName: vmName,
-            hasDismissAction: hasDismissAction)
+            status: status, isInstallerMounted: isInstallerMounted, diskControl: diskControl,
+            vmName: vmName, hasDismissAction: hasDismissAction)
     }
 
     /// Closes any open popover and stops the spinner.

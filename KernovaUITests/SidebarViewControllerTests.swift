@@ -94,12 +94,16 @@ struct SidebarViewControllerTests {
     @Test("Agent indicator hidden for Linux guests")
     func agentHiddenForLinux() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().clipboardService = SpiceClipboardService(
+            inputPipe: Pipe(), outputPipe: Pipe())
+        #expect(instance.agentStatus == .waiting)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
     func agentWaitingVisibleForRunningMac() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
         #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 
@@ -108,13 +112,14 @@ struct SidebarViewControllerTests {
         let instance = VMInstanceFixture.make(
             guestOS: .macOS, phase: .running(sessionID: UUID()),
             hostState: VMHostState(agentInstallNudgeDismissed: true))
+        instance.beginSessionContextForTesting()
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     @Test("Agent indicator suppressed for a stopped macOS VM")
     func agentSuppressedWhenStopped() {
         // Neither a VM that has never had an agent nor one that has: with no
-        // live control channel, `.waiting` means "unknown", not "not installed".
+        // session, `agentStatus` makes no statement to render.
         let fresh = VMInstanceFixture.make(guestOS: .macOS, phase: .stopped)
         #expect(visibleAgentStatus(for: fresh) == nil)
 
@@ -125,7 +130,7 @@ struct SidebarViewControllerTests {
     }
 
     @Test(
-        "Agent indicator suppressed outside a live session",
+        "Agent indicator suppressed for a VM with no session, whatever its phase",
         arguments: [
             PhaseFixture.operating(
                 .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
@@ -135,14 +140,22 @@ struct SidebarViewControllerTests {
             .settled(.initialBoot),
         ]
     )
-    func agentSuppressedWhenNotInLiveSession(phase: PhaseFixture) {
+    func agentSuppressedWithoutSession(phase: PhaseFixture) {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
+        #expect(instance.sessionContext == nil)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
-    /// The live-session gate must not swallow the *louder* agent states — only
-    /// the `.waiting` install nudge is dismissible, so a gate that over-reached
-    /// would silently drop the "didn't reconnect" affordance.
+    @Test("Agent indicator shows during an operation that holds a session")
+    func agentVisibleDuringOperationHoldingSession() {
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, phase: .operating(.saving, from: .running(sessionID: UUID())))
+        instance.beginSessionContextForTesting()
+        #expect(visibleAgentStatus(for: instance) == .waiting)
+    }
+
+    /// Only the `.waiting` install nudge is dismissible, so a gate that
+    /// over-reached would silently drop the "didn't reconnect" affordance.
     @Test("Agent indicator surfaces .expectedMissing on a running VM")
     func agentExpectedMissingVisibleWhenRunning() {
         let library = makeWiredLibrary()
@@ -167,6 +180,7 @@ struct SidebarViewControllerTests {
     @Test("The app-wide preference suppresses .waiting without touching the per-VM flag")
     func agentSuppressedWhenPromptDisabledAppWide() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
         #expect(
             SidebarVMRowCellView.visibleAgentStatus(for: instance, installPromptDisabled: true)
                 == nil)
@@ -197,12 +211,17 @@ struct SidebarViewControllerTests {
     /// The cell holds its instance weakly, so the caller keeps `instance` alive:
     /// binding a temporary would leave the row on a deallocated VM, and its
     /// observation loop registering nothing.
-    private func makeRow(instance: VMInstance, isBusy: Bool) -> SidebarVMRowCellView {
+    private func makeRow(
+        instance: VMInstance, isBusy: Bool,
+        diskControl: @escaping () -> GuestAgentDiskControl.Model? = { nil }
+    ) -> SidebarVMRowCellView {
         let cell = SidebarVMRowCellView()
         cell.configure(
             instance: instance,
             isRenaming: false,
             installPromptDisabled: { false },
+            agentDiskControl: diskControl,
+            agentNudgeDismissible: { false },
             isBusy: { isBusy },
             detail: { nil },
             tags: { [] },
@@ -239,7 +258,9 @@ struct SidebarViewControllerTests {
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        let cell = makeRow(instance: instance, isBusy: false)
+        let cell = makeRow(instance: instance, isBusy: false) {
+            GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+        }
         let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
         #expect(!badge.isHidden)
         #expect(badge.status == .waiting)
@@ -266,6 +287,8 @@ struct SidebarViewControllerTests {
             instance: instance,
             isRenaming: false,
             installPromptDisabled: { viewModel.agentInstallPromptDisabled },
+            agentDiskControl: { GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) },
+            agentNudgeDismissible: { false },
             isBusy: { false },
             detail: { nil },
             tags: { [] },
@@ -281,6 +304,36 @@ struct SidebarViewControllerTests {
         // The cell's observation applies on a later main-actor turn, with no
         // observable of its own to await.
         try await waitUntil { badge.isHidden }
+    }
+
+    /// The badge now shows through an operation that holds a session, which
+    /// takes neither the disk control nor the dismissal's write — so both have
+    /// to follow the phase, not only the agent status.
+    @Test("The agent badge withholds its disk control and dismissal during an operation")
+    func agentBadgeWithholdsControlsDuringOperation() async throws {
+        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let viewModel = makeViewModel()
+        let sessionID = UUID()
+        let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: sessionID))
+        instance.beginSessionContextForTesting()
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+        controller.viewDidAppear()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        let cell = try #require(
+            outline.view(atColumn: 0, row: 1, makeIfNecessary: true) as? SidebarVMRowCellView)
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+        #expect(badge.diskControl?.isEnabled == true)
+        #expect(badge.hasDismissAction)
+
+        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: sessionID)))
+
+        // The cell's observation applies on a later main-actor turn, with no
+        // observable of its own to await.
+        try await waitUntil { badge.diskControl?.isEnabled == false && !badge.hasDismissAction }
+        #expect(!badge.isHidden)
+        #expect(badge.status == .waiting)
     }
 
     /// Re-arming an observation reports only changes made *after* it registers,
@@ -319,6 +372,8 @@ struct SidebarViewControllerTests {
             instance: instance,
             isRenaming: true,
             installPromptDisabled: { false },
+            agentDiskControl: { nil },
+            agentNudgeDismissible: { false },
             isBusy: { false },
             detail: { nil },
             tags: { [] },
@@ -1379,6 +1434,8 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
             instance: instance,
             isRenaming: false,
             installPromptDisabled: { true },
+            agentDiskControl: { nil },
+            agentNudgeDismissible: { false },
             isBusy: { false },
             detail: { nil },
             tags: { [] },

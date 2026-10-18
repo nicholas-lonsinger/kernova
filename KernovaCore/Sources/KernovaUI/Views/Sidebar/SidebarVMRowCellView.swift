@@ -27,6 +27,12 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// Reads the app-wide install-prompt suppression, live, so the row's
     /// observation loop wakes when it changes.
     private var installPromptDisabled: (() -> Bool)?
+    /// Resolves the VM's guest-agent disk control, live, so the row's
+    /// observation loop wakes when anything admission reads changes; `nil`
+    /// hides the badge.
+    private var agentDiskControl: (() -> GuestAgentDiskControl.Model?)?
+    /// Reads whether the install nudge's dismissal can be written now, live.
+    private var agentNudgeDismissible: (() -> Bool)?
     private var rowObservation: ObservationLoop?
     /// Commits the edited name; the `Bool` is `true` when editing ended by Return,
     /// which decides whether the controller restores sidebar focus.
@@ -188,6 +194,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         instance: VMInstance,
         isRenaming: Bool,
         installPromptDisabled: @escaping () -> Bool,
+        agentDiskControl: @escaping () -> GuestAgentDiskControl.Model?,
+        agentNudgeDismissible: @escaping () -> Bool,
         isBusy: @escaping () -> Bool,
         detail: @escaping () -> String?,
         tags: @escaping () -> [VMTag],
@@ -199,6 +207,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         let isRebindToDifferentVM = self.instance !== instance
         self.instance = instance
         self.installPromptDisabled = installPromptDisabled
+        self.agentDiskControl = agentDiskControl
+        self.agentNudgeDismissible = agentNudgeDismissible
         self.isBusy = isBusy
         self.detail = detail
         self.tags = tags
@@ -246,6 +256,8 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.hostState.ephemeralModeEnabled
                 _ = instance.unreadableFiles
                 _ = self.installPromptDisabled?()
+                _ = self.agentDiskControl?()
+                _ = self.agentNudgeDismissible?()
                 _ = self.detail?()
                 _ = self.tags?()
             },
@@ -291,13 +303,15 @@ final class SidebarVMRowCellView: NSTableCellView {
         unreadableWarning.isHidden = unreadableNotice == nil
 
         if let agentStatus = Self.visibleAgentStatus(
-            for: instance, installPromptDisabled: installPromptDisabled?() ?? false)
+            for: instance, installPromptDisabled: installPromptDisabled?() ?? false),
+            let diskControl = agentDiskControl?()
         {
             agentButton.isHidden = false
-            let dismissible = agentStatus == .waiting
+            let dismissible = agentStatus == .waiting && (agentNudgeDismissible?() ?? false)
             agentButton.configure(
                 status: agentStatus,
                 isInstallerMounted: instance.hasGuestAgentInstallerMounted,
+                diskControl: diskControl,
                 vmName: instance.name, hasDismissAction: dismissible
             )
         } else {
@@ -397,6 +411,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         tagDots.tags = []
         tagDots.isHidden = true
         installPromptDisabled = nil
+        agentDiskControl = nil
+        agentNudgeDismissible = nil
         spinner.stopAnimation(nil)
         // Close any popover, stop the agent spinner, and drop the closures —
         // they capture the bound VMInstance and would otherwise keep it alive.
@@ -520,20 +536,15 @@ final class SidebarVMRowCellView: NSTableCellView {
 
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.
     ///
-    /// Hidden for Linux guests, during macOS install, when `.current`, when
-    /// `.waiting` was dismissed for this VM or turned off app-wide by
-    /// `installPromptDisabled`, and — the outermost gate — whenever the VM has
-    /// no live session: every state the badge renders is a statement about *this*
-    /// session's control channel. On a stopped or suspended VM `agentStatus`
-    /// degrades to `.waiting`, and the badge would report "guest agent not
-    /// installed" for a VM whose agent state is unknown.
+    /// Hidden for Linux guests, during macOS install, for a VM with no session
+    /// (`agentStatus` is `nil`), when `.current`, and when `.waiting` was
+    /// dismissed for this VM or turned off app-wide by `installPromptDisabled`.
     static func visibleAgentStatus(
         for instance: VMInstance, installPromptDisabled: Bool
     ) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.setupState == nil else { return nil }
-        guard instance.hasLiveSession else { return nil }
-        let status = instance.agentStatus
+        guard let status = instance.agentStatus else { return nil }
         if case .current = status { return nil }
         if case .waiting = status,
             installPromptDisabled || instance.hostState.agentInstallNudgeDismissed

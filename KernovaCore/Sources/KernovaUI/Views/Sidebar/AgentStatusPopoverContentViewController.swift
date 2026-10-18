@@ -5,9 +5,9 @@ import KernovaCore
 /// button (the small SF Symbol or spinner next to each VM row).
 ///
 /// State is mutable in place via
-/// ``update(status:isInstallerMounted:vmName:hasDismissAction:)`` so the host
-/// can refresh the popover when either input flips while it is open, without
-/// dismiss/re-present flicker.
+/// ``update(status:isInstallerMounted:diskControl:vmName:hasDismissAction:)``
+/// so the host can refresh the popover when any input flips while it is open,
+/// without dismiss/re-present flicker.
 @MainActor
 final class AgentStatusPopoverContentViewController: NSViewController {
     /// What the trailing button does.
@@ -44,8 +44,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     /// Whether the bundled installer disk is attached to the VM.
     private(set) var isInstallerMounted = false
     /// The trailing button, resolved from the guest-agent disk control.
-    private(set) var actionButtonRole = ActionButton(
-        GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false))
+    private(set) var actionButtonRole = ActionButton.done
     /// VM name interpolated into the body text.
     private(set) var vmName: String = ""
     /// When `true`, surfaces the "Don't show again" link in the action row.
@@ -125,15 +124,15 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    /// Replaces the popover's status, installer state, VM name, and
-    /// dismiss-action flag and refreshes every label and button in place.
+    /// Replaces the popover's status, installer state, disk control, VM name,
+    /// and dismiss-action flag and refreshes every label and button in place.
     func update(
-        status: AgentStatus, isInstallerMounted: Bool, vmName: String, hasDismissAction: Bool
+        status: AgentStatus, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
+        vmName: String, hasDismissAction: Bool
     ) {
         self.status = status
         self.isInstallerMounted = isInstallerMounted
-        actionButtonRole = ActionButton(
-            GuestAgentDiskControl.model(status: status, isInstallerMounted: isInstallerMounted))
+        actionButtonRole = ActionButton(diskControl)
         self.vmName = vmName
         self.hasDismissAction = hasDismissAction
         if isViewLoaded {

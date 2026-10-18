@@ -173,7 +173,8 @@ package final class VMCommandCore {
         let name: String
         /// `nil` for an arrival, which has no ``VMStatus`` yet.
         let status: VMStatus?
-        let agentStatus: AgentStatus
+        /// `nil` for an arrival and for a VM with no session.
+        let agentStatus: AgentStatus?
         let errorMessage: String?
         /// `nil` for an arrival, and for a VM no Start or Resume has failed on.
         let startFailure: VMStartFailure?
@@ -672,7 +673,7 @@ package final class VMCommandCore {
             networkName: library.networks.networkName(of: config),
             macAddress: config.macAddress,
             ipAddress: library.guestAddresses.address(for: instance),
-            agentStatus: instance.agentStatus.wireName,
+            agentStatus: instance.agentStatus?.wireName,
             hasSavedState: instance.hasSaveFile,
             isEphemeral: subject.isEphemeral,
             snapshotCount: instance.snapshotManifest.snapshots.count,
@@ -702,7 +703,7 @@ package final class VMCommandCore {
             networkName: library.networks.networkName(of: config),
             macAddress: config.macAddress,
             ipAddress: GuestAddressObserver.address(withNoLiveGuest: config),
-            agentStatus: AgentStatus.waiting.wireName,
+            agentStatus: nil,
             hasSavedState: false,
             isEphemeral: subject.isEphemeral,
             snapshotCount: 0,
@@ -791,7 +792,7 @@ package final class VMCommandCore {
                     startFailure: instance.activity.lastStartFailure)
             case .arriving(let arrival):
                 states[arrival.id] = ObservedState(
-                    name: arrival.name, status: nil, agentStatus: .waiting, errorMessage: nil,
+                    name: arrival.name, status: nil, agentStatus: nil, errorMessage: nil,
                     startFailure: nil)
             }
         }
@@ -844,7 +845,7 @@ package final class VMCommandCore {
             if before.agentStatus != now.agentStatus {
                 batch.append(
                     .agentStatusChanged(
-                        id: id, name: now.name, status: now.agentStatus.wireName))
+                        id: id, name: now.name, status: now.agentStatus?.wireName))
             }
             if before.name != now.name {
                 batch.append(.renamed(id: id, from: before.name, to: now.name))

@@ -17,13 +17,14 @@ struct CLIRenderingTests {
 
     private func info(
         ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
-        networkMembership: String = "common", networkName: VMNetworkName? = nil
+        networkMembership: String = "common", networkName: VMNetworkName? = nil,
+        agentStatus: String? = "current"
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "nat", networkMembership: networkMembership,
             networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
-            ipAddress: ipAddress, agentStatus: "current",
+            ipAddress: ipAddress, agentStatus: agentStatus,
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
             stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
@@ -135,6 +136,22 @@ struct CLIRenderingTests {
         #expect(rendered.contains("Running"))
         #expect(rendered.contains("8 GB"))
         #expect(rendered.contains("192.168.64.4"))
+    }
+
+    @Test("A VM with no session reads its guest agent as absent")
+    func infoWithoutSessionReadsTheAgentAsAbsent() throws {
+        let rendered = TableRenderer.render(info(agentStatus: nil), quiet: false)
+        let row = try #require(
+            rendered.components(separatedBy: "\n").first { $0.hasPrefix("Guest Agent") })
+        #expect(row.hasSuffix("  \u{2013}"))
+    }
+
+    @Test("A VM with no session omits the agent status from its JSON")
+    func infoWithoutSessionOmitsTheAgentStatusKey() throws {
+        let data = Data(try JSONRenderer.render(info(agentStatus: nil)).utf8)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["agentStatus"] == nil)
+        #expect(try JSONDecoder().decode(VMInfo.self, from: data).agentStatus == nil)
     }
 
     @Test("A named network whose name the unreadable list can't give reads as that, not as its identifier")
