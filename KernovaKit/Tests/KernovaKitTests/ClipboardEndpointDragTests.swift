@@ -163,6 +163,84 @@ struct ClipboardEndpointDragTests {
         #expect(try #require(stopped).abortCode != nil)
     }
 
+    // MARK: - Ending a served drag's readout
+
+    /// Has the guest under `harness` serve `generation`'s first item to its end,
+    /// reading the whole transfer off the connection it dials.
+    private func serveWholePull(_ harness: RawPeerHarness, generation: UInt64) async throws {
+        let fd = try await servePull(harness, generation: generation)
+        let received = await offCooperativePool { try? receiveTransfer(fd: fd) }
+        #expect(try #require(received).isComplete)
+    }
+
+    /// How many drag-out readouts in `reports` finished as completed.
+    private func completedDragOuts(_ reports: ClipboardTransferReports) -> Int {
+        reports.reports.filter { report in
+            guard case .finished(let finish) = report, finish.gesture == .dragOut,
+                case .completed = finish.outcome
+            else { return false }
+            return true
+        }.count
+    }
+
+    /// An idle gap no test outlasts, so only the host's `DragComplete` can end
+    /// a served drag's readout.
+    private static let unreachedIdleGap = TimeInterval.infinity
+
+    @Test("a served drag-out item's readout completes once its transfer has")
+    func servedDragReadoutCompletes() async throws {
+        let harness = try RawPeerHarness(role: .guest, kind: .drop)
+        defer { harness.tearDown() }
+        harness.endpoint.offer(
+            ClipboardContent(representations: [try dragged("one.bin", Data("one".utf8))]))
+
+        try await serveWholePull(harness, generation: 1)
+
+        let reports = harness.side.reports
+        try await reports.wait { completedDragOuts(reports) == 1 && reports.latest == .idle }
+    }
+
+    @Test("the host's DragComplete after a served transfer leaves no live or pending readout")
+    func dragCompleteEndsTheServedReadout() async throws {
+        let harness = try RawPeerHarness(
+            role: .guest, kind: .drop, progressIdleGap: Self.unreachedIdleGap)
+        defer { harness.tearDown() }
+        harness.endpoint.offer(
+            ClipboardContent(representations: [try dragged("one.bin", Data("one".utf8))]))
+        try await serveWholePull(harness, generation: 1)
+        let reports = harness.side.reports
+        try await reports.wait { reports.lastRunningSnapshot(gesture: .dragOut) != nil }
+
+        try harness.send(.dragComplete(generation: 1))
+
+        try await reports.wait { completedDragOuts(reports) == 1 && reports.latest == .idle }
+        #expect(harness.endpoint.outboundContent(generation: 1) == nil)
+    }
+
+    @Test("two drags served and completed in turn leave nothing pending behind either")
+    func successiveDragsLeaveNothingPending() async throws {
+        let harness = try RawPeerHarness(
+            role: .guest, kind: .drop, progressIdleGap: Self.unreachedIdleGap)
+        defer { harness.tearDown() }
+        let reports = harness.side.reports
+        for generation in UInt64(1)...2 {
+            harness.endpoint.offer(
+                ClipboardContent(representations: [try dragged("one.bin", Data("one".utf8))]))
+            try await serveWholePull(harness, generation: generation)
+            try harness.send(.dragComplete(generation: generation))
+            try await reports.wait {
+                completedDragOuts(reports) == Int(generation) && reports.latest == .idle
+            }
+        }
+
+        let running = reports.reports.compactMap { report -> ClipboardProgressSnapshot? in
+            guard case .running(let snapshot, _) = report else { return nil }
+            return snapshot
+        }
+        #expect(!running.isEmpty)
+        #expect(running.allSatisfy { $0.pendingBehind == 0 })
+    }
+
     @Test("a folder dragged out arrives as its tree")
     func folderArrivesWhole() async throws {
         let pair = try EndpointPair(kind: .drop)

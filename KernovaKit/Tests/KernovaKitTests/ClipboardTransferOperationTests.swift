@@ -403,6 +403,27 @@ struct ClipboardTransferOperationTests {
         #expect(recorder.finish?.finalSnapshot?.filesCompleted == 2)
     }
 
+    @Test("an operation let go of before its idle gap passes takes its bar down with it")
+    func anOperationLetGoOfRetiresItsReadout() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        var operation: ClipboardTransferOperation? = makeOperation(
+            recorder: recorder, clock: clock, gesture: .dragOut, direction: .outbound)
+        clock.advance(seconds: Self.revealDelay)
+
+        operation?.unitBegan(id: 1, expectedBytes: 100)
+        operation?.unitEnded(id: 1, succeeded: true)
+        operation?.finishWhenIdle()
+        await settle()
+        #expect(recorder.runningSnapshot != nil)
+        #expect(clock.parked.count == 1)
+
+        // The reporter holds the operation weakly, so nothing else would ever
+        // take this bar down.
+        operation = nil
+        try await recorder.changed.wait { recorder.latest == .idle }
+    }
+
     // MARK: - Cancel
 
     @Test("a cancel on the readout reaches the operation's own stop closure")

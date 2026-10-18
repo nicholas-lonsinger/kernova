@@ -559,10 +559,9 @@ final class ClipboardOutboundOffers {
         }
     }
 
-    /// Retires the drag the peer is done with: nothing will pull from it again.
-    ///
-    /// Anything still streaming from it is called off; its readout, opened on
-    /// the peer's first pull, ends on its own idle gap.
+    /// Retires the drag the peer is done with: nothing will pull from it again,
+    /// so its readout ends here and anything still streaming from it is called
+    /// off.
     func handleDragComplete(_ complete: Kernova_V1_DragComplete) {
         guard let entry = entries[complete.generation] else { return }
         retire(entry)
@@ -704,10 +703,16 @@ final class ClipboardOutboundOffers {
     }
 
     /// Drops `entry` from the live set and ends the transfers still riding it.
+    ///
+    /// The readout an entry carries here is a drag out's — a clipboard offer's
+    /// is held apart, and a drop never retires this way — and it ends as its
+    /// idle gap would have: the peer will ask it for nothing more, and the
+    /// entry is the readout's only owner.
     private func retire(_ entry: Entry) {
         entry.live.withLock { $0 = 0 }
         forget(entry)
         if entry.generation == currentGeneration { currentGeneration = 0 }
+        entry.operation?.finish(.completed)
     }
 
     /// Removes `entry` from the live set, calling off its deadline with it.

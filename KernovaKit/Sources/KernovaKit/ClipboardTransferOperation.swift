@@ -344,6 +344,22 @@ public final class ClipboardTransferOperation: Sendable {
             State(startedAt: clock.now, expectedBytes: expectedBytes, expectedItems: expectedItems))
     }
 
+    /// Retires a readout its owner let go of without a terminal.
+    ///
+    /// The reporter holds the operation weakly, so without this the last bar
+    /// an unended operation published would stand on every surface for good.
+    /// Every earlier publication captured `self`, so all of them have landed
+    /// before this runs and the retire is the last word.
+    deinit {
+        let outcome = state.withLock { $0.abandon(at: clock.now) }
+        guard outcome.call != nil else { return }
+        let reporter = reporter
+        let id = header.id
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { reporter.retire(id) }
+        }
+    }
+
     // MARK: - Transfer events
 
     /// Announces the operation as accepted but not yet moving bytes, so the
@@ -429,7 +445,8 @@ public final class ClipboardTransferOperation: Sendable {
     }
 
     /// Arms the idle terminal: the operation completes `idleGap` after its last
-    /// transfer ends if nothing has begun since.
+    /// transfer ends if nothing has begun since, and its owner still holds it —
+    /// one let go of first retires its readout instead.
     ///
     /// For a peer-driven operation, where nothing on this side knows the peer has
     /// stopped asking. Nothing in flight is not "finished" — a multi-file paste is

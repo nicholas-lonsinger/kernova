@@ -36,7 +36,8 @@ final class EndpointSide {
         lazyPullTimeout: TimeInterval,
         firstGeneration: UInt64,
         dataLink: ClipboardEndpoint.DataLink,
-        dataSocketTimeout: TimeInterval = testWaitBackstop
+        dataSocketTimeout: TimeInterval = testWaitBackstop,
+        progressIdleGap: TimeInterval = 0
     ) {
         self.channel = channel
         self.pasteLimit = Locked(pasteLimit)
@@ -50,7 +51,7 @@ final class EndpointSide {
             maxPasteBytes: { limit.withLock { $0 } }, staging: staging)
         configuration.lazyPullTimeout = lazyPullTimeout
         configuration.progressRevealDelay = 0
-        configuration.progressIdleGap = 0
+        configuration.progressIdleGap = progressIdleGap
         configuration.clock = clock
         configuration.dataLink = dataLink
         configuration.dataSocketTimeout = dataSocketTimeout
@@ -202,6 +203,7 @@ final class RawPeerHarness {
         lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         firstGeneration: UInt64 = 1,
         dataSocketTimeout: TimeInterval = testWaitBackstop,
+        progressIdleGap: TimeInterval = 0,
         autoStart: Bool = true
     ) throws {
         let (localFd, peerFd) = try makeRawSocketPair()
@@ -217,7 +219,7 @@ final class RawPeerHarness {
             pasteLimit: pasteLimit, freeSpaceProvider: freeSpaceProvider,
             lazyPullTimeout: lazyPullTimeout, firstGeneration: firstGeneration,
             dataLink: role == .host ? .accepts : .dials(port: 0, connect: dialled.dialer),
-            dataSocketTimeout: dataSocketTimeout)
+            dataSocketTimeout: dataSocketTimeout, progressIdleGap: progressIdleGap)
         recorder = FrameRecorder(channel: peer)
         if autoStart { side.start() }
     }
