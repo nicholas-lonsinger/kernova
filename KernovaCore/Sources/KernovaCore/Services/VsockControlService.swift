@@ -120,7 +120,7 @@ package final class VsockControlService: VsockFeatureService {
     private let cadence: ControlChannelCadence
 
     /// The two-stage silence watchdog, shared with the guest agent.
-    private let liveness: ControlLivenessMonitor
+    private var liveness: ControlLivenessMonitor
 
     /// Reads the latest policy from the host configuration.
     ///

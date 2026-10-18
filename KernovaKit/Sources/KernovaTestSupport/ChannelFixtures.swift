@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 // MARK: - Socket / channel factories
 
@@ -78,11 +79,14 @@ public func nextFrame(from channel: VsockChannel) async throws -> Frame {
 /// the shared iteration, so a test needing both "expect this frame" and "expect
 /// no frame" against the same channel records once here rather than hand-rolling
 /// an iterator per assertion.
-public final class FrameRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storedFrames: [Frame] = []
-    private var ended = false
-    private var consumeTask: Task<Void, Never>?
+public final class FrameRecorder: Sendable {
+    private struct State: Sendable {
+        var frames: [Frame] = []
+        var ended = false
+        var consumeTask: Task<Void, Never>?
+    }
+
+    private let state = Locked(State())
 
     /// Fires on every recorded frame and once the channel ends; await it instead
     /// of polling ``frames``.
@@ -90,39 +94,43 @@ public final class FrameRecorder: @unchecked Sendable {
 
     /// Starts recording `channel`.
     public init(channel: VsockChannel) {
-        consumeTask = Task { [weak self] in
+        let consumeTask = Task { [weak self] in
             do {
                 for try await frame in channel.incoming {
                     guard let self else { return }
-                    self.lock.withLock { self.storedFrames.append(frame) }
+                    self.state.withLock { $0.frames.append(frame) }
                     self.recorded.notify()
                 }
             } catch {
                 // The stream errored — recording stops, and `isFinished` says so.
             }
             guard let self else { return }
-            self.lock.withLock { self.ended = true }
+            self.state.withLock { $0.ended = true }
             self.recorded.notify()
         }
+        state.withLock { $0.consumeTask = consumeTask }
     }
 
-    deinit { consumeTask?.cancel() }
+    deinit { cancel() }
 
     /// Stops recording.
     public func cancel() {
+        let consumeTask = state.withLock { state in
+            defer { state.consumeTask = nil }
+            return state.consumeTask
+        }
         consumeTask?.cancel()
-        consumeTask = nil
     }
 
     /// Every frame recorded so far, in arrival order.
-    public var frames: [Frame] { lock.withLock { storedFrames } }
+    public var frames: [Frame] { state.withLock { $0.frames } }
 
     /// How many frames have been recorded.
-    public var count: Int { lock.withLock { storedFrames.count } }
+    public var count: Int { state.withLock { $0.frames.count } }
 
     /// Whether the channel has ended — the peer closed its end, or the stream
     /// errored.
-    public var isFinished: Bool { lock.withLock { ended } }
+    public var isFinished: Bool { state.withLock { $0.ended } }
 
     /// The first recorded frame whose payload matches `predicate`, if any.
     public func first(where predicate: (Frame) -> Bool) -> Frame? {

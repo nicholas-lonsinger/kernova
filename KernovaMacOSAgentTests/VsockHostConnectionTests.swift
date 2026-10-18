@@ -61,11 +61,11 @@ struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
 
     private func pendingLogCount(_ conn: VsockHostConnection) -> Int {
-        conn.lock.withLock { conn.pendingLogs.count }
+        conn.pendingLogsForTesting().count
     }
 
     private func pendingMessages(_ conn: VsockHostConnection) -> [String] {
-        conn.lock.withLock { conn.pendingLogs }.compactMap { framed -> String? in
+        conn.pendingLogsForTesting().compactMap { framed -> String? in
             var decoder = StreamFrameDecoder()
             decoder.feed(framed)
             guard let payload = try? decoder.nextFrame(),

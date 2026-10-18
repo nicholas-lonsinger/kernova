@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 // MARK: - TestAdmissionGate
 
@@ -16,50 +17,52 @@ import KernovaLogging
 /// bumped to compensate, inflate the pool. Leaving a cancelled waiter in the
 /// queue costs it one turn's wait and keeps the invariant exact; cancellation is
 /// then observed by the work it wraps.
-final class TestAdmissionGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var available: Int
-    private var waiters: [() -> Void] = []
+final class TestAdmissionGate: Sendable {
+    private struct State: Sendable {
+        var available: Int
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state: Locked<State>
 
     /// Creates a gate holding `width` permits; a width below 1 admits nobody.
     init(width: Int) {
-        available = max(0, width)
+        state = Locked(State(available: max(0, width)))
     }
 
     /// Suspends until a permit is free, then takes it.
     func acquire() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            lock.lock()
-            guard available > 0 else {
-                waiters.append { continuation.resume() }
-                lock.unlock()
-                return
+            let admitted = state.withLock { state in
+                guard state.available > 0 else {
+                    state.waiters.append(continuation)
+                    return false
+                }
+                state.available -= 1
+                return true
             }
-            available -= 1
-            lock.unlock()
-            continuation.resume()
+            if admitted { continuation.resume() }
         }
     }
 
     /// Returns a permit, resuming the oldest waiter if one is queued.
     func release() {
-        lock.lock()
-        guard !waiters.isEmpty else {
-            available += 1
-            lock.unlock()
-            return
+        let next = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            guard !state.waiters.isEmpty else {
+                state.available += 1
+                return nil
+            }
+            return state.waiters.removeFirst()
         }
-        let resume = waiters.removeFirst()
-        lock.unlock()
-        resume()
+        next?.resume()
     }
 
     #if DEBUG
     /// Permits not currently held, for a test asserting the pool stays balanced.
-    var availableForTesting: Int { lock.withLock { available } }
+    var availableForTesting: Int { state.withLock { $0.available } }
 
     /// Callers queued for a permit.
-    var waiterCountForTesting: Int { lock.withLock { waiters.count } }
+    var waiterCountForTesting: Int { state.withLock { $0.waiters.count } }
     #endif
 }
 

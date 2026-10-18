@@ -52,7 +52,7 @@ struct VsockGuestDropAgentTests {
                 freeSpaceProvider: freeSpaceProvider,
                 dataDialer: dialled.dialer,
                 revealInFinder: { urls in revealed.set(urls) })
-            agent.hostSupportsDrop = { true }
+            agent.applyHostCapability(supportsDrop: true)
         }
 
         /// Starts the agent, enables it the way the control agent's capability
@@ -350,7 +350,7 @@ struct VsockGuestDropAgentTests {
         await MainActor.run {
             reporter.onReportChanged = { report in
                 guard case .finished(let finish) = report else { return }
-                finishes.set((finishes.value ?? []) + [finish])
+                finishes.update { $0 = ($0 ?? []) + [finish] }
             }
         }
 
@@ -465,7 +465,7 @@ struct VsockGuestDropAgentTests {
     func staysPausedWithoutTheCapability() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        harness.agent.hostSupportsDrop = { false }
+        harness.agent.applyHostCapability(supportsDrop: false)
 
         harness.agent.start()
         harness.agent.applyPolicy(enabled: true)
@@ -475,8 +475,7 @@ struct VsockGuestDropAgentTests {
         #expect(harness.agent.liveChannelForTesting == nil)
 
         // The capability arriving is what starts the client.
-        harness.agent.hostSupportsDrop = { true }
-        harness.agent.syncEnablement()
+        harness.agent.applyHostCapability(supportsDrop: true)
         try await waitUntil { harness.agent.liveChannelForTesting != nil }
     }
 

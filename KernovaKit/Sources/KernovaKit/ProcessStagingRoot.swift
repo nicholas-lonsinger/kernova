@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 import System
 
 /// One process's own directory under a staging parent that several processes
@@ -13,9 +14,7 @@ import System
 /// appears under its scanned name only once its lock is held: ``claim()`` builds
 /// it under a hidden name and renames it into place, and reclaim never judges a
 /// hidden entry.
-///
-/// `@unchecked Sendable`: an internal lock serializes ``claim()``.
-public final class ProcessStagingRoot: @unchecked Sendable {
+public final class ProcessStagingRoot: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ProcessStagingRoot")
 
@@ -24,8 +23,9 @@ public final class ProcessStagingRoot: @unchecked Sendable {
     public let url: URL
 
     private let parent: URL
-    private let lock = NSLock()
-    private var directoryLock: ExclusiveFileLock?
+
+    /// Held across ``claim()``'s file-system work, which it serializes.
+    private let directoryLock = Locked<ExclusiveFileLock?>(nil)
 
     /// A root under `parent`; touches no disk.
     public init(parent: URL) {
@@ -44,30 +44,30 @@ public final class ProcessStagingRoot: @unchecked Sendable {
     ///   when something else occupies ``url``; nothing is left under the parent,
     ///   and a later call tries again.
     public func claim() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        if let held = directoryLock {
-            if Self.isEntry(at: url, lockedBy: held) { return }
-            directoryLock = nil
-        }
+        try directoryLock.withLock { directoryLock in
+            if let held = directoryLock {
+                if Self.isEntry(at: url, lockedBy: held) { return }
+                directoryLock = nil
+            }
 
-        let manager = FileManager.default
-        try manager.createDirectory(at: parent, withIntermediateDirectories: true)
-        let building = parent.appendingPathComponent(
-            "." + url.lastPathComponent, isDirectory: true)
-        try manager.createDirectory(at: building, withIntermediateDirectories: false)
-        do {
-            guard let acquired = try ExclusiveFileLock.tryAcquire(at: building) else {
-                throw Errno.wouldBlock
+            let manager = FileManager.default
+            try manager.createDirectory(at: parent, withIntermediateDirectories: true)
+            let building = parent.appendingPathComponent(
+                "." + url.lastPathComponent, isDirectory: true)
+            try manager.createDirectory(at: building, withIntermediateDirectories: false)
+            do {
+                guard let acquired = try ExclusiveFileLock.tryAcquire(at: building) else {
+                    throw Errno.wouldBlock
+                }
+                // The lock rides the inode through the rename.
+                guard renamex_np(building.path, url.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw Errno(rawValue: errno)
+                }
+                directoryLock = acquired
+            } catch {
+                try? manager.removeItem(at: building)
+                throw error
             }
-            // The lock rides the inode through the rename.
-            guard renamex_np(building.path, url.path, UInt32(RENAME_EXCL)) == 0 else {
-                throw Errno(rawValue: errno)
-            }
-            directoryLock = acquired
-        } catch {
-            try? manager.removeItem(at: building)
-            throw error
         }
     }
 

@@ -2,6 +2,7 @@ import ArgumentParser
 import Darwin
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -13,15 +14,22 @@ import Testing
 /// response, then closes — the hang-up a process exiting produces. Every
 /// request is recorded, so a test can assert what the tool actually asked for
 /// and not only what it did with the answer.
-final class TestCommandSocket: @unchecked Sendable {
+final class TestCommandSocket: Sendable {
     /// Where this server listens.
     let path: String
 
     private let descriptor: Int32
+
+    /// Runs the serve loop, and orders ``requests()`` and ``close()`` behind it.
     private let queue = DispatchQueue(label: "test.kernova.command-socket")
-    private var received: [VMCommandRequest] = []
-    private var accepted: Int32?
-    private var isClosed = false
+
+    private struct State: Sendable {
+        var received: [VMCommandRequest] = []
+        var accepted: Int32?
+        var isClosed = false
+    }
+
+    private let state = Locked(State())
 
     /// Binds a listening socket in a scratch directory of its own, under a
     /// short leaf — `sockaddr_un.sun_path` holds 104 bytes.
@@ -77,7 +85,7 @@ final class TestCommandSocket: @unchecked Sendable {
         queue.async { [self] in
             let connection = accept(descriptor, nil, nil)
             guard connection >= 0 else { return }
-            accepted = connection
+            state.withLock { $0.accepted = connection }
             var deadline = Self.readDeadline
             _ = setsockopt(
                 connection, SOL_SOCKET, SO_RCVTIMEO, &deadline,
@@ -90,7 +98,7 @@ final class TestCommandSocket: @unchecked Sendable {
                     if let request = try? JSONDecoder().decode(
                         VMCommandRequest.self, from: Data(frame))
                     {
-                        received.append(request)
+                        state.withLock { $0.received.append(request) }
                     }
                     guard !remaining.isEmpty else { continue }
                     for response in remaining.removeFirst() {
@@ -105,20 +113,23 @@ final class TestCommandSocket: @unchecked Sendable {
                 decoder.feed(Data(buffer[0..<count]))
             }
             Darwin.close(connection)
-            accepted = nil
+            state.withLock { $0.accepted = nil }
         }
     }
 
     /// What the tool asked for, in the order it asked.
     func requests() -> [VMCommandRequest] {
-        queue.sync { received }
+        queue.sync { state.withLock { $0.received } }
     }
 
     /// Closes the listener and any connection it accepted; idempotent.
     func close() {
         queue.sync {
-            guard !isClosed else { return }
-            isClosed = true
+            let (wasOpen, accepted) = state.withLock { state in
+                defer { state.isClosed = true }
+                return (!state.isClosed, state.accepted)
+            }
+            guard wasOpen else { return }
             if let accepted { Darwin.close(accepted) }
             Darwin.close(descriptor)
             unlink(path)

@@ -69,7 +69,7 @@ struct VsockGuestControlAgentTests {
         terminateAfter: TimeInterval? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
-        onHostCapabilitiesChanged: (@Sendable () -> Void)? = nil
+        onHostCapabilitiesChanged: (@Sendable (Bool) -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let provider: VsockSocketProvider = { _, _ in
@@ -239,7 +239,7 @@ struct VsockGuestControlAgentTests {
         let agent = makeAgent(
             agentFd: agentFd,
             heartbeatInterval: 0.1,
-            onHostCapabilitiesChanged: { notified.increment() })
+            onHostCapabilitiesChanged: { _ in notified.increment() })
         defer { agent.stop() }
         agent.start()
 
@@ -270,13 +270,13 @@ struct VsockGuestControlAgentTests {
         // Short unresponsive window; terminate stays disabled (the makeAgent
         // default), so the watchdog flags "unresponsive" without tearing the
         // channel down during the test.
-        let states = StateBox()
+        let states = AtomicBox<HostConnectionState>()
         let agent = makeAgent(
             clock: kind.makeClock(),
             agentFd: agentFd,
             heartbeatInterval: 0.05,
             unresponsiveAfter: 0.15,
-            onStateChange: { states.record($0) })
+            onStateChange: { states.set($0) })
         defer { agent.stop() }
         agent.start()
 
@@ -348,34 +348,6 @@ struct VsockGuestControlAgentTests {
 
     // MARK: - PolicyUpdate routing
 
-    /// Lock-protected box for the most recent policy received via the
-    /// onPolicy callback.
-    private final class PolicyBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var storedValue: Kernova_V1_PolicyUpdate?
-        /// Fires on every `set`; await it instead of polling `value`.
-        let changed = AsyncGate()
-        func set(_ p: Kernova_V1_PolicyUpdate) {
-            lock.withLock { storedValue = p }
-            changed.notify()
-        }
-        var value: Kernova_V1_PolicyUpdate? { lock.withLock { storedValue } }
-    }
-
-    /// Lock-protected box recording the latest connection state delivered via
-    /// the agent's `onStateChange` callback.
-    private final class StateBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var storedValue: HostConnectionState?
-        /// Fires on every `record`; await it instead of polling `value`.
-        let changed = AsyncGate()
-        func record(_ s: HostConnectionState) {
-            lock.withLock { storedValue = s }
-            changed.notify()
-        }
-        var value: HostConnectionState? { lock.withLock { storedValue } }
-    }
-
     @Test("Inbound PolicyUpdate is forwarded to the onPolicy callback")
     func policyUpdateRoutesToCallback() async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
@@ -383,7 +355,7 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let received = PolicyBox()
+        let received = AtomicBox<Kernova_V1_PolicyUpdate>()
         let agent = makeAgent(
             agentFd: agentFd,
             onPolicy: { policy in
@@ -418,7 +390,7 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let received = PolicyBox()
+        let received = AtomicBox<Kernova_V1_PolicyUpdate>()
         let agent = makeAgent(
             agentFd: agentFd,
             onPolicy: { policy in received.set(policy) })
@@ -446,27 +418,36 @@ struct VsockGuestControlAgentTests {
 
     // MARK: - Display drops
 
-    @Test("the host's drop capability is recorded from its Hello")
+    /// Collects every drop capability `onHostCapabilitiesChanged` reports, in
+    /// order.
+    private func recordingDropCapability(
+        into reported: AtomicBox<[Bool]>
+    ) -> @Sendable (Bool) -> Void {
+        { supportsDrop in reported.update { $0 = ($0 ?? []) + [supportsDrop] } }
+    }
+
+    @Test("the host's drop capability is reported from its Hello")
     func hostDropCapabilityObservedFromHello() async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
         let host = VsockChannel(fileDescriptor: hostFd)
         host.start()
         defer { host.close() }
 
-        let notified = AtomicInt()
-        let agent = makeAgent(agentFd: agentFd, onHostCapabilitiesChanged: { notified.increment() })
+        let reported = AtomicBox<[Bool]>()
+        let agent = makeAgent(
+            agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
         agent.start()
         defer { agent.stop() }
 
         _ = try await nextFrame(from: host)  // drain outbound Hello
         // The connection itself clears the previous host's capabilities, which
         // is a change the drop client has to hear about too.
-        try await notified.changed.wait { notified.value >= 1 }
-        #expect(agent.hostSupportsDropFiles == false)
+        try await reported.changed.wait { (reported.value?.count ?? 0) >= 1 }
+        #expect(reported.value == [false])
 
         try host.send(makeHostHelloFrame())
-        try await notified.changed.wait { notified.value >= 2 }
-        #expect(agent.hostSupportsDropFiles)
+        try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
+        #expect(reported.value == [false, true])
     }
 
     @Test("a host that advertises no drop capability leaves it off")
@@ -476,16 +457,17 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let notified = AtomicInt()
-        let agent = makeAgent(agentFd: agentFd, onHostCapabilitiesChanged: { notified.increment() })
+        let reported = AtomicBox<[Bool]>()
+        let agent = makeAgent(
+            agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
         agent.start()
         defer { agent.stop() }
 
         _ = try await nextFrame(from: host)  // drain outbound Hello
         try host.send(makeHostHelloFrame(streamingCapable: false))
-        try await notified.changed.wait { notified.value >= 2 }
+        try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
 
-        #expect(agent.hostSupportsDropFiles == false)
+        #expect(reported.value == [false, false])
     }
 
     @Test("A stop() taken inside onPolicy drops the policy buffered behind it")
@@ -496,7 +478,7 @@ struct VsockGuestControlAgentTests {
         defer { host.close() }
 
         let policies = AtomicInt()
-        let states = StateBox()
+        let states = AtomicBox<HostConnectionState>()
         let agentBox = AtomicBox<VsockGuestControlAgent>()
         let agent = makeAgent(
             agentFd: agentFd,
@@ -508,7 +490,7 @@ struct VsockGuestControlAgentTests {
                 // gets in production is best-effort.
                 if policies.increment() == 1 { agentBox.value?.stop() }
             },
-            onStateChange: { states.record($0) })
+            onStateChange: { states.set($0) })
         agentBox.set(agent)
         agent.start()
         defer { agent.stop() }

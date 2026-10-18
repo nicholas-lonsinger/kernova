@@ -263,6 +263,11 @@ public enum AppRegistryWait {
 
 /// Wakes the run loop a wait is parked on, from whichever thread the registry's
 /// notification lands on.
+///
+/// `@unchecked` because the SDK does not mark `CFRunLoop` `Sendable`, while
+/// Core Foundation's run-loop functions "are generally thread-safe and can be
+/// called from any thread" (Apple, *Threading Programming Guide*, "Thread
+/// Safety and Run Loop Objects").
 private final class RunLoopWaker: @unchecked Sendable {
     private let loop: CFRunLoop
 

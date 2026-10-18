@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 // MARK: - testWaitBackstop
 
@@ -23,20 +24,22 @@ public let testWaitBackstop: TimeInterval = 60
 
 // MARK: - Test-session OS activity
 
-/// OS activity exempting the test host from App Nap and idle timer throttling,
-/// begun by the first `armTestSessionActivity()` call — which reads this token
-/// precisely to run the lazy initializer — and held for the rest of the
-/// process's life. `.userInitiated` also keeps the machine from idle-sleeping
-/// mid-run: system sleep would blow every armed backstop.
+/// Begins the OS activity exempting the test host from App Nap and idle timer
+/// throttling, on the first `armTestSessionActivity()` call — which reads this
+/// precisely to run the lazy initializer — and retains its token for the rest
+/// of the process's life. `.userInitiated` also keeps the machine from
+/// idle-sleeping mid-run: system sleep would blow every armed backstop.
 ///
 /// On an idle, display-off machine the OS can hold a windowless process's
 /// timers past the 60 s backstop, then release every armed wait at one
 /// instant, mass-failing whatever cases are in flight (observed 2026-08-06,
 /// #759). Test runs are user-initiated work even when the display is off.
-nonisolated(unsafe) private let testSessionActivity: NSObjectProtocol =
-    ProcessInfo.processInfo.beginActivity(
+private let testSessionActivity: Void = {
+    let token = ProcessInfo.processInfo.beginActivity(
         options: .userInitiated,
         reason: "Test waits measure real time and must not be throttled")
+    _ = Unmanaged.passRetained(token as AnyObject)
+}()
 
 /// Begins the test session's OS activity on first call; later calls no-op.
 ///
@@ -138,16 +141,15 @@ func backstopDiagnosis(
 /// (a `notify()` and the timeout backstop) try to fire it.
 ///
 /// `CheckedContinuation` traps on a second resume.
-final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fired = false
+final class ResumeOnce: Sendable {
+    private let fired = Locked(false)
 
     /// Runs `body` only on the first call; every later call is a no-op.
     func fire(_ body: () -> Void) {
-        lock.lock()
-        let already = fired
-        fired = true
-        lock.unlock()
+        let already = fired.withLock { fired in
+            defer { fired = true }
+            return fired
+        }
         if !already { body() }
     }
 }
@@ -160,19 +162,18 @@ final class ResumeOnce: @unchecked Sendable {
 /// awaits `wait(until:)`, which suspends until the predicate holds — re-checked
 /// on every `notify()` — or throws `TestFailure` after `timeout`, a
 /// stuck-condition backstop the happy path never reaches.
-public final class AsyncGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var waiters: [UUID: () -> Void] = [:]
+public final class AsyncGate: Sendable {
+    private let waiters = Locked<[UUID: @Sendable () -> Void]>([:])
 
     /// Creates a fresh gate with no waiters.
     public init() {}
 
     /// Wake every current waiter; call right after mutating observed state.
     public func notify() {
-        lock.lock()
-        let resumes = Array(waiters.values)
-        waiters.removeAll()
-        lock.unlock()
+        let resumes = waiters.withLock { waiters in
+            defer { waiters.removeAll() }
+            return Array(waiters.values)
+        }
         resumes.forEach { $0() }
     }
 
@@ -219,15 +220,11 @@ public final class AsyncGate: @unchecked Sendable {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let id = UUID()
             let once = ResumeOnce()
-            lock.lock()
-            waiters[id] = { once.fire { cont.resume() } }
-            lock.unlock()
+            waiters.withLock { $0[id] = { once.fire { cont.resume() } } }
             // Close the arm-vs-notify race: a notify may have landed before we
             // registered, so re-check now instead of blocking.
             if predicate() {
-                lock.lock()
-                waiters.removeValue(forKey: id)
-                lock.unlock()
+                waiters.withLock { _ = $0.removeValue(forKey: id) }
                 once.fire { cont.resume() }
                 return
             }
@@ -235,7 +232,7 @@ public final class AsyncGate: @unchecked Sendable {
             // condition fails the wait instead of hanging.
             backstop = Task {
                 try? await MonotonicEngineClock().sleep(for: max(0, timeout - stopwatch.elapsed))
-                self.lock.withLock { self.waiters[id] = nil }
+                self.waiters.withLock { $0[id] = nil }
                 once.fire { cont.resume() }
             }
         }

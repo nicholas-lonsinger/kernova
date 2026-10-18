@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import KernovaSynchronization
 
 // MARK: - Config fields
 
@@ -172,7 +173,7 @@ extension CodingUserInfoKey {
 
 /// The config fields a collecting decode met a value it could not decode
 /// in, in the order it met them.
-final class ConfigProblemCollector: @unchecked Sendable {
+final class ConfigProblemCollector: Sendable {
     struct Recorded: Sendable {
         /// The value the repair acts on.
         let path: ConfigValuePath
@@ -181,16 +182,15 @@ final class ConfigProblemCollector: @unchecked Sendable {
         let repair: ConfigProblem.Repair?
     }
 
-    private let lock = NSLock()
-    private var recorded: [Recorded] = []
+    private let recorded = Locked<[Recorded]>([])
 
-    fileprivate var mark: Int { lock.withLock { recorded.count } }
+    fileprivate var mark: Int { recorded.withLock { $0.count } }
 
     /// Drops what was recorded since `mark` and records `entry` — or, where
     /// another form already recorded the value at `entry`'s path, keeps that
     /// one problem, repairable only while both forms can repair it.
     fileprivate func replaceRecorded(since mark: Int, with entry: Recorded) {
-        lock.withLock {
+        recorded.withLock { recorded in
             recorded.removeSubrange(mark...)
             guard let earlier = recorded.firstIndex(where: { $0.path == entry.path }) else {
                 recorded.append(entry)
@@ -202,7 +202,7 @@ final class ConfigProblemCollector: @unchecked Sendable {
         }
     }
 
-    fileprivate var all: [Recorded] { lock.withLock { recorded } }
+    fileprivate var all: [Recorded] { recorded.withLock { $0 } }
 }
 
 // MARK: - Diagnosis

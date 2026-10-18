@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 import Testing
 
 /// A directory under the temporary directory that no other test shares,
@@ -55,20 +56,20 @@ public struct TestScratchDirectory: Sendable {
 
 /// The scratch directories one test case minted, removed when the case ends,
 /// after which it takes no more.
-///
-/// `@unchecked Sendable`: `lock` serializes every access to `urls`,
-/// `sharedURLs` and `isClosed`.
-final class TestScratchLedger: @unchecked Sendable {
+final class TestScratchLedger: Sendable {
     /// The running case's ledger; `nil` outside a ``TestCaseScopeTrait`` scope.
     @TaskLocal static var current: TestScratchLedger?
 
-    private let lock = NSLock()
-    private var urls: [URL] = []
-    private var sharedURLs: [String: URL] = [:]
-    private var isClosed = false
+    private struct State: Sendable {
+        var urls: [URL] = []
+        var sharedURLs: [String: URL] = [:]
+        var isClosed = false
+    }
+
+    private let state = Locked(State())
 
     /// Every directory recorded so far, in minting order.
-    var recordedURLs: [URL] { lock.withLock { urls } }
+    var recordedURLs: [URL] { state.withLock { $0.urls } }
 
     /// Runs `body` with a fresh ledger as ``current``, then removes every
     /// directory recorded in it, whether `body` returned or threw.
@@ -98,9 +99,9 @@ final class TestScratchLedger: @unchecked Sendable {
 
     fileprivate func mint(_ prefix: String, for caller: @autoclosure () -> String) -> URL {
         let url = TestScratchDirectory.freshURL(prefix)
-        let recorded = lock.withLock {
-            guard !isClosed else { return false }
-            urls.append(url)
+        let recorded = state.withLock { state in
+            guard !state.isClosed else { return false }
+            state.urls.append(url)
             return true
         }
         guard recorded else { Self.caseEnded(caller()) }
@@ -108,12 +109,12 @@ final class TestScratchLedger: @unchecked Sendable {
     }
 
     fileprivate func shared(_ prefix: String, for caller: @autoclosure () -> String) -> URL {
-        let url: URL? = lock.withLock {
-            guard !isClosed else { return nil }
-            if let url = sharedURLs[prefix] { return url }
+        let url: URL? = state.withLock { state in
+            guard !state.isClosed else { return nil }
+            if let url = state.sharedURLs[prefix] { return url }
             let url = TestScratchDirectory.freshURL(prefix)
-            urls.append(url)
-            sharedURLs[prefix] = url
+            state.urls.append(url)
+            state.sharedURLs[prefix] = url
             return url
         }
         guard let url else { Self.caseEnded(caller()) }
@@ -130,9 +131,9 @@ final class TestScratchLedger: @unchecked Sendable {
     }
 
     private func removeAll() {
-        let recorded = lock.withLock {
-            isClosed = true
-            return urls
+        let recorded = state.withLock { state in
+            state.isClosed = true
+            return state.urls
         }
         for url in recorded {
             do {

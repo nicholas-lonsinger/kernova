@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaSynchronization
 
 /// Guest-side control-channel agent that talks to the host's
 /// `VsockControlService` on `KernovaVsockPort.control`.
@@ -10,17 +11,13 @@ import KernovaLogging
 /// carries the version handshake, a recurring heartbeat, and a watchdog that
 /// closes the channel once inbound traffic stops for `terminateAfter`, leaving
 /// `VsockGuestClient` to rebuild it.
-final class VsockGuestControlAgent: @unchecked Sendable {
+final class VsockGuestControlAgent: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
 
     private let clock: any EngineClock
     private let client: VsockGuestClient
     private let cadence: ControlChannelCadence
-
-    /// The two-stage silence watchdog, shared with the host service, and reset
-    /// per connection by ``serve(channel:)``.
-    private let liveness: ControlLivenessMonitor
 
     /// Invoked on every inbound `PolicyUpdate`, with the raw protobuf snapshot.
     private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
@@ -30,40 +27,58 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// Called off the main thread; the receiver must hop to the main actor.
     private let onStateChange: (@Sendable (HostConnectionState) -> Void)?
 
-    private let lock = NSLock()
-    private var nextHeartbeatNonce: UInt64 = 1
+    private let state: Locked<State>
 
-    /// Connection state surfaced to the menu-bar UI.
-    ///
-    /// Guarded by `lock`; mutate only through `updateConnectionState(_:)` so the
-    /// change callback fires exactly on real transitions.
-    private var connectionStateStorage: HostConnectionState = .connecting
+    private struct State: Sendable {
+        var nextHeartbeatNonce: UInt64 = 1
 
-    /// The guest-agent version the host bundles, learned from its `Hello`.
-    ///
-    /// Guarded by `lock`; empty means unknown, which the UI shows as no update.
-    private var hostBundledAgentVersionStorage: String = ""
+        /// Connection state surfaced to the menu-bar UI.
+        ///
+        /// Set only through `transition(to:)`, so the change callback fires
+        /// exactly on real transitions.
+        private(set) var connectionState: HostConnectionState = .connecting
 
-    /// Whether the host advertised the streaming-clipboard capability.
-    ///
-    /// Guarded by `lock` and reset per connection; gates the clipboard bit of
-    /// every inbound `PolicyUpdate`, symmetric with the host's own gate.
-    private var hostSupportsClipboardStreaming = false
+        /// The guest-agent version the host bundles, learned from its `Hello`;
+        /// empty means unknown, which the UI shows as no update.
+        var hostBundledAgentVersion = ""
 
-    /// Whether the host advertised the display-drop capability.
-    ///
-    /// Guarded by `lock` and reset per connection; a host without it runs no drop
-    /// listener, so the guest's drop client stays paused rather than redialling a
-    /// port nothing is bound to.
-    private var hostSupportsDropFilesStorage = false
+        /// Whether the host advertised the streaming-clipboard capability.
+        ///
+        /// Reset per connection; gates the clipboard bit of every inbound
+        /// `PolicyUpdate`, symmetric with the host's own gate.
+        var hostSupportsClipboardStreaming = false
+
+        /// The two-stage silence watchdog, shared with the host service, and
+        /// reset per connection by ``serve(channel:)``.
+        var liveness: ControlLivenessMonitor
+
+        init(cadence: ControlChannelCadence) {
+            liveness = ControlLivenessMonitor(cadence: cadence)
+        }
+
+        /// Moves to `newState`, and returns whether that changed anything.
+        mutating func transition(to newState: HostConnectionState) -> Bool {
+            guard connectionState != newState else { return false }
+            connectionState = newState
+            return true
+        }
+
+        mutating func takeHeartbeatNonce() -> UInt64 {
+            defer { nextHeartbeatNonce += 1 }
+            return nextHeartbeatNonce
+        }
+    }
 
     /// Invoked whenever the host's advertised capabilities change — on each
-    /// `Hello`, and on each connection teardown that clears them.
+    /// `Hello`, and on each connection teardown that clears them — with
+    /// whether the host now takes files dropped on the VM display.
     ///
-    /// Separate from `onStateChange`, which is change-gated on a state already
-    /// set to `.connected` before any `Hello` arrives and so never fires for the
-    /// capabilities themselves. Called off the main thread.
-    private let onHostCapabilitiesChanged: (@Sendable () -> Void)?
+    /// A host without that capability runs no drop listener, so the guest's
+    /// drop client stays paused rather than redialling a port nothing is bound
+    /// to. Separate from `onStateChange`, which is change-gated on a state
+    /// already set to `.connected` before any `Hello` arrives and so never
+    /// fires for the capabilities themselves. Called off the main thread.
+    private let onHostCapabilitiesChanged: (@Sendable (_ hostSupportsDropFiles: Bool) -> Void)?
 
     /// Creates the control agent; tests inject a socketpair-backed client and
     /// small cadences.
@@ -74,12 +89,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         cadence: ControlChannelCadence = .production,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
-        onHostCapabilitiesChanged: (@Sendable () -> Void)? = nil
+        onHostCapabilitiesChanged: (@Sendable (_ hostSupportsDropFiles: Bool) -> Void)? = nil
     ) {
         self.clock = clock
         self.client = client
         self.cadence = cadence
-        self.liveness = ControlLivenessMonitor(cadence: cadence)
+        self.state = Locked(State(cadence: cadence))
         self.onPolicy = onPolicy
         self.onStateChange = onStateChange
         self.onHostCapabilitiesChanged = onHostCapabilitiesChanged
@@ -87,33 +102,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     // MARK: - UI state accessors
 
-    /// Thread-safe host-connection state for the menu-bar UI to pull on open.
+    /// Host-connection state for the menu-bar UI to pull on open.
     var connectionState: HostConnectionState {
-        lock.withLock { connectionStateStorage }
+        state.withLock { $0.connectionState }
     }
 
-    /// Thread-safe read of the host's bundled agent version; empty when unknown.
+    /// The host's bundled agent version; empty when unknown.
     var hostBundledAgentVersion: String {
-        lock.withLock { hostBundledAgentVersionStorage }
-    }
-
-    /// Thread-safe read of whether the host takes files dropped on the VM
-    /// display.
-    var hostSupportsDropFiles: Bool {
-        lock.withLock { hostSupportsDropFilesStorage }
-    }
-
-    /// Transitions `connectionState`, firing `onStateChange` only on a real
-    /// change.
-    ///
-    /// Must not be called while already holding `lock` (NSLock is not reentrant).
-    private func updateConnectionState(_ newState: HostConnectionState) {
-        let changed: Bool = lock.withLock {
-            guard connectionStateStorage != newState else { return false }
-            connectionStateStorage = newState
-            return true
-        }
-        if changed { onStateChange?(newState) }
+        state.withLock { $0.hostBundledAgentVersion }
     }
 
     // MARK: - Lifecycle
@@ -137,15 +133,15 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private func serve(channel: VsockChannel) async {
         // Neither a stale liveness clock nor a stale capability may leak across
         // connections.
-        liveness.reset()
-        lock.withLock {
-            hostSupportsClipboardStreaming = false
-            hostSupportsDropFilesStorage = false
+        let connected = state.withLock { state in
+            state.liveness.reset()
+            state.hostSupportsClipboardStreaming = false
+            return state.transition(to: .connected)
         }
         // The clearing is a capability change like any other: a client enabled by
         // the previous host's Hello has to stand down until this one says Hello.
-        onHostCapabilitiesChanged?()
-        updateConnectionState(.connected)
+        onHostCapabilitiesChanged?(false)
+        if connected { onStateChange?(.connected) }
 
         sendHello(on: channel)
 
@@ -162,7 +158,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         defer {
             heartbeatTask.cancel()
             livenessTask.cancel()
-            updateConnectionState(.connecting)
+            if state.withLock({ $0.transition(to: .connecting) }) { onStateChange?(.connecting) }
         }
 
         do {
@@ -184,8 +180,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         let inbound = ControlChannelInbound.classify(frame)
         // Any inbound traffic counts as liveness.
         if inbound.isLivenessSignal {
-            liveness.record(at: clock.now)
-            updateConnectionState(.connected)
+            let now = clock.now
+            let reconnected = state.withLock { state in
+                state.liveness.record(at: now)
+                return state.transition(to: .connected)
+            }
+            if reconnected { onStateChange?(.connected) }
         }
 
         switch inbound {
@@ -197,12 +197,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         case .hello(let hello):
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardTransferV3)
             let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV3)
-            lock.withLock {
-                hostSupportsClipboardStreaming = hostStreams
-                hostSupportsDropFilesStorage = hostTakesDrops
-                hostBundledAgentVersionStorage = hello.bundledAgentVersion
+            state.withLock { state in
+                state.hostSupportsClipboardStreaming = hostStreams
+                state.hostBundledAgentVersion = hello.bundledAgentVersion
             }
-            onHostCapabilitiesChanged?()
+            onHostCapabilitiesChanged?(hostTakesDrops)
             // `logDescription` bounds the peer-supplied capability strings; these
             // records can be forwarded into the host's log store.
             #log(
@@ -220,7 +219,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         case .policyUpdate(let policy):
             // Symmetric capability gate: ignore a clipboard-enable from a host
             // that didn't advertise streaming support.
-            let hostStreams = lock.withLock { hostSupportsClipboardStreaming }
+            let hostStreams = state.withLock { $0.hostSupportsClipboardStreaming }
             var effective = policy
             effective.clipboardSharingEnabled = policy.clipboardSharingEnabled && hostStreams
             if policy.clipboardSharingEnabled && !hostStreams {
@@ -256,10 +255,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     }
 
     private func sendHeartbeat(on channel: VsockChannel) {
-        let nonce = lock.withLock {
-            defer { nextHeartbeatNonce += 1 }
-            return nextHeartbeatNonce
-        }
+        let nonce = state.withLock { $0.takeHeartbeatNonce() }
         do {
             try channel.send(Frame.controlHeartbeat(nonce: nonce))
         } catch {
@@ -275,7 +271,13 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     // MARK: - Liveness
 
     private func checkLiveness(channel: VsockChannel) {
-        switch liveness.evaluate(at: clock.now) {
+        let now = clock.now
+        let (verdict, becameUnresponsive) = state.withLock { state in
+            let verdict = state.liveness.evaluate(at: now)
+            guard case .becameUnresponsive = verdict else { return (verdict, false) }
+            return (verdict, state.transition(to: .unresponsive))
+        }
+        switch verdict {
         case .unchanged, .recovered:
             // The host hasn't sent anything yet, or nothing crossed a stage —
             // keep waiting. An evaluation never recovers a peer; the inbound
@@ -286,7 +288,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 Self.logger, .warning,
                 "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — host appears unresponsive"
             )
-            updateConnectionState(.unresponsive)
+            if becameUnresponsive { onStateChange?(.unresponsive) }
         case .expired(let silentFor):
             #log(
                 Self.logger, .warning,

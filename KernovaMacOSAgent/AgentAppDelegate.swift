@@ -135,15 +135,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                     self?.statusItemController?.connectionStateChanged()
                 }
             },
-            onHostCapabilitiesChanged: { [weak dropAgent] in
-                dropAgent?.syncEnablement()
+            onHostCapabilitiesChanged: { [weak dropAgent] hostSupportsDropFiles in
+                dropAgent?.applyHostCapability(supportsDrop: hostSupportsDropFiles)
             }
         )
 
         self.vsockConnection = vsockConnection
-        dropAgent.hostSupportsDrop = { [weak controlAgent] in
-            controlAgent?.hostSupportsDropFiles ?? false
-        }
         self.transferReporter = transferReporter
         self.clipboardAgent = clipboardAgent
         self.dropAgent = dropAgent
