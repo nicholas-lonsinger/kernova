@@ -27,11 +27,10 @@ package final class AttachmentFileMonitor {
 
     /// Parent directory -> live watcher.
     ///
-    /// `nonisolated(unsafe)` so `deinit` can cancel the sources;
     /// `@ObservationIgnored` keeps the macro from re-isolating the storage behind
-    /// main-actor accessors.
+    /// main-actor accessors, which `deinit` could not call to cancel the sources.
     @ObservationIgnored
-    nonisolated(unsafe) private var parentSources: [String: DispatchSourceFileSystemObject] = [:]
+    private var parentSources: [String: DispatchSourceFileSystemObject] = [:]
 
     /// Parent directory -> tracked paths whose direct parent is that directory.
     ///

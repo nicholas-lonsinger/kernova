@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import Synchronization
 
 /// Streams a remote file to a local destination, resuming an interrupted
 /// transfer from the partial bytes left beside it.
@@ -858,12 +859,10 @@ struct DownloadBundle: Sendable {
 /// a time, which for a multi-GB image is billions of async iterations. The
 /// data-task delegate delivers `Data` chunks instead, written straight to the
 /// bundle's data file with no intermediate buffering.
-private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    // URLSession serialises delegate callbacks onto a private queue, so the
-    // mutable state below — touched only in those callbacks — is race-free.
+private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate, Sendable {
     private let responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>
     private let streamContinuation: AsyncThrowingStream<Data, any Error>.Continuation
-    private var responseDelivered = false
+    private let responseDelivered = Mutex(false)
 
     init(
         responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>,
@@ -879,11 +878,10 @@ private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate,
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
-        guard !responseDelivered else {
+        guard deliverResponse() else {
             completionHandler(.allow)
             return
         }
-        responseDelivered = true
         guard let httpResponse = response as? HTTPURLResponse else {
             responseContinuation.resume(throwing: URLError(.badServerResponse))
             completionHandler(.cancel)
@@ -905,13 +903,21 @@ private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate,
         if let error {
             // A failure landing before response delivery must go out through the
             // response continuation, or the awaiter hangs.
-            if !responseDelivered {
-                responseDelivered = true
+            if deliverResponse() {
                 responseContinuation.resume(throwing: error)
             }
             streamContinuation.finish(throwing: error)
         } else {
             streamContinuation.finish()
+        }
+    }
+
+    /// Claims the one resumption of `responseContinuation`: `true` for the
+    /// first caller only.
+    private func deliverResponse() -> Bool {
+        responseDelivered.withLock { delivered in
+            defer { delivered = true }
+            return !delivered
         }
     }
 }

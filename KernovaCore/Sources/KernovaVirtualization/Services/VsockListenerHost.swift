@@ -8,10 +8,7 @@ import Virtualization
 ///
 /// One instance handles one port; pair several with one `VZVirtioSocketDevice`
 /// to run multiple services side-by-side.
-///
-/// `@unchecked Sendable`: every stored property is `let`, and the non-Sendable
-/// `VZVirtioSocketListener` is touched only at `init` and `attach(to:)`.
-final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
+final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockListenerHost")
 
     let listener: VsockListener

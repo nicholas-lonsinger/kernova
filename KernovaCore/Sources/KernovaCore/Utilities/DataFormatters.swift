@@ -2,7 +2,8 @@ import Foundation
 
 /// Formatting utilities for display values.
 package enum DataFormatters {
-    private nonisolated(unsafe) static let byteFormatter: ByteCountFormatter = {
+    /// Formats a byte count into a human-readable string (e.g., "4.2 GB").
+    package static func formatBytes(_ bytes: UInt64) -> String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         // `allowsNonnumericFormatting` governs the zero case alone, rendering it
@@ -10,12 +11,7 @@ package enum DataFormatters {
         // file crosses the clipboard, so its size reads "0 bytes" — the unit
         // Finder's own Get Info uses for one.
         formatter.allowsNonnumericFormatting = false
-        return formatter
-    }()
-
-    /// Formats a byte count into a human-readable string (e.g., "4.2 GB").
-    package static func formatBytes(_ bytes: UInt64) -> String {
-        byteFormatter.string(fromByteCount: Int64(bytes))
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 
     /// Formats a byte count with fixed width for stable progress display (e.g., "861.900 MB").

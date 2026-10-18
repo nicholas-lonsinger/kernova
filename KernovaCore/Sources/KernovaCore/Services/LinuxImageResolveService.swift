@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import Synchronization
 
 /// Resolves a Linux installer image source against its server, just before
 /// downloading — and, for a user-supplied URL, once more in the wizard so the
@@ -216,18 +217,17 @@ final class LinuxImageResolveService: LinuxImageResolving {
 /// the digest's trust anchor onto whatever answered. A hop staying on the host
 /// over HTTPS — a path normalisation — is followed; any other is refused, and
 /// ``refusedRedirect`` is what the fetch reports in place of a status code.
-private final class ManifestOriginPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+private final class ManifestOriginPolicy: NSObject, URLSessionTaskDelegate, Sendable {
     /// The host the fetch may stay on, lowercased. `nil` for a URL naming none,
     /// which no redirect target can then match.
     private let host: String?
-    private let lock = NSLock()
-    private var refused: URL?
+    private let refused = Mutex<URL?>(nil)
 
     /// Where a redirect tried to move the fetch, once one was refused.
     ///
     /// Read from the awaiting task rather than from the session's delegate
     /// queue, which is what the lock is for.
-    var refusedRedirect: URL? { lock.withLock { refused } }
+    var refusedRedirect: URL? { refused.withLock { $0 } }
 
     init(url: URL) {
         self.host = url.host()?.lowercased()
@@ -244,7 +244,7 @@ private final class ManifestOriginPolicy: NSObject, URLSessionTaskDelegate, @unc
         guard let target = request.url, let host,
             target.scheme?.lowercased() == "https", target.host()?.lowercased() == host
         else {
-            lock.withLock { refused = request.url ?? response.url }
+            refused.withLock { $0 = request.url ?? response.url }
             // Declining leaves the task holding the redirect's own response — a
             // body nobody here reads, and one that can sit unfinished until the
             // request times out. Cancelling ends the fetch at the refusal;

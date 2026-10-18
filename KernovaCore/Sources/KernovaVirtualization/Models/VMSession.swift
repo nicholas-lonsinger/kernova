@@ -50,9 +50,11 @@ private actor VMQueueIsolation {
 /// allowed to touch it: `VZVirtualMachineView.virtualMachine`.
 ///
 /// `VZVirtualMachineView.h` (macOS 27.0) provides `VZVirtualMachineViewAdaptor`
-/// for exactly this hand-off, because "VZVirtualMachine operates on a specific
-/// dispatch queue and is not Sendable"; below a 27.0 deployment target the same
-/// crossing is spelled `@unchecked Sendable`. This type is that one greppable
+/// for exactly this hand-off: "In Swift 6, assigning a non-Sendable
+/// `VZVirtualMachine` to this view's virtualMachine property across isolation
+/// boundaries is a compiler error. Use `VZVirtualMachineViewAdaptor` as a
+/// Sendable alternative". Below a 27.0 deployment target the same crossing is
+/// spelled `@unchecked Sendable`. This type is that one greppable
 /// crossing — a one-line swap once the deployment target reaches 27.0.
 package struct VMDisplayHandle: @unchecked Sendable {
     private let vm: VZVirtualMachine
