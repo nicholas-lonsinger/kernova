@@ -10,13 +10,14 @@ struct ControlLivenessMonitorTests {
     private static let cadence = ControlChannelCadence(
         heartbeatInterval: 1, unresponsiveAfter: 10, terminateAfter: 20)
 
-    private func makeMonitor() -> (ControlLivenessMonitor, TestEngineClock) {
-        (ControlLivenessMonitor(cadence: Self.cadence), TestEngineClock())
+    private func makeMonitor() -> ControlLivenessMonitor {
+        ControlLivenessMonitor(cadence: Self.cadence)
     }
 
     @Test("A channel that never spoke is not judged silent")
     func silenceBeforeAnyFrameIsNotJudged() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
 
         clock.advance(seconds: 600)
 
@@ -26,7 +27,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("Silence inside the unresponsive window changes nothing")
     func healthyInsideTheWindow() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
 
         clock.advance(seconds: 9)
@@ -37,7 +39,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("Crossing the unresponsive window reports the silence once")
     func becomesUnresponsiveOnlyOnce() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
 
         clock.advance(seconds: 11)
@@ -52,7 +55,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("A recorded frame is what leaves the unresponsive stage")
     func recordRecovers() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
         clock.advance(seconds: 11)
         #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))
@@ -68,7 +72,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("A peer that was never unresponsive does not recover")
     func recordDoesNotRecoverAHealthyPeer() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
 
         #expect(monitor.record(at: clock.now) == .unchanged)
         clock.advance(seconds: 5)
@@ -77,7 +82,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("An evaluation never lifts the unresponsive stage; only an inbound frame does")
     func evaluateNeverRecovers() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
         clock.advance(seconds: 11)
         #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))
@@ -93,7 +99,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("A hold never stands in for the first signal")
     func holdBeforeAnySignalRecordsNothing() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
 
         // A guest live-paused before it ever spoke: every tick holds, and none
         // of them may arm a deadline the peer would then be judged against.
@@ -110,7 +117,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("A hold defers the deadline of a peer that has spoken")
     func holdDefersTheDeadline() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
 
         // Held every 9 s across three terminate windows.
@@ -124,7 +132,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("A hold lifts the unresponsive stage of a peer it starts judging again")
     func holdRecovers() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
         clock.advance(seconds: 11)
         #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))
@@ -135,7 +144,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("Silence past the terminate window expires with its measured span")
     func expiresPastTerminate() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
 
         clock.advance(seconds: 21)
@@ -145,7 +155,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("Expiry outranks the unresponsive stage from a standing start")
     func expiresWithoutPassingThroughUnresponsive() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
 
         clock.advance(seconds: 60)
@@ -156,7 +167,8 @@ struct ControlLivenessMonitorTests {
 
     @Test("Reset drops the recorded signal and the unresponsive stage")
     func resetForgetsEverything() {
-        let (monitor, clock) = makeMonitor()
+        var monitor = makeMonitor()
+        let clock = TestEngineClock()
         monitor.record(at: clock.now)
         clock.advance(seconds: 11)
         #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))

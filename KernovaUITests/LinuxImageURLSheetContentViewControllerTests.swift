@@ -233,10 +233,10 @@ struct LinuxImageURLSheetContentViewControllerTests {
 
 /// Resolve stand-in that stays inside the pasted-URL overload until the test
 /// releases it, the way the real one stays busy across a round trip.
-private final class SuspendingResolveService: LinuxImageResolving, @unchecked Sendable {
+@MainActor
+private final class SuspendingResolveService: LinuxImageResolving {
     private let result = makeResolvedLinuxImage()
     private let gate = AsyncGate()
-    private let lock = NSLock()
     private var isResolving = false
     private var isReleased = false
 
@@ -246,20 +246,20 @@ private final class SuspendingResolveService: LinuxImageResolving, @unchecked Se
     }
 
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
-        lock.withLock { self.isResolving = true }
+        isResolving = true
         gate.notify()
-        try? await gate.wait(until: { self.lock.withLock { self.isReleased } })
+        try? await gate.wait(until: { self.isReleased })
         return result
     }
 
     /// Suspends until a resolve is in flight.
     func waitUntilResolving() async throws {
-        try await gate.wait(until: { self.lock.withLock { self.isResolving } })
+        try await gate.wait(until: { self.isResolving })
     }
 
     /// Lets the in-flight resolve finish.
     func release() {
-        lock.withLock { self.isReleased = true }
+        isReleased = true
         gate.notify()
     }
 }

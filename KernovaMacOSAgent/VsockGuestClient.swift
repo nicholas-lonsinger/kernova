@@ -2,6 +2,7 @@ import Foundation
 import KernovaKit
 import Darwin
 import KernovaLogging
+import KernovaSynchronization
 
 /// Outcome of a `VsockSocketProvider` failure: `.transient` retries the
 /// connect loop, `.permanent` halts it for good.
@@ -22,10 +23,13 @@ typealias VsockSocketProvider =
 ///
 /// Exactly one of `finish` and `abandon` sees the other as unfinished, so the fd
 /// has exactly one owner and is never closed while the call is still in flight.
-final class BlockingConnectHandoff: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recorded: Int32?
-    private var abandoned = false
+final class BlockingConnectHandoff: Sendable {
+    private struct State: Sendable {
+        var recorded: Int32?
+        var abandoned = false
+    }
+
+    private let state = Locked(State())
 
     /// Records the syscall's `errno` (`0` on success).
     ///
@@ -33,9 +37,9 @@ final class BlockingConnectHandoff: @unchecked Sendable {
     ///   `false` once the waiter has abandoned the attempt, leaving the caller
     ///   holding the socket.
     func finish(errno: Int32) -> Bool {
-        lock.withLock {
-            recorded = errno
-            return !abandoned
+        state.withLock { state in
+            state.recorded = errno
+            return !state.abandoned
         }
     }
 
@@ -44,15 +48,15 @@ final class BlockingConnectHandoff: @unchecked Sendable {
     /// - Returns: `true` when it had not finished — the worker now owns the
     ///   socket; `false` when it beat the deadline, leaving `outcome` readable.
     func abandon() -> Bool {
-        lock.withLock {
-            guard recorded == nil else { return false }
-            abandoned = true
+        state.withLock { state in
+            guard state.recorded == nil else { return false }
+            state.abandoned = true
             return true
         }
     }
 
     /// The recorded `errno`, or `nil` while the syscall is still in flight.
-    var outcome: Int32? { lock.withLock { recorded } }
+    var outcome: Int32? { state.withLock { $0.recorded } }
 }
 
 /// Rations blocking `connect(2)` attempts per client label once earlier
@@ -79,7 +83,7 @@ final class BlockingConnectHandoff: @unchecked Sendable {
 /// rationed from the floor again rather than from wherever the last one
 /// escalated to — parked threads are never reclaimed, so an escalation carried
 /// across episodes would only ratchet.
-final class BlockingConnectGate: @unchecked Sendable {
+final class BlockingConnectGate: Sendable {
     /// Parked attempts tolerated before admission rides the backoff.
     static let maxParkedAttempts = 3
     /// Wait before the first admission past the cap, doubled per parked
@@ -87,7 +91,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     static let backoffFloor: TimeInterval = 10
     static let backoffCeiling: TimeInterval = 600
 
-    private struct LabelState {
+    private struct LabelState: Sendable {
         /// Attempts abandoned past their deadline whose syscall has not
         /// returned.
         var parked = 0
@@ -100,8 +104,7 @@ final class BlockingConnectGate: @unchecked Sendable {
         var lastAdmissionAt = EngineInstant(nanoseconds: 0)
     }
 
-    private let lock = NSLock()
-    private var states: [String: LabelState] = [:]
+    private let states = Locked<[String: LabelState]>([:])
     private let clock: any EngineClock
 
     /// Creates a gate reading time from `clock` — a manually advanced clock in
@@ -115,7 +118,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     /// - Returns: `true` unless the label is over its parked cap with nothing
     ///   completed since and its current backoff has not elapsed.
     func admit(_ label: String) -> Bool {
-        lock.withLock {
+        states.withLock { states in
             var state = states[label] ?? LabelState()
             if state.parked >= Self.maxParkedAttempts, state.parksThisEpisode > 0 {
                 let over = max(0, state.parksThisEpisode - Self.maxParkedAttempts)
@@ -136,7 +139,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     /// `markParkReturned` — which only a worker that saw the abandoned flag
     /// can reach — is preceded by its own increment.
     func markParked(_ label: String) {
-        lock.withLock {
+        states.withLock { states in
             var state = states[label] ?? LabelState()
             state.parked += 1
             state.parksThisEpisode += 1
@@ -147,7 +150,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     /// Undoes a `markParked` whose syscall turned out to have beaten the
     /// deadline, leaving the attempt counted as completed.
     func revertPark(_ label: String) {
-        lock.withLock {
+        states.withLock { states in
             var state = states[label] ?? LabelState()
             state.parked = max(0, state.parked - 1)
             state.parksThisEpisode = 0
@@ -159,7 +162,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     /// including from the current wedge's escalation, so a later wedge is not
     /// rationed for threads no longer stranded.
     func markParkReturned(_ label: String) {
-        lock.withLock {
+        states.withLock { states in
             guard var state = states[label] else { return }
             state.parked = max(0, state.parked - 1)
             state.parksThisEpisode = max(0, state.parksThisEpisode - 1)
@@ -171,7 +174,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     /// outcome — the host is answering, so rationing lifts and the wedge
     /// episode ends.
     func markCompleted(_ label: String) {
-        lock.withLock {
+        states.withLock { states in
             var state = states[label] ?? LabelState()
             state.parksThisEpisode = 0
             states[label] = state
@@ -181,7 +184,7 @@ final class BlockingConnectGate: @unchecked Sendable {
     #if DEBUG
     /// How many of `label`'s attempts are parked in the kernel.
     func parkedCountForTesting(_ label: String) -> Int {
-        lock.withLock { states[label]?.parked ?? 0 }
+        states.withLock { $0[label]?.parked ?? 0 }
     }
     #endif
 }
@@ -193,7 +196,7 @@ private let blockingConnectGate = BlockingConnectGate()
 ///
 /// What to do once connected is the `serve` closure passed to `start(serve:)`;
 /// when it returns, the client sleeps for `retryInterval` and reconnects.
-final class VsockGuestClient: @unchecked Sendable {
+final class VsockGuestClient: Sendable {
     private enum LoopOutcome: Equatable {
         case retry
         /// Exit the loop; client is now permanently inert.
@@ -242,25 +245,35 @@ final class VsockGuestClient: @unchecked Sendable {
     private let retryInterval: TimeInterval
     private let socketProvider: VsockSocketProvider
 
-    private let lock = NSLock()
-    private var currentChannel: VsockChannel?
-    private var reconnectTask: Task<Void, Never>?
-    private var stopped = false
+    private let state = Locked(State())
 
-    /// When `true`, the reconnect loop skips connect attempts and waits for
-    /// `resume()`; reversible, unlike `stopped`.
-    private var paused = false
+    private struct State: Sendable {
+        var currentChannel: VsockChannel?
+        var reconnectTask: Task<Void, Never>?
+        var stopped = false
 
-    /// A `resume()` the loop has not acted on yet.
-    ///
-    /// Latched rather than edge-triggered: `resume()` routinely lands while the
-    /// loop is mid-attempt rather than parked, and the wake must survive to the
-    /// next park.
-    private var wakeRequested = false
+        /// When `true`, the reconnect loop skips connect attempts and waits for
+        /// `resume()`; reversible, unlike `stopped`.
+        var paused = false
 
-    /// The task holding the current between-attempts sleep; cancelling it is
-    /// what wakes the loop early.
-    private var retryWaiter: Task<Void, Never>?
+        /// A `resume()` the loop has not acted on yet.
+        ///
+        /// Latched rather than edge-triggered: `resume()` routinely lands while
+        /// the loop is mid-attempt rather than parked, and the wake must survive
+        /// to the next park.
+        var wakeRequested = false
+
+        /// The task holding the current between-attempts sleep; cancelling it
+        /// is what wakes the loop early.
+        var retryWaiter: Task<Void, Never>?
+
+        /// Detaches the current channel, for the caller to close outside the
+        /// lock.
+        mutating func takeChannel() -> VsockChannel? {
+            defer { currentChannel = nil }
+            return currentChannel
+        }
+    }
 
     // MARK: - Init
 
@@ -288,9 +301,9 @@ final class VsockGuestClient: @unchecked Sendable {
     /// Idempotent. Once stopped — including by a permanent provider failure —
     /// the client cannot be restarted; create a new instance.
     func start(serve: @escaping @Sendable (VsockChannel) async -> Void) {
-        lock.withLock {
-            guard reconnectTask == nil, !stopped else { return }
-            reconnectTask = Task.detached(priority: .utility) { [weak self] in
+        state.withLock { state in
+            guard state.reconnectTask == nil, !state.stopped else { return }
+            state.reconnectTask = Task.detached(priority: .utility) { [weak self] in
                 await self?.runReconnectLoop(serve: serve)
             }
         }
@@ -300,13 +313,11 @@ final class VsockGuestClient: @unchecked Sendable {
     ///
     /// Idempotent, and reversible with `resume()` — unlike `stop()`.
     func pause() {
-        let ch: VsockChannel? = lock.withLock {
-            paused = true
-            let c = currentChannel
-            currentChannel = nil
-            return c
+        let channel = state.withLock { state in
+            state.paused = true
+            return state.takeChannel()
         }
-        ch?.close()
+        channel?.close()
     }
 
     /// Resumes the reconnect loop after `pause()` and has it connect now rather
@@ -319,10 +330,10 @@ final class VsockGuestClient: @unchecked Sendable {
     /// handshake has landed — the thing the host's feature-channel admission
     /// gate refuses connections ahead of.
     func resume() {
-        let waiter: Task<Void, Never>? = lock.withLock {
-            paused = false
-            wakeRequested = true
-            return retryWaiter
+        let waiter = state.withLock { state in
+            state.paused = false
+            state.wakeRequested = true
+            return state.retryWaiter
         }
         waiter?.cancel()
     }
@@ -333,22 +344,19 @@ final class VsockGuestClient: @unchecked Sendable {
     /// The cancelled loop task is still winding down when this returns — the
     /// `serve` closure may be mid-run inside it.
     func stop() {
-        let (task, ch): (Task<Void, Never>?, VsockChannel?) = lock.withLock {
-            stopped = true
-            let t = reconnectTask
-            reconnectTask = nil
-            let c = currentChannel
-            currentChannel = nil
-            return (t, c)
+        let (task, channel) = state.withLock { state in
+            state.stopped = true
+            defer { state.reconnectTask = nil }
+            return (state.reconnectTask, state.takeChannel())
         }
         task?.cancel()
-        ch?.close()
+        channel?.close()
     }
 
     #if DEBUG
     /// Test seam.
     var liveChannelForTesting: VsockChannel? {
-        lock.withLock { currentChannel }
+        state.withLock { $0.currentChannel }
     }
     #endif
 
@@ -356,19 +364,19 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private func runReconnectLoop(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
         while !Task.isCancelled {
-            let isPaused: Bool = lock.withLock {
+            let isPaused = state.withLock { state in
                 // A wake latched before this attempt is satisfied by the attempt
                 // itself, so it must not also skip the park that follows. A
                 // `resume()` arriving mid-attempt is a fresh signal instead, and
                 // the next `waitBeforeRetry()` consumes it.
-                if !paused { wakeRequested = false }
-                return paused
+                if !state.paused { state.wakeRequested = false }
+                return state.paused
             }
             if !isPaused {
                 let outcome = await connectAndServe(serve: serve)
                 switch outcome {
                 case .terminate:
-                    lock.withLock { stopped = true }
+                    state.withLock { $0.stopped = true }
                     return
                 case .retry:
                     break
@@ -390,12 +398,12 @@ final class VsockGuestClient: @unchecked Sendable {
         let waiter = Task<Void, Never> { [clock, retryInterval] in
             try? await clock.sleep(for: retryInterval)
         }
-        let parked: Bool = lock.withLock {
-            if wakeRequested {
-                wakeRequested = false
+        let parked = state.withLock { state in
+            if state.wakeRequested {
+                state.wakeRequested = false
                 return false
             }
-            retryWaiter = waiter
+            state.retryWaiter = waiter
             return true
         }
         guard parked else {
@@ -407,7 +415,7 @@ final class VsockGuestClient: @unchecked Sendable {
         } onCancel: {
             waiter.cancel()
         }
-        lock.withLock { retryWaiter = nil }
+        state.withLock { $0.retryWaiter = nil }
     }
 
     private func connectAndServe(
@@ -442,9 +450,9 @@ final class VsockGuestClient: @unchecked Sendable {
         // Re-check `paused` under the same lock that publishes `currentChannel`:
         // a `pause()` landing while `socketProvider` was mid-flight would
         // otherwise be overwritten here and `serve` would run against policy.
-        let aborted: Bool = lock.withLock {
-            if stopped || paused { return true }
-            currentChannel = channel
+        let aborted = state.withLock { state in
+            if state.stopped || state.paused { return true }
+            state.currentChannel = channel
             return false
         }
         if aborted {
@@ -458,8 +466,8 @@ final class VsockGuestClient: @unchecked Sendable {
 
         await serve(channel)
 
-        lock.withLock {
-            if currentChannel === channel { currentChannel = nil }
+        state.withLock { state in
+            if state.currentChannel === channel { state.currentChannel = nil }
         }
         return .retry
     }

@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import Synchronization
 import Testing
 
 #if SWIFT_PACKAGE
@@ -12,7 +13,7 @@ import KernovaTestSupport
 // `waitForChange` below is here rather than in KernovaTestSupport: it is built
 // on the core's `waitForObservedChange`, and only the core's and the app's
 // tests wait on `@Observable` production state — the GuestAgent/KernovaKit
-// bundles' predicates read `Sendable` boxes (`AtomicInt`, `PolicyBox`) with no
+// bundles' predicates read `Sendable` boxes (`AtomicInt`, `AtomicBox`) with no
 // such observable type to track.
 
 // MARK: - In-memory defaults
@@ -697,13 +698,12 @@ func waitForChange(
 /// Records that a `withObservationTracking` `onChange` fired, from the
 /// `@Sendable` closure the API hands it — which no actor-isolated state can be
 /// written from.
-final class ObservationFireRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = false
+final class ObservationFireRecorder: Sendable {
+    private let fired = Mutex(false)
 
-    var didFire: Bool { lock.withLock { value } }
+    var didFire: Bool { fired.withLock { $0 } }
 
-    func record() { lock.withLock { value = true } }
+    func record() { fired.withLock { $0 = true } }
 }
 
 // MARK: - ChannelLostRecorder

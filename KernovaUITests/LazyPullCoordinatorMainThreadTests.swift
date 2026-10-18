@@ -1,5 +1,5 @@
 import Foundation
-import KernovaTestSupport
+import KernovaSynchronization
 import Testing
 
 @testable import KernovaKit
@@ -54,7 +54,7 @@ struct LazyPullCoordinatorMainThreadTests {
     @Test("nested main-thread waits both resolve, and the outer is not stranded by the inner (#860)")
     func nestedWaitsBothResolve() {
         let coordinator = LazyPullCoordinator()
-        let innerResolved = Box(false)
+        let innerResolved = Locked(false)
         let clock = ContinuousClock()
         let started = clock.now
 
@@ -71,7 +71,7 @@ struct LazyPullCoordinatorMainThreadTests {
                     RunLoop.main.perform { coordinator.deliver(2, self.inlineRep("inner")) }
                 }
                 if case .delivered(let rep) = inner, rep.inMemoryData == Data("inner".utf8) {
-                    innerResolved.value = true
+                    innerResolved.withLock { $0 = true }
                 }
             }
         }
@@ -81,7 +81,7 @@ struct LazyPullCoordinatorMainThreadTests {
             return
         }
         #expect(rep.inMemoryData == Data("outer".utf8))
-        #expect(innerResolved.value)
+        #expect(innerResolved.withLock { $0 })
         // Both resolved rather than blocking to the 5 s window. The bound sits
         // just under it: stranding takes the whole window, the per-slice
         // re-check returns in ~0.1 s, and every second between the two is

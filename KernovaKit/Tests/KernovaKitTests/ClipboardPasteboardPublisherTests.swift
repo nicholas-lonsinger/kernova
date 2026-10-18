@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -162,9 +163,8 @@ struct ClipboardPasteboardPublisherTests {
 
     @Test("a plan's file URL and inline types reach their own serving calls")
     func planRoutesEachTypeToItsServingCall() {
-        let serving = RecordingPromiseServing()
-        serving.url = URL(fileURLWithPath: "/tmp/kernova-test/a.bin")
-        serving.data = Data("inline".utf8)
+        let serving = RecordingPromiseServing(
+            url: URL(fileURLWithPath: "/tmp/kernova-test/a.bin"), data: Data("inline".utf8))
 
         let plan = ClipboardPasteboardItemPlan.plan(
             for: [
@@ -188,8 +188,7 @@ struct ClipboardPasteboardPublisherTests {
 
     @Test("a type no coordinate resolves is left off, and an item left empty is dropped")
     func unresolvedTypesAreLeftOff() {
-        let serving = RecordingPromiseServing()
-        serving.data = Data("inline".utf8)
+        let serving = RecordingPromiseServing(data: Data("inline".utf8))
 
         let plan = ClipboardPasteboardItemPlan.plan(
             for: [
@@ -212,44 +211,40 @@ struct ClipboardPasteboardPublisherTests {
 }
 
 /// One call a promise made on its serving side.
-private struct Call: Equatable {
+private struct Call: Equatable, Sendable {
     let generation: UInt64
     let repIndex: Int
     let uti: String?
 }
 
 /// Records what a promised type asked for instead of pulling anything.
-private final class RecordingPromiseServing: ClipboardPromiseServing, @unchecked Sendable {
-    private let lock = NSLock()
-    private var storedFileURLCalls: [Call] = []
-    private var storedDataCalls: [Call] = []
-    private var storedURL: URL?
-    private var storedData: Data?
-
-    var url: URL? {
-        get { lock.withLock { storedURL } }
-        set { lock.withLock { storedURL = newValue } }
+private final class RecordingPromiseServing: ClipboardPromiseServing, Sendable {
+    private struct Calls: Sendable {
+        var fileURL: [Call] = []
+        var data: [Call] = []
     }
 
-    var data: Data? {
-        get { lock.withLock { storedData } }
-        set { lock.withLock { storedData = newValue } }
+    let url: URL?
+    let data: Data?
+    private let calls = Locked(Calls())
+
+    /// Answers every file-URL request with `url` and every data request with
+    /// `data`.
+    init(url: URL? = nil, data: Data? = nil) {
+        self.url = url
+        self.data = data
     }
 
-    var fileURLCalls: [Call] { lock.withLock { storedFileURLCalls } }
-    var dataCalls: [Call] { lock.withLock { storedDataCalls } }
+    var fileURLCalls: [Call] { calls.withLock { $0.fileURL } }
+    var dataCalls: [Call] { calls.withLock { $0.data } }
 
     func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-        lock.withLock {
-            storedFileURLCalls.append(Call(generation: generation, repIndex: repIndex, uti: nil))
-            return storedURL
-        }
+        calls.withLock { $0.fileURL.append(Call(generation: generation, repIndex: repIndex, uti: nil)) }
+        return url
     }
 
     func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-        lock.withLock {
-            storedDataCalls.append(Call(generation: generation, repIndex: repIndex, uti: uti))
-            return storedData
-        }
+        calls.withLock { $0.data.append(Call(generation: generation, repIndex: repIndex, uti: uti)) }
+        return data
     }
 }

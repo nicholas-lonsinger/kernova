@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 
 // MARK: - awaitFirst
@@ -55,25 +56,24 @@ func makeTestClient(
 ///
 /// Exposes a `changed` gate so tests can `await changed.wait { value >= n }`
 /// instead of polling — each `increment()` fires the gate.
-final class AtomicInt: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storedValue: Int = 0
+final class AtomicInt: Sendable {
+    private let count = Locked(0)
 
     /// Fires on every `increment()`; await it instead of polling `value`.
     let changed = AsyncGate()
 
     @discardableResult
     func increment() -> Int {
-        let newValue = lock.withLock { () -> Int in
-            storedValue += 1
-            return storedValue
+        let newValue = count.withLock { count in
+            count += 1
+            return count
         }
         changed.notify()
         return newValue
     }
 
     var value: Int {
-        lock.withLock { storedValue }
+        count.withLock { $0 }
     }
 }
 
@@ -86,19 +86,25 @@ final class AtomicInt: @unchecked Sendable {
 /// the closure is built (an agent whose own callback reads it), and recording
 /// what a callback saw. `changed` fires on every `set`, so the reader awaits
 /// instead of polling.
-final class AtomicBox<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storedValue: Value?
+final class AtomicBox<Value: Sendable>: Sendable {
+    private let slot = Locked<Value?>(nil)
 
-    /// Fires on every `set(_:)`; await it instead of polling `value`.
+    /// Fires on every `set(_:)` and `update(_:)`; await it instead of polling
+    /// `value`.
     let changed = AsyncGate()
 
     var value: Value? {
-        lock.withLock { storedValue }
+        slot.withLock { $0 }
     }
 
     func set(_ newValue: Value?) {
-        lock.withLock { storedValue = newValue }
+        update { $0 = newValue }
+    }
+
+    /// Changes the slot in one lock hold, so a read-modify-write races no
+    /// other writer.
+    func update(_ body: (inout Value?) -> Void) {
+        slot.withLock(body)
         changed.notify()
     }
 }

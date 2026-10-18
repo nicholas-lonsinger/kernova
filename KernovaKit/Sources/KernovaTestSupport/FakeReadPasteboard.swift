@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 /// One in-memory pasteboard item: the types it declares, in fidelity order, and
 /// the bytes it hands over for each.
@@ -37,20 +38,23 @@ public struct FakePasteboardItem: ClipboardPasteboardItemReading, Sendable {
 }
 
 /// In-memory `ClipboardReadPasteboard` a test stages a snapshot on directly.
-public final class FakeReadPasteboard: ClipboardReadPasteboard, @unchecked Sendable {
-    private let lock = NSLock()
-    private var storedItems: [FakePasteboardItem] = []
-    private var storedChangeCount = 0
+public final class FakeReadPasteboard: ClipboardReadPasteboard, Sendable {
+    private struct State: Sendable {
+        var items: [FakePasteboardItem] = []
+        var changeCount = 0
+    }
+
+    private let state = Locked(State())
 
     /// Creates an empty pasteboard double.
     public init() {}
 
     /// Monotonic change count, bumped by every staging call as a real
     /// pasteboard's is by every write.
-    public var changeCount: Int { lock.withLock { storedChangeCount } }
+    public var changeCount: Int { state.withLock { $0.changeCount } }
 
     /// The items currently staged, in order.
-    public var items: [any ClipboardPasteboardItemReading] { lock.withLock { storedItems } }
+    public var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
 
     /// Stages a single item, as one copy does, bumping the change count.
     public func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) {
@@ -60,9 +64,9 @@ public final class FakeReadPasteboard: ClipboardReadPasteboard, @unchecked Senda
     /// Stages several items, as a multi-select copy does, bumping the change
     /// count.
     public func setItems(_ items: [FakePasteboardItem]) {
-        lock.withLock {
-            storedItems = items
-            storedChangeCount += 1
+        state.withLock { state in
+            state.items = items
+            state.changeCount += 1
         }
     }
 }

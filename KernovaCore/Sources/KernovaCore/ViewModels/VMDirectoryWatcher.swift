@@ -13,10 +13,7 @@ import KernovaLogging
 final class VMDirectoryWatcher {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDirectoryWatcher")
 
-    /// `nonisolated(unsafe)` because `DispatchSource` is not `Sendable` and it must
-    /// be cancelled in `deinit` (which is nonisolated); safe because it is only
-    /// written in `start()` and read in `deinit`.
-    nonisolated(unsafe) private var directorySource: DispatchSourceFileSystemObject?
+    private var directorySource: DispatchSourceFileSystemObject?
     private var activationObservation: HostNotification.Observation?
     private var debounceTask: Task<Void, Never>?
     private let appActivation: HostNotification

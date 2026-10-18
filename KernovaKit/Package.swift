@@ -113,13 +113,14 @@ let package = Package(
             dependencies: [
                 "KernovaKit",
                 "KernovaAppRegistry",
+                "KernovaSynchronization",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: sharedSwiftSettings
         ),
         .target(
             name: "KernovaTestSupport",
-            dependencies: ["KernovaKit", "KernovaLogging"],
+            dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
             swiftSettings: sharedSwiftSettings
         ),
         .testTarget(

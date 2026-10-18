@@ -43,11 +43,11 @@ struct VMLibraryViewModelEphemeralTests {
             name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
-        storage.bundles[bundleURL] = config
+        storage.setConfiguration(config, at: bundleURL)
         if ephemeral {
             var hostState = VMHostState()
             hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
-            storage.hostStates[bundleURL] = hostState
+            storage.setHostState(hostState, at: bundleURL)
         }
         storage.files.setManifest(
             VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), at: bundleURL)

@@ -30,7 +30,7 @@ package final class VMCommandSocketListener {
     private let copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>
     private let awaitReady: @MainActor @Sendable () async -> Void
     private let prepareToSurface: @MainActor @Sendable () -> Void
-    private let queue = DispatchQueue(label: "app.kernova.command-socket")
+    private let queue = DispatchSerialQueue(label: "app.kernova.command-socket")
 
     private var listener: UnixSocketListener?
     /// Every live client, held for its I/O lifetime: ``stop()`` is what closes
@@ -186,7 +186,7 @@ package final class VMCommandSocketListener {
         router: VMCommandEnvelopeRouter,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
         prepareToSurface: @MainActor @Sendable @escaping () -> Void,
-        queue: DispatchQueue?,
+        queue: DispatchSerialQueue?,
         adopt: (VMCommandConnection) -> Void
     ) {
         guard let queue else {
@@ -241,12 +241,10 @@ package final class VMCommandSocketListener {
 
 /// One client on the command socket, from accept to close.
 ///
-/// Every field is touched on the listener's private queue and nowhere else;
-/// `send(_:)`, `close()` and `follow(_:)` are the three entry points a
-/// main-actor caller uses, and each hops to that queue before touching
-/// anything. The main actor is reached only to run a verb — parsing and
-/// serialization stay off it.
-final class VMCommandConnection: @unchecked Sendable {
+/// Isolated to the listener's private queue, which is its executor. Every
+/// `nonisolated` method hops onto that queue, in call order; only a verb runs
+/// on the main actor — parsing and serialization stay off it.
+actor VMCommandConnection {
     /// How long a connection may stay silent before it is closed.
     ///
     /// A client that connects and never speaks costs a descriptor; nothing
@@ -257,11 +255,11 @@ final class VMCommandConnection: @unchecked Sendable {
     /// Reaching it means the peer is gone or wedged, and the connection goes.
     private static let maxPendingWriteBytes = 8 * 1024 * 1024
 
-    nonisolated private static let logger = KernovaLogger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMCommandConnection")
 
     private let fd: Int32
-    private let queue: DispatchQueue
+    private nonisolated let queue: DispatchSerialQueue
     private let router: VMCommandEnvelopeRouter
     private let awaitReady: @MainActor @Sendable () async -> Void
     private let prepareToSurface: @MainActor @Sendable () -> Void
@@ -287,9 +285,13 @@ final class VMCommandConnection: @unchecked Sendable {
     private var onClose: (@Sendable () -> Void)?
     private var isClosed = false
 
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        queue.asUnownedSerialExecutor()
+    }
+
     init(
         fd: Int32,
-        queue: DispatchQueue,
+        queue: DispatchSerialQueue,
         router: VMCommandEnvelopeRouter,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
         prepareToSurface: @MainActor @Sendable @escaping () -> Void
@@ -302,70 +304,81 @@ final class VMCommandConnection: @unchecked Sendable {
     }
 
     /// Begins reading, and arms the silent-client deadline.
-    func start(onClose: @escaping @Sendable () -> Void) {
-        queue.async { [self] in
-            guard !isClosed else {
-                onClose()
-                return
-            }
-            self.onClose = onClose
-
-            let descriptor = fd
-            let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
-            source.setEventHandler { [weak self] in self?.readAvailable() }
-            source.setCancelHandler { Darwin.close(descriptor) }
-            readSource = source
-
-            let deadline = DispatchSource.makeTimerSource(queue: queue)
-            deadline.schedule(deadline: .now() + Self.firstFrameTimeout)
-            deadline.setEventHandler { [weak self] in
-                #log(Self.logger, .notice, "Closing a command connection that sent no frame in time")
-                self?.closeNow()
-            }
-            timeoutSource = deadline
-
-            source.resume()
-            deadline.resume()
-        }
+    nonisolated func start(onClose: @escaping @Sendable () -> Void) {
+        onQueue { $0.startNow(onClose: onClose) }
     }
 
     /// Queues one response payload, framed, for the client.
-    func send(_ payload: Data) {
-        queue.async { [self] in
-            guard !isClosed else { return }
-            guard let framed = try? StreamFrame.encode(payload) else {
-                #log(Self.logger, .error, "A response was too large to frame; closing the connection")
-                closeNow()
-                return
-            }
-            pendingWrite.append(framed)
-            guard pendingWrite.count <= Self.maxPendingWriteBytes else {
-                #log(
-                    Self.logger, .notice,
-                    "A client stopped reading with \(self.pendingWrite.count, privacy: .public) bytes owed; closing the connection"
-                )
-                closeNow()
-                return
-            }
-            flushPending()
-        }
+    nonisolated func send(_ payload: Data) {
+        onQueue { $0.sendNow(payload) }
     }
 
     /// Adopts the task pumping an event subscription, so closing cancels it.
-    func follow(_ task: Task<Void, Never>) {
-        queue.async { [self] in
-            guard !isClosed else {
-                task.cancel()
-                return
-            }
-            subscription?.cancel()
-            subscription = task
-        }
+    nonisolated func follow(_ task: Task<Void, Never>) {
+        onQueue { $0.followNow(task) }
     }
 
     /// Closes the connection; safe from any isolation, idempotent.
-    func close() {
-        queue.async { [self] in closeNow() }
+    nonisolated func close() {
+        onQueue { $0.closeNow() }
+    }
+
+    /// Runs `body` on ``queue`` after everything already queued there.
+    private nonisolated func onQueue(_ body: @escaping @Sendable (isolated VMCommandConnection) -> Void) {
+        queue.async { [self] in assumeIsolated(body) }
+    }
+
+    private func startNow(onClose: @escaping @Sendable () -> Void) {
+        guard !isClosed else {
+            onClose()
+            return
+        }
+        self.onClose = onClose
+
+        let descriptor = fd
+        let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
+        source.setEventHandler { [weak self] in self?.assumeIsolated { $0.readAvailable() } }
+        source.setCancelHandler { Darwin.close(descriptor) }
+        readSource = source
+
+        let deadline = DispatchSource.makeTimerSource(queue: queue)
+        deadline.schedule(deadline: .now() + Self.firstFrameTimeout)
+        deadline.setEventHandler { [weak self] in
+            #log(Self.logger, .notice, "Closing a command connection that sent no frame in time")
+            self?.assumeIsolated { $0.closeNow() }
+        }
+        timeoutSource = deadline
+
+        source.resume()
+        deadline.resume()
+    }
+
+    private func sendNow(_ payload: Data) {
+        guard !isClosed else { return }
+        guard let framed = try? StreamFrame.encode(payload) else {
+            #log(Self.logger, .error, "A response was too large to frame; closing the connection")
+            closeNow()
+            return
+        }
+        pendingWrite.append(framed)
+        guard pendingWrite.count <= Self.maxPendingWriteBytes else {
+            #log(
+                Self.logger, .notice,
+                "A client stopped reading with \(self.pendingWrite.count, privacy: .public) bytes owed; closing the connection"
+            )
+            closeNow()
+            return
+        }
+        flushPending()
+    }
+
+    private func followNow(_ task: Task<Void, Never>) {
+        guard !isClosed else {
+            task.cancel()
+            return
+        }
+        subscription?.cancel()
+        subscription = task
     }
 
     // MARK: - Read
@@ -465,17 +478,15 @@ final class VMCommandConnection: @unchecked Sendable {
         }
     }
 
-    /// Runs one request's main-actor work as a task ``closeNow()`` can cancel.
-    ///
-    /// Called on ``queue``, the only isolation ``inFlight`` is touched from —
-    /// including the removal, which hops back once `body` returns.
+    /// Runs one request's main-actor work as a task ``closeNow()`` can cancel,
+    /// removing its ``inFlight`` entry back on ``queue`` once `body` returns.
     private func track(_ body: @MainActor @Sendable @escaping () async -> Void) {
         guard !isClosed else { return }
         let id = nextRequestID
         nextRequestID += 1
         inFlight[id] = Task { @MainActor [self] in
             await body()
-            queue.async { [self] in inFlight[id] = nil }
+            onQueue { $0.inFlight[id] = nil }
         }
     }
 
@@ -514,8 +525,10 @@ final class VMCommandConnection: @unchecked Sendable {
         guard writeSource == nil else { return }
         let source = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in
-            guard let self, !self.isClosed else { return }
-            self.flushPending()
+            self?.assumeIsolated { connection in
+                guard !connection.isClosed else { return }
+                connection.flushPending()
+            }
         }
         writeSource = source
         source.resume()

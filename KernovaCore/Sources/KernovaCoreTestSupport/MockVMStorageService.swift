@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import Synchronization
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -21,7 +22,32 @@ import KernovaTestSupport
 /// `bundles` too (as the existing clone tests do) — otherwise a watcher-triggered
 /// `reconcileWithDisk()` racing the test could mistake an unregistered resting-state instance for a
 /// bundle that vanished from disk and evict it.
-final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
+final class MockVMStorageService: VMStorageProviding {
+    private struct State {
+        var listVMBundlesCallCount = 0
+        var deleteVMBundleCallCount = 0
+        var permanentlyDeleteVMBundleCallCount = 0
+        var createVMBundleCallCount = 0
+        var cloneVMBundleCallCount = 0
+        var publishBundleCallCount = 0
+        var reclaimStagedBundlesCallCount = 0
+        var discardedStagedURLs: [URL] = []
+        var stagedBundleURLs: [URL] = []
+        var lastCloneRelativePaths: [String]?
+        var createVMBundleError: (any Error)?
+        var cloneVMBundleError: (any Error)?
+        var publishBundleError: (any Error)?
+        var discardStagedBundleError: (any Error)?
+        var deleteVMBundleError: (any Error)?
+        var permanentlyDeleteVMBundleError: (any Error)?
+        var listVMBundlesError: (any Error)?
+        var afterPublish: (@MainActor () -> Void)?
+        var publishHold: DispatchSemaphore?
+        var cloneHold: DispatchSemaphore?
+    }
+
+    private let state = Mutex(State())
+
     // MARK: - Storage
 
     /// Every bundle's state files. A bundle it holds nothing for is read and
@@ -31,37 +57,37 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     var bundleFiles: any VMBundleFileAccessing { files }
 
-    /// Each bundle's `config.json`, as a view over ``files``: setting an entry
-    /// seeds the file, and dropping one drops the bundle.
+    /// Each bundle's `config.json`, read from one ``InMemoryVMBundleFiles/snapshot()``.
     var bundles: [URL: VMConfiguration] {
-        get {
-            Dictionary(
-                uniqueKeysWithValues: files.bundleURLs.compactMap { url in
-                    files.configuration(at: url).map { (url, $0) }
-                })
-        }
-        set {
-            let old = bundles
-            for url in old.keys where newValue[url] == nil { files.removeBundle(at: url) }
-            for (url, config) in newValue where old[url] != config {
-                files.setConfiguration(config, at: url)
-            }
-        }
+        let snapshot = files.snapshot()
+        return Dictionary(
+            uniqueKeysWithValues: snapshot.bundleURLs.compactMap { url in
+                snapshot.configuration(at: url).map { (url, $0) }
+            })
     }
 
-    /// Each bundle's `host-state.json`, as a view over ``files``.
+    /// Each bundle's `host-state.json`, read from one ``InMemoryVMBundleFiles/snapshot()``.
     var hostStates: [URL: VMHostState] {
-        get {
-            Dictionary(
-                uniqueKeysWithValues: files.bundleURLs.compactMap { url in
-                    files.hostState(at: url).map { (url, $0) }
-                })
-        }
-        set {
-            for (url, hostState) in newValue where files.hostState(at: url) != hostState {
-                files.setHostState(hostState, at: url)
-            }
-        }
+        let snapshot = files.snapshot()
+        return Dictionary(
+            uniqueKeysWithValues: snapshot.bundleURLs.compactMap { url in
+                snapshot.hostState(at: url).map { (url, $0) }
+            })
+    }
+
+    /// Seeds the bundle at `url` with `configuration` as its `config.json`.
+    func setConfiguration(_ configuration: VMConfiguration, at url: URL) {
+        files.setConfiguration(configuration, at: url)
+    }
+
+    /// Seeds the bundle at `url` with `hostState` as its `host-state.json`.
+    func setHostState(_ hostState: VMHostState, at url: URL) {
+        files.setHostState(hostState, at: url)
+    }
+
+    /// Drops every file the store holds for the bundle at `url`.
+    func removeBundle(at url: URL) {
+        files.removeBundle(at: url)
     }
     private let scratch: TestScratchDirectory
     private var baseDirectory: URL { scratch.url }
@@ -79,37 +105,82 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     // MARK: - Call Tracking
 
-    var listVMBundlesCallCount = 0
+    var listVMBundlesCallCount: Int { state.withLock { $0.listVMBundlesCallCount } }
     /// Replaces of `config.json` that landed, in any bundle.
     var saveConfigurationCallCount: Int { files.replaceCount(of: VMBundleLayout.configRelativePath) }
     /// Replaces of `host-state.json` that landed, in any bundle.
     var saveHostStateCallCount: Int { files.replaceCount(of: VMBundleLayout.hostStateRelativePath) }
-    var deleteVMBundleCallCount = 0
-    var permanentlyDeleteVMBundleCallCount = 0
-    var createVMBundleCallCount = 0
-    var cloneVMBundleCallCount = 0
-    var publishBundleCallCount = 0
-    var reclaimStagedBundlesCallCount = 0
+    var deleteVMBundleCallCount: Int { state.withLock { $0.deleteVMBundleCallCount } }
+    var permanentlyDeleteVMBundleCallCount: Int { state.withLock { $0.permanentlyDeleteVMBundleCallCount } }
+    var createVMBundleCallCount: Int { state.withLock { $0.createVMBundleCallCount } }
+    var cloneVMBundleCallCount: Int { state.withLock { $0.cloneVMBundleCallCount } }
+    var publishBundleCallCount: Int { state.withLock { $0.publishBundleCallCount } }
+    var reclaimStagedBundlesCallCount: Int { state.withLock { $0.reclaimStagedBundlesCallCount } }
 
     /// Every staged tree discarded, in order, whether or not the discard
     /// threw.
-    var discardedStagedURLs: [URL] = []
+    var discardedStagedURLs: [URL] { state.withLock { $0.discardedStagedURLs } }
 
     /// Every staged path handed out, in order — the only way a test can name one,
     /// since each is minted fresh rather than derived from a configuration.
-    var stagedBundleURLs: [URL] = []
+    var stagedBundleURLs: [URL] { state.withLock { $0.stagedBundleURLs } }
 
     /// The `relativePaths` argument from the most recent `cloneVMBundle` call.
-    var lastCloneRelativePaths: [String]?
+    var lastCloneRelativePaths: [String]? { state.withLock { $0.lastCloneRelativePaths } }
 
     // MARK: - Error Injection
 
-    var createVMBundleError: (any Error)?
-    var cloneVMBundleError: (any Error)?
-    var publishBundleError: (any Error)?
-    var discardStagedBundleError: (any Error)?
+    /// Each sets the error every later call of its operation throws; `nil`
+    /// clears it.
+    func setCreateVMBundleError(_ error: (any Error)?) {
+        state.withLock { $0.createVMBundleError = error }
+    }
 
-    private var afterPublish: (@MainActor () -> Void)?
+    func setCloneVMBundleError(_ error: (any Error)?) {
+        state.withLock { $0.cloneVMBundleError = error }
+    }
+
+    func setPublishBundleError(_ error: (any Error)?) {
+        state.withLock { $0.publishBundleError = error }
+    }
+
+    func setDiscardStagedBundleError(_ error: (any Error)?) {
+        state.withLock { $0.discardStagedBundleError = error }
+    }
+
+    func setDeleteVMBundleError(_ error: (any Error)?) {
+        state.withLock { $0.deleteVMBundleError = error }
+    }
+
+    func setPermanentlyDeleteVMBundleError(_ error: (any Error)?) {
+        state.withLock { $0.permanentlyDeleteVMBundleError = error }
+    }
+
+    func setListVMBundlesError(_ error: (any Error)?) {
+        state.withLock { $0.listVMBundlesError = error }
+    }
+
+    /// Thrown by every later replace of `config.json`.
+    func setSaveConfigurationError(_ error: (any Error)?) {
+        files.setReplaceError(error, for: VMBundleLayout.configRelativePath)
+    }
+
+    /// Thrown by every later replace of `host-state.json`.
+    func setSaveHostStateError(_ error: (any Error)?) {
+        files.setReplaceError(error, for: VMBundleLayout.hostStateRelativePath)
+    }
+
+    /// Makes the bundle's `config.json` read as present but unreadable, or
+    /// readable again.
+    func setConfigurationUnreadable(_ isUnreadable: Bool, at bundleURL: URL) {
+        files.setUnreadable(isUnreadable, relativePath: VMBundleLayout.configRelativePath, at: bundleURL)
+    }
+
+    /// Makes the bundle's `host-state.json` read as present but unreadable, or
+    /// readable again.
+    func setHostStateUnreadable(_ isUnreadable: Bool, at bundleURL: URL) {
+        files.setUnreadable(isUnreadable, relativePath: VMBundleLayout.hostStateRelativePath, at: bundleURL)
+    }
 
     // periphery:ignore:parameters isolation - `isolated` keeps `body` on the caller's actor
     /// Runs `body` with `hook` installed to run on the main actor once each
@@ -125,48 +196,29 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         isolation: isolated (any Actor)? = #isolation,
         _ body: () async throws -> Value
     ) async rethrows -> Value {
-        afterPublish = hook
-        defer { afterPublish = nil }
+        state.withLock { $0.afterPublish = hook }
+        defer { state.withLock { $0.afterPublish = nil } }
         return try await body()
     }
 
-    /// Holds a publish on its own thread, after its rename has landed, until
-    /// signalled — the arrival stays past the point a cancel stops it while the
-    /// main actor is free. ``publishLanded`` fires as the hold begins.
-    var publishHold: DispatchSemaphore?
+    /// Holds every later publish on its own thread, after its rename has
+    /// landed, until `hold` is signalled — the arrival stays past the point a
+    /// cancel stops it while the main actor is free. ``publishLanded`` fires as
+    /// the hold begins.
+    func setPublishHold(_ hold: DispatchSemaphore?) {
+        state.withLock { $0.publishHold = hold }
+    }
+
     let publishLanded = AsyncGate()
 
-    /// Holds a clone's copy on its own thread, before it writes anything,
-    /// until signalled; ``cloneEntered`` fires as the hold begins. An error set
-    /// while held is the one the copy throws.
-    var cloneHold: DispatchSemaphore?
-    let cloneEntered = AsyncGate()
-    /// Thrown by every later replace of `config.json`.
-    var saveConfigurationError: (any Error)? {
-        get { files.replaceError(for: VMBundleLayout.configRelativePath) }
-        set { files.setReplaceError(newValue, for: VMBundleLayout.configRelativePath) }
-    }
-    /// Thrown by every later replace of `host-state.json`.
-    var saveHostStateError: (any Error)? {
-        get { files.replaceError(for: VMBundleLayout.hostStateRelativePath) }
-        set { files.setReplaceError(newValue, for: VMBundleLayout.hostStateRelativePath) }
-    }
-    var deleteVMBundleError: (any Error)?
-    var permanentlyDeleteVMBundleError: (any Error)?
-    var listVMBundlesError: (any Error)?
-    /// Bundle URLs whose `config.json` reads as present but unreadable.
-    var loadConfigurationFailURLs: Set<URL> = [] {
-        didSet { markUnreadable(VMBundleLayout.configRelativePath, old: oldValue, new: loadConfigurationFailURLs) }
-    }
-    /// Bundle URLs whose `host-state.json` reads as present but unreadable.
-    var loadHostStateFailURLs: Set<URL> = [] {
-        didSet { markUnreadable(VMBundleLayout.hostStateRelativePath, old: oldValue, new: loadHostStateFailURLs) }
+    /// Holds every later clone's copy on its own thread, before it writes
+    /// anything, until `hold` is signalled; ``cloneEntered`` fires as the hold
+    /// begins. An error set while held is the one the copy throws.
+    func setCloneHold(_ hold: DispatchSemaphore?) {
+        state.withLock { $0.cloneHold = hold }
     }
 
-    private func markUnreadable(_ relativePath: String, old: Set<URL>, new: Set<URL>) {
-        for url in old.subtracting(new) { files.setUnreadable(false, relativePath: relativePath, at: url) }
-        for url in new.subtracting(old) { files.setUnreadable(true, relativePath: relativePath, at: url) }
-    }
+    let cloneEntered = AsyncGate()
 
     // MARK: - VMStorageProviding
 
@@ -192,13 +244,15 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             "\(UUID().uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
-        stagedBundleURLs.append(url)
+        state.withLock { $0.stagedBundleURLs.append(url) }
         return url
     }
 
     func listVMBundles() throws -> [URL] {
-        listVMBundlesCallCount += 1
-        if let error = listVMBundlesError { throw error }
+        try state.withLock { state in
+            state.listVMBundlesCallCount += 1
+            if let error = state.listVMBundlesError { throw error }
+        }
         // Mirrors the real service's hidden-skipping enumeration, which never
         // admits a bundle still being written under `.Staging`.
         let staging = stagingRoot.url.standardizedFileURL
@@ -211,21 +265,26 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     /// Records the directory as held, so the configuration the create writes
     /// next lands in ``files`` rather than on disk.
     func createVMBundle(at bundleURL: URL) throws {
-        createVMBundleCallCount += 1
-        if let error = createVMBundleError { throw error }
+        try state.withLock { state in
+            state.createVMBundleCallCount += 1
+            if let error = state.createVMBundleError { throw error }
+        }
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: bundleURL)
     }
 
     func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String])
         throws
     {
-        cloneVMBundleCallCount += 1
-        lastCloneRelativePaths = relativePaths
+        let cloneHold = state.withLock { state in
+            state.cloneVMBundleCallCount += 1
+            state.lastCloneRelativePaths = relativePaths
+            return state.cloneHold
+        }
         if let cloneHold {
             cloneEntered.notify()
             cloneHold.wait()
         }
-        if let error = cloneVMBundleError { throw error }
+        if let error = state.withLock({ $0.cloneVMBundleError }) { throw error }
         // Mirrors the real service on disk: a macOS clone's `copyOut` writes
         // its MachineIdentifier file straight into this URL afterward, and a
         // test that lays real files into the source reads them in the clone.
@@ -244,8 +303,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     /// assertion on `bundles[finalURL]` or `hostStates[finalURL]` reads the
     /// published bundle.
     func publishBundle(from stagedURL: URL, to bundleURL: URL) throws {
-        publishBundleCallCount += 1
-        if let error = publishBundleError { throw error }
+        try state.withLock { state in
+            state.publishBundleCallCount += 1
+            if let error = state.publishBundleError { throw error }
+        }
         let fm = FileManager.default
         if fm.fileExists(atPath: stagedURL.path(percentEncoded: false)) {
             guard !fm.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
@@ -254,11 +315,11 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             try fm.moveItem(at: stagedURL, to: bundleURL)
         }
         files.moveBundle(from: stagedURL, to: bundleURL)
-        if let publishHold {
+        if let publishHold = state.withLock({ $0.publishHold }) {
             publishLanded.notify()
             publishHold.wait()
         }
-        if let afterPublish {
+        if let afterPublish = state.withLock({ $0.afterPublish }) {
             DispatchQueue.main.sync { MainActor.assumeIsolated { afterPublish() } }
         }
     }
@@ -278,8 +339,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     func discardStagedBundle(at stagedURL: URL) throws {
-        discardedStagedURLs.append(stagedURL)
-        if let error = discardStagedBundleError { throw error }
+        try state.withLock { state in
+            state.discardedStagedURLs.append(stagedURL)
+            if let error = state.discardStagedBundleError { throw error }
+        }
         try? FileManager.default.removeItem(at: stagedURL)
         files.removeBundle(at: stagedURL)
     }
@@ -292,19 +355,23 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     @discardableResult
     func reclaimStagedBundles() -> Task<Void, Never> {
-        reclaimStagedBundlesCallCount += 1
+        state.withLock { $0.reclaimStagedBundlesCallCount += 1 }
         return Task {}
     }
 
     func deleteVMBundle(at bundleURL: URL) throws {
-        deleteVMBundleCallCount += 1
-        if let error = deleteVMBundleError { throw error }
+        try state.withLock { state in
+            state.deleteVMBundleCallCount += 1
+            if let error = state.deleteVMBundleError { throw error }
+        }
         files.removeBundle(at: bundleURL)
     }
 
     func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
-        permanentlyDeleteVMBundleCallCount += 1
-        if let error = permanentlyDeleteVMBundleError { throw error }
+        try state.withLock { state in
+            state.permanentlyDeleteVMBundleCallCount += 1
+            if let error = state.permanentlyDeleteVMBundleError { throw error }
+        }
         files.removeBundle(at: bundleURL)
     }
 }

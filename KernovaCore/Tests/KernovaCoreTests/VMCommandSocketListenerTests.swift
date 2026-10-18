@@ -32,35 +32,30 @@ struct VMCommandSocketListenerTests {
     }
 
     /// A tally a production callback writes and the test reads.
-    final class Counter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
+    @MainActor
+    final class Counter {
+        private(set) var value = 0
 
-        var value: Int { lock.withLock { count } }
-
-        func increment() { lock.withLock { count += 1 } }
+        func increment() { value += 1 }
     }
 
     /// The app's first library read, as a gate a test opens when it chooses.
-    ///
-    /// Lock-guarded rather than `@MainActor`: production awaits it while the
-    /// test holds the main actor.
-    final class LibraryReadiness: @unchecked Sendable {
+    @MainActor
+    final class LibraryReadiness {
         private let gate = AsyncGate()
-        private let lock = NSLock()
         private var landed: Bool
 
         init(landed: Bool) { self.landed = landed }
 
         /// Reports the read as complete, releasing everything waiting on it.
         func land() {
-            lock.withLock { landed = true }
+            landed = true
             gate.notify()
         }
 
         /// What the listener awaits before answering a verb.
         func wait() async {
-            try? await gate.wait { self.lock.withLock { self.landed } }
+            try? await gate.wait { self.landed }
         }
     }
 
@@ -413,7 +408,8 @@ struct VMCommandSocketListenerTests {
 /// The socket is blocking with a receive deadline, so `nextResponse()` returns
 /// the moment bytes land rather than polling for them, and a stuck transport
 /// fails the read instead of hanging the suite.
-private final class TestCommandClient: @unchecked Sendable {
+@MainActor
+private final class TestCommandClient {
     private let fd: Int32
     private var decoder = StreamFrameDecoder()
     private var isClosed = false

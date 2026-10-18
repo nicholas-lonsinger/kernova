@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaSynchronization
 
 /// Guest-side agent for files dropped on the VM display, talking to the host's
 /// `VsockDropService` on `KernovaVsockPort.drop`.
@@ -12,9 +13,9 @@ import KernovaLogging
 /// Downloads folder with Finder's own "Keep Both" naming, then revealed in a
 /// Finder window.
 ///
-/// Published state is confined to the main dispatch queue; the worker queue is
-/// what the blocking pulls park on, so no pull ever holds the main thread.
-final class VsockGuestDropAgent: @unchecked Sendable {
+/// Connection state is confined to the main actor; the worker queue is what
+/// the blocking pulls park on, so no pull ever holds the main thread.
+final class VsockGuestDropAgent: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "VsockGuestDropAgent")
 
@@ -34,17 +35,23 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// socketpair in place of a real dial.
     private let dataDialer: @Sendable (UInt32) throws -> Int32
 
-    /// Whether the host advertised `drop.files.v3`, so the reconnect loop only
-    /// dials a host that has a drop listener.
-    var hostSupportsDrop: @Sendable () -> Bool = { false }
+    /// What decides whether the reconnect loop dials; both default off with the
+    /// client paused.
+    private let enablement = Locked(Enablement())
 
-    /// Whether the host's latest `PolicyUpdate` has drag and drop switched on.
-    ///
-    /// Default-off with the client paused: the host binds the drop ports only
-    /// while the setting is on, so dialling before the first policy arrives buys
-    /// a refused connect per retry interval.
-    private let policyLock = NSLock()
-    private var dropEnabledByPolicy = false
+    private struct Enablement: Sendable {
+        /// Whether the host advertised `drop.files.v3`, so the reconnect loop
+        /// only dials a host that has a drop listener.
+        var hostSupportsDrop = false
+
+        /// Whether the host's latest `PolicyUpdate` has drag and drop switched
+        /// on: the host binds the drop ports only while the setting is on, so
+        /// dialling before the first policy arrives buys a refused connect per
+        /// retry interval.
+        var enabledByPolicy = false
+
+        var shouldDial: Bool { hostSupportsDrop && enabledByPolicy }
+    }
 
     /// Runs one drop job at a time, in offer order.
     ///
@@ -54,20 +61,20 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private let jobQueue = DispatchQueue(
         label: "app.kernova.macosagent.drop-jobs", qos: .userInitiated)
 
-    // MARK: - Main-queue state
+    // MARK: - Main-actor state
 
-    private var liveChannel: VsockChannel?
+    @MainActor private var liveChannel: VsockChannel?
 
     /// The current connection: what the host has offered, and every pull that
     /// lands it.
-    private var endpoint: ClipboardEndpoint?
+    @MainActor private var endpoint: ClipboardEndpoint?
 
     /// The readout of every drop the host has offered and this side has not
     /// finished, by generation.
-    private var jobs: [UInt64: ClipboardTransferOperation] = [:]
+    @MainActor private var jobs: [UInt64: ClipboardTransferOperation] = [:]
 
     #if DEBUG
-    /// Test seam, readable from any thread: reads on the main queue that owns it.
+    /// Test seam, readable from any thread: reads on the main actor that owns it.
     var liveChannelForTesting: VsockChannel? { MainActorBridge.sync { liveChannel } }
     #endif
 
@@ -140,18 +147,25 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// Records the host's drag-and-drop setting and matches the reconnect loop
     /// to it.
     func applyPolicy(enabled: Bool) {
-        policyLock.withLock { dropEnabledByPolicy = enabled }
-        syncEnablement()
+        updateEnablement { $0.enabledByPolicy = enabled }
     }
 
-    /// Matches the reconnect loop to what the host advertises and permits.
+    /// Records whether the host takes dropped files and matches the reconnect
+    /// loop to it.
     ///
     /// Called whenever the control agent learns the host's capabilities — its
-    /// `Hello`, and the clearing that precedes the next one — and on every
-    /// policy update, so a host with no drop listener is never redialled every
-    /// retry interval.
-    func syncEnablement() {
-        if hostSupportsDrop() && policyLock.withLock({ dropEnabledByPolicy }) {
+    /// `Hello`, and the clearing that precedes the next one — so a host with no
+    /// drop listener is never redialled every retry interval.
+    func applyHostCapability(supportsDrop: Bool) {
+        updateEnablement { $0.hostSupportsDrop = supportsDrop }
+    }
+
+    private func updateEnablement(_ change: (inout Enablement) -> Void) {
+        let shouldDial = enablement.withLock { enablement in
+            change(&enablement)
+            return enablement.shouldDial
+        }
+        if shouldDial {
             client.resume()
         } else {
             client.pause()
@@ -160,30 +174,29 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     func stop() {
         client.stop()
-        DispatchQueue.main.async { [weak self] in
+        MainActorBridge.async { [weak self] in
             self?.teardownConnectionState()
         }
         #log(Self.logger, .notice, "Vsock drop agent stopped")
     }
 
-    /// Clears per-connection state on the main queue.
+    /// Clears per-connection state.
+    @MainActor
     private func teardownConnectionState() {
-        dispatchPrecondition(condition: .onQueue(.main))
-        MainActor.assumeIsolated {
-            // Unblocks any worker parked on a pull; it reads the dead connection
-            // as a cancellation and ends its job.
-            endpoint?.stop()
-            for operation in jobs.values {
-                // Retired, not finished: the transport measuring these is gone, so
-                // there is nothing left to show finishing.
-                operation.abandon()
-            }
+        // Unblocks any worker parked on a pull; it reads the dead connection
+        // as a cancellation and ends its job.
+        endpoint?.stop()
+        for operation in jobs.values {
+            // Retired, not finished: the transport measuring these is gone, so
+            // there is nothing left to show finishing.
+            operation.abandon()
         }
         endpoint = nil
         liveChannel = nil
         jobs.removeAll()
     }
 
+    @MainActor
     private func teardownIfCurrent(_ channel: VsockChannel) {
         if liveChannel === channel { teardownConnectionState() }
     }

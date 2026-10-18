@@ -7,7 +7,10 @@ import KernovaTestSupport
 @testable import KernovaCore
 
 /// No-op mock for `DiskImageProviding` that tracks calls without creating real disk images.
-final class MockDiskImageService: DiskImageProviding, @unchecked Sendable {
+@MainActor
+final class MockDiskImageService: DiskImageProviding {
+    nonisolated init() {}
+
     var createDiskImageCallCount = 0
     var lastCreatedSizeInGB: Int?
     var lastCreatedDiskImageURL: URL?

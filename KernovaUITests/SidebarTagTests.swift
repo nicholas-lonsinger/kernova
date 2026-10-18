@@ -160,8 +160,8 @@ struct SidebarTagTests {
             let library = viewModel.library
             let work = try library.createTag(named: "Work", color: .blue)
             let original = library.admitFixture(name: "Original", hostState: VMHostState(tags: [work.id]))
-            storage.bundles[original.bundleURL] = original.configuration
-            storage.hostStates[original.bundleURL] = original.hostState
+            storage.setConfiguration(original.configuration, at: original.bundleURL)
+            storage.setHostState(original.hostState, at: original.bundleURL)
 
             viewModel.cloneVM(original, as: outcome)
             await viewModel.awaitArrivals()
@@ -187,8 +187,8 @@ struct SidebarTagTests {
                 hostState: VMHostState(
                     ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id, tags: [work.id]),
                 snapshots: VMSnapshotManifest(snapshots: [baseline]))
-            storage.bundles[original.bundleURL] = original.configuration
-            storage.hostStates[original.bundleURL] = original.hostState
+            storage.setConfiguration(original.configuration, at: original.bundleURL)
+            storage.setHostState(original.hostState, at: original.bundleURL)
             viewModel.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
 
             viewModel.cloneVM(original, as: outcome)

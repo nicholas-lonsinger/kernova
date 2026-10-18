@@ -202,11 +202,8 @@ final class USBAccessoryService: USBAccessoryProviding {
 
 /// Bridges `AAUSBAccessoryListener`'s callbacks, which arrive on the accessory
 /// manager's own serial queue, onto the main actor.
-///
-/// `@unchecked Sendable` because `NSObject` is not `Sendable` and the protocol
-/// is `NS_SWIFT_SENDABLE`; the only stored state is two `@Sendable` closures.
 @available(macOS 27.0, *)
-private final class AccessoryListener: NSObject, AAUSBAccessoryListener, @unchecked Sendable {
+private final class AccessoryListener: NSObject, AAUSBAccessoryListener, Sendable {
     private let didConnect: @Sendable (AAUSBAccessory) -> Void
     private let didDisconnect: @Sendable (AAUSBAccessory) -> Void
 

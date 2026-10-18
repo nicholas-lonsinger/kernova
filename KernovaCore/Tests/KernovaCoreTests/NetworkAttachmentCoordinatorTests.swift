@@ -216,7 +216,7 @@ struct NetworkAttachmentCoordinatorTests {
             entitled: true,
             retryDelays: [],
             materialized: [])
-        h.vmnet.operations.createNetworkError = TestFailure("vmnet refused")
+        h.vmnet.operations.setCreateNetworkError(TestFailure("vmnet refused"))
         h.device.refusedPlans = [.vmnet(.common(.hostOnly)), .vmnet(.common(.nat))]
 
         h.coordinator.activate()
@@ -228,7 +228,7 @@ struct NetworkAttachmentCoordinatorTests {
         // the VM detached with no wake-up signal for the new kind. The
         // refusals lift only after the switch, so the supersede path (not a
         // direct attach) is what recovers the session.
-        h.vmnet.operations.createNetworkError = nil
+        h.vmnet.operations.setCreateNetworkError(nil)
         h.choiceBox.choice = NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil)
         h.coordinator.configurationChanged()
         h.device.refusedPlans = []
@@ -298,7 +298,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.pendingChanges.values == [true])
         #expect(h.device.appliedPlans.isEmpty)
 
-        h.provider.available = [Self.wiFi]
+        h.provider.setAvailable([Self.wiFi])
         h.observer.fire()
 
         #expect(h.device.appliedPlans == [.bridged("en0")])
@@ -379,8 +379,8 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.activate()
 
         // en1 undocked: the host now offers only Wi-Fi.
-        h.provider.available = [Self.wiFi]
-        h.provider.primary = "en0"
+        h.provider.setAvailable([Self.wiFi])
+        h.provider.setPrimary("en0")
         h.device.plan = nil
         h.coordinator.attachmentWasDisconnected(error: TestFailure("undock"))
 
@@ -399,7 +399,7 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.activate()
         #expect(h.device.appliedPlans.isEmpty)
 
-        h.provider.available = [Self.wiFi, Self.ethernet]
+        h.provider.setAvailable([Self.wiFi, Self.ethernet])
         h.observer.fire()
 
         #expect(h.device.appliedPlans == [.bridged("en1")])
@@ -415,7 +415,7 @@ struct NetworkAttachmentCoordinatorTests {
             entitled: true)
         h.coordinator.activate()
 
-        h.provider.primary = "en1"
+        h.provider.setPrimary("en1")
         h.observer.fire()
 
         #expect(h.device.appliedPlans.isEmpty)
@@ -437,8 +437,8 @@ struct NetworkAttachmentCoordinatorTests {
         // en1 pulled and the default route with it; the link event can land
         // before (or without) VZ's disconnect callback, so the live attachment
         // still names the vanished interface.
-        h.provider.available = []
-        h.provider.primary = nil
+        h.provider.setAvailable([])
+        h.provider.setPrimary(nil)
         h.observer.fire()
 
         #expect(h.device.detachCount == 1)
@@ -457,7 +457,7 @@ struct NetworkAttachmentCoordinatorTests {
             entitled: true)
         h.coordinator.activate()
 
-        h.provider.primary = nil
+        h.provider.setPrimary(nil)
         h.observer.fire()
 
         #expect(h.device.appliedPlans.isEmpty)

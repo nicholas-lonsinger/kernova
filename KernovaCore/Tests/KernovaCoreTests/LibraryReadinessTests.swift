@@ -17,17 +17,17 @@ struct LibraryReadinessTests {
     }
 
     /// A library read the test lands when it chooses.
-    private final class LibraryRead: @unchecked Sendable {
+    @MainActor
+    private final class LibraryRead {
         private let gate = AsyncGate()
-        private let lock = NSLock()
         private var landed = false
 
         func wait() async {
-            try? await gate.wait { self.lock.withLock { self.landed } }
+            try? await gate.wait { self.landed }
         }
 
         func land() {
-            lock.withLock { landed = true }
+            landed = true
             gate.notify()
         }
     }

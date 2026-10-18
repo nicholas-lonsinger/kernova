@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -27,11 +28,11 @@ struct AppClipboardReadoutTests {
     /// cancel.
     private func runTransfer(
         on instance: VMInstance, gesture: ClipboardTransferGesture, since: Date
-    ) -> (operation: ClipboardTransferOperation, cancelled: Box<Bool>) {
-        let cancelled = Box(false)
+    ) -> (operation: ClipboardTransferOperation, cancelled: Locked<Bool>) {
+        let cancelled = Locked(false)
         let operation = ClipboardTransferOperation(
             gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
-            clock: GatedEngineClock(), onCancelRequested: { cancelled.value = true },
+            clock: GatedEngineClock(), onCancelRequested: { cancelled.withLock { $0 = true } },
             reporter: instance.clipboardTransfers)
         instance.clipboardTransfers.publish(
             from: operation,
@@ -67,8 +68,8 @@ struct AppClipboardReadoutTests {
 
         // Through the owning VM's reporter, which is what turns the id back into
         // the operation and asks it to stop.
-        #expect(shown.cancelled.value)
-        #expect(!latest.cancelled.value)
+        #expect(shown.cancelled.withLock { $0 })
+        #expect(!latest.cancelled.withLock { $0 })
         withExtendedLifetime((shown.operation, latest.operation)) {}
     }
 
@@ -81,7 +82,7 @@ struct AppClipboardReadoutTests {
         // before the click landed, so no reporter answers for the id.
         #expect(!AppClipboardReadout.cancel(.unattached, in: [instance]))
 
-        #expect(!running.cancelled.value)
+        #expect(!running.cancelled.withLock { $0 })
         withExtendedLifetime(running.operation) {}
     }
 

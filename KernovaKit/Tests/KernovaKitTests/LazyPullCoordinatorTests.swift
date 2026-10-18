@@ -1,65 +1,70 @@
 import Foundation
-import Testing
+import KernovaSynchronization
 import KernovaTestSupport
+import Testing
 
 @testable import KernovaKit
 
 @Suite("LazyPullCoordinator", .caseScoped)
 struct LazyPullCoordinatorTests {
     // No-signal polls — `pendingSlotCountForTesting` and `waiterCountForTesting`
-    // are NSLock-guarded SUT state, not @Observable, and neither slot nor waiter
+    // are lock-guarded SUT state, not @Observable, and neither slot nor waiter
     // registration publishes anything a test could arm on. Stated once for the
     // suite: every poll below is one of these two reads.
 
     /// A `Sendable` slot to ferry a representation out of an off-actor awaiter
     /// closure.
-    private final class RepBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var rep: ClipboardContent.Representation?
-        private var abort: ClipboardStreamAbortInfo?
-        func setRep(_ r: ClipboardContent.Representation) { lock.withLock { rep = r } }
-        func setAbort(_ a: ClipboardStreamAbortInfo) { lock.withLock { abort = a } }
-        var representation: ClipboardContent.Representation? { lock.withLock { rep } }
-        var abortInfo: ClipboardStreamAbortInfo? { lock.withLock { abort } }
+    private final class RepBox: Sendable {
+        private struct Received: Sendable {
+            var representation: ClipboardContent.Representation?
+            var abort: ClipboardStreamAbortInfo?
+        }
+
+        private let received = Locked(Received())
+        func setRep(_ r: ClipboardContent.Representation) { received.withLock { $0.representation = r } }
+        func setAbort(_ a: ClipboardStreamAbortInfo) { received.withLock { $0.abort = a } }
+        var representation: ClipboardContent.Representation? { received.withLock { $0.representation } }
+        var abortInfo: ClipboardStreamAbortInfo? { received.withLock { $0.abort } }
     }
 
     /// A `Sendable` tally for off-actor `onProgress` callbacks that also captures
     /// the latest `(bytes, total)` and whether the byte counts were monotonic.
-    private final class ProgressCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        private var lastBytes = 0
-        private var lastTotalBytes = 0
-        private var monotonic = true
+    private final class ProgressCounter: Sendable {
+        private struct Figures: Sendable {
+            var count = 0
+            var lastBytes = 0
+            var lastTotal = 0
+            var monotonic = true
+        }
+
+        private let figures = Locked(Figures())
         func bump(bytes: Int, total: Int) {
-            lock.withLock {
-                if bytes < lastBytes { monotonic = false }
-                count += 1
-                lastBytes = bytes
-                lastTotalBytes = total
+            figures.withLock { figures in
+                if bytes < figures.lastBytes { figures.monotonic = false }
+                figures.count += 1
+                figures.lastBytes = bytes
+                figures.lastTotal = total
             }
         }
-        var value: Int { lock.withLock { count } }
-        var lastBytesReceived: Int { lock.withLock { lastBytes } }
-        var lastTotal: Int { lock.withLock { lastTotalBytes } }
-        var isMonotonic: Bool { lock.withLock { monotonic } }
+        var value: Int { figures.withLock { $0.count } }
+        var lastBytesReceived: Int { figures.withLock { $0.lastBytes } }
+        var lastTotal: Int { figures.withLock { $0.lastTotal } }
+        var isMonotonic: Bool { figures.withLock { $0.monotonic } }
     }
 
     /// A `Sendable` call counter for a closure two joining pulls share.
-    private final class Tally: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        func bump() { lock.withLock { count += 1 } }
-        var value: Int { lock.withLock { count } }
+    private final class Tally: Sendable {
+        private let count = Locked(0)
+        func bump() { count.withLock { $0 += 1 } }
+        var value: Int { count.withLock { $0 } }
     }
 
     /// A `Sendable` log of labelled steps, for a test asserting the order two
     /// closures ran in.
-    private final class OrderLog: @unchecked Sendable {
-        private let lock = NSLock()
-        private var steps: [String] = []
-        func record(_ step: String) { lock.withLock { steps.append(step) } }
-        var entries: [String] { lock.withLock { steps } }
+    private final class OrderLog: Sendable {
+        private let steps = Locked<[String]>([])
+        func record(_ step: String) { steps.withLock { $0.append(step) } }
+        var entries: [String] { steps.withLock { $0 } }
     }
 
     /// Runs the blocking `pull` on a dedicated thread so the test's
@@ -349,14 +354,14 @@ struct LazyPullCoordinatorTests {
             start: { starts.bump() })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        let resolved = Box<LazyPullOutcome?>(nil)
+        let resolved = Locked<LazyPullOutcome?>(nil)
         let joinResolved = AsyncGate()
         coordinator.join(
             transferID: 21,
             onProgress: { asyncProgress.bump(bytes: $0, total: $1) },
             retire: {}, start: { starts.bump() },
-            onResolve: {
-                resolved.value = $0
+            onResolve: { result in
+                resolved.withLock { $0 = result }
                 joinResolved.notify()
             })
         try await waitUntil { coordinator.waiterCountForTesting(21) == 2 }
@@ -368,8 +373,8 @@ struct LazyPullCoordinatorTests {
             Issue.record("Expected .delivered for the synchronous waiter")
             return
         }
-        try await joinResolved.wait { resolved.value != nil }
-        guard case .delivered(let asyncRep) = resolved.value else {
+        try await joinResolved.wait { resolved.withLock { $0 } != nil }
+        guard case .delivered(let asyncRep) = resolved.withLock({ $0 }) else {
             Issue.record("Expected .delivered for the asynchronous waiter")
             return
         }
@@ -389,14 +394,14 @@ struct LazyPullCoordinatorTests {
         async let held = runPull(coordinator, transferID: 33, retire: { retires.bump() })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        let leftOutcome = Box<LazyPullOutcome?>(nil)
+        let leftOutcome = Locked<LazyPullOutcome?>(nil)
         let waiter = coordinator.join(
             transferID: 33, retire: { retires.bump() }, start: {},
-            onResolve: { leftOutcome.value = $0 })
+            onResolve: { result in leftOutcome.withLock { $0 = result } })
         try await waitUntil { coordinator.waiterCountForTesting(33) == 2 }
 
         #expect(coordinator.leave(waiter))
-        guard case .cancelled = leftOutcome.value else {
+        guard case .cancelled = leftOutcome.withLock({ $0 }) else {
             Issue.record("Expected the departing waiter to resolve .cancelled")
             return
         }
@@ -417,18 +422,18 @@ struct LazyPullCoordinatorTests {
     func lastWaiterOutRetiresThePull() async throws {
         let coordinator = LazyPullCoordinator()
         let retires = Tally()
-        let outcome = Box<LazyPullOutcome?>(nil)
+        let outcome = Locked<LazyPullOutcome?>(nil)
         let resolved = AsyncGate()
         let waiter = coordinator.join(
             transferID: 34, retire: { retires.bump() }, start: {},
-            onResolve: {
-                outcome.value = $0
+            onResolve: { result in
+                outcome.withLock { $0 = result }
                 resolved.notify()
             })
 
         #expect(coordinator.leave(waiter) == false)
-        try await resolved.wait { outcome.value != nil }
-        guard case .cancelled = outcome.value else {
+        try await resolved.wait { outcome.withLock { $0 } != nil }
+        guard case .cancelled = outcome.withLock({ $0 }) else {
             Issue.record("Expected .cancelled for the last waiter out")
             return
         }

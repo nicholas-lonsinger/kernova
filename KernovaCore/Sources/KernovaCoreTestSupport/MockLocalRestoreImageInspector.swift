@@ -3,7 +3,10 @@ import Foundation
 @testable import KernovaCore
 
 /// Scripted stand-in for `LocalRestoreImageInspecting`.
-final class MockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchecked Sendable {
+@MainActor
+final class MockLocalRestoreImageInspector: LocalRestoreImageInspecting {
+    nonisolated init() {}
+
     var lastInspectedURL: URL?
 
     /// Thrown instead of returning, per the per-method `<method>Error` convention.

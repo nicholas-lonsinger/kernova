@@ -736,7 +736,7 @@ struct SidebarFolderTests {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storage: storage)
         let original = viewModel.library.admitFixture(name: "Original")
-        storage.bundles[original.bundleURL] = original.configuration
+        storage.setConfiguration(original.configuration, at: original.bundleURL)
         let clients = try viewModel.library.createFolder(named: "Clients", members: [original.id])
 
         viewModel.cloneVM(original)
@@ -803,7 +803,7 @@ struct SidebarFolderTests {
         let viewModel = makeViewModel(storage: storage)
         let clients = try viewModel.library.createFolder(named: "Clients")
         let source = try scratch.importSource(name: "Never Copied", onDisk: false)
-        storage.bundles[source.url] = source.config
+        storage.setConfiguration(source.config, at: source.url)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url], intoFolder: clients.id)
         #expect(members(of: clients, in: viewModel) == [source.config.id])

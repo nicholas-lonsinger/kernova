@@ -128,7 +128,7 @@ struct VMLibraryViewModelSnapshotTests {
             name: "Seeded", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
-        harness.storage.bundles[bundleURL] = config
+        harness.storage.setConfiguration(config, at: bundleURL)
         let snapshot = makeSnapshot()
         harness.storage.files.setManifest(
             VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id), at: bundleURL)
@@ -146,7 +146,7 @@ struct VMLibraryViewModelSnapshotTests {
             name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
-        harness.storage.bundles[bundleURL] = config
+        harness.storage.setConfiguration(config, at: bundleURL)
 
         await harness.viewModel.loadVMs()
         #expect(harness.snapshots.sweptStagingBundleURLs.isEmpty)
@@ -446,12 +446,12 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let held = instance.configuration
-        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        harness.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let write = try harness.viewModel.library.updateConfiguration(of: instance, as: .rename) {
             $0.name = "Renamed"
         }
         #expect(write.failedToSave)
-        harness.storage.saveConfigurationError = nil
+        harness.storage.setSaveConfigurationError(nil)
 
         await harness.viewModel.takeSnapshot(instance, name: "After the failure").value
 
@@ -735,7 +735,7 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
-        harness.snapshots.discardError = CocoaError(.fileWriteNoPermission)
+        harness.snapshots.setDiscardError(CocoaError(.fileWriteNoPermission))
 
         await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
 

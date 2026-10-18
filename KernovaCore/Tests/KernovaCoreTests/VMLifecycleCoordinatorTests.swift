@@ -360,7 +360,7 @@ struct VMLifecycleCoordinatorTests {
         let downloads = scratch.url
             .appendingPathComponent("latestDestination", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
-        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -397,7 +397,7 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("latestSharedMove", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(
             downloadsDirectory: downloads)
-        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -549,7 +549,7 @@ struct VMLifecycleCoordinatorTests {
         let downloads = scratch.url
             .appendingPathComponent("cancelPreservesContext", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
-        downloadService.downloadError = CancellationError()
+        downloadService.setDownloadError(CancellationError())
         // Already naming the file the resolved image derives, so nothing but the
         // cancel can touch the context.
         let originalContext = MacOSInstallContext(
@@ -611,7 +611,7 @@ struct VMLifecycleCoordinatorTests {
         let temp = scratch.url
             .appendingPathComponent("freshDownloadMoved", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
-        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
 
         let persisted = temp.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
@@ -651,7 +651,7 @@ struct VMLifecycleCoordinatorTests {
         let temp = scratch.url
             .appendingPathComponent("freshDownloadOnce", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
-        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
 
         // Honored, not lapsed: the persisted destination is already the one the
         // resolved image derives.
@@ -687,14 +687,15 @@ struct VMLifecycleCoordinatorTests {
         // actually requested and can fail.
         let destination = temp.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-        downloadService.downloadError = DownloadError.freshDownloadCleanupFailed(
-            path: destination.path(percentEncoded: false),
-            underlying: NSError(
-                domain: NSCocoaErrorDomain,
-                code: NSFileWriteNoPermissionError,
-                userInfo: [NSLocalizedDescriptionKey: "denied"]
-            )
-        )
+        downloadService.setDownloadError(
+            DownloadError.freshDownloadCleanupFailed(
+                path: destination.path(percentEncoded: false),
+                underlying: NSError(
+                    domain: NSCocoaErrorDomain,
+                    code: NSFileWriteNoPermissionError,
+                    userInfo: [NSLocalizedDescriptionKey: "denied"]
+                )
+            ))
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -780,11 +781,12 @@ struct VMLifecycleCoordinatorTests {
         let temp = scratch.url
             .appendingPathComponent("urlCancelResumeData", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
-        downloadService.downloadError = NSError(
-            domain: NSURLErrorDomain,
-            code: NSURLErrorCancelled,
-            userInfo: nil
-        )
+        downloadService.setDownloadError(
+            NSError(
+                domain: NSURLErrorDomain,
+                code: NSURLErrorCancelled,
+                userInfo: nil
+            ))
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: temp.appendingPathComponent(
@@ -805,7 +807,7 @@ struct VMLifecycleCoordinatorTests {
         let downloads = scratch.url
             .appendingPathComponent("networkFailure", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
-        downloadService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
         // Already naming the file the resolved image derives, so the retry
         // context that survives is the one that went in.
         let originalContext = MacOSInstallContext(
@@ -853,7 +855,7 @@ struct VMLifecycleCoordinatorTests {
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
             try await coordinator.launchGuestSetup(on: instance).value()
@@ -882,7 +884,7 @@ struct VMLifecycleCoordinatorTests {
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
             try await coordinator.launchGuestSetup(on: instance).value()
@@ -904,7 +906,7 @@ struct VMLifecycleCoordinatorTests {
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
             try await coordinator.launchGuestSetup(on: instance).value()
@@ -935,12 +937,12 @@ struct VMLifecycleCoordinatorTests {
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
         defer { withExtendedLifetime(library) {} }
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         var contextDuringInstall: MacOSInstallContext?
         installService.onInstall = {
             contextDuringInstall = instance.configuration.installContext
             // Writable again by the time the install completes.
-            storage.saveConfigurationError = nil
+            storage.setSaveConfigurationError(nil)
         }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -981,7 +983,7 @@ struct VMLifecycleCoordinatorTests {
         resolveService.resolveResult = makeResolvedLinuxImage(sizeBytes: UInt64(contents.count))
         resolveService.manifestSHA256 = digest
         let downloadService = MockDownloadService()
-        downloadService.downloadedContents = contents
+        downloadService.setDownloadedContents(contents)
         let fileSystem = MockFileSystem()
 
         let coordinator = makeTestLifecycle(
@@ -1100,7 +1102,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
-        fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        fixture.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
             try await fixture.coordinator.launchGuestSetup(on: instance).value()
@@ -1125,7 +1127,7 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: destination.path(percentEncoded: false))
         let instance = makeLinuxInstance(context: context, in: fixture)
         let held = instance.configuration
-        fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        fixture.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
             try await fixture.coordinator.launchGuestSetup(on: instance).value()
@@ -1141,8 +1143,9 @@ struct VMLifecycleCoordinatorTests {
     func downloadLinuxImagePersistsDestination() async throws {
         // Read on the failure path: a successful run clears the context.
         let fixture = try makeLinuxFixture()
-        fixture.downloadService.downloadError = DownloadError.downloadFailed(
-            URLError(.notConnectedToInternet))
+        fixture.downloadService.setDownloadError(
+            DownloadError.downloadFailed(
+                URLError(.notConnectedToInternet)))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1273,7 +1276,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         // The download returns without fetching, exactly as the service does
         // when a completed file with no resumable bundle is already there.
-        fixture.downloadService.downloadedContents = nil
+        fixture.downloadService.setDownloadedContents(nil)
         let destination = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
         try Data("not the image the mirror published".utf8).write(to: destination)
@@ -1438,7 +1441,7 @@ struct VMLifecycleCoordinatorTests {
             to: fixture.downloads.appendingPathComponent(resolved.filename))
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         try fixture.contents.write(to: destination)
-        fixture.downloadService.downloadedContents = nil
+        fixture.downloadService.setDownloadedContents(nil)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1459,7 +1462,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         // What a transfer already streaming to the destination looks like from
         // here: the file matches, and the adoption is refused anyway.
-        fixture.downloadService.adoptExistingFileResult = false
+        fixture.downloadService.setAdoptExistingFileResult(false)
         let resolved = fixture.resolveService.resolveResult
         try fixture.contents.write(
             to: fixture.downloads.appendingPathComponent(resolved.filename))
@@ -1498,8 +1501,9 @@ struct VMLifecycleCoordinatorTests {
     @Test("A cancelled download surfaces as CancellationError however URLSession words it")
     func downloadLinuxImageURLCancel() async throws {
         let fixture = try makeLinuxFixture()
-        fixture.downloadService.downloadError = NSError(
-            domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: nil)
+        fixture.downloadService.setDownloadError(
+            NSError(
+                domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: nil))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1529,9 +1533,9 @@ struct VMLifecycleCoordinatorTests {
     @Test("The setup state walks Download then Verify as the pipeline runs")
     func downloadLinuxImageDrivesTheSetupState() async throws {
         let fixture = try makeLinuxFixture()
-        fixture.downloadService.progressSamples = [
+        fixture.downloadService.setProgressSamples([
             DownloadProgress(bytesWritten: 10, totalBytes: 100, bytesPerSecond: 5)
-        ]
+        ])
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1629,7 +1633,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         // What a setup cancelled during Checksum leaves: the whole file at the
         // destination, which the download skips over without fetching.
-        fixture.downloadService.downloadedContents = nil
+        fixture.downloadService.setDownloadedContents(nil)
         let destination = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
         try fixture.contents.write(to: destination)

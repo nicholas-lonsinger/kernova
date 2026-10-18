@@ -1,52 +1,12 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import System
 import Testing
 
 @testable import KernovaKit
-
-/// Collects every encoded byte, for the cases that drive the codec rather than
-/// the whole-archive helpers above it.
-private final class ArchiveBytesSink: ClipboardSequentialArchiveStream, @unchecked Sendable {
-    private let lock = NSLock()
-    private var collected = Data()
-
-    var bytes: Data { lock.withLock { collected } }
-
-    func write(from buffer: UnsafeRawBufferPointer) throws -> Int {
-        lock.withLock { collected.append(contentsOf: buffer) }
-        return buffer.count
-    }
-}
-
-/// Hands one buffer's bytes to the decoder in reads, for the cases that need the
-/// codec's own `onOutputAdvanced` guard.
-private final class ArchiveBytesSource: ClipboardSequentialArchiveStream, @unchecked Sendable {
-    private let lock = NSLock()
-    private let bytes: Data
-    private var offset = 0
-
-    init(bytes: Data) {
-        self.bytes = bytes
-    }
-
-    func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
-        guard let destination = buffer.baseAddress else { return 0 }
-        return lock.withLock {
-            let take = min(buffer.count, bytes.count - offset)
-            guard take > 0 else { return 0 }
-            let start = bytes.index(bytes.startIndex, offsetBy: offset)
-            bytes[start..<bytes.index(start, offsetBy: take)].withUnsafeBytes { raw in
-                guard let source = raw.baseAddress else { return }
-                destination.copyMemory(from: source, byteCount: take)
-            }
-            offset += take
-            return take
-        }
-    }
-}
 
 /// The archive codec on its own: a source — a folder, one file, or resident
 /// bytes — encoded whole by ``ClipboardArchive/archiveBytes(of:)`` and unpacked
@@ -405,14 +365,15 @@ struct ClipboardArchiveStreamTests {
         let payload = Data(repeating: 0x41, count: 1 << 20)
         try payload.write(to: file)
 
-        let sink = ArchiveBytesSink()
-        let counted = ArchiveByteCounter()
+        let sink = ClipboardArchiveDataSink()
+        let counted = Locked(0)
         let failure = ClipboardArchiveCodec.encode(
             .file(file, name: "big.log", byteCount: payload.count), into: sink, counted: counted)
         #expect(failure == nil)
         #expect(sink.bytes.count < payload.count)
-        #expect(counted.value >= payload.count)
-        #expect(counted.value <= payload.count + ClipboardStreamTuning.fileExtractAllowance)
+        let total = counted.withLock { $0 }
+        #expect(total >= payload.count)
+        #expect(total <= payload.count + ClipboardStreamTuning.fileExtractAllowance)
     }
 
     // MARK: - The output guard
@@ -429,18 +390,18 @@ struct ClipboardArchiveStreamTests {
         #expect(payload.count == 4 * quantum)
         try payload.write(to: source.appendingPathComponent("random.bin"))
 
-        let advances = Box(0)
+        let advances = Locked(0)
         let failure = ClipboardArchiveCodec.extract(
-            from: ArchiveBytesSource(
+            from: ClipboardArchiveDataSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
-            into: try makeDestination(in: scratch.url), counted: ArchiveByteCounter(),
-            pacingBytes: quantum, onOutputAdvanced: { _ in advances.value += 1 })
+            into: try makeDestination(in: scratch.url), counted: Locked(0),
+            pacingBytes: quantum, onOutputAdvanced: { _ in advances.withLock { $0 += 1 } })
 
         #expect(failure == nil)
         // Paced by anything coarser — the whole archive, or the compressed bytes
         // arriving — a payload this size would report once, and the free-space
         // and ceiling checks would run once with it.
-        #expect(advances.value >= payload.count / quantum - 1)
+        #expect(advances.withLock { $0 } >= payload.count / quantum - 1)
     }
 
     @Test("a refusing guard stops the extract, and its reason survives the archive's rewrapping")
@@ -461,9 +422,9 @@ struct ClipboardArchiveStreamTests {
         }
         let destination = try makeDestination(in: scratch.url)
         let failure = ClipboardArchiveCodec.extract(
-            from: ArchiveBytesSource(
+            from: ClipboardArchiveDataSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
-            into: destination, counted: ArchiveByteCounter(), pacingBytes: quantum,
+            into: destination, counted: Locked(0), pacingBytes: quantum,
             onOutputAdvanced: guarded)
 
         #expect(failure != nil)
@@ -471,7 +432,7 @@ struct ClipboardArchiveStreamTests {
         // its own, so the box is the only place the consumer's own reason for
         // stopping is still legible.
         #expect(
-            refusal.value as? ClipboardArchiveStreamError
+            refusal.recorded as? ClipboardArchiveStreamError
                 == ClipboardArchiveStreamError.outputRefused(.overAdvertisedSize))
         #expect(
             landedByteCount(at: destination.appendingPathComponent("random.bin")) < payload.count)

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import Synchronization
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -18,7 +19,7 @@ import KernovaTestSupport
 ///
 /// Lock-based because production reads and writes it from `Task.detached`, so
 /// calls arrive off the test's isolation.
-final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sendable {
+final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     /// One call this store answered, in the order a revert makes them.
     enum Event: Equatable {
         case stageRestore
@@ -42,8 +43,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         var platformMachineIdentifier: Data?
     }
 
-    private let lock = NSLock()
-    private var state = State()
+    private let state = Mutex(State())
 
     /// Where a prepared snapshot's own `config.json` is written, as the real
     /// store writes it into the bundle — what the manifest reads each
@@ -65,47 +65,47 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
 
     /// Seeds the size one snapshot reports.
     func setSize(_ size: SnapshotSize, for snapshotID: UUID) {
-        lock.withLock { state.sizes[snapshotID] = size }
+        state.withLock { $0.sizes[snapshotID] = size }
     }
 
     /// Seeds the configuration one snapshot captured, as `prepareSnapshot`
     /// records it — what a revert reads back and installs.
     func setCapturedConfiguration(_ configuration: VMConfiguration, for snapshotID: UUID) {
-        lock.withLock { state.capturedConfigurations[snapshotID] = configuration }
+        state.withLock { $0.capturedConfigurations[snapshotID] = configuration }
     }
 
     // MARK: - Recorded calls
 
     /// The revert calls this store answered, in order.
-    var events: [Event] { lock.withLock { state.events } }
+    var events: [Event] { state.withLock { $0.events } }
     /// Bundle-relative paths passed to `captureDisks`, keyed by snapshot id.
-    var capturedPaths: [UUID: [String]] { lock.withLock { state.capturedPaths } }
-    var discardedIDs: [UUID] { lock.withLock { state.discardedIDs } }
-    var removedDirectoryIDs: [UUID] { lock.withLock { state.removedDirectoryIDs } }
-    var sweptStagingBundleURLs: [URL] { lock.withLock { state.sweptStagingBundleURLs } }
+    var capturedPaths: [UUID: [String]] { state.withLock { $0.capturedPaths } }
+    var discardedIDs: [UUID] { state.withLock { $0.discardedIDs } }
+    var removedDirectoryIDs: [UUID] { state.withLock { $0.removedDirectoryIDs } }
+    var sweptStagingBundleURLs: [URL] { state.withLock { $0.sweptStagingBundleURLs } }
 
     // MARK: - Error injection
 
-    var captureError: (any Error)? {
-        get { lock.withLock { state.captureError } }
-        set { lock.withLock { state.captureError = newValue } }
-    }
-    /// Thrown by the next and every later `stageRestore`.
-    var stageError: (any Error)? {
-        get { lock.withLock { state.stageError } }
-        set { lock.withLock { state.stageError = newValue } }
-    }
-    var discardError: (any Error)? {
-        get { lock.withLock { state.discardError } }
-        set { lock.withLock { state.discardError = newValue } }
+    /// Sets the error every later disk or suspend-slot capture throws.
+    func setCaptureError(_ error: (any Error)?) {
+        state.withLock { $0.captureError = error }
     }
 
-    /// When set, `createMacPlatformFiles` writes this as the bundle's
+    /// Sets the error the next and every later `stageRestore` throws.
+    func setStageError(_ error: (any Error)?) {
+        state.withLock { $0.stageError = error }
+    }
+
+    /// Sets the error every later `discardSnapshot` throws.
+    func setDiscardError(_ error: (any Error)?) {
+        state.withLock { $0.discardError = error }
+    }
+
+    /// Once set, `createMacPlatformFiles` writes `identifier` as the bundle's
     /// `MachineIdentifier` and answers it, decoding no hardware model — which
     /// only a restore image can supply.
-    var platformMachineIdentifier: Data? {
-        get { lock.withLock { state.platformMachineIdentifier } }
-        set { lock.withLock { state.platformMachineIdentifier = newValue } }
+    func setPlatformMachineIdentifier(_ identifier: Data?) {
+        state.withLock { $0.platformMachineIdentifier = identifier }
     }
 
     // MARK: - VMBundleMachineFileWorking
@@ -115,7 +115,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     ) throws -> VMSnapshotCapturePlan {
         files?.setSnapshotConfiguration(configuration, id: snapshotID, at: bundleURL)
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        return lock.withLock {
+        return state.withLock { state in
             state.capturedConfigurations[snapshotID] = configuration
             return VMSnapshotCapturePlan(
                 saveFileURL: layout.snapshotLayout(id: snapshotID).saveFileURL,
@@ -125,14 +125,14 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     }
 
     func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws {
-        try lock.withLock {
+        try state.withLock { state in
             if let error = state.captureError { throw error }
             state.capturedPaths[snapshotID] = relativePaths
         }
     }
 
     func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
-        try lock.withLock {
+        try state.withLock { state in
             if let error = state.captureError { throw error }
         }
     }
@@ -146,7 +146,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
     ) throws -> VMSnapshotRestorePlan {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        return try lock.withLock {
+        return try state.withLock { state in
             guard let configuration = state.capturedConfigurations[snapshotID] else {
                 throw VMSnapshotError.snapshotMissingConfiguration
             }
@@ -159,36 +159,36 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     }
 
     func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
-        try lock.withLock {
+        try state.withLock { state in
             state.events.append(.stageRestore)
             if let error = state.stageError { throw error }
         }
     }
 
     func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
-        lock.withLock { state.events.append(.installRestore) }
+        state.withLock { $0.events.append(.installRestore) }
     }
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
-        try lock.withLock {
+        try state.withLock { state in
             if let error = state.discardError { throw error }
             state.discardedIDs.append(snapshotID)
         }
     }
 
     func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID) {
-        lock.withLock { state.removedDirectoryIDs.append(snapshotID) }
+        state.withLock { $0.removedDirectoryIDs.append(snapshotID) }
     }
 
     func sweepRestoreStaging(bundleURL: URL) {
-        lock.withLock {
+        state.withLock { state in
             state.events.append(.sweepRestoreStaging)
             state.sweptStagingBundleURLs.append(bundleURL)
         }
     }
 
     func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
-        let (sizes, hold) = lock.withLock {
+        let (sizes, hold) = state.withLock { state in
             var sizes: [UUID: SnapshotSize] = [:]
             for id in snapshotIDs { sizes[id] = state.sizes[id] ?? SnapshotSize(bytes: 0, privateBytes: nil) }
             state.sizeReads += 1
@@ -202,7 +202,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     }
 
     /// How many size reads have taken their figures.
-    var sizeReads: Int { lock.withLock { state.sizeReads } }
+    var sizeReads: Int { state.withLock { $0.sizeReads } }
 
     /// Fires as each size read has taken its figures.
     let sizeReadEntered = AsyncGate()
@@ -211,7 +211,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     /// returned semaphore is signalled — so a test can land it after a later one.
     func holdNextSizeRead() -> DispatchSemaphore {
         let hold = DispatchSemaphore(value: 0)
-        lock.withLock { state.sizeReadHold = hold }
+        state.withLock { $0.sizeReadHold = hold }
         return hold
     }
 
@@ -224,7 +224,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     }
 
     func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
-        guard let machineIdentifier = platformMachineIdentifier else {
+        guard let machineIdentifier = state.withLock({ $0.platformMachineIdentifier }) else {
             return try real.createMacPlatformFiles(bundleURL: bundleURL, hardwareModel: hardwareModel)
         }
         try machineIdentifier.write(to: VMBundleLayout(bundleURL: bundleURL).machineIdentifierURL)

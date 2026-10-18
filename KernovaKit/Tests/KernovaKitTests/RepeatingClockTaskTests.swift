@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -12,17 +13,16 @@ struct RepeatingClockTaskTests {
 
     /// Counts body runs and wakes a waiter on each, so a test awaits a run
     /// rather than polling for one.
-    private final class RunCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var runs = 0
+    private final class RunCounter: Sendable {
+        private let runs = Locked(0)
 
         /// Fires on every `record()`.
         let changed = AsyncGate()
 
-        var count: Int { lock.withLock { runs } }
+        var count: Int { runs.withLock { $0 } }
 
         func record() {
-            lock.withLock { runs += 1 }
+            runs.withLock { $0 += 1 }
             changed.notify()
         }
     }
@@ -33,31 +33,34 @@ struct RepeatingClockTaskTests {
     /// The only way to reach the window the post-sleep cancellation check
     /// closes: a cancellation landing while the sleep is elapsing leaves the
     /// loop resuming from a sleep that did not throw.
-    private final class CancelDuringSleepClock: EngineClock, @unchecked Sendable {
-        private let lock = NSLock()
-        private var task: Task<Void, Never>?
-        private var sleeps = 0
+    private final class CancelDuringSleepClock: EngineClock, Sendable {
+        private struct State: Sendable {
+            var task: Task<Void, Never>?
+            var sleeps = 0
+        }
+
+        private let state = Locked(State())
 
         /// Fires once the loop's task handle is installed, so `sleep` waits for
         /// it instead of racing the caller's assignment.
         private let armed = AsyncGate()
 
         /// How many sleeps the loop asked for.
-        var sleepCount: Int { lock.withLock { sleeps } }
+        var sleepCount: Int { state.withLock { $0.sleeps } }
 
         /// Hands the clock the task it is to cancel.
         func arm(_ task: Task<Void, Never>) {
-            lock.withLock { self.task = task }
+            state.withLock { $0.task = task }
             armed.notify()
         }
 
         var now: EngineInstant { EngineInstant(nanoseconds: 0) }
 
         func sleep(for interval: TimeInterval) async throws {
-            try await armed.wait { self.lock.withLock { self.task != nil } }
-            let handle = lock.withLock { () -> Task<Void, Never>? in
-                sleeps += 1
-                return task
+            try await armed.wait { self.state.withLock { $0.task != nil } }
+            let handle = state.withLock { state in
+                state.sleeps += 1
+                return state.task
             }
             handle?.cancel()
         }

@@ -136,7 +136,7 @@ struct ClipboardEndpointRefusalTests {
         #expect(await harness.side.serveFileURLOffMain(generation: 1, repIndex: 0) == nil)
         try await harness.side.recorder.waitForRefusal()
 
-        harness.side.pasteLimit.value = cap * 4
+        harness.side.pasteLimit.withLock { $0 = cap * 4 }
         let serve = harness.side.startFileURLServe(generation: 1, repIndex: 0)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
         try harness.refuseTransfer(

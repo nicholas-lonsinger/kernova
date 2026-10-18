@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Synchronization
 import Testing
 import UniformTypeIdentifiers
 
@@ -189,30 +190,34 @@ struct ClipboardHostPasteboardItemsTests {
 
     /// Records the paste-time fires `promisedItemSpecs` routes to a clipboard
     /// service, returning canned values — no service, no wire.
-    private final class RecordingRepProvider: ClipboardPromiseServing, @unchecked Sendable {
-        private let lock = NSLock()
-        private var fileURLCallsStorage: [(generation: UInt64, repIndex: Int)] = []
-        private var dataCallsStorage: [(generation: UInt64, repIndex: Int, uti: String)] = []
-        var urlToReturn: URL?
-        var dataToReturn: Data?
+    private final class RecordingRepProvider: ClipboardPromiseServing, Sendable {
+        private struct Calls: Sendable {
+            var fileURL: [(generation: UInt64, repIndex: Int)] = []
+            var data: [(generation: UInt64, repIndex: Int, uti: String)] = []
+        }
 
-        var fileURLCalls: [(generation: UInt64, repIndex: Int)] {
-            lock.withLock { fileURLCallsStorage }
+        private let urlToReturn: URL?
+        private let dataToReturn: Data?
+        private let calls = Mutex(Calls())
+
+        /// Answers every file-URL fire with `url` and every data fire with
+        /// `data`.
+        init(url: URL? = nil, data: Data? = nil) {
+            urlToReturn = url
+            dataToReturn = data
         }
-        var dataCalls: [(generation: UInt64, repIndex: Int, uti: String)] {
-            lock.withLock { dataCallsStorage }
-        }
-        var totalCallCount: Int {
-            lock.withLock { fileURLCallsStorage.count + dataCallsStorage.count }
-        }
+
+        var fileURLCalls: [(generation: UInt64, repIndex: Int)] { calls.withLock { $0.fileURL } }
+        var dataCalls: [(generation: UInt64, repIndex: Int, uti: String)] { calls.withLock { $0.data } }
+        var totalCallCount: Int { calls.withLock { $0.fileURL.count + $0.data.count } }
 
         func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-            lock.withLock { fileURLCallsStorage.append((generation, repIndex)) }
+            calls.withLock { $0.fileURL.append((generation, repIndex)) }
             return urlToReturn
         }
 
         func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-            lock.withLock { dataCallsStorage.append((generation, repIndex, uti)) }
+            calls.withLock { $0.data.append((generation, repIndex, uti)) }
             return dataToReturn
         }
     }
@@ -245,9 +250,8 @@ struct ClipboardHostPasteboardItemsTests {
 
     @Test("a promised item's provide closure routes .fileURL and inline flavors to the right pulls")
     func promisedItemClosuresRouteFlavors() throws {
-        let provider = RecordingRepProvider()
-        provider.urlToReturn = URL(fileURLWithPath: "/tmp/served/photo.png")
-        provider.dataToReturn = Data("promised bytes".utf8)
+        let provider = RecordingRepProvider(
+            url: URL(fileURLWithPath: "/tmp/served/photo.png"), data: Data("promised bytes".utf8))
         let promises = [
             CopyToMacPromise(
                 generation: 7, repIndex: 0, uti: UTType.png.identifier, filename: "photo.png",

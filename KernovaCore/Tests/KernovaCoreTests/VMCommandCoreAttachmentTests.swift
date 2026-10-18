@@ -408,11 +408,11 @@ struct VMCommandCoreAttachmentTests {
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
         let instance = makeInstance(in: harness) { $0.storageDisks = [ghost, locked, keeper] }
 
-        harness.fileSystem.trashError = CocoaError(.fileNoSuchFile)
+        harness.fileSystem.setTrashError(CocoaError(.fileNoSuchFile))
         try await harness.core.removeStorageDisk(
             .id(instance.id), disk: ghost.id, trashFile: true, consent: .all)
 
-        harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        harness.fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let failure = try await #require(throws: CommandError.self) {
             try await harness.core.removeStorageDisk(
                 .id(instance.id), disk: locked.id, trashFile: true, consent: .all)
@@ -744,11 +744,11 @@ struct VMCommandCoreAttachmentTests {
         let locked = RemovableMediaItem(path: externalPath("locked.iso"), readOnly: true)
         let instance = makeInstance(in: harness) { $0.removableMedia = [ghost, locked] }
 
-        harness.fileSystem.trashError = CocoaError(.fileNoSuchFile)
+        harness.fileSystem.setTrashError(CocoaError(.fileNoSuchFile))
         try await harness.core.removeRemovableMedia(
             .id(instance.id), item: ghost.id, trashFile: true, consent: .all)
 
-        harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        harness.fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let failure = try await #require(throws: CommandError.self) {
             try await harness.core.removeRemovableMedia(
                 .id(instance.id), item: locked.id, trashFile: true, consent: .all)
@@ -1307,7 +1307,7 @@ struct VMCommandCoreAttachmentTests {
         let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         let source = makeInstance(in: harness, name: "Source") { $0.storageDisks = [disk] }
         let hold = DispatchSemaphore(value: 0)
-        harness.storage.cloneHold = hold
+        harness.storage.setCloneHold(hold)
         let clone = try await harness.core.clone(
             .id(source.id), outcome: .newMachine, waitForOutcome: false)
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
@@ -1784,7 +1784,7 @@ struct VMCommandCoreAttachmentTests {
             $0.storageDisks = [disk, keeper]
         }
         try VMInstanceFixture.writeSaveFile(for: instance)
-        harness.storage.saveConfigurationError = VMStorageError.bundleNotFound(instance.bundleURL)
+        harness.storage.setSaveConfigurationError(VMStorageError.bundleNotFound(instance.bundleURL))
 
         await #expect(throws: CommandError.self) {
             try await harness.core.removeStartFailedAttachment(

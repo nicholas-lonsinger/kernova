@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import Synchronization
 
 /// Appending writer for a VM's on-disk `serial.log` that bounds its size with
 /// single-generation rotation: when the file reaches `maxFileSize` it is
@@ -8,27 +9,16 @@ import KernovaLogging
 /// of serial history. A pre-existing log already at the cap is cleared at
 /// open rather than archived, so the bound holds from the first write.
 ///
-/// All file state is guarded by one `NSLock`, so `write(_:)` is safe to call
-/// from the background queue that drives serial output. After `close()` or a
+/// The file I/O runs inside one `Mutex`, so `write(_:)` is safe to call from
+/// the background queue that drives serial output. After `close()` or a
 /// failed open, writes are dropped.
-final class SerialLogWriter: @unchecked Sendable {
+final class SerialLogWriter: Sendable {
     /// Rotation threshold. 10 MB retains dozens of Linux boots' console output
     /// while keeping the worst-case bundle overhead (live file plus one rotated
     /// generation) negligible next to a disk image.
     static let defaultMaxFileSize = 10 * 1024 * 1024
 
-    private let logURL: URL
-    private let rotatedURL: URL
-    private let maxFileSize: Int
-    private let label: String
-
-    private let lock = NSLock()
-
-    // Guarded by `lock`.
-    private var handle: FileHandle?
-    private var fileSize = 0
-    /// Set after a failed rotation so the failure logs once, not per chunk.
-    private var rotationDisabled = false
+    private let file: Mutex<LogFile>
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SerialLogWriter")
 
@@ -36,30 +26,10 @@ final class SerialLogWriter: @unchecked Sendable {
         logURL: URL, rotatedURL: URL, label: String,
         maxFileSize: Int = SerialLogWriter.defaultMaxFileSize
     ) {
-        self.logURL = logURL
-        self.rotatedURL = rotatedURL
-        self.maxFileSize = maxFileSize
-        self.label = label
-
-        lock.lock()
-        defer { lock.unlock() }
-        openLocked()
-
-        // A pre-existing log at or over the cap (from a build without one, or
-        // a run whose rotation was disabled) is cleared, not archived: rotating
-        // it whole would carry an arbitrarily large file as `serial.log.1`,
-        // breaking the twice-the-cap bound exactly when it matters most.
-        if fileSize >= maxFileSize {
-            do {
-                try handle?.truncate(atOffset: 0)
-                fileSize = 0
-            } catch {
-                #log(
-                    Self.logger, .warning,
-                    "Could not clear oversized serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-            }
-        }
+        var file = LogFile(logURL: logURL, rotatedURL: rotatedURL, maxFileSize: maxFileSize, label: label)
+        file.open()
+        file.clearIfOversized()
+        self.file = Mutex(file)
     }
 
     /// Appends `data` to the log, rotating once the file reaches `maxFileSize`.
@@ -69,95 +39,136 @@ final class SerialLogWriter: @unchecked Sendable {
     /// a failed open are dropped silently.
     func write(_ data: Data) {
         guard !data.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        guard let handle else { return }
-
-        do {
-            try handle.write(contentsOf: data)
-            fileSize += data.count
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Failed to write to serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            return
-        }
-
-        if fileSize >= maxFileSize {
-            rotateLocked()
-        }
+        file.withLock { $0.write(data) }
     }
 
     /// Closes the log file. Subsequent writes are dropped. Idempotent.
     func close() {
-        lock.lock()
-        defer { lock.unlock() }
-        closeLocked()
+        file.withLock { $0.close() }
     }
 
-    // MARK: - Locked helpers
+    // Each logging method copies `label` into a local first: `#log`'s escaping
+    // autoclosure cannot capture a mutating method's `self`.
+    private struct LogFile {
+        let logURL: URL
+        let rotatedURL: URL
+        let maxFileSize: Int
+        let label: String
 
-    private func openLocked() {
-        let path = logURL.path(percentEncoded: false)
-        if !FileManager.default.fileExists(atPath: path) {
-            FileManager.default.createFile(atPath: path, contents: nil)
+        var handle: FileHandle?
+        var fileSize = 0
+        /// Set after a failed rotation so the failure logs once, not per chunk.
+        var rotationDisabled = false
+
+        init(logURL: URL, rotatedURL: URL, maxFileSize: Int, label: String) {
+            self.logURL = logURL
+            self.rotatedURL = rotatedURL
+            self.maxFileSize = maxFileSize
+            self.label = label
         }
-        do {
-            let newHandle = try FileHandle(forWritingTo: logURL)
+
+        /// A pre-existing log at or over the cap (from a build without one, or
+        /// a run whose rotation was disabled) is cleared, not archived: rotating
+        /// it whole would carry an arbitrarily large file as `serial.log.1`,
+        /// breaking the twice-the-cap bound exactly when it matters most.
+        mutating func clearIfOversized() {
+            let label = label
+            guard fileSize >= maxFileSize else { return }
             do {
-                fileSize = Int(try newHandle.seekToEnd())
+                try handle?.truncate(atOffset: 0)
+                fileSize = 0
             } catch {
                 #log(
-                    Self.logger, .warning,
-                    "Could not seek to end of serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    SerialLogWriter.logger, .warning,
+                    "Could not clear oversized serial log for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
+            }
+        }
+
+        mutating func write(_ data: Data) {
+            let label = label
+            guard let handle else { return }
+
+            do {
+                try handle.write(contentsOf: data)
+                fileSize += data.count
+            } catch {
+                #log(
+                    SerialLogWriter.logger, .error,
+                    "Failed to write to serial log for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                return
+            }
+
+            if fileSize >= maxFileSize {
+                rotate()
+            }
+        }
+
+        mutating func open() {
+            let label = label
+            let path = logURL.path(percentEncoded: false)
+            if !FileManager.default.fileExists(atPath: path) {
+                FileManager.default.createFile(atPath: path, contents: nil)
+            }
+            do {
+                let newHandle = try FileHandle(forWritingTo: logURL)
+                do {
+                    fileSize = Int(try newHandle.seekToEnd())
+                } catch {
+                    #log(
+                        SerialLogWriter.logger, .warning,
+                        "Could not seek to end of serial log for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                    fileSize = 0
+                }
+                handle = newHandle
+            } catch {
+                #log(
+                    SerialLogWriter.logger, .warning,
+                    "Could not open serial log for writing for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                handle = nil
                 fileSize = 0
             }
-            handle = newHandle
-        } catch {
-            #log(
-                Self.logger, .warning,
-                "Could not open serial log for writing for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            handle = nil
-            fileSize = 0
         }
-    }
 
-    private func closeLocked() {
-        do {
-            try handle?.close()
-        } catch {
-            #log(
-                Self.logger, .warning,
-                "Failed to close serial log file for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        handle = nil
-    }
-
-    /// Moves `serial.log` to `serial.log.1` and reopens a fresh live file. On
-    /// failure, keeps appending to the oversized file — losing output would be
-    /// worse — and disables further rotation attempts for this writer.
-    private func rotateLocked() {
-        guard !rotationDisabled else { return }
-        closeLocked()
-
-        do {
-            let fileManager = FileManager.default
-            if fileManager.fileExists(atPath: rotatedURL.path(percentEncoded: false)) {
-                try fileManager.removeItem(at: rotatedURL)
+        mutating func close() {
+            let label = label
+            do {
+                try handle?.close()
+            } catch {
+                #log(
+                    SerialLogWriter.logger, .warning,
+                    "Failed to close serial log file for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
             }
-            try fileManager.moveItem(at: logURL, to: rotatedURL)
-        } catch {
-            rotationDisabled = true
-            #log(
-                Self.logger, .error,
-                "Serial log rotation failed for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
+            handle = nil
         }
 
-        openLocked()
+        /// Moves `serial.log` to `serial.log.1` and reopens a fresh live file. On
+        /// failure, keeps appending to the oversized file — losing output would be
+        /// worse — and disables further rotation attempts for this writer.
+        mutating func rotate() {
+            let label = label
+            guard !rotationDisabled else { return }
+            close()
+
+            do {
+                let fileManager = FileManager.default
+                if fileManager.fileExists(atPath: rotatedURL.path(percentEncoded: false)) {
+                    try fileManager.removeItem(at: rotatedURL)
+                }
+                try fileManager.moveItem(at: logURL, to: rotatedURL)
+            } catch {
+                rotationDisabled = true
+                #log(
+                    SerialLogWriter.logger, .error,
+                    "Serial log rotation failed for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+            }
+
+            open()
+        }
     }
 }

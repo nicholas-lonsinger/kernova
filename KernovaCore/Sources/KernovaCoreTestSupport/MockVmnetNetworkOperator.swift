@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -11,34 +12,53 @@ import Testing
 ///
 /// Every handle wraps a fabricated pointer, distinct per call so a test can
 /// tell a cached handle from a freshly materialized one.
-final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable {
-    /// The subnet every create reports.
-    var subnet = IPv4Subnet.scripted("192.168.213.0")
+final class MockVmnetNetworkOperator: VmnetNetworkOperating {
+    private struct State {
+        var subnet = IPv4Subnet.scripted("192.168.213.0")
+        var createNetworkError: (any Error)?
+        var createdKinds: [VmnetNetworkKind] = []
+        var released: [VmnetNetworkHandle] = []
+        var fabricated: [VmnetNetworkHandle] = []
+    }
 
-    /// Thrown by every create when set.
-    var createNetworkError: (any Error)?
+    private let state = Mutex(State())
 
-    private(set) var createdKinds: [VmnetNetworkKind] = []
+    deinit {
+        state.withLock { $0.fabricated }.forEach { UnsafeMutableRawPointer($0.network).deallocate() }
+    }
+
+    /// Sets the subnet every later create reports.
+    func setSubnet(_ subnet: IPv4Subnet) {
+        state.withLock { $0.subnet = subnet }
+    }
+
+    /// Sets the error every later create throws; `nil` clears it.
+    func setCreateNetworkError(_ error: (any Error)?) {
+        state.withLock { $0.createNetworkError = error }
+    }
+
+    /// Every kind a create was asked for, in call order.
+    var createdKinds: [VmnetNetworkKind] { state.withLock { $0.createdKinds } }
+
     /// Every network given back, in call order.
-    private(set) var releasedNetworks: [OpaquePointer] = []
-
-    private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
-
-    deinit { fabricatedNetworks.forEach { $0.deallocate() } }
+    var releasedNetworks: [OpaquePointer] { state.withLock { $0.released }.map(\.network) }
 
     func createNetwork(_ kind: VmnetNetworkKind) throws -> (
         handle: VmnetNetworkHandle, subnet: IPv4Subnet
     ) {
-        createdKinds.append(kind)
-        if let createNetworkError { throw createNetworkError }
-        let network = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
-        fabricatedNetworks.append(network)
-        return (VmnetNetworkHandle(network: OpaquePointer(network)), subnet)
+        try state.withLock { state in
+            state.createdKinds.append(kind)
+            if let error = state.createNetworkError { throw error }
+            let handle = VmnetNetworkHandle(
+                network: OpaquePointer(UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)))
+            state.fabricated.append(handle)
+            return (handle, state.subnet)
+        }
     }
 
     /// Records the release; the fabricated pointer is freed with the mock.
     func releaseNetwork(_ handle: VmnetNetworkHandle) {
-        releasedNetworks.append(handle.network)
+        state.withLock { $0.released.append(handle) }
     }
 }
 
@@ -53,7 +73,7 @@ extension VmnetNetworkService {
 /// The real `VmnetNetworkService` over a `MockVmnetNetworkOperator`, with the
 /// networks a test needs stood up on known subnets before the code under test
 /// runs.
-final class ScriptedVmnetNetworks: @unchecked Sendable {
+final class ScriptedVmnetNetworks {
     let operations = MockVmnetNetworkOperator()
     let service: VmnetNetworkService
     /// The views `materialize(_:on:owner:)` opened. A network other than a
@@ -79,7 +99,7 @@ final class ScriptedVmnetNetworks: @unchecked Sendable {
     func materialize(
         _ network: VmnetNetworkSelection, on subnet: String? = nil, through view: VmnetSessionNetworks
     ) {
-        if let subnet { operations.subnet = .scripted(subnet) }
+        if let subnet { operations.setSubnet(.scripted(subnet)) }
         do {
             _ = try view.joinedNetwork(for: network)
         } catch {

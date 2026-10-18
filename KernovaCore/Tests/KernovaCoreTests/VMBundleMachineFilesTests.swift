@@ -641,6 +641,7 @@ struct VMBundleMachineFilesTests {
     // MARK: - In-bundle disks
 
     @Test("An in-bundle disk is written at the path its id names, under the bundle")
+    @MainActor
     func createInternalDiskWritesUnderTheBundle() async throws {
         let fixture = try makeFixture()
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
@@ -656,6 +657,7 @@ struct VMBundleMachineFilesTests {
     }
 
     @Test("A failed in-bundle disk write removes what it left, and an earlier failure removes nothing")
+    @MainActor
     func createInternalDiskCleansUpOnlyAfterAWrite() async throws {
         for (error, expectsCleanup) in [
             (DiskImageError.writeFailed(NSError(domain: "t", code: 1)), true),

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import Synchronization
 
 /// An `AF_UNIX` stream socket the app binds, listens on, and accepts clients
 /// from — the plumbing every host-side listener shares.
@@ -11,7 +12,7 @@ import KernovaKit
 ///
 /// The accepted descriptor is the callback's to own — it arrives with
 /// `SO_NOSIGPIPE` and `O_NONBLOCK` already set, and nothing here closes it.
-final class UnixSocketListener: @unchecked Sendable {
+final class UnixSocketListener: Sendable {
     /// Why `start()` could not bring the socket up.
     enum StartFailure: Error, Equatable {
         /// The path does not fit `sockaddr_un.sun_path`.
@@ -24,9 +25,7 @@ final class UnixSocketListener: @unchecked Sendable {
     /// Filesystem path of the bound socket — `nil` until `start()` binds
     /// successfully, and again after `stop()`.
     var boundPath: String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return bound
+        state.withLock { $0.bound }
     }
 
     private let path: String
@@ -34,13 +33,17 @@ final class UnixSocketListener: @unchecked Sendable {
     private let backlog: Int32
     private let fileMode: mode_t
 
-    private let lock = NSLock()
-    // Guarded by `lock`; an fd of `-1` means inactive. The listener is
-    // re-startable — stop() then start() re-binds the same instance.
-    private var listenFd: Int32 = -1
-    private var listenSource: DispatchSourceRead?
-    private var bound: String?
-    private var onAccept: (@Sendable (Int32) -> Void)?
+    /// The listener is re-startable — stop() then start() re-binds the same
+    /// instance.
+    private struct State {
+        /// `-1` means inactive.
+        var listenFd: Int32 = -1
+        var listenSource: DispatchSourceRead?
+        var bound: String?
+        var onAccept: (@Sendable (Int32) -> Void)?
+    }
+
+    private let state = Mutex(State())
 
     /// Process-wide `SIGPIPE` suppression so a write to a peer whose read side
     /// has vanished surfaces as `EPIPE` from `write(2)` instead of killing the
@@ -73,9 +76,15 @@ final class UnixSocketListener: @unchecked Sendable {
     /// nothing, handler included. A stale socket file from a prior crash is
     /// unlinked first.
     func start(onAccept: @escaping @Sendable (Int32) -> Void) throws(StartFailure) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard listenFd < 0 else { return }
+        try state.withLock { state throws(StartFailure) in
+            try start(onAccept: onAccept, in: &state)
+        }
+    }
+
+    private func start(
+        onAccept: @escaping @Sendable (Int32) -> Void, in state: inout State
+    ) throws(StartFailure) {
+        guard state.listenFd < 0 else { return }
 
         var address = try Self.address(for: path)
 
@@ -108,10 +117,10 @@ final class UnixSocketListener: @unchecked Sendable {
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in self?.acceptOne() }
         source.setCancelHandler { close(fd) }
-        listenFd = fd
-        listenSource = source
-        bound = path
-        self.onAccept = onAccept
+        state.listenFd = fd
+        state.listenSource = source
+        state.bound = path
+        state.onAccept = onAccept
         source.resume()
     }
 
@@ -120,17 +129,16 @@ final class UnixSocketListener: @unchecked Sendable {
     ///
     /// Idempotent. Connections already handed to `onAccept` are untouched.
     func stop() {
-        lock.lock()
-        defer { lock.unlock() }
+        state.withLock { state in
+            state.listenSource?.cancel()  // cancel handler closes listenFd
+            state.listenSource = nil
+            state.listenFd = -1
+            state.onAccept = nil
 
-        listenSource?.cancel()  // cancel handler closes listenFd
-        listenSource = nil
-        listenFd = -1
-        onAccept = nil
-
-        if bound != nil {
-            unlink(path)
-            bound = nil
+            if state.bound != nil {
+                unlink(path)
+                state.bound = nil
+            }
         }
     }
 
@@ -143,15 +151,12 @@ final class UnixSocketListener: @unchecked Sendable {
     }
 
     private func acceptOne() {
-        lock.lock()
-        guard listenFd >= 0, let deliver = onAccept else {
-            lock.unlock()
-            return
+        let next: (fd: Int32, deliver: @Sendable (Int32) -> Void)? = state.withLock { state in
+            guard state.listenFd >= 0, let deliver = state.onAccept else { return nil }
+            // The listening fd is non-blocking, so this returns immediately.
+            return (accept(state.listenFd, nil, nil), deliver)
         }
-        // The listening fd is non-blocking, so this returns immediately.
-        let accepted = accept(listenFd, nil, nil)
-        lock.unlock()
-
+        guard let (accepted, deliver) = next else { return }
         guard accepted >= 0 else { return }  // EWOULDBLOCK / transient — the source refires
 
         Self.setNoSIGPIPE(accepted)

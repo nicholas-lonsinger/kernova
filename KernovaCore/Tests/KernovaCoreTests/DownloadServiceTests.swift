@@ -1,5 +1,6 @@
 import Foundation
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -54,7 +55,7 @@ struct DownloadServiceTests {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xAA, count: 256 * 1024 + 100)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             #expect(request.value(forHTTPHeaderField: "Range") == nil)
             return .fullResponse(
                 url: (request.url ?? Self.remoteURL),
@@ -63,7 +64,7 @@ struct DownloadServiceTests {
                 lastModified: "Mon, 01 Jan 2026 00:00:00 GMT"
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
@@ -90,16 +91,16 @@ struct DownloadServiceTests {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xAA, count: 4096)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let fileSystem = MockFileSystem()
         // A generic failure, NOT `.fileNoSuchFile` — that one is swallowed
         // silently as the ordinary "nothing to discard" case and would not
         // exercise this path.
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
 
         try await service.download(
@@ -143,11 +144,11 @@ struct DownloadServiceTests {
         try FileManager.default.removeItem(at: bundle.dataURL)
         #expect(bundle.exists)
 
-        StubURLProtocol.handler = { _ in
+        StubURLProtocol.setHandler { _ in
             Issue.record("Husk beside a complete file must not trigger a re-download")
             return .response(url: Self.remoteURL, statusCode: 500, body: Data(), headers: [:])
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let recorder = ProgressRecorder()
         let fileSystem = MockFileSystem()
@@ -190,7 +191,7 @@ struct DownloadServiceTests {
         try prefix.write(to: bundle.dataURL)
         #expect(bundle.partialByteCount == Int64(prefix.count))
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             // Verify resume headers
             #expect(request.value(forHTTPHeaderField: "Range") == "bytes=\(prefix.count)-")
             #expect(request.value(forHTTPHeaderField: "If-Range") == "\"v1\"")
@@ -202,7 +203,7 @@ struct DownloadServiceTests {
                 total: Int64(fullPayload.count)
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         try await service.download(
@@ -238,12 +239,12 @@ struct DownloadServiceTests {
         try stale.write(to: bundle.dataURL)
 
         let newPayload = Data(repeating: 0x33, count: 4096)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             // Server ignores If-Range and sends a full 200 — file changed.
             #expect(request.value(forHTTPHeaderField: "Range") == "bytes=8192-")
             return .fullResponse(url: (request.url ?? Self.remoteURL), body: newPayload, etag: "\"v2\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         try await service.download(
@@ -276,7 +277,7 @@ struct DownloadServiceTests {
         )
         try complete.write(to: bundle.dataURL)
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .response(
                 url: (request.url ?? Self.remoteURL),
                 statusCode: 416,
@@ -284,7 +285,7 @@ struct DownloadServiceTests {
                 headers: ["Content-Range": "bytes */\(complete.count)"]
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
@@ -323,7 +324,7 @@ struct DownloadServiceTests {
         )
         try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             // Status 206 with NO Content-Range header — the failure case.
             .response(
                 url: request.url ?? Self.remoteURL,
@@ -332,7 +333,7 @@ struct DownloadServiceTests {
                 headers: [:]
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -358,10 +359,10 @@ struct DownloadServiceTests {
     func httpErrorThrows() async throws {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .response(url: (request.url ?? Self.remoteURL), statusCode: 404, body: Data(), headers: [:])
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -384,11 +385,11 @@ struct DownloadServiceTests {
         let preExisting = Data(repeating: 0x99, count: 2048)
         try preExisting.write(to: destination)
 
-        StubURLProtocol.handler = { _ in
+        StubURLProtocol.setHandler { _ in
             Issue.record("Stub should not have been called when skip-existing fast path fires")
             return .response(url: Self.remoteURL, statusCode: 500, body: Data(), headers: [:])
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let progressBox = ProgressRecorder()
         let service = Self.makeServiceWithStub()
@@ -413,7 +414,7 @@ struct DownloadServiceTests {
         // Deliver enough partial bytes (≥ writeChunkSize) so at least one
         // chunked write commits to disk before the error fires.
         let partial = Data(repeating: 0x55, count: 512 * 1024)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .midStreamError(
                 url: request.url ?? Self.remoteURL,
                 declaredLength: 4 * 1024 * 1024,
@@ -421,7 +422,7 @@ struct DownloadServiceTests {
                 error: URLError(.networkConnectionLost)
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -459,14 +460,14 @@ struct DownloadServiceTests {
         try Data(repeating: 0xCC, count: 1024).write(to: bundle.dataURL)
 
         let payload = Data(repeating: 0x42, count: 2048)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             // The corrupt bundle must be discarded — request should be fresh
             // (no Range header from stale state).
             #expect(request.value(forHTTPHeaderField: "Range") == nil)
             return .fullResponse(
                 url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         try await service.download(
@@ -498,7 +499,7 @@ struct DownloadServiceTests {
         try Data(repeating: 0x99, count: 4096).write(to: bundle.dataURL)
 
         let payload = Data(repeating: 0x77, count: 2048)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             // Should target the NEW URL (caller's remoteURL), not the stale one.
             #expect(request.url == Self.remoteURL)
             // Should be a fresh request (no Range header from stale state).
@@ -506,7 +507,7 @@ struct DownloadServiceTests {
             return .fullResponse(
                 url: request.url ?? Self.remoteURL, body: payload, etag: "\"new\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         try await service.download(
@@ -539,7 +540,7 @@ struct DownloadServiceTests {
         )
         try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             // Server returns the wrong range — start at 0 even though we asked
             // for bytes=1024-.
             .partialResponse(
@@ -550,7 +551,7 @@ struct DownloadServiceTests {
                 total: 1500
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -591,7 +592,7 @@ struct DownloadServiceTests {
         )
         try Data(repeating: 0x55, count: 4096).write(to: bundle.dataURL)
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .response(
                 url: request.url ?? Self.remoteURL,
                 statusCode: 416,
@@ -599,7 +600,7 @@ struct DownloadServiceTests {
                 headers: ["Content-Range": "bytes */2048"]
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -639,7 +640,7 @@ struct DownloadServiceTests {
         )
         try prefix.write(to: bundle.dataURL)
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .partialResponse(
                 url: request.url ?? Self.remoteURL,
                 body: suffix,
@@ -648,7 +649,7 @@ struct DownloadServiceTests {
                 total: Int64(total.count)
             )
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let recorder = ProgressRecorder()
         let service = Self.makeServiceWithStub()
@@ -849,10 +850,10 @@ struct DownloadServiceTests {
         // Build a payload comfortably larger than the 256 KB write-chunk so
         // multiple progress reports fire.
         let payload = Data(repeating: 0x44, count: 1024 * 1024)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .fullResponse(url: (request.url ?? Self.remoteURL), body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let progressBox = ProgressRecorder()
         let service = Self.makeServiceWithStub()
@@ -882,12 +883,12 @@ struct DownloadServiceTests {
         // caught it up front. Left unchecked they fill the volume.
         let destination = scratch.url.appendingPathComponent("installer.iso")
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .unboundedResponse(
                 url: request.url ?? Self.remoteURL,
                 body: Data(repeating: 0x55, count: 8192))
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -924,13 +925,13 @@ struct DownloadServiceTests {
                 originalURL: Self.remoteURL, etag: "\"v1\"", lastModified: nil, createdAt: Date()))
         try prefix.write(to: bundle.dataURL)
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .partialResponse(
                 url: request.url ?? Self.remoteURL,
                 body: Data(repeating: 0x22, count: 2000),
                 start: 3000, end: 4095, total: 4096)
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -961,12 +962,12 @@ struct DownloadServiceTests {
         // from outside the service.
         let destination = scratch.url.appendingPathComponent("installer.iso")
 
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .fullResponse(
                 url: request.url ?? Self.remoteURL,
                 body: Data(repeating: 0x55, count: 8192), etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let progressBox = ProgressRecorder()
         let service = Self.makeServiceWithStub()
@@ -1062,7 +1063,7 @@ struct DownloadServiceTests {
         // A resume is answered by the mirror that overruns; a request carrying
         // no Range — what an attempt with no bundle behind it sends — gets the
         // file the ceiling was probed against.
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             guard request.value(forHTTPHeaderField: "Range") == nil else {
                 return .partialResponse(
                     url: request.url ?? Self.remoteURL,
@@ -1071,7 +1072,7 @@ struct DownloadServiceTests {
             }
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         do {
@@ -1101,10 +1102,10 @@ struct DownloadServiceTests {
     @Test("A transfer that fits its ceiling, and one with no ceiling at all, both complete")
     func sizeCeilingStopsOnlyWhatRunsPastIt() async throws {
         let payload = Data(repeating: 0x66, count: 4096)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
 
@@ -1133,12 +1134,12 @@ struct DownloadServiceTests {
 
         let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)
         let requests = RequestCounter()
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             requests.increment()
             return .fullResponse(
                 url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         let first = Task {
@@ -1162,11 +1163,11 @@ struct DownloadServiceTests {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xCD, count: 4096)
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             #expect(request.value(forHTTPHeaderField: "Range") == nil)
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v2\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         // `MockFileSystem.fileExists` always reports true, so the discard sees
         // an image at the destination; the recording mock leaves the real path
@@ -1191,14 +1192,14 @@ struct DownloadServiceTests {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let requests = RequestCounter()
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             requests.increment()
             return .fullResponse(url: request.url ?? Self.remoteURL, body: Data(), etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let fileSystem = MockFileSystem()
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
 
         do {
@@ -1327,12 +1328,12 @@ struct DownloadServiceTests {
         // destination-occupied check and pass with the claim honored or not.
         let started = RequestGate()
         let release = RequestGate()
-        StubURLProtocol.handler = { request in
+        StubURLProtocol.setHandler { request in
             started.signal()
             release.waitOnThisThread()
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
-        defer { StubURLProtocol.handler = nil }
+        defer { StubURLProtocol.setHandler(nil) }
 
         let service = Self.makeServiceWithStub()
         let download = Task {
@@ -1370,21 +1371,14 @@ struct DownloadServiceTests {
 // MARK: - Helpers
 
 /// Counts stub requests from URLSession's own queue, where the handler runs.
-final class RequestCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
+final class RequestCounter: Sendable {
+    private let count = Mutex(0)
 
     func increment() {
-        lock.lock()
-        count += 1
-        lock.unlock()
+        count.withLock { $0 += 1 }
     }
 
-    var value: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return count
-    }
+    var value: Int { count.withLock { $0 } }
 }
 
 /// A one-shot signal passed between the test and URLSession's own queue, where
@@ -1392,33 +1386,40 @@ final class RequestCounter: @unchecked Sendable {
 ///
 /// Event-driven in both directions: the awaiting side resumes on the signal,
 /// and a signal that already fired resumes it immediately.
-final class RequestGate: @unchecked Sendable {
+final class RequestGate: Sendable {
     /// How long ``waitOnThisThread()`` holds before giving up.
     ///
     /// The handler blocks a URLSession thread, so a case that fails before it
     /// signals would otherwise hang the run rather than report.
     private static let synchronousWaitLimit: TimeInterval = 30
 
-    private let condition = NSCondition()
-    private var fired = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private struct State {
+        var fired = false
+        var waiters: [CheckedContinuation<Void, Never>] = []
+        var blockedThreads: [DispatchSemaphore] = []
+    }
+
+    private let state = Mutex(State())
 
     func signal() {
-        condition.lock()
-        fired = true
-        let pending = waiters
-        waiters.removeAll()
-        condition.broadcast()
-        condition.unlock()
-        for continuation in pending { continuation.resume() }
+        let (waiters, blockedThreads) = state.withLock { state in
+            state.fired = true
+            defer {
+                state.waiters.removeAll()
+                state.blockedThreads.removeAll()
+            }
+            return (state.waiters, state.blockedThreads)
+        }
+        for continuation in waiters { continuation.resume() }
+        for thread in blockedThreads { thread.signal() }
     }
 
     func wait() async {
         await withCheckedContinuation { continuation in
-            condition.lock()
-            let alreadyFired = fired
-            if !alreadyFired { waiters.append(continuation) }
-            condition.unlock()
+            let alreadyFired = state.withLock { state in
+                if !state.fired { state.waiters.append(continuation) }
+                return state.fired
+            }
             if alreadyFired { continuation.resume() }
         }
     }
@@ -1426,10 +1427,12 @@ final class RequestGate: @unchecked Sendable {
     /// Blocks the calling thread until the signal — for the stub handler, which
     /// URLSession calls synchronously off the main thread.
     func waitOnThisThread() {
-        let deadline = Date().addingTimeInterval(Self.synchronousWaitLimit)
-        condition.lock()
-        while !fired, condition.wait(until: deadline) {}
-        condition.unlock()
+        let blocked = DispatchSemaphore(value: 0)
+        let alreadyFired = state.withLock { state in
+            if !state.fired { state.blockedThreads.append(blocked) }
+            return state.fired
+        }
+        if !alreadyFired { _ = blocked.wait(timeout: .now() + Self.synchronousWaitLimit) }
     }
 }
 
@@ -1444,8 +1447,8 @@ final class ProgressRecorder {
 
 /// Stub URLProtocol that intercepts requests for tests.
 ///
-/// Tests set `StubURLProtocol.handler` to control the response shape per case.
-final class StubURLProtocol: URLProtocol, @unchecked Sendable {
+/// Tests call `StubURLProtocol.setHandler` to control the response shape per case.
+final class StubURLProtocol: URLProtocol {
     struct StubResponse {
         let response: HTTPURLResponse
         let body: Data
@@ -1541,21 +1544,23 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    /// The response shape for the case in flight, set before a download starts.
+    private static let handler = Mutex<(@Sendable (URLRequest) -> StubResponse)?>(nil)
+
+    /// Sets the response shape for the case in flight, before a download starts.
     ///
     /// Belongs to `DownloadServiceTests` alone: the handler is a global, Swift Testing
     /// runs suites in parallel, and that suite's `.serialized` orders only its own
     /// cases — a second suite driving this class would clobber it, which is why the
     /// other URL-stubbing suites each declare their own `URLProtocol`.
-    /// `nonisolated(unsafe)`: URLSession instantiates the protocol per request on a
-    /// session-internal queue, so no actor can own this.
-    nonisolated(unsafe) static var handler: ((URLRequest) -> StubResponse)?
+    static func setHandler(_ handler: (@Sendable (URLRequest) -> StubResponse)?) {
+        self.handler.withLock { $0 = handler }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = Self.handler else {
+        guard let handler = Self.handler.withLock({ $0 }) else {
             client?.urlProtocol(
                 self,
                 didFailWithError: NSError(

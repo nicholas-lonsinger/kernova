@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 /// An `EngineClock` whose reading moves only when the test advances it.
 ///
@@ -7,24 +8,23 @@ import KernovaKit
 /// one call instead of sleeping through it. `sleep(for:)` advances the reading
 /// and returns without suspending, so a subject that sleeps on this clock runs
 /// at test speed.
-public final class TestEngineClock: EngineClock, @unchecked Sendable {
-    private let lock = NSLock()
-    private var nanoseconds: UInt64
+public final class TestEngineClock: EngineClock, Sendable {
+    private let nanoseconds: Locked<UInt64>
 
     /// Creates a clock reading `startNanoseconds`.
     public init(startNanoseconds: UInt64 = 0) {
-        self.nanoseconds = startNanoseconds
+        self.nanoseconds = Locked(startNanoseconds)
     }
 
     /// The reading as last advanced.
     public var now: EngineInstant {
-        EngineInstant(nanoseconds: lock.withLock { nanoseconds })
+        EngineInstant(nanoseconds: nanoseconds.withLock { $0 })
     }
 
     /// Moves the reading forward by `seconds`.
     public func advance(seconds: TimeInterval) {
         let span = schedulable(seconds)
-        lock.withLock { nanoseconds &+= UInt64(span * 1_000_000_000) }
+        nanoseconds.withLock { $0 &+= UInt64(span * 1_000_000_000) }
     }
 
     /// Advances the reading by `interval` and returns, without suspending.

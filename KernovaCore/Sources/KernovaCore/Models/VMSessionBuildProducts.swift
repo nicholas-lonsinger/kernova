@@ -3,10 +3,7 @@ import Foundation
 /// What a configuration build produced for the session it brings up, besides
 /// the machine itself: what ``VMActivity/adoptBuildProducts(_:_:)`` takes into
 /// the session context.
-///
-/// `@unchecked Sendable`: built off the main actor and handed over whole —
-/// nothing touches a pipe here until the session context adopts it.
-package struct VMSessionBuildProducts: @unchecked Sendable {
+package struct VMSessionBuildProducts: Sendable {
     let serialInputPipe: Pipe
     let serialOutputPipe: Pipe
     let clipboardInputPipe: Pipe?

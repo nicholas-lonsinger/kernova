@@ -75,6 +75,7 @@ struct LinuxInstallContextTests {
     }
 
     @Test("A catalog pick is checked against the manifest row, credited to the list's own host")
+    @MainActor
     func catalogChecksAgainstTheManifestRow() async throws {
         // The list sits on a different host from the ISO, and the digest is
         // credited to the list.

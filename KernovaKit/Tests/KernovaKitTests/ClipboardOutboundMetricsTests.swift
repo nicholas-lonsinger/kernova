@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 /// The sender's own stage timings, over a real data connection.
 @Suite("ClipboardOutboundMetrics", .caseScoped)
@@ -45,7 +46,7 @@ struct ClipboardOutboundMetricsTests {
 
         let payload = Data(repeating: 0x42, count: 2 * ClipboardStreamTuning.dataReadBufferBytes + 17)
         let transferID: UInt64 = 1
-        let received = Box<ReceivedTransfer?>(nil)
+        let received = Locked<ReceivedTransfer?>(nil)
         let served = AsyncGate()
         harness.outbox.serve(
             transferID: transferID, generation: 1,
@@ -54,7 +55,7 @@ struct ClipboardOutboundMetricsTests {
             isCurrent: { _ in true },
             link: .dial {
                 try dialToPeer { far in
-                    received.value = try? receiveTransfer(fd: far)
+                    received.withLock { $0 = try? receiveTransfer(fd: far) }
                     served.notify()
                 }
             },
@@ -79,8 +80,8 @@ struct ClipboardOutboundMetricsTests {
         #expect(metrics.inbound == nil)
 
         // The wire count the peer was told matches what the sender counted.
-        try await served.wait { received.value != nil }
-        let transfer = try #require(received.value)
+        try await served.wait { received.withLock { $0 } != nil }
+        let transfer = try #require(received.withLock { $0 })
         #expect(Int(transfer.reply.totalBytes) == metrics.wireByteCount)
         #expect(transfer.payload == payload)
         #expect(transfer.isComplete)
@@ -263,12 +264,12 @@ struct ClipboardOutboundMetricsTests {
     @Test("seconds spent producing bytes rather than handing them to the socket are the source's")
     func sourceWaitAccumulatesOverWrites() async throws {
         let clock = TestEngineClock()
-        let timed = Box<[ClipboardTransferMetrics]>([])
+        let timed = Locked<[ClipboardTransferMetrics]>([])
         let reported = AsyncGate()
         let outbox = ClipboardTransferOutbox(
             clock: clock,
             onTransferTimed: { metrics in
-                timed.value.append(metrics)
+                timed.withLock { $0.append(metrics) }
                 reported.notify()
             })
         defer { outbox.cancelAll() }
@@ -277,7 +278,7 @@ struct ClipboardOutboundMetricsTests {
         // between a buffer being produced and the socket taking it, so the
         // seconds it burns are charged exactly where a slow source's are. It
         // runs once before the stream opens and once before every socket write.
-        let checks = Box(0)
+        let checks = Locked(0)
         let payload = Data(repeating: 0x42, count: 4 * ClipboardStreamTuning.dataReadBufferBytes)
         let transferID: UInt64 = 1
         outbox.serve(
@@ -285,19 +286,19 @@ struct ClipboardOutboundMetricsTests {
             representation: .init(uti: "public.utf8-plain-text", data: payload),
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
             isCurrent: { _ in
-                checks.value += 1
+                checks.withLock { $0 += 1 }
                 clock.advance(seconds: Self.perCheckSeconds)
                 return true
             },
             link: .dial { try dialToPeer { far in _ = try? receiveTransfer(fd: far) } })
 
-        try await reported.wait { !timed.value.isEmpty }
-        let metrics = try #require(timed.value.first)
+        try await reported.wait { !timed.withLock { $0 }.isEmpty }
+        let metrics = try #require(timed.withLock { $0 }.first)
         let sent = try #require(metrics.outbound)
 
         // More than one write, so the figure accumulated over the stream rather
         // than being taken once.
-        #expect(checks.value > 2)
+        #expect(checks.withLock { $0 } > 2)
         #expect(sent.sourceWait >= 2 * Self.perCheckSeconds)
         // A clock that moves nowhere else charges every second of the stream to
         // one stage or the other, and none of them was the socket's: what is left

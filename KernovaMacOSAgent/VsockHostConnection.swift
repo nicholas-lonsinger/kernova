@@ -1,16 +1,17 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaSynchronization
 
 /// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`.
 ///
 /// Connection lifecycle is delegated to `VsockGuestClient`; this class layers
 /// log-specific buffering and inbound drain on top.
 ///
-/// Every log call here is made outside a `lock` hold: this class is the sink
+/// Every log call here is made outside a `state` hold: this class is the sink
 /// `KernovaLogger` forwards through, so its own records re-enter `forwardLog`,
 /// which takes that same non-reentrant lock.
-final class VsockHostConnection: @unchecked Sendable {
+final class VsockHostConnection: Sendable {
     private let logger: KernovaLogger
 
     /// Maximum number of `LogRecord` frames held between the logging thread
@@ -31,37 +32,107 @@ final class VsockHostConnection: @unchecked Sendable {
     private let drainQueue = DispatchQueue(
         label: "app.kernova.macosagent.log-drain", qos: .utility)
 
-    let lock = NSLock()
+    private let state = Locked(State())
 
-    /// Records waiting for the drain, oldest first, each already framed for the
-    /// wire, guarded by `lock`.
-    ///
-    /// Framed on the way in, so a record that could not be sent is never
-    /// admitted, and a send that fails means only that the channel has ended.
-    private(set) var pendingLogs: [Data] = []
+    private struct State: Sendable {
+        /// Records waiting for the drain, oldest first, each already framed for
+        /// the wire.
+        ///
+        /// Framed on the way in, so a record that could not be sent is never
+        /// admitted, and a send that fails means only that the channel has
+        /// ended.
+        var pendingLogs: [Data] = []
 
-    /// Whether the record the drain took off `pendingLogs` is still this
-    /// connection's, guarded by `lock` — set while its send runs, cleared by
-    /// the send's outcome or by a discard.
-    ///
-    /// It counts against `logBufferLimit` and in what an ended channel leaves
-    /// held, so neither depends on how far the send has got; a send that fails
-    /// returns the record only while it is still owned.
-    private var recordInFlight = false
+        /// Whether the record the drain took off `pendingLogs` is still this
+        /// connection's — set while its send runs, cleared by the send's
+        /// outcome or by a discard.
+        ///
+        /// It counts against `logBufferLimit` and in what an ended channel
+        /// leaves held, so neither depends on how far the send has got; a send
+        /// that fails returns the record only while it is still owned.
+        var recordInFlight = false
 
-    /// Whether a `drainPending()` run is enqueued or in flight, guarded by
-    /// `lock` — one run at a time, however many records arrive.
-    private var drainScheduled = false
+        /// Whether a `drainPending()` run is enqueued or in flight — one run at
+        /// a time, however many records arrive.
+        var drainScheduled = false
 
-    /// The channel the drain sends on, guarded by `lock`: installed by
-    /// `serveLogChannel` for as long as it serves, and cleared by whichever side
-    /// learns the channel is dead first — the serve loop at its end, or the
-    /// drain on a failed send.
-    private var channel: VsockChannel?
+        /// The channel the drain sends on: installed by `serveLogChannel` for
+        /// as long as it serves, and cleared by whichever side learns the
+        /// channel is dead first — the serve loop at its end, or the drain on a
+        /// failed send.
+        var channel: VsockChannel?
 
-    /// Records the ring has evicted since the drain last emptied it, guarded by
-    /// `lock`.
-    private var droppedCount = 0
+        /// Records the ring has evicted since the drain last emptied it.
+        var droppedCount = 0
+
+        var policy: ForwardingPolicy = .undecided
+
+        /// Records the connection holds for the host: the ring, and a record in
+        /// flight it still owns.
+        var heldCount: Int {
+            pendingLogs.count + (recordInFlight ? 1 : 0)
+        }
+
+        /// Appends `framed` unless host policy is `.disabled`, evicting the
+        /// oldest waiting records until what the connection holds fits
+        /// `logBufferLimit`, charging them to `droppedCount`.
+        ///
+        /// - Returns: `true` when this is the append that started dropping.
+        mutating func append(_ framed: Data) -> Bool {
+            guard policy != .disabled else { return false }
+            pendingLogs.append(framed)
+            let evicted = heldCount - VsockHostConnection.logBufferLimit
+            guard evicted > 0 else { return false }
+            pendingLogs.removeFirst(evicted)
+            let wasDropping = droppedCount > 0
+            droppedCount += evicted
+            return !wasDropping
+        }
+
+        /// Drops every held record — the ring and one in flight — together
+        /// with the overflow tally that only describes them.
+        mutating func discardPending() {
+            pendingLogs.removeAll(keepingCapacity: false)
+            recordInFlight = false
+            droppedCount = 0
+        }
+
+        /// Marks a drain run scheduled, and returns whether one already was.
+        mutating func scheduleDrain() -> Bool {
+            defer { drainScheduled = true }
+            return drainScheduled
+        }
+
+        /// Without a channel to carry a record the run ends, leaving the ring
+        /// and the overflow tally for the next connection.
+        mutating func nextDrainStep() -> DrainStep {
+            guard let channel else {
+                drainScheduled = false
+                return .finished
+            }
+            if !pendingLogs.isEmpty {
+                recordInFlight = true
+                return .send(pendingLogs.removeFirst(), on: channel)
+            }
+            if droppedCount > 0 {
+                defer { droppedCount = 0 }
+                return .reportDrops(droppedCount)
+            }
+            drainScheduled = false
+            return .finished
+        }
+
+        /// Returns `framed`, the record a send on the ended `failedChannel` did
+        /// not deliver, to the head of the ring while it is still owned, and
+        /// retires `failedChannel` if it is still the installed one.
+        mutating func holdForNextConnection(_ framed: Data, failedOn failedChannel: VsockChannel) {
+            if recordInFlight {
+                recordInFlight = false
+                pendingLogs.insert(framed, at: 0)
+            }
+            if channel === failedChannel { channel = nil }
+        }
+    }
 
     /// Whether the host has decided log forwarding yet, and if so, its verdict.
     ///
@@ -73,13 +144,18 @@ final class VsockHostConnection: @unchecked Sendable {
         case disabled
     }
 
-    /// Current forwarding policy, guarded by `lock`.
-    private var policy: ForwardingPolicy = .undecided
-
-    /// Lock-guarded read of the forwarding policy for the main-thread menu.
+    /// The forwarding policy, for the main-thread menu.
     var isLogForwardingEnabled: Bool {
-        lock.withLock { policy == .enabled }
+        state.withLock { $0.policy == .enabled }
     }
+
+    #if DEBUG
+    /// The records waiting for the drain, oldest first, each framed for the
+    /// wire.
+    func pendingLogsForTesting() -> [Data] {
+        state.withLock { $0.pendingLogs }
+    }
+    #endif
 
     /// Production init — forwards on `KernovaVsockPort.log`.
     convenience init() {
@@ -108,7 +184,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Discards the buffered log records, then stops the loop and tears down
     /// any active channel.
     func stop() {
-        lock.withLock { discardPendingLocked() }
+        state.withLock { $0.discardPending() }
         client.stop()
     }
 
@@ -122,10 +198,10 @@ final class VsockHostConnection: @unchecked Sendable {
     /// does nothing.
     func setEnabled(_ enabled: Bool) {
         let target: ForwardingPolicy = enabled ? .enabled : .disabled
-        let needsTransition: Bool = lock.withLock {
-            let was = policy
-            policy = target
-            if target == .disabled, was != .disabled { discardPendingLocked() }
+        let needsTransition = state.withLock { state in
+            let was = state.policy
+            state.policy = target
+            if target == .disabled, was != .disabled { state.discardPending() }
             return was != target
         }
         // Ahead of the no-change guard — see `VsockGuestClient.resume()`.
@@ -151,7 +227,7 @@ final class VsockHostConnection: @unchecked Sendable {
         category: String,
         segments: [LogSegment]
     ) {
-        let policy = lock.withLock { self.policy }
+        let policy = state.withLock { $0.policy }
         if policy == .disabled { return }
 
         var frame = Frame()
@@ -195,39 +271,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// `forwardLog` sampled the policy before building its frame.
     func bufferFrameUnlessDisabled(_ frame: Frame) {
         guard let framed = try? VsockChannel.serializeFramed(frame) else { return }
-        let startedDropping: Bool = lock.withLock {
-            guard policy != .disabled else { return false }
-            pendingLogs.append(framed)
-            return trimToLimitLocked()
-        }
-        if startedDropping { reportDroppingStarted() }
-    }
-
-    /// Records the connection holds for the host: the ring, and a record in
-    /// flight it still owns.
-    private var heldCountLocked: Int {
-        pendingLogs.count + (recordInFlight ? 1 : 0)
-    }
-
-    /// Evicts the oldest waiting records until what the connection holds fits
-    /// `logBufferLimit`, charging them to `droppedCount`.
-    ///
-    /// - Returns: `true` when this is the trim that started dropping.
-    private func trimToLimitLocked() -> Bool {
-        let evicted = heldCountLocked - Self.logBufferLimit
-        guard evicted > 0 else { return false }
-        pendingLogs.removeFirst(evicted)
-        let wasDropping = droppedCount > 0
-        droppedCount += evicted
-        return !wasDropping
-    }
-
-    /// Drops every held record — the ring and one in flight — together with the
-    /// overflow tally that only describes them.
-    private func discardPendingLocked() {
-        pendingLogs.removeAll(keepingCapacity: false)
-        recordInFlight = false
-        droppedCount = 0
+        if state.withLock({ $0.append(framed) }) { reportDroppingStarted() }
     }
 
     /// Announces that the ring has started evicting; the count follows from the
@@ -251,43 +295,16 @@ final class VsockHostConnection: @unchecked Sendable {
     /// its end, so a record or channel installed after that hold finds
     /// `drainScheduled` clear here and gets a run of its own.
     private func scheduleDrain() {
-        let alreadyScheduled: Bool = lock.withLock {
-            let scheduled = drainScheduled
-            drainScheduled = true
-            return scheduled
-        }
-        guard !alreadyScheduled else { return }
+        guard !state.withLock({ $0.scheduleDrain() }) else { return }
         drainQueue.async { [weak self] in self?.drainPending() }
     }
 
-    /// What a drain does next, decided under `lock` so a record or a channel
+    /// What a drain does next, decided under `state` so a record or a channel
     /// arriving alongside the drain either joins this run or schedules the next.
     private enum DrainStep {
         case send(Data, on: VsockChannel)
         case reportDrops(Int)
         case finished
-    }
-
-    /// Without a channel to carry a record the run ends, leaving the ring and
-    /// the overflow tally for the next connection.
-    private func nextDrainStep() -> DrainStep {
-        lock.withLock {
-            guard let channel = self.channel else {
-                drainScheduled = false
-                return .finished
-            }
-            if !pendingLogs.isEmpty {
-                recordInFlight = true
-                return .send(pendingLogs.removeFirst(), on: channel)
-            }
-            if droppedCount > 0 {
-                let dropped = droppedCount
-                droppedCount = 0
-                return .reportDrops(dropped)
-            }
-            drainScheduled = false
-            return .finished
-        }
     }
 
     /// Sends the ring to the host until it empties or the channel goes away.
@@ -297,7 +314,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// and `serveLogChannel` reports every end.
     private func drainPending() {
         while true {
-            switch nextDrainStep() {
+            switch state.withLock({ $0.nextDrainStep() }) {
             case .finished:
                 return
             case .reportDrops(let dropped):
@@ -310,34 +327,23 @@ final class VsockHostConnection: @unchecked Sendable {
             case .send(let framed, let channel):
                 do {
                     try channel.writeFramed(framed)
-                    lock.withLock { recordInFlight = false }
+                    state.withLock { $0.recordInFlight = false }
                 } catch {
-                    holdForNextConnection(framed, failedOn: channel)
+                    // Head re-insertion is what keeps the host's view
+                    // chronological across the next connection, and retiring
+                    // the channel means this run's next step and every run a
+                    // record schedules before the serve loop notices find
+                    // nothing to send on.
+                    state.withLock { $0.holdForNextConnection(framed, failedOn: channel) }
                 }
             }
-        }
-    }
-
-    /// Returns `framed`, the record a send on the ended `channel` did not
-    /// deliver, to the head of the ring while it is still owned — head
-    /// re-insertion is what keeps the host's view chronological across the
-    /// next connection — and retires `channel` if it is still the installed
-    /// one, so this run's next step and every run a record schedules before
-    /// the serve loop notices find nothing to send on.
-    private func holdForNextConnection(_ framed: Data, failedOn channel: VsockChannel) {
-        lock.withLock {
-            if recordInFlight {
-                recordInFlight = false
-                pendingLogs.insert(framed, at: 0)
-            }
-            if self.channel === channel { self.channel = nil }
         }
     }
 
     // MARK: - Per-connection serve
 
     private func serveLogChannel(_ channel: VsockChannel) async {
-        lock.withLock { self.channel = channel }
+        state.withLock { $0.channel = channel }
         // Wakes the worker rather than sending here: a host that accepts the
         // connection and then stops reading parks the drain, not this loop.
         scheduleDrain()
@@ -366,9 +372,9 @@ final class VsockHostConnection: @unchecked Sendable {
         // channel still has in flight. The channel is retired before the line
         // is logged, so the drain run its own record wakes finds nothing to
         // send on.
-        let held: Int = lock.withLock {
-            self.channel = nil
-            return heldCountLocked
+        let held = state.withLock { state in
+            state.channel = nil
+            return state.heldCount
         }
         if let failure {
             #log(

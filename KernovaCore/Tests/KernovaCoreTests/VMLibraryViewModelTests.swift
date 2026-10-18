@@ -127,7 +127,7 @@ struct VMLibraryViewModelTests {
         viewModel.selectRevealing(instance.id)
 
         // Pre-populate mock storage so delete doesn't throw
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance)
 
@@ -144,7 +144,7 @@ struct VMLibraryViewModelTests {
         let second = viewModel.library.admitFixture(name: "Second")
         viewModel.selectRevealing(second.id)
 
-        storage.bundles[second.bundleURL] = second.configuration
+        storage.setConfiguration(second.configuration, at: second.bundleURL)
 
         await viewModel.delete(second)
 
@@ -170,7 +170,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)
         viewModel.selectRevealing(instance.id)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         #expect(instance.isSuspended)
         #expect(instance.activity.admits(.operation(.deleting)))
@@ -187,7 +187,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)  // Suspended when the sheet opened…
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         // …but a Resume landed via its still-live menu key equivalent before the
         // user clicked Move to Trash.
@@ -203,8 +203,8 @@ struct VMLibraryViewModelTests {
     func deleteVMFailurePresentsAboutTheVM() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        storage.bundles[instance.bundleURL] = instance.configuration
-        storage.deleteVMBundleError = CocoaError(.fileWriteNoPermission)
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
+        storage.setDeleteVMBundleError(CocoaError(.fileWriteNoPermission))
 
         await viewModel.delete(instance)
 
@@ -219,7 +219,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         let resume = Task { @MainActor in
             try await viewModel.lifecycle.launchStart(instance, .restoringSavedState).value()
@@ -246,7 +246,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
         viewModel.selectRevealing(instance.id)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, permanently: true)
 
@@ -272,7 +272,7 @@ struct VMLibraryViewModelTests {
                 )
             ]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, deletingExternalIDs: [diskID], permanently: true)
 
@@ -307,7 +307,7 @@ struct VMLibraryViewModelTests {
                 )
             ]
         }
-        storage.bundles[target.bundleURL] = target.configuration
+        storage.setConfiguration(target.configuration, at: target.bundleURL)
 
         await viewModel.delete(target, deletingExternalIDs: [sharedID], permanently: true)
 
@@ -473,7 +473,7 @@ struct VMLibraryViewModelTests {
                     id: agentID, path: agentPath, readOnly: true, label: "Kernova Guest Agent")
             ]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         // Even if a caller passes the agent's id in the trash set, it is
         // excluded by `externalAttachments`, so nothing is trashed.
@@ -503,7 +503,7 @@ struct VMLibraryViewModelTests {
                 RemovableMediaItem(path: externalISO.path(percentEncoded: false), readOnly: true)
             ]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance)
 
@@ -538,7 +538,7 @@ struct VMLibraryViewModelTests {
                     id: isoID, path: externalISO.path(percentEncoded: false), readOnly: true)
             ]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, deletingExternalIDs: [diskID, isoID])
 
@@ -570,7 +570,7 @@ struct VMLibraryViewModelTests {
                 ),
             ]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, deletingExternalIDs: [trashedID])
 
@@ -604,7 +604,7 @@ struct VMLibraryViewModelTests {
                 )
             ]
         }
-        storage.bundles[target.bundleURL] = target.configuration
+        storage.setConfiguration(target.configuration, at: target.bundleURL)
 
         await viewModel.delete(target, deletingExternalIDs: [sharedID])
 
@@ -640,7 +640,7 @@ struct VMLibraryViewModelTests {
                 )
             ]
         }
-        storage.bundles[target.bundleURL] = target.configuration
+        storage.setConfiguration(target.configuration, at: target.bundleURL)
 
         await viewModel.delete(target, deletingExternalIDs: [sharedID])
 
@@ -671,7 +671,7 @@ struct VMLibraryViewModelTests {
                 downloadDestinationPath: destination.path(percentEncoded: false)
             )
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance)
 
@@ -700,7 +700,7 @@ struct VMLibraryViewModelTests {
                 downloadDestinationPath: destination.path(percentEncoded: false)
             )
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, permanently: true)
 
@@ -828,7 +828,7 @@ struct VMLibraryViewModelTests {
                 localIPSWPath: "/tmp/UserPicked.ipsw"
             )
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance)
 
@@ -842,7 +842,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(
             storageService: storage, downloadService: downloadService)
         let instance = viewModel.library.admitFixture()
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance)
 
@@ -852,7 +852,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM swallows missing-file errors for a selected external")
     func deleteVMSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileNoSuchFile)
+        fileSystem.setTrashError(CocoaError(.fileNoSuchFile))
         let ghostID = UUID()
         let ghostPath = scratch.url
             .appendingPathComponent("kernova-ghost.iso")
@@ -860,7 +860,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture {
             $0.removableMedia = [RemovableMediaItem(id: ghostID, path: ghostPath, readOnly: true)]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, deletingExternalIDs: [ghostID])
 
@@ -871,7 +871,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM permanently swallows missing-file errors for a selected external")
     func deleteVMPermanentlySwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        fileSystem.removeError = CocoaError(.fileNoSuchFile)
+        fileSystem.setRemoveError(CocoaError(.fileNoSuchFile))
         let ghostID = UUID()
         let ghostPath = scratch.url
             .appendingPathComponent("kernova-ghost.iso")
@@ -879,7 +879,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture {
             $0.removableMedia = [RemovableMediaItem(id: ghostID, path: ghostPath, readOnly: true)]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         // removeItem on a vanished file throws the same fileNoSuchFile family as
         // trashItem, so the immediate path must swallow it without an error alert.
@@ -892,7 +892,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM alerts once, naming the selected external that stayed")
     func deleteVMAlertsOnceForAnExternalThatStayed() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let lockedID = UUID()
         let lockedPath = scratch.url
             .appendingPathComponent("kernova-locked.iso")
@@ -900,7 +900,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture {
             $0.removableMedia = [RemovableMediaItem(id: lockedID, path: lockedPath, readOnly: true)]
         }
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance, deletingExternalIDs: [lockedID])
 
@@ -913,7 +913,7 @@ struct VMLibraryViewModelTests {
     @Test("A removable-media removal whose file stayed alerts once, naming the file")
     func removeRemovableMediaAlertsOnceForAFileThatStayed() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        fileSystem.setTrashError(CocoaError(.fileWriteNoPermission))
         let lockedPath = scratch.url
             .appendingPathComponent("kernova-locked.img")
             .path(percentEncoded: false)
@@ -931,7 +931,7 @@ struct VMLibraryViewModelTests {
     func deleteVMIgnoresStaleRepeatConfirm() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         await viewModel.delete(instance)
         #expect(storage.deleteVMBundleCallCount == 1)
@@ -2106,7 +2106,7 @@ struct VMLibraryViewModelTests {
     func setConfigurationForwardLeavesAFailedSaveToTheLibrary() {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = registerConfigurationVM(in: viewModel)
-        storage.saveConfigurationError = CocoaError(.fileWriteNoPermission)
+        storage.setSaveConfigurationError(CocoaError(.fileWriteNoPermission))
         let before = instance.configuration
 
         let outcome = viewModel.setConfiguration(
@@ -2219,7 +2219,7 @@ struct VMLibraryViewModelTests {
                 name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
                 memorySizeInGB: VMGuestOS.linux.hostMemorySize)
             config.macAddress = mac
-            storage.bundles[VMInstanceFixture.bundleURL(for: config.id)] = config
+            storage.setConfiguration(config, at: VMInstanceFixture.bundleURL(for: config.id))
         }
         return storage
     }
@@ -2386,7 +2386,7 @@ struct VMLibraryViewModelTests {
         viewModel.displayBootSurface = { _ in Self.retinaSurface }
         let instance = makeMatchWindowInstance(in: viewModel.library, files: storage.files)
         let original = instance.configuration.displayResolution
-        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await viewModel.start(instance)
 
@@ -3487,8 +3487,9 @@ struct VMLibraryViewModelTests {
     @Test("createVM removes the row and discards the staged tree when the bundle write fails")
     func createVMBundleWriteFailure() async throws {
         let storage = MockVMStorageService()
-        storage.createVMBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setCreateVMBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, virtService, _) = makeViewModel(storageService: storage)
         let wizard = makeCreationWizard(name: "Fail VM")
 
@@ -3636,8 +3637,9 @@ struct VMLibraryViewModelTests {
     @Test("createVM leaves nothing at the bundle URL when publication fails")
     func createVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
-        storage.publishBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setPublishBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let wizard = makeCreationWizard(name: "Unpublishable VM", startAfterCreate: false)
 
@@ -3729,7 +3731,7 @@ struct VMLibraryViewModelTests {
             )
         }
         instance.activity.placeForTesting(.initialBoot)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         // A long-running install we can observe being cancelled.
         let cancelStream = AsyncStream<Void>.makeStream()
@@ -3824,7 +3826,7 @@ struct VMLibraryViewModelTests {
         }
         installing.activity.placeForTesting(.initialBoot)
         viewModel.selectRevealing(installing.id)
-        storage.bundles[installing.bundleURL] = installing.configuration
+        storage.setConfiguration(installing.configuration, at: installing.bundleURL)
 
         let cancelStream = AsyncStream<Void>.makeStream()
         try installing.launchParkedSetup {
@@ -3947,8 +3949,9 @@ struct VMLibraryViewModelTests {
             source: .checksumList(URL(string: "https://checksums.example/SHA256SUMS")!))
         let resolveService = MockLinuxImageResolveService()
         let downloadService = MockDownloadService()
-        downloadService.downloadError = DownloadError.checksumMismatch(
-            filename: "debian.iso", expected: expected, actual: String(repeating: "b", count: 64))
+        downloadService.setDownloadError(
+            DownloadError.checksumMismatch(
+                filename: "debian.iso", expected: expected, actual: String(repeating: "b", count: 64)))
         let (viewModel, _, _, _, _) = makeViewModel(
             linuxImageResolveService: resolveService, downloadService: downloadService,
             downloadsDirectory: scratch.url)
@@ -3978,7 +3981,7 @@ struct VMLibraryViewModelTests {
         resolveService.resolveResult = makeResolvedLinuxImage(sizeBytes: UInt64(contents.count))
         resolveService.manifestSHA256 = digest
         let downloadService = MockDownloadService()
-        downloadService.downloadedContents = contents
+        downloadService.setDownloadedContents(contents)
 
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(
@@ -4918,7 +4921,7 @@ struct VMLibraryViewModelTests {
         let source = try scratch.importSource(name: name, onDisk: createOnDisk)
         if !createOnDisk {
             // Nothing is copied, so the source only has to read.
-            storage.bundles[source.url] = source.config
+            storage.setConfiguration(source.config, at: source.url)
         }
         return source
     }
@@ -5015,7 +5018,7 @@ struct VMLibraryViewModelTests {
         // returns before the copy) but shares the same config UUID.
         let source = try makeImportSource(
             name: existing.configuration.name, storage: storage, createOnDisk: false)
-        storage.bundles[source.url] = existing.configuration
+        storage.setConfiguration(existing.configuration, at: source.url)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         await viewModel.awaitArrivals()
@@ -5031,7 +5034,7 @@ struct VMLibraryViewModelTests {
             name: "Already There", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[bundleURL] = config
+        storage.setConfiguration(config, at: bundleURL)
         let existing = viewModel.library.admitForTesting(
             VMInstanceFixture.read(bundleURL, from: storage.files), phase: .stopped,
             preferences: makeTestPreferences())
@@ -5051,7 +5054,7 @@ struct VMLibraryViewModelTests {
         let first = try makeImportSource(name: "Batch VM 1", storage: storage)
         let duplicate = try makeImportSource(
             name: existing.configuration.name, storage: storage, createOnDisk: false)
-        storage.bundles[duplicate.url] = existing.configuration
+        storage.setConfiguration(existing.configuration, at: duplicate.url)
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, duplicate.url, third.url])
@@ -5084,8 +5087,9 @@ struct VMLibraryViewModelTests {
     @Test("importVM leaves nothing at the destination when publication fails")
     func importVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
-        storage.publishBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setPublishBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let source = try makeImportSource(name: "Unpublishable Import", storage: storage)
 
@@ -5196,7 +5200,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture(name: "Original")
         instance.activity.placeForTesting(.stopped)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         viewModel.cloneVM(instance)
 
@@ -5214,7 +5218,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture(name: "Original")
         instance.activity.placeForTesting(.stopped)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         viewModel.cloneVM(instance)
         await viewModel.awaitArrivals()
@@ -5346,7 +5350,7 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM removes its arrival on storage error and selects remaining instance")
     func cloneVMRemovesTheArrivalOnError() async {
         let storage = MockVMStorageService()
-        storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
+        storage.setCloneVMBundleError(VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let instance = viewModel.library.admitFixture(name: "Fail Clone")
         instance.activity.placeForTesting(.stopped)
@@ -5368,12 +5372,13 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM leaves nothing at the clone's bundle URL when publication fails")
     func cloneVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
-        storage.publishBundleError = VMStorageError.bundleAlreadyExists(
-            URL(filePath: "/tmp/occupied.kernova"))
+        storage.setPublishBundleError(
+            VMStorageError.bundleAlreadyExists(
+                URL(filePath: "/tmp/occupied.kernova")))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let instance = viewModel.library.admitFixture(name: "Clone Source")
         instance.activity.placeForTesting(.stopped)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         viewModel.cloneVM(instance)
         let destination = try #require(viewModel.arrivals.first).destinationURL
@@ -5420,7 +5425,7 @@ struct VMLibraryViewModelTests {
         let existing = viewModel.library.beginGatedArrival(kind, named: "In Flight", gate: gate)
         let instance = viewModel.library.admitFixture(name: "Source")
         instance.activity.placeForTesting(.stopped)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         viewModel.cloneVM(instance)
 
@@ -5441,7 +5446,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture(name: "VM")
         instance.activity.placeForTesting(.stopped)
         viewModel.library.admitFixture(name: "VM Copy")
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         viewModel.cloneVM(instance)
 
@@ -5464,7 +5469,7 @@ struct VMLibraryViewModelTests {
         try FileManager.default.createDirectory(
             at: sourceLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
         try Data("disk-bytes".utf8).write(to: sourceLayout.additionalDiskURL(id: diskID))
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
 
         viewModel.cloneVM(instance, as: .newMachine)
         await viewModel.awaitArrivals()
@@ -5500,7 +5505,7 @@ struct VMLibraryViewModelTests {
             }
         }
         instance.activity.placeForTesting(.stopped)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
         return instance
     }
 
@@ -5811,9 +5816,9 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         let url3 = scratch.url
             .appendingPathComponent("\(config3.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url1] = config1
-        storage.bundles[url2] = config2
-        storage.bundles[url3] = config3
+        storage.setConfiguration(config1, at: url1)
+        storage.setConfiguration(config2, at: url2)
+        storage.setConfiguration(config3, at: url3)
 
         // Set custom order: Third, First, Second
         preferences.vmOrder = [config3.id, config1.id, config2.id]
@@ -5867,8 +5872,8 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url1] = config1
-        storage.bundles[url2] = config2
+        storage.setConfiguration(config1, at: url1)
+        storage.setConfiguration(config2, at: url2)
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         await viewModel.loadVMs()
@@ -5888,7 +5893,7 @@ struct VMLibraryViewModelTests {
             createdAt: Date(timeIntervalSince1970: 200))
         let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url1] = config1
+        storage.setConfiguration(config1, at: url1)
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         await viewModel.loadVMs()
@@ -5904,7 +5909,7 @@ struct VMLibraryViewModelTests {
             createdAt: Date(timeIntervalSince1970: 100))
         let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url2] = config2
+        storage.setConfiguration(config2, at: url2)
 
         viewModel.reconcileWithDisk()
 
@@ -5920,7 +5925,7 @@ struct VMLibraryViewModelTests {
         let a = viewModel.library.admitFixture(name: "A")
         let b = viewModel.library.admitFixture(name: "B")
         viewModel.selectRevealing(b.id)
-        storage.bundles[b.bundleURL] = b.configuration
+        storage.setConfiguration(b.configuration, at: b.bundleURL)
 
         await viewModel.delete(b)
 
@@ -5935,7 +5940,7 @@ struct VMLibraryViewModelTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
 
         // Set custom order with a stale UUID followed by the real one
         let staleID = UUID()
@@ -6057,7 +6062,7 @@ struct VMLibraryViewModelTests {
         ]
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[url] = config
+        storage.setConfiguration(config, at: url)
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         await viewModel.loadVMs()
         let instance = try #require(viewModel.instances.first)

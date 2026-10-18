@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaAppRegistry
+import KernovaSynchronization
 
 /// Launching the app this tool is embedded in.
 enum AppLaunch {
@@ -10,7 +11,7 @@ enum AppLaunch {
     /// The launch is not awaited: the retry loop's first successful connect is
     /// the readiness signal, and this is what lets that loop give up early
     /// rather than spending its whole deadline on an app that will never come.
-    static var reportedFailure: CLIFailure? { failure.value }
+    static var reportedFailure: CLIFailure? { failure.withLock { $0 } }
 
     /// Asks Launch Services for the app at `app`, as ``configuration`` says.
     ///
@@ -33,9 +34,9 @@ enum AppLaunch {
         let box = failure
         NSWorkspace.shared.openApplication(at: app, configuration: Self.configuration) { _, error in
             guard let error else { return }
-            box.store(
-                CLIFailure(
-                    .unavailable, "Kernova could not be started: \(error.localizedDescription)"))
+            let failure = CLIFailure(
+                .unavailable, "Kernova could not be started: \(error.localizedDescription)")
+            box.withLock { $0 = failure }
         }
     }
 
@@ -66,16 +67,7 @@ enum AppLaunch {
 
     /// Holds what the launch reported, written from the completion handler's
     /// own queue and read by the connect loop.
-    private static let failure = FailureBox()
-
-    private final class FailureBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: CLIFailure?
-
-        var value: CLIFailure? { lock.withLock { stored } }
-
-        func store(_ failure: CLIFailure) { lock.withLock { stored = failure } }
-    }
+    private static let failure = Locked<CLIFailure?>(nil)
 }
 
 /// How long a connect waits between attempts while the app comes up.

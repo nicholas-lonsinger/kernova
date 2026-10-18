@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -178,38 +179,41 @@ private struct FakeAppRegistry: AppRegistry {
 
 /// An instance a test terminates on cue, reporting it through the same callback
 /// Launch Services' own notification would.
-private final class FakeRegisteredInstance: RegisteredAppInstance, @unchecked Sendable {
+private final class FakeRegisteredInstance: RegisteredAppInstance, Sendable {
     /// Fires once the wait has registered its observer, so a test can terminate
     /// the instance without racing the registration.
     let observed = AsyncGate()
 
     let processHasExited: Bool
 
-    private let lock = NSLock()
-    private var terminated: Bool
-    private var notify: (@Sendable () -> Void)?
+    private struct State: Sendable {
+        var terminated: Bool
+        var notify: (@Sendable () -> Void)?
+    }
+
+    private let state: Locked<State>
 
     init(terminated: Bool = false, processExited: Bool = true) {
-        self.terminated = terminated
+        state = Locked(State(terminated: terminated))
         processHasExited = processExited
     }
 
-    var hasTerminated: Bool { lock.withLock { terminated } }
+    var hasTerminated: Bool { state.withLock { $0.terminated } }
 
     /// Whether the wait currently holds an observation of this instance.
-    var isObserved: Bool { lock.withLock { notify != nil } }
+    var isObserved: Bool { state.withLock { $0.notify != nil } }
 
     func observeTermination(_ notify: @escaping @Sendable () -> Void) -> TerminationObservation {
-        lock.withLock { self.notify = notify }
+        state.withLock { $0.notify = notify }
         observed.notify()
-        return TerminationObservation { [self] in lock.withLock { self.notify = nil } }
+        return TerminationObservation { [state] in state.withLock { $0.notify = nil } }
     }
 
     /// Reports the instance gone the way the registry would.
     func terminate() {
-        let waiter = lock.withLock { () -> (@Sendable () -> Void)? in
-            terminated = true
-            return notify
+        let waiter = state.withLock { state in
+            state.terminated = true
+            return state.notify
         }
         waiter?()
     }

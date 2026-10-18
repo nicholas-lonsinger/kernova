@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 @testable import KernovaCore
 
@@ -18,53 +19,77 @@ import Foundation
 /// ``holdElsewhere(_:)`` stands in for another copy of Kernova holding it.
 ///
 /// Lock-based because the protocol is `Sendable` and the library reads bundles
-/// from detached tasks. Recursive, because an access's body reads back through
-/// the same store.
-final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
-    private let lock = NSRecursiveLock()
-    private var bundles: [URL: [String: Data]] = [:]
-    private var replaceCounts: [String: Int] = [:]
-    private var readCounts: [String: Int] = [:]
-    private var replaceErrors: [String: any Error] = [:]
-    private var unreadable: Set<BundlePath> = []
-    private var target: InMemoryVMBundleFiles?
-    private var lockedElsewhere: Set<URL> = []
-    private var lockedElsewhereUnprobed: Set<URL> = []
-    private var lockedByThisCopy: Set<URL> = []
-    private var lockErrors: [URL: any Error] = [:]
-    private let disk = CoordinatedBundleFileAccess()
-
+/// from detached tasks.
+final class InMemoryVMBundleFiles: VMBundleFileAccessing {
     private struct BundlePath: Hashable {
         let bundle: URL
         let relativePath: String
     }
 
+    private struct State {
+        var bundles: [URL: [String: Data]] = [:]
+        var replaceCounts: [String: Int] = [:]
+        var readCounts: [String: Int] = [:]
+        var replaceErrors: [String: any Error] = [:]
+        var unreadable: Set<BundlePath> = []
+        var target: InMemoryVMBundleFiles?
+        var lockedElsewhere: Set<URL> = []
+        var lockedElsewhereUnprobed: Set<URL> = []
+        var lockedByThisCopy: Set<URL> = []
+        var lockErrors: [URL: any Error] = [:]
+        /// Which bundle each live holder locks, re-keyed with its bundle.
+        var holders: [UUID: URL] = [:]
+
+        mutating func read(_ relativePath: String, in bundle: URL) throws -> Data? {
+            readCounts[relativePath, default: 0] += 1
+            if unreadable.contains(BundlePath(bundle: bundle, relativePath: relativePath)) {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return bundles[bundle]?[relativePath]
+        }
+
+        mutating func replace(_ relativePath: String, in bundle: URL, with data: Data) throws {
+            if let error = replaceErrors[relativePath] { throw error }
+            bundles[bundle, default: [:]][relativePath] = data
+            replaceCounts[relativePath, default: 0] += 1
+        }
+    }
+
+    private let state = Mutex(State())
+    /// Held across each `reading` or `writing` body, so no access sees another
+    /// part-way.
+    private let access = NSLock()
+    private let disk = CoordinatedBundleFileAccess()
+
     private static func key(_ url: URL) -> URL { url.standardizedFileURL }
+
+    /// The store every call forwards to once ``forward(to:)`` has run.
+    private var target: InMemoryVMBundleFiles? { state.withLock { $0.target } }
 
     // MARK: - Accounting
 
     /// How many replaces of `relativePath` landed, across every bundle.
     func replaceCount(of relativePath: String) -> Int {
         if let target { return target.replaceCount(of: relativePath) }
-        return lock.withLock { replaceCounts[relativePath, default: 0] }
+        return state.withLock { $0.replaceCounts[relativePath, default: 0] }
     }
 
     /// How many reads of `relativePath` an access made, across every bundle.
     func readCount(of relativePath: String) -> Int {
         if let target { return target.readCount(of: relativePath) }
-        return lock.withLock { readCounts[relativePath, default: 0] }
+        return state.withLock { $0.readCounts[relativePath, default: 0] }
     }
 
     /// Thrown by every later replace of `relativePath`, in every bundle; `nil`
     /// clears it.
     func setReplaceError(_ error: (any Error)?, for relativePath: String) {
         if let target { return target.setReplaceError(error, for: relativePath) }
-        lock.withLock { replaceErrors[relativePath] = error }
+        state.withLock { $0.replaceErrors[relativePath] = error }
     }
 
     func replaceError(for relativePath: String) -> (any Error)? {
         if let target { return target.replaceError(for: relativePath) }
-        return lock.withLock { replaceErrors[relativePath] }
+        return state.withLock { $0.replaceErrors[relativePath] }
     }
 
     /// Makes `relativePath` in the bundle at `url` read as present but
@@ -72,8 +97,8 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     func setUnreadable(_ isUnreadable: Bool, relativePath: String, at url: URL) {
         if let target { return target.setUnreadable(isUnreadable, relativePath: relativePath, at: url) }
         let path = BundlePath(bundle: Self.key(url), relativePath: relativePath)
-        lock.withLock {
-            if isUnreadable { unreadable.insert(path) } else { unreadable.remove(path) }
+        state.withLock {
+            if isUnreadable { $0.unreadable.insert(path) } else { $0.unreadable.remove(path) }
         }
     }
 
@@ -82,7 +107,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     /// The bytes `relativePath` holds in the bundle at `url`, `nil` when absent.
     func data(atRelativePath relativePath: String, in url: URL) -> Data? {
         if let target { return target.data(atRelativePath: relativePath, in: url) }
-        return lock.withLock { bundles[Self.key(url)]?[relativePath] }
+        return state.withLock { $0.bundles[Self.key(url)]?[relativePath] }
     }
 
     /// Puts `data` at `relativePath` in the bundle at `url` as though it were
@@ -90,50 +115,60 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     /// store holds the bundle from then on, so it is no longer read on disk.
     func setData(_ data: Data?, atRelativePath relativePath: String, in url: URL) {
         if let target { return target.setData(data, atRelativePath: relativePath, in: url) }
-        lock.withLock { bundles[Self.key(url), default: [:]][relativePath] = data }
+        state.withLock { $0.bundles[Self.key(url), default: [:]][relativePath] = data }
     }
 
     /// Every bundle this store holds a file for.
     var bundleURLs: [URL] {
         if let target { return target.bundleURLs }
-        return lock.withLock { Array(bundles.keys) }
+        return state.withLock { Array($0.bundles.keys) }
+    }
+
+    /// A new store holding a copy of every file this one holds, taken in one
+    /// hold, so reads from it never see a seed or a write part-way.
+    func snapshot() -> InMemoryVMBundleFiles {
+        if let target { return target.snapshot() }
+        let bundles = state.withLock { $0.bundles }
+        let copy = InMemoryVMBundleFiles()
+        copy.state.withLock { $0.bundles = bundles }
+        return copy
     }
 
     func holds(_ url: URL) -> Bool {
         if let target { return target.holds(url) }
-        return lock.withLock { bundles[Self.key(url)] != nil }
+        return state.withLock { $0.bundles[Self.key(url)] != nil }
     }
 
-    /// Re-keys everything held at `source` to `destination`, its run lock
-    /// included, as a rename of the bundle directory would.
     /// Copies every file this store holds at or under each of `relativePaths`
     /// in the bundle at `source` to the same path in the bundle at
     /// `destination`, as a clone copies those paths on disk.
     func copyFiles(_ relativePaths: [String], from source: URL, to destination: URL) {
         if let target { return target.copyFiles(relativePaths, from: source, to: destination) }
-        lock.withLock {
-            guard let files = bundles[Self.key(source)] else { return }
+        state.withLock { state in
+            guard let files = state.bundles[Self.key(source)] else { return }
             for (path, data) in files
             where relativePaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
-                bundles[Self.key(destination), default: [:]][path] = data
+                state.bundles[Self.key(destination), default: [:]][path] = data
             }
         }
     }
 
+    /// Re-keys everything held at `source` to `destination`, its run lock
+    /// included, as a rename of the bundle directory would.
     func moveBundle(from source: URL, to destination: URL) {
         if let target { return target.moveBundle(from: source, to: destination) }
-        lock.withLock {
-            if lockedByThisCopy.remove(Self.key(source)) != nil {
-                lockedByThisCopy.insert(Self.key(destination))
-                for (id, url) in holders where url == Self.key(source) {
-                    holders[id] = Self.key(destination)
+        state.withLock {
+            if $0.lockedByThisCopy.remove(Self.key(source)) != nil {
+                $0.lockedByThisCopy.insert(Self.key(destination))
+                for (id, url) in $0.holders where url == Self.key(source) {
+                    $0.holders[id] = Self.key(destination)
                 }
             }
-            if lockedElsewhere.remove(Self.key(source)) != nil {
-                lockedElsewhere.insert(Self.key(destination))
+            if $0.lockedElsewhere.remove(Self.key(source)) != nil {
+                $0.lockedElsewhere.insert(Self.key(destination))
             }
-            guard let files = bundles.removeValue(forKey: Self.key(source)) else { return }
-            bundles[Self.key(destination)] = files
+            guard let files = $0.bundles.removeValue(forKey: Self.key(source)) else { return }
+            $0.bundles[Self.key(destination)] = files
         }
     }
 
@@ -143,7 +178,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     /// lock attempt on it is refused until ``releaseElsewhere(_:)``.
     func holdElsewhere(_ url: URL) {
         if let target { return target.holdElsewhere(url) }
-        lock.withLock { _ = lockedElsewhere.insert(Self.key(url)) }
+        state.withLock { _ = $0.lockedElsewhere.insert(Self.key(url)) }
     }
 
     /// Marks the bundle at `url` as one another copy of Kernova takes after
@@ -151,16 +186,16 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     /// finds it held — from then on as ``holdElsewhere(_:)`` holds it.
     func holdElsewhereAfterProbes(_ url: URL) {
         if let target { return target.holdElsewhereAfterProbes(url) }
-        lock.withLock { _ = lockedElsewhereUnprobed.insert(Self.key(url)) }
+        state.withLock { _ = $0.lockedElsewhereUnprobed.insert(Self.key(url)) }
     }
 
     /// Ends the hold ``holdElsewhere(_:)`` or
     /// ``holdElsewhereAfterProbes(_:)`` stood for.
     func releaseElsewhere(_ url: URL) {
         if let target { return target.releaseElsewhere(url) }
-        lock.withLock {
-            _ = lockedElsewhere.remove(Self.key(url))
-            _ = lockedElsewhereUnprobed.remove(Self.key(url))
+        state.withLock {
+            _ = $0.lockedElsewhere.remove(Self.key(url))
+            _ = $0.lockedElsewhereUnprobed.remove(Self.key(url))
         }
     }
 
@@ -168,29 +203,30 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     /// directory that has gone would; `nil` clears it.
     func setLockError(_ error: (any Error)?, at url: URL) {
         if let target { return target.setLockError(error, at: url) }
-        lock.withLock { lockErrors[Self.key(url)] = error }
+        state.withLock { $0.lockErrors[Self.key(url)] = error }
     }
 
     /// Whether this copy holds the run lock on the bundle at `url` right now.
     func isLockedByThisCopy(_ url: URL) -> Bool {
         if let target { return target.isLockedByThisCopy(url) }
-        return lock.withLock { lockedByThisCopy.contains(Self.key(url)) }
+        return state.withLock { $0.lockedByThisCopy.contains(Self.key(url)) }
     }
 
     /// Every bundle this copy holds the run lock on right now.
     var bundlesLockedByThisCopy: Set<URL> {
         if let target { return target.bundlesLockedByThisCopy }
-        return lock.withLock { lockedByThisCopy }
+        return state.withLock { $0.lockedByThisCopy }
     }
 
     /// What holds one bundle's run lock, releasing it as it goes — under
     /// whatever URL a rename has carried it to since.
-    private final class Holder: @unchecked Sendable {
+    private final class Holder: Sendable {
         let store: InMemoryVMBundleFiles
-        let id = UUID()
+        let id: UUID
 
-        init(store: InMemoryVMBundleFiles) {
+        init(store: InMemoryVMBundleFiles, id: UUID) {
             self.store = store
+            self.id = id
         }
 
         deinit {
@@ -198,31 +234,28 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         }
     }
 
-    /// Which bundle each live holder locks, re-keyed with its bundle.
-    private var holders: [UUID: URL] = [:]
-
     fileprivate func releaseHolder(_ id: UUID) {
-        lock.withLock {
-            guard let url = holders.removeValue(forKey: id) else { return }
-            lockedByThisCopy.remove(url)
+        state.withLock {
+            guard let url = $0.holders.removeValue(forKey: id) else { return }
+            $0.lockedByThisCopy.remove(url)
         }
     }
 
     func removeBundle(at url: URL) {
         if let target { return target.removeBundle(at: url) }
-        lock.withLock { _ = bundles.removeValue(forKey: Self.key(url)) }
+        state.withLock { _ = $0.bundles.removeValue(forKey: Self.key(url)) }
     }
 
     /// Moves every bundle this store holds into `other` and forwards every
     /// later call there.
     func forward(to other: InMemoryVMBundleFiles) {
         guard other !== self else { return }
-        lock.withLock {
-            for (url, files) in bundles {
+        state.withLock { state in
+            for (url, files) in state.bundles {
                 for (path, data) in files { other.setData(data, atRelativePath: path, in: url) }
             }
-            bundles.removeAll()
-            target = other
+            state.bundles.removeAll()
+            state.target = other
         }
     }
 
@@ -310,28 +343,28 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
         if let target { return try target.lockBundle(at: bundleURL) }
         let key = Self.key(bundleURL)
-        return try lock.withLock {
-            if let error = lockErrors[key] { throw error }
-            if lockedElsewhereUnprobed.remove(key) != nil { lockedElsewhere.insert(key) }
-            guard !lockedElsewhere.contains(key), lockedByThisCopy.insert(key).inserted else {
-                return nil
-            }
-            let holder = Holder(store: self)
-            holders[holder.id] = key
-            return holder
+        let id: UUID? = try state.withLock { state in
+            if let error = state.lockErrors[key] { throw error }
+            if state.lockedElsewhereUnprobed.remove(key) != nil { state.lockedElsewhere.insert(key) }
+            guard !state.lockedElsewhere.contains(key), state.lockedByThisCopy.insert(key).inserted
+            else { return nil }
+            let id = UUID()
+            state.holders[id] = key
+            return id
         }
+        return id.map { Holder(store: self, id: $0) }
     }
 
     func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool {
         if let target { return try target.isBundleLockedElsewhere(at: bundleURL) }
         let key = Self.key(bundleURL)
-        return lock.withLock { lockedElsewhere.contains(key) || lockedByThisCopy.contains(key) }
+        return state.withLock { $0.lockedElsewhere.contains(key) || $0.lockedByThisCopy.contains(key) }
     }
 
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {
         if let target { return try target.reading(bundleURL, body) }
         guard holds(bundleURL) else { return try disk.reading(bundleURL, body) }
-        return try lock.withLock { try body(Handle(store: self, bundle: Self.key(bundleURL))) }
+        return try access.withLock { try body(Handle(store: self, bundle: Self.key(bundleURL))) }
     }
 
     func writing<T>(
@@ -340,7 +373,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     ) throws -> T {
         if let target { return try target.writing(bundleURL, key, body) }
         guard holds(bundleURL) else { return try disk.writing(bundleURL, key, body) }
-        return try lock.withLock { try body(Handle(store: self, bundle: Self.key(bundleURL))) }
+        return try access.withLock { try body(Handle(store: self, bundle: Self.key(bundleURL))) }
     }
 
     private struct Handle: VMBundleFileWriting {
@@ -348,17 +381,11 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         let bundle: URL
 
         func data(atRelativePath relativePath: String) throws -> Data? {
-            store.readCounts[relativePath, default: 0] += 1
-            if store.unreadable.contains(BundlePath(bundle: bundle, relativePath: relativePath)) {
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            return store.bundles[bundle]?[relativePath]
+            try store.state.withLock { try $0.read(relativePath, in: bundle) }
         }
 
         func replace(atRelativePath relativePath: String, with data: Data) throws {
-            if let error = store.replaceErrors[relativePath] { throw error }
-            store.bundles[bundle, default: [:]][relativePath] = data
-            store.replaceCounts[relativePath, default: 0] += 1
+            try store.state.withLock { try $0.replace(relativePath, in: bundle, with: data) }
         }
     }
 }

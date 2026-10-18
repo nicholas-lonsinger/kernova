@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// Identity of one ``ClipboardTransferOperation``.
 ///
@@ -11,18 +12,7 @@ import KernovaLogging
 /// the operation it named is gone, and a surface holding the readout it last
 /// rendered would then cancel a stranger.
 public struct ClipboardTransferOperationID: Hashable, Sendable {
-    private final class Counter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value: UInt64 = 0
-        func next() -> UInt64 {
-            lock.withLock {
-                value &+= 1
-                return value
-            }
-        }
-    }
-
-    private static let counter = Counter()
+    private static let lastMinted = Locked<UInt64>(0)
 
     private let value: UInt64
 
@@ -30,7 +20,12 @@ public struct ClipboardTransferOperationID: Hashable, Sendable {
 
     /// Mints an identity nothing else holds. The counter starts above
     /// ``unattached``, so a minted identity never collides with it.
-    public init() { value = Self.counter.next() }
+    public init() {
+        value = Self.lastMinted.withLock {
+            $0 &+= 1
+            return $0
+        }
+    }
 
     /// The identity of a readout no operation produced — a snapshot a test or a
     /// preview built by hand. Cancelling it reaches nothing, which is the point:
@@ -48,11 +43,8 @@ public struct ClipboardTransferOperationID: Hashable, Sendable {
 /// finishes inside the gate never flashes UI), and it publishes exactly one
 /// terminal to its ``ClipboardTransferReporter``.
 ///
-/// `@unchecked Sendable`: every stored property is guarded by `lock`. It must
-/// stay lock-based rather than `@MainActor` — the guest agent drives it from
-/// main-queue-confined (but non-`@MainActor`) callbacks, and stream lanes drive
-/// it from any thread.
-public final class ClipboardTransferOperation: @unchecked Sendable {
+/// Lock-based rather than `@MainActor`: stream lanes drive it from any thread.
+public final class ClipboardTransferOperation: Sendable {
     /// How long an operation must have been running before its progress shows.
     ///
     /// Uniform across every passive surface; the status-item dropdown, which
@@ -82,7 +74,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         let name: String?
     }
 
-    /// What an event left for `deliver` to run once `lock` is released.
+    /// What an event left for `deliver` to run once the lock is released.
     ///
     /// Deferred because an `os_log` under the lock would put every chunk
     /// callback behind it.
@@ -91,7 +83,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         var logs: [LogEvent] = []
     }
 
-    /// One publication to the reporter, resolved under `lock`.
+    /// One publication to the reporter, resolved under the lock.
     private enum ReporterCall: Sendable {
         case running(ClipboardProgressSnapshot, since: Date)
         case queued
@@ -112,14 +104,22 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
 
     // MARK: - Identity
 
+    /// What every readout of this operation names it by.
+    private struct Header: Sendable {
+        let id: ClipboardTransferOperationID
+        let gesture: ClipboardTransferGesture
+        let direction: ClipboardProgressSnapshot.Direction
+        let peerName: String
+        let isCancellable: Bool
+        /// When the operation began, in wall-clock terms, so an app-level
+        /// surface can rank concurrent operations across VMs.
+        let startedDate: Date
+    }
+
+    private let header: Header
+
     /// What a surface cancels this operation by.
-    public let id = ClipboardTransferOperationID()
-    private let gesture: ClipboardTransferGesture
-    private let direction: ClipboardProgressSnapshot.Direction
-    private let peerName: String
-    /// When the operation began, in wall-clock terms, so an app-level surface can
-    /// rank concurrent operations across VMs.
-    private let startedDate = Date()
+    public var id: ClipboardTransferOperationID { header.id }
 
     // MARK: - Injected seams
 
@@ -135,47 +135,178 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
 
     // MARK: - Locked state
 
-    private let lock = NSLock()
-    private let startedAt: EngineInstant
-    private var units: [UInt64: UnitState] = [:]
-    /// Bytes moved across the whole operation.
-    ///
-    /// A running sum rather than a reduction over `units` on demand: both totals
-    /// are read on *every* event, and a folder paste holds one unit per file, so
-    /// reducing would scale the hot path with the tree's size.
-    private var transferredBytes: UInt64 = 0
-    /// Bytes the units expect to move; see `transferredBytes`.
-    private var declaredBytes: UInt64 = 0
-    /// Floor for the denominator — what the whole operation advertised before any
-    /// transfer began. Units revise the figure upward, never below this.
-    private let expectedBytes: UInt64
-    /// Floor for the file count, so a drop's bar counts every dropped file rather
-    /// than each in turn.
-    private let expectedItems: Int
-    private var completedCount = 0
-    /// Transfers currently in flight, in the order they began; the readout names
-    /// the most recently begun one.
-    private var activeUnits: [UInt64] = []
-    /// Last file seen streaming, kept so the readout still names something during
-    /// the gap between two transfers.
-    private var lastActiveName: String?
-    /// Whether the reveal gate has been passed — once true, the readout is on
-    /// screen and the terminal must clear it.
-    private var revealed = false
-    /// Whether anything has been published, so a terminal inside the reveal gate
-    /// knows it has nothing to retire.
-    private var published = false
-    private var isFinished = false
-    /// The armed idle terminal, `nil` while none is.
-    ///
-    /// A transfer beginning, or any terminal, cancels it under `lock`, and the
-    /// terminal acts only if it takes `lock` uncancelled — so one armed before
-    /// a transfer began can never complete the operation.
-    private var idleTerminal: Task<Void, Never>?
-    /// This operation's share of the republish-rate bound — the aggregate is a
-    /// single byte stream even when several transfers feed it.
-    private let coalescer = FetchProgressCoalescer()
-    private var rate = TransferRateEstimator()
+    /// What the readout is built from; every event changes it in one `withLock`.
+    private struct State: Sendable {
+        let startedAt: EngineInstant
+        /// Floor for the denominator — what the whole operation advertised before
+        /// any transfer began. Units revise the figure upward, never below this.
+        let expectedBytes: UInt64
+        /// Floor for the file count, so a drop's bar counts every dropped file
+        /// rather than each in turn.
+        let expectedItems: Int
+        private(set) var units: [UInt64: UnitState] = [:]
+        /// Bytes moved across the whole operation.
+        ///
+        /// A running sum rather than a reduction over `units` on demand: both
+        /// totals are read on *every* event, and a folder paste holds one unit per
+        /// file, so reducing would scale the hot path with the tree's size.
+        private(set) var transferredBytes: UInt64 = 0
+        /// Bytes the units expect to move; see `transferredBytes`.
+        private(set) var declaredBytes: UInt64 = 0
+        var completedCount = 0
+        /// Transfers currently in flight, in the order they began; the readout
+        /// names the most recently begun one.
+        var activeUnits: [UInt64] = []
+        /// Last file seen streaming, kept so the readout still names something
+        /// during the gap between two transfers.
+        var lastActiveName: String?
+        /// Whether the reveal gate has been passed — once true, the readout is on
+        /// screen and the terminal must clear it.
+        var revealed = false
+        /// Whether anything has been published, so a terminal inside the reveal
+        /// gate knows it has nothing to retire.
+        var published = false
+        var isFinished = false
+        /// The armed idle terminal, `nil` while none is.
+        ///
+        /// A transfer beginning, or any terminal, cancels it under the lock, and
+        /// the terminal acts only if it takes the lock uncancelled — so one armed
+        /// before a transfer began can never complete the operation.
+        var idleTerminal: Task<Void, Never>?
+        /// This operation's share of the republish-rate bound — the aggregate is
+        /// a single byte stream even when several transfers feed it.
+        var coalescer = FetchProgressCoalescer()
+        var rate = TransferRateEstimator()
+
+        init(startedAt: EngineInstant, expectedBytes: UInt64, expectedItems: Int) {
+            self.startedAt = startedAt
+            self.expectedBytes = expectedBytes
+            self.expectedItems = expectedItems
+        }
+
+        /// The denominator: what the units declare, never below what the
+        /// operation advertised up front.
+        var totalBytes: UInt64 { max(declaredBytes, expectedBytes) }
+
+        /// Installs one transfer's state, keeping the running sums in step.
+        mutating func setUnit(_ id: UInt64, _ state: UnitState) {
+            let previous = units[id]
+            declaredBytes = declaredBytes &- (previous?.expected ?? 0) &+ state.expected
+            transferredBytes = transferredBytes &- (previous?.observed ?? 0) &+ state.observed
+            units[id] = state
+        }
+
+        /// Calls off the armed idle terminal.
+        mutating func cancelIdleTerminal() {
+            idleTerminal?.cancel()
+            idleTerminal = nil
+        }
+
+        /// Decides whether this event, sampled at `now`, may reach the UI, then
+        /// resolves what to publish.
+        ///
+        /// Only the reveal bypasses the throttle; everything else — the per-file
+        /// counter included — rides the coalescer, since a folder can complete
+        /// thousands of small files faster than a screen is worth repainting. The
+        /// final update is never lost: the throttle's final-chunk rule always
+        /// admits the update that reaches the total.
+        mutating func resolve(at now: EngineInstant, revealDelay: TimeInterval, header: Header) -> Outcome {
+            let elapsed = startedAt.seconds(to: now)
+            rate.record(bytes: transferredBytes, seconds: elapsed)
+
+            var logs: [LogEvent] = []
+            let admits: Bool
+            if !revealed {
+                guard elapsed >= revealDelay else { return Outcome() }
+                revealed = true
+                // The reveal bypassed the throttle, so its watermarks must still
+                // reflect what just went on screen — otherwise the next update
+                // would measure its delta from a byte count already shown.
+                coalescer.markForwarded(bytesTransferred: transferredBytes, at: now)
+                logs.append(.revealed(elapsed: elapsed, transferred: transferredBytes, total: totalBytes))
+                admits = true
+            } else {
+                admits = coalescer.shouldForward(
+                    bytesTransferred: transferredBytes, totalBytes: totalBytes, at: now)
+            }
+            if let current = activeUnits.last, let name = units[current]?.name {
+                lastActiveName = name
+            }
+            guard admits else { return Outcome(logs: logs) }
+            published = true
+            let snapshot = snapshot(at: now, header: header)
+            logs.append(.emission(snapshot))
+            return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
+        }
+
+        /// Resolves a terminal reached at `now`.
+        mutating func finish(_ terminal: Terminal, at now: EngineInstant, header: Header) -> Outcome {
+            guard !isFinished else { return Outcome() }
+            isFinished = true
+            cancelIdleTerminal()
+            let outcome: ClipboardTransferOutcome
+            let label: String
+            var isFailure = false
+            switch terminal {
+            case .completed:
+                outcome = .completed(final: snapshot(at: now, header: header))
+                label = "completed"
+            case .cancelled:
+                outcome = .cancelled(final: snapshot(at: now, header: header))
+                label = "cancelled"
+            case .failed(let failure):
+                outcome = .failed(failure)
+                label = "failed"
+                isFailure = true
+            }
+            let logs: [LogEvent] = [ended(label, at: now)]
+            // A refusal is owed an answer whether or not a bar ever appeared; a
+            // completion nobody saw has nothing to say.
+            guard revealed || isFailure else {
+                return published ? Outcome(call: .retire, logs: logs) : Outcome(logs: logs)
+            }
+            published = true
+            let finish = ClipboardTransferFinish(
+                gesture: header.gesture, outcome: outcome, peerName: header.peerName, date: Date())
+            return Outcome(call: .finished(finish), logs: logs)
+        }
+
+        /// Ends the operation without a finished report.
+        mutating func abandon(at now: EngineInstant) -> Outcome {
+            guard !isFinished else { return Outcome() }
+            isFinished = true
+            cancelIdleTerminal()
+            let logs: [LogEvent] = [ended("abandoned", at: now)]
+            guard published else { return Outcome(logs: logs) }
+            return Outcome(call: .retire, logs: logs)
+        }
+
+        func snapshot(at now: EngineInstant, header: Header) -> ClipboardProgressSnapshot {
+            let total = totalBytes
+            return ClipboardProgressSnapshot(
+                direction: header.direction,
+                peerName: header.peerName,
+                currentItemName: lastActiveName,
+                filesCompleted: completedCount,
+                fileCount: max(units.count, expectedItems),
+                bytesTransferred: min(transferredBytes, total),
+                totalBytes: total,
+                bytesPerSecond: rate.bytesPerSecond,
+                secondsRemaining: rate.secondsRemaining(bytes: transferredBytes, total: total),
+                gesture: header.gesture,
+                elapsedSeconds: max(0, startedAt.seconds(to: now)),
+                isCancellable: header.isCancellable,
+                operationID: header.id)
+        }
+
+        func ended(_ terminal: String, at now: EngineInstant) -> LogEvent {
+            .ended(
+                terminal: terminal, elapsed: max(0, startedAt.seconds(to: now)),
+                transferred: transferredBytes, total: totalBytes, revealed: revealed)
+        }
+    }
+
+    private let state: Locked<State>
 
     // MARK: - Init
 
@@ -201,17 +332,16 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         onCancelRequested: (@Sendable () -> Void)? = nil,
         reporter: ClipboardTransferReporter
     ) {
-        self.gesture = gesture
-        self.direction = direction
-        self.peerName = peerName
-        self.expectedBytes = expectedBytes
-        self.expectedItems = expectedItems
+        self.header = Header(
+            id: ClipboardTransferOperationID(), gesture: gesture, direction: direction,
+            peerName: peerName, isCancellable: onCancelRequested != nil, startedDate: Date())
         self.revealDelay = revealDelay
         self.idleGap = idleGap
         self.clock = clock
         self.onCancelRequested = onCancelRequested
         self.reporter = reporter
-        self.startedAt = clock.now
+        self.state = Locked(
+            State(startedAt: clock.now, expectedBytes: expectedBytes, expectedItems: expectedItems))
     }
 
     // MARK: - Transfer events
@@ -227,11 +357,11 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// for it would be a frozen one.
     public func markQueued() {
         deliver(
-            lock.withLock { () -> Outcome in
-                guard !isFinished, !published else { return Outcome() }
+            state.withLock { state -> Outcome in
+                guard !state.isFinished, !state.published else { return Outcome() }
                 // Counts as a publication, so a terminal that never reveals
                 // still retires the entry this leaves behind.
-                published = true
+                state.published = true
                 return Outcome(call: .queued)
             })
     }
@@ -239,12 +369,12 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// Records that one of this operation's transfers started, declaring it if
     /// this is the first the operation has heard of it.
     public func unitBegan(id: UInt64, expectedBytes: UInt64 = 0, name: String? = nil) {
-        apply(id: id, declaring: UnitState(expected: expectedBytes, name: name)) { unit in
-            if !self.activeUnits.contains(unit) { self.activeUnits.append(unit) }
-            self.lastActiveName = self.units[unit]?.name ?? self.lastActiveName
+        apply(id: id, declaring: UnitState(expected: expectedBytes, name: name)) { state, unit in
+            if !state.activeUnits.contains(unit) { state.activeUnits.append(unit) }
+            state.lastActiveName = state.units[unit]?.name ?? state.lastActiveName
             // A transfer in flight means the operation isn't idle: call off the
             // terminal armed for the gap this transfer just filled.
-            self.cancelIdleTerminalLocked()
+            state.cancelIdleTerminal()
         }
     }
 
@@ -255,11 +385,11 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// while the stream carries something else entirely — a directory rep
     /// advertises a stat-walk size and then streams a compressed archive.
     public func unitProgressed(id: UInt64, bytesTransferred: UInt64, totalBytes: UInt64 = 0) {
-        apply(id: id, declaring: nil) { unit in
-            guard var state = self.units[unit] else { return }
-            if totalBytes > 0 { state.expected = totalBytes }
-            state.observed = max(state.observed, min(bytesTransferred, state.expected))
-            self.setUnit(unit, state)
+        apply(id: id, declaring: nil) { state, unit in
+            guard var unitState = state.units[unit] else { return }
+            if totalBytes > 0 { unitState.expected = totalBytes }
+            unitState.observed = max(unitState.observed, min(bytesTransferred, unitState.expected))
+            state.setUnit(unit, unitState)
             // Does NOT touch `activeUnits`: a chunk callback fires on the
             // transfer's own lane, so one can land *after* the transfer
             // finished, and re-adding the unit here would leave the operation
@@ -270,18 +400,18 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
 
     /// Records one transfer's terminal, crediting a successful one in full.
     public func unitEnded(id: UInt64, succeeded: Bool) {
-        apply(id: id, declaring: nil) { unit in
-            self.activeUnits.removeAll { $0 == unit }
-            guard succeeded, var state = self.units[unit] else { return }
-            if !state.completed {
-                state.completed = true
-                self.completedCount += 1
+        apply(id: id, declaring: nil) { state, unit in
+            state.activeUnits.removeAll { $0 == unit }
+            guard succeeded, var unitState = state.units[unit] else { return }
+            if !unitState.completed {
+                unitState.completed = true
+                state.completedCount += 1
             }
             // Credit the expected byte count in full: the throttle can have
             // suppressed the final chunks, and a completed transfer must read as
             // complete.
-            state.observed = state.expected
-            self.setUnit(unit, state)
+            unitState.observed = unitState.expected
+            state.setUnit(unit, unitState)
         }
     }
 
@@ -295,7 +425,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// flashes UI; a `.failed` one always reports, since a refusal is owed an
     /// answer whether or not a bar was on screen.
     public func finish(_ terminal: Terminal) {
-        deliver(lock.withLock { finishLocked(terminal) })
+        deliver(state.withLock { $0.finish(terminal, at: clock.now, header: header) })
     }
 
     /// Arms the idle terminal: the operation completes `idleGap` after its last
@@ -306,9 +436,9 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// walked one file at a time, so the gap between two of them looks exactly
     /// like the end, and this gap is what tells them apart.
     public func finishWhenIdle() {
-        lock.withLock {
-            guard !isFinished, activeUnits.isEmpty, idleTerminal == nil else { return }
-            idleTerminal = clock.schedule(after: idleGap) { [weak self] in
+        state.withLock { state in
+            guard !state.isFinished, state.activeUnits.isEmpty, state.idleTerminal == nil else { return }
+            state.idleTerminal = clock.schedule(after: idleGap) { [weak self] in
                 self?.idleTerminalFired()
             }
         }
@@ -317,15 +447,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// Retires the operation without a finished report — a teardown, where what
     /// the readout was measuring no longer exists.
     public func abandon() {
-        deliver(
-            lock.withLock { () -> Outcome in
-                guard !isFinished else { return Outcome() }
-                isFinished = true
-                cancelIdleTerminalLocked()
-                let logs: [LogEvent] = [endedLocked("abandoned")]
-                guard published else { return Outcome(logs: logs) }
-                return Outcome(call: .retire, logs: logs)
-            })
+        deliver(state.withLock { $0.abandon(at: clock.now) })
     }
 
     /// Whether this operation can still take events.
@@ -333,18 +455,18 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// A caller that *caches* an operation across events must ask before reusing
     /// one: events after a terminal are dropped, and a reused finished operation
     /// silently measures nothing at all.
-    public var isLive: Bool { lock.withLock { !isFinished } }
+    public var isLive: Bool { state.withLock { !$0.isFinished } }
 
     /// Whether this operation can be stopped, which is what puts a Cancel
     /// affordance on its readout.
-    public var isCancellable: Bool { onCancelRequested != nil }
+    public var isCancellable: Bool { header.isCancellable }
 
     /// Stops what this operation measures, if it can be stopped at all.
     public func requestCancel() {
         guard let onCancelRequested else { return }
         #log(
             Self.logger, .notice,
-            "Cancel requested for a \(String(describing: self.gesture), privacy: .public) transfer")
+            "Cancel requested for a \(String(describing: self.header.gesture), privacy: .public) transfer")
         onCancelRequested()
     }
 
@@ -356,120 +478,35 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// introduce a transfer. Progress and terminals for an unknown transfer are
     /// dropped: a chunk landing after the operation ended must never mint a new
     /// unit, since nothing would arm a terminal for it.
-    private func apply(id: UInt64, declaring declared: UnitState?, _ mutate: (UInt64) -> Void) {
+    private func apply(
+        id: UInt64, declaring declared: UnitState?, _ mutate: (inout State, UInt64) -> Void
+    ) {
         deliver(
-            lock.withLock { () -> Outcome in
-                guard !isFinished else { return Outcome() }
-                if units[id] == nil {
+            state.withLock { state -> Outcome in
+                guard !state.isFinished else { return Outcome() }
+                if state.units[id] == nil {
                     guard let declared else { return Outcome() }
-                    setUnit(id, declared)
+                    state.setUnit(id, declared)
                 }
-                mutate(id)
-                return resolveLocked()
+                mutate(&state, id)
+                return state.resolve(at: clock.now, revealDelay: revealDelay, header: header)
             })
-    }
-
-    /// Installs one transfer's state, keeping the running sums in step.
-    ///
-    /// Caller holds `lock`.
-    private func setUnit(_ id: UInt64, _ state: UnitState) {
-        let previous = units[id]
-        declaredBytes = declaredBytes &- (previous?.expected ?? 0) &+ state.expected
-        transferredBytes = transferredBytes &- (previous?.observed ?? 0) &+ state.observed
-        units[id] = state
-    }
-
-    /// Decides whether this event may reach the UI, then resolves what to publish.
-    ///
-    /// Caller holds `lock`. Only the reveal bypasses the throttle; everything
-    /// else — the per-file counter included — rides the coalescer, since a folder
-    /// can complete thousands of small files faster than a screen is worth
-    /// repainting. The final update is never lost: the throttle's final-chunk rule
-    /// always admits the update that reaches the total.
-    private func resolveLocked() -> Outcome {
-        let sampledAt = clock.now
-        let elapsed = startedAt.seconds(to: sampledAt)
-        rate.record(bytes: transferredBytes, seconds: elapsed)
-
-        var logs: [LogEvent] = []
-        let admits: Bool
-        if !revealed {
-            guard elapsed >= revealDelay else { return Outcome() }
-            revealed = true
-            // The reveal bypassed the throttle, so its watermarks must still
-            // reflect what just went on screen — otherwise the next update would
-            // measure its delta from a byte count already shown.
-            coalescer.markForwarded(bytesTransferred: transferredBytes, at: sampledAt)
-            logs.append(
-                .revealed(
-                    elapsed: elapsed, transferred: transferredBytes, total: totalBytesLocked))
-            admits = true
-        } else {
-            admits = coalescer.shouldForward(
-                bytesTransferred: transferredBytes, totalBytes: totalBytesLocked, at: sampledAt)
-        }
-        if let current = activeUnits.last, let name = units[current]?.name {
-            lastActiveName = name
-        }
-        guard admits else { return Outcome(logs: logs) }
-        published = true
-        let snapshot = snapshotLocked()
-        logs.append(.emission(snapshot))
-        return Outcome(call: .running(snapshot, since: startedDate), logs: logs)
-    }
-
-    /// Resolves a terminal under `lock`.
-    private func finishLocked(_ terminal: Terminal) -> Outcome {
-        guard !isFinished else { return Outcome() }
-        isFinished = true
-        cancelIdleTerminalLocked()
-        let outcome: ClipboardTransferOutcome
-        let label: String
-        var isFailure = false
-        switch terminal {
-        case .completed:
-            outcome = .completed(final: snapshotLocked())
-            label = "completed"
-        case .cancelled:
-            outcome = .cancelled(final: snapshotLocked())
-            label = "cancelled"
-        case .failed(let failure):
-            outcome = .failed(failure)
-            label = "failed"
-            isFailure = true
-        }
-        let logs: [LogEvent] = [endedLocked(label)]
-        // A refusal is owed an answer whether or not a bar ever appeared; a
-        // completion nobody saw has nothing to say.
-        guard revealed || isFailure else {
-            return published ? Outcome(call: .retire, logs: logs) : Outcome(logs: logs)
-        }
-        published = true
-        let finish = ClipboardTransferFinish(
-            gesture: gesture, outcome: outcome, peerName: peerName, date: Date())
-        return Outcome(call: .finished(finish), logs: logs)
     }
 
     /// Completes the operation once it has stayed idle for the whole gap.
     ///
     /// Runs on the idle terminal's own task, so a cancel that landed first is
-    /// what `Task.isCancelled` reads under `lock`.
+    /// what `Task.isCancelled` reads under the lock.
     private func idleTerminalFired() {
         deliver(
-            lock.withLock { () -> Outcome in
+            state.withLock { state -> Outcome in
                 guard !Task.isCancelled else { return Outcome() }
-                return finishLocked(.completed)
+                return state.finish(.completed, at: clock.now, header: header)
             })
     }
 
-    /// Calls off the armed idle terminal. Caller holds `lock`.
-    private func cancelIdleTerminalLocked() {
-        idleTerminal?.cancel()
-        idleTerminal = nil
-    }
-
     /// Runs an event's deferred work — the records and the publication — with
-    /// `lock` released.
+    /// the lock released.
     private func deliver(_ outcome: Outcome) {
         for event in outcome.logs { log(event) }
         if let call = outcome.call { send(call) }
@@ -499,58 +536,24 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
         }
     }
 
-    // MARK: - Projection
-
-    /// The denominator: what the units declare, never below what the operation
-    /// advertised up front.
-    ///
-    /// Caller holds `lock`.
-    private var totalBytesLocked: UInt64 { max(declaredBytes, expectedBytes) }
-
-    /// Caller holds `lock`.
-    private func snapshotLocked() -> ClipboardProgressSnapshot {
-        let total = totalBytesLocked
-        return ClipboardProgressSnapshot(
-            direction: direction,
-            peerName: peerName,
-            currentItemName: lastActiveName,
-            filesCompleted: completedCount,
-            fileCount: max(units.count, expectedItems),
-            bytesTransferred: min(transferredBytes, total),
-            totalBytes: total,
-            bytesPerSecond: rate.bytesPerSecond,
-            secondsRemaining: rate.secondsRemaining(bytes: transferredBytes, total: total),
-            gesture: gesture,
-            elapsedSeconds: max(0, clock.seconds(since: startedAt)),
-            isCancellable: onCancelRequested != nil,
-            operationID: id)
-    }
-
     // MARK: - Records
-
-    /// Caller holds `lock`.
-    private func endedLocked(_ terminal: String) -> LogEvent {
-        .ended(
-            terminal: terminal, elapsed: max(0, clock.seconds(since: startedAt)), transferred: transferredBytes,
-            total: totalBytesLocked, revealed: revealed)
-    }
 
     private func log(_ event: LogEvent) {
         switch event {
         case .revealed(let elapsed, let transferred, let total):
             #log(
                 Self.logger, .info,
-                "\(String(describing: self.gesture), privacy: .public) \(String(describing: self.direction), privacy: .public) '\(self.peerName, privacy: .public)' revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes"
+                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes"
             )
         case .ended(let terminal, let elapsed, let transferred, let total, let revealed):
             #log(
                 Self.logger, .info,
-                "\(String(describing: self.gesture), privacy: .public) \(String(describing: self.direction), privacy: .public) '\(self.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes, revealed=\(revealed, privacy: .public)"
+                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes, revealed=\(revealed, privacy: .public)"
             )
         case .emission(let snapshot):
             #log(
                 Self.logger, .debug,
-                "\(String(describing: self.gesture), privacy: .public) readout — \(snapshot.bytesTransferred, privacy: .public)/\(snapshot.totalBytes, privacy: .public) bytes, \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
+                "\(String(describing: self.header.gesture), privacy: .public) readout — \(snapshot.bytesTransferred, privacy: .public)/\(snapshot.totalBytes, privacy: .public) bytes, \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
             )
         }
     }

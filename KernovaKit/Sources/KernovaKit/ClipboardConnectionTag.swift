@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 /// Log-only coordinate identifying one clipboard connection within a process.
 ///
@@ -7,9 +8,7 @@ import Foundation
 /// carrying the same numbers; `conn=` tells them apart. The tag is never
 /// serialized and no wire value is derived from it.
 public struct ClipboardConnectionTag: Sendable, CustomStringConvertible {
-    private static let lock = NSLock()
-    // `nonisolated(unsafe)`: every read and write happens inside `lock`.
-    private nonisolated(unsafe) static var lastSequence: UInt64 = 0
+    private static let lastSequence = Locked<UInt64>(0)
 
     /// Mint order within this process, counting from 1; `0` means no connection.
     public let sequence: UInt64
@@ -48,9 +47,9 @@ public struct ClipboardConnectionTag: Sendable, CustomStringConvertible {
         sequence: 0, processIdentifier: ProcessInfo.processInfo.processIdentifier)
 
     private static func nextSequence() -> UInt64 {
-        lock.withLock {
-            lastSequence += 1
-            return lastSequence
+        lastSequence.withLock {
+            $0 += 1
+            return $0
         }
     }
 }

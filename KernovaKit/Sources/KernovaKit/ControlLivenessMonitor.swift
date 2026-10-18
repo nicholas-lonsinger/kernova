@@ -4,10 +4,10 @@ import Foundation
 /// both peers to "is the far side still there, and how does it stop being
 /// unresponsive".
 ///
-/// Lock-guarded rather than isolated: the host drives it from the main actor
-/// and the guest from its per-connection serve task, and a watchdog that could
-/// be queued behind the blocking send it exists to break is no watchdog.
-public final class ControlLivenessMonitor: @unchecked Sendable {
+/// A value its owner keeps beside the connection state the verdicts drive, so
+/// one critical section — the host's main actor, the guest agent's lock —
+/// both reaches a verdict and acts on it.
+public struct ControlLivenessMonitor: Sendable {
     /// What one liveness observation says about the peer.
     ///
     /// Stage changes are edge-triggered — ``becameUnresponsive`` and
@@ -35,18 +35,14 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
     }
 
     private let cadence: ControlChannelCadence
-    private let lock = NSLock()
     private var lastSignal: EngineInstant?
-    private var unresponsive = false
+
+    /// Whether the peer is currently in the unresponsive stage.
+    public private(set) var isUnresponsive = false
 
     /// Creates a monitor judging silence against `cadence`.
     public init(cadence: ControlChannelCadence) {
         self.cadence = cadence
-    }
-
-    /// Whether the peer is currently in the unresponsive stage.
-    public var isUnresponsive: Bool {
-        lock.withLock { unresponsive }
     }
 
     /// Records an inbound frame as a liveness signal at `instant`, arming the
@@ -56,13 +52,11 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
     /// ``Verdict/recovered`` on the call that leaves it and
     /// ``Verdict/unchanged`` on every other.
     @discardableResult
-    public func record(at instant: EngineInstant) -> Verdict {
-        lock.withLock {
-            lastSignal = instant
-            guard unresponsive else { return .unchanged }
-            unresponsive = false
-            return .recovered
-        }
+    public mutating func record(at instant: EngineInstant) -> Verdict {
+        lastSignal = instant
+        guard isUnresponsive else { return .unchanged }
+        isUnresponsive = false
+        return .recovered
     }
 
     /// Defers the deadline to `instant` while the peer is unable to answer —
@@ -73,40 +67,31 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
     /// stand in for the first signal, or a pause would arm the watchdog against
     /// a channel that never spoke. Otherwise it behaves as ``record(at:)``.
     @discardableResult
-    public func hold(at instant: EngineInstant) -> Verdict {
-        lock.withLock {
-            guard lastSignal != nil else { return .unchanged }
-            lastSignal = instant
-            guard unresponsive else { return .unchanged }
-            unresponsive = false
-            return .recovered
-        }
+    public mutating func hold(at instant: EngineInstant) -> Verdict {
+        guard lastSignal != nil else { return .unchanged }
+        return record(at: instant)
     }
 
     /// Judges the peer's silence as of `instant`, which is how it enters the
     /// unresponsive stage and how the channel expires — never how it leaves
     /// either. A peer that has not spoken yet is not judged at all.
-    public func evaluate(at instant: EngineInstant) -> Verdict {
-        lock.withLock {
-            guard let lastSignal else { return .unchanged }
-            let silentFor = lastSignal.seconds(to: instant)
-            if silentFor > cadence.terminateAfter {
-                return .expired(silentFor: silentFor)
-            }
-            if silentFor > cadence.unresponsiveAfter, !unresponsive {
-                unresponsive = true
-                return .becameUnresponsive(silentFor: silentFor)
-            }
-            return .unchanged
+    public mutating func evaluate(at instant: EngineInstant) -> Verdict {
+        guard let lastSignal else { return .unchanged }
+        let silentFor = lastSignal.seconds(to: instant)
+        if silentFor > cadence.terminateAfter {
+            return .expired(silentFor: silentFor)
         }
+        if silentFor > cadence.unresponsiveAfter, !isUnresponsive {
+            isUnresponsive = true
+            return .becameUnresponsive(silentFor: silentFor)
+        }
+        return .unchanged
     }
 
     /// Forgets the recorded signal and the unresponsive stage, so the next
     /// connection is judged from its own first frame.
-    public func reset() {
-        lock.withLock {
-            lastSignal = nil
-            unresponsive = false
-        }
+    public mutating func reset() {
+        lastSignal = nil
+        isUnresponsive = false
     }
 }

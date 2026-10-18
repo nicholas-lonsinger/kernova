@@ -1,6 +1,8 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
+import Synchronization
 import Testing
 import UniformTypeIdentifiers
 
@@ -506,13 +508,11 @@ struct VsockClipboardServiceTests {
     ///
     /// Off the main actor by construction: it answers while an off-main pull
     /// holds the main thread, so main-actor isolation would make it unanswerable
-    /// exactly when a test needs an answer. `@unchecked Sendable` — every
-    /// mutable field is read and written under `lock`, and the gates and
-    /// connections it holds are thread-safe in their own right. `openConnection`
-    /// bounds what "while main is held" covers.
-    private final class FakeGuestResponder: @unchecked Sendable {
+    /// exactly when a test needs an answer. `openConnection` bounds what "while
+    /// main is held" covers.
+    private final class FakeGuestResponder: Sendable {
         /// What the connection carries.
-        enum Payload {
+        enum Payload: Sendable {
             /// Streamed verbatim: an inline rep's raw bytes, or an archive a
             /// test built itself.
             case verbatim(Data)
@@ -525,7 +525,7 @@ struct VsockClipboardServiceTests {
         }
 
         /// How far into the transfer the guest gets before it stops.
-        enum Hold {
+        enum Hold: Sendable {
             /// Serves the transfer whole.
             case whole
             /// Parks *before* the connection is opened, until
@@ -549,7 +549,7 @@ struct VsockClipboardServiceTests {
             case beforeTrailer
         }
 
-        struct Reply {
+        struct Reply: Sendable {
             /// The UTI the offer described, which the host's request must name.
             let uti: String
             let payload: Payload
@@ -559,20 +559,30 @@ struct VsockClipboardServiceTests {
             let hold: Hold
         }
 
+        private struct State: Sendable {
+            var replies: [UInt64: Reply] = [:]
+            var consumeTask: Task<Void, Never>?
+            /// Connections whose stream stopped at its hold, by transfer id.
+            var parked: [UInt64: (connection: ParkedDataConnection, hold: Hold)] = [:]
+            var recordedRequests: [Kernova_V1_ClipboardRequest] = []
+            var replyReleased = false
+            /// Whether every reply registered without a hold of its own parks
+            /// before its trailer.
+            var holdsTrailer = false
+            var isCancelled = false
+            /// Ids a release named before their stream had parked, so each is
+            /// finished the moment it does.
+            var latchedFinishes: Set<UInt64> = []
+
+            /// Where `reply`'s stream stops.
+            func hold(for reply: Reply) -> Hold {
+                reply.hold == .whole && holdsTrailer ? .beforeTrailer : reply.hold
+            }
+        }
+
         private let service: VsockClipboardService
         private let guest: VsockChannel
-        private let lock = NSLock()
-        private var replies: [UInt64: Reply] = [:]
-        private var consumeTask: Task<Void, Never>?
-        /// Connections whose stream stopped at its hold, by transfer id.
-        private var parked: [UInt64: (connection: ParkedDataConnection, hold: Hold)] = [:]
-        private var recordedRequests: [Kernova_V1_ClipboardRequest] = []
-        private var replyReleased = false
-        private var holdsTrailer = false
-        private var isCancelled = false
-        /// Ids a release named before their stream had parked, so each is
-        /// finished the moment it does.
-        private var latchedFinishes: Set<UInt64> = []
+        private let state = Mutex(State())
 
         /// Fires as each request arrives, before its transfer opens.
         let requested = AsyncGate()
@@ -587,18 +597,17 @@ struct VsockClipboardServiceTests {
         fileprivate let hostClosed = HostClosedTransfers()
 
         /// Every `ClipboardRequest` the host sent, in arrival order.
-        var requests: [Kernova_V1_ClipboardRequest] { lock.withLock { recordedRequests } }
+        var requests: [Kernova_V1_ClipboardRequest] { state.withLock { $0.recordedRequests } }
 
         /// Whether `transferID`'s stream is parked at its hold right now.
         func isParked(_ transferID: UInt64) -> Bool {
-            lock.withLock { parked[transferID] != nil }
+            state.withLock { $0.parked[transferID] != nil }
         }
 
-        /// When `true`, every reply registered without a hold of its own parks
-        /// before its trailer.
-        var holdTrailer: Bool {
-            get { lock.withLock { holdsTrailer } }
-            set { lock.withLock { holdsTrailer = newValue } }
+        /// Makes every reply registered without a hold of its own park before
+        /// its trailer.
+        func holdEveryTrailer() {
+            state.withLock { $0.holdsTrailer = true }
         }
 
         /// Releases every transfer parked before its trailer, so it ends — and
@@ -609,20 +618,16 @@ struct VsockClipboardServiceTests {
         /// *after* this call is a hold a later part of the test asked for, and
         /// must still park.
         func releaseTrailer() {
-            let held = lock.withLock { () -> [ParkedDataConnection] in
-                for (xid, reply) in replies where parked[xid] == nil && holdsTrailerLocked(reply) {
-                    latchedFinishes.insert(xid)
+            let held = state.withLock { state -> [ParkedDataConnection] in
+                for (xid, reply) in state.replies
+                where state.parked[xid] == nil && state.hold(for: reply) == .beforeTrailer {
+                    state.latchedFinishes.insert(xid)
                 }
-                let matching = parked.filter { $0.value.hold == .beforeTrailer }
-                for xid in matching.keys { parked[xid] = nil }
+                let matching = state.parked.filter { $0.value.hold == .beforeTrailer }
+                for xid in matching.keys { state.parked[xid] = nil }
                 return matching.values.map(\.connection)
             }
             for connection in held { connection.resume() }
-        }
-
-        /// Whether `reply` would park before its trailer. Caller holds `lock`.
-        private func holdsTrailerLocked(_ reply: Reply) -> Bool {
-            reply.hold == .beforeTrailer || (reply.hold == .whole && holdsTrailer)
         }
 
         /// Finishes one transfer parked before its payload or its trailer,
@@ -634,9 +639,9 @@ struct VsockClipboardServiceTests {
         /// in — which no gate on the *request* can rule out, the request being
         /// recorded before the transfer is served.
         func finishTransfer(_ transferID: UInt64) {
-            let connection = lock.withLock { () -> ParkedDataConnection? in
-                guard let entry = parked.removeValue(forKey: transferID) else {
-                    latchedFinishes.insert(transferID)
+            let connection = state.withLock { state -> ParkedDataConnection? in
+                guard let entry = state.parked.removeValue(forKey: transferID) else {
+                    state.latchedFinishes.insert(transferID)
                     return nil
                 }
                 return entry.connection
@@ -648,7 +653,7 @@ struct VsockClipboardServiceTests {
 
         /// Releases every reply registered with `.beforeReply` so it streams.
         func releaseReplies() {
-            lock.withLock { replyReleased = true }
+            state.withLock { $0.replyReleased = true }
             replyGate.notify()
         }
 
@@ -705,8 +710,8 @@ struct VsockClipboardServiceTests {
         ) {
             let xid = ClipboardTransferID.make(
                 generation: generation, repIndex: Int(repIndex), hostMinted: true)
-            lock.withLock {
-                replies[xid] = Reply(
+            state.withLock {
+                $0.replies[xid] = Reply(
                     uti: uti, payload: payload, isInline: isInline, isArchive: isArchive, hold: hold)
             }
         }
@@ -722,8 +727,8 @@ struct VsockClipboardServiceTests {
                 do {
                     for try await frame in self.guest.incoming {
                         guard case .clipboardRequest(let req) = frame.payload else { continue }
-                        if let reply = self.record(req) {
-                            try await self.serve(req: req, reply: reply)
+                        if let (reply, hold) = self.record(req) {
+                            try await self.serve(req: req, reply: reply, hold: hold)
                         }
                     }
                 } catch {
@@ -733,9 +738,9 @@ struct VsockClipboardServiceTests {
             // A `cancel()` that landed between creating the task and taking the
             // lock has already run; storing the task then would leave a responder
             // answering after teardown, so honour the flag instead of keeping it.
-            let alreadyCancelled = lock.withLock { () -> Bool in
-                guard !isCancelled else { return true }
-                consumeTask = task
+            let alreadyCancelled = state.withLock { state -> Bool in
+                guard !state.isCancelled else { return true }
+                state.consumeTask = task
                 return false
             }
             if alreadyCancelled { task.cancel() }
@@ -743,10 +748,10 @@ struct VsockClipboardServiceTests {
 
         /// Records one arrived request and returns the reply registered for it,
         /// announcing the arrival before anything is served.
-        private func record(_ req: Kernova_V1_ClipboardRequest) -> Reply? {
-            let reply = lock.withLock { () -> Reply? in
-                recordedRequests.append(req)
-                return replies[req.transferID]
+        private func record(_ req: Kernova_V1_ClipboardRequest) -> (reply: Reply, hold: Hold)? {
+            let reply = state.withLock { state -> (reply: Reply, hold: Hold)? in
+                state.recordedRequests.append(req)
+                return state.replies[req.transferID].map { ($0, state.hold(for: $0)) }
             }
             requested.notify()
             return reply
@@ -757,29 +762,29 @@ struct VsockClipboardServiceTests {
         /// Synchronous and isolation-free so a `@MainActor` test can call it from
         /// a `defer`, which cannot `await`.
         func cancel() {
-            let (task, held) = lock.withLock { () -> (Task<Void, Never>?, [ParkedDataConnection]) in
-                isCancelled = true
-                let task = consumeTask
-                consumeTask = nil
-                let held = parked.values.map(\.connection)
-                parked.removeAll()
-                latchedFinishes.removeAll()
+            let (task, held) = state.withLock {
+                state -> (Task<Void, Never>?, [ParkedDataConnection]) in
+                state.isCancelled = true
+                let task = state.consumeTask
+                state.consumeTask = nil
+                let held = state.parked.values.map(\.connection)
+                state.parked.removeAll()
+                state.latchedFinishes.removeAll()
                 return (task, held)
             }
             task?.cancel()
             for connection in held { connection.abandon() }
         }
-        deinit { consumeTask?.cancel() }
+        deinit { state.withLock { $0.consumeTask }?.cancel() }
 
-        /// Answers one request on a data connection of its own, stopping where
-        /// the reply's hold says.
-        private func serve(req: Kernova_V1_ClipboardRequest, reply: Reply) async throws {
+        /// Answers one request on a data connection of its own, stopping at
+        /// `hold`.
+        private func serve(req: Kernova_V1_ClipboardRequest, reply: Reply, hold: Hold) async throws {
             // The request names the rep the offer described; a payload answering
             // some other UTI would make its shape a coincidence.
             #expect(req.uti == reply.uti)
-            let hold: Hold = reply.hold == .whole && holdTrailer ? .beforeTrailer : reply.hold
             if hold == .beforeReply {
-                try await replyGate.wait { self.lock.withLock { self.replyReleased } }
+                try await replyGate.wait { self.state.withLock { $0.replyReleased } }
             }
             let xid = req.transferID
             let wire: Data
@@ -830,9 +835,9 @@ struct VsockClipboardServiceTests {
             // A release that already named this transfer applies here rather
             // than being dropped, so the stream ends whichever side got there
             // first.
-            let alreadyReleased = lock.withLock { () -> Bool in
-                guard latchedFinishes.remove(xid) == nil else { return true }
-                parked[xid] = (connection: connection, hold: hold)
+            let alreadyReleased = state.withLock { state -> Bool in
+                guard state.latchedFinishes.remove(xid) == nil else { return true }
+                state.parked[xid] = (connection: connection, hold: hold)
                 return false
             }
             guard !alreadyReleased else {
@@ -2360,7 +2365,7 @@ struct VsockClipboardServiceTests {
         defer { responder.cancel() }
         // Park before the trailer so the transfer is live (bytes received, pull
         // unresolved) while we observe the bar.
-        responder.holdTrailer = true
+        responder.holdEveryTrailer()
         responder.register(
             generation: 41, repIndex: 0, uti: "public.data", bytes: fileBytes,
             filename: "big.bin", isInline: false)
@@ -2413,10 +2418,10 @@ struct VsockClipboardServiceTests {
         // Generous until the first fire has passed its pre-flight, then too small
         // for the second fire's — the one path a fire takes out of
         // `performBlockingPull` before it reaches the coordinator.
-        let freeSpace = Box<Int64>(1 << 40)
+        let freeSpace = Locked<Int64>(1 << 40)
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
-            freeSpaceProvider: { _ in freeSpace.value },
+            freeSpaceProvider: { _ in freeSpace.withLock { $0 } },
             stagingRoot: stagingRoot.root, stagingKey: UUID().uuidString)
         service.start()
         defer { service.stop() }
@@ -2445,7 +2450,7 @@ struct VsockClipboardServiceTests {
         }
         try await responder.requested.wait { responder.requests.count == 1 }
 
-        freeSpace.value = 1024 * 1024
+        freeSpace.withLock { $0 = 1024 * 1024 }
         let secondFire = await offCooperativePool {
             service.serveFileURL(generation: 45, repIndex: 0)
         }
@@ -2457,7 +2462,7 @@ struct VsockClipboardServiceTests {
         // Capacity back before the first fire's transfer opens: its reply runs
         // the receiver's own capacity check, and only the second fire's
         // pre-flight was meant to see the squeeze.
-        freeSpace.value = 1 << 40
+        freeSpace.withLock { $0 = 1 << 40 }
         responder.releaseReplies()
         #expect(await firstFire.value != nil)
         #expect(responder.requests.count == 1)
@@ -2604,9 +2609,9 @@ struct VsockClipboardServiceTests {
         // Wired once the offer is promised, as a Copy to Mac would leave it: the
         // retract a release performs on the host pasteboard, which in production
         // reaches the very provider whose fire is running.
-        let retracts = Box(0)
+        let retracts = Locked(0)
         service.retractStaleHostWrite = {
-            retracts.value += 1
+            retracts.withLock { $0 += 1 }
             return true
         }
 
@@ -2626,7 +2631,7 @@ struct VsockClipboardServiceTests {
         try await reports.wait {
             reports.failure == .supersededCopyRetracted(hasSuccessor: false)
         }
-        #expect(retracts.value == 1)
+        #expect(retracts.withLock { $0 } == 1)
     }
 
     @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")
@@ -3458,7 +3463,7 @@ struct VsockClipboardServiceTests {
         responder.register(
             generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
             isInline: true)
-        responder.holdTrailer = true
+        responder.holdEveryTrailer()
         responder.start()
         defer { responder.cancel() }
 
@@ -3485,19 +3490,18 @@ struct VsockClipboardServiceTests {
 /// A receiver cancels by closing its end and says nothing on the control
 /// channel, so this is what a cancellation looks like from the other end: the
 /// stream ends where the payload should have been.
-private final class HostClosedTransfers: @unchecked Sendable {
-    private let lock = NSLock()
-    private var ids: [UInt64] = []
+private final class HostClosedTransfers: Sendable {
+    private let ids = Mutex<[UInt64]>([])
 
     /// Fires as each closed connection is recorded.
     let recorded = AsyncGate()
 
     /// The ids recorded so far, in the order their connections ended.
-    var all: [UInt64] { lock.withLock { ids } }
+    var all: [UInt64] { ids.withLock { $0 } }
 
     /// Records `transferID` and wakes whatever awaits ``recorded``.
     func record(_ transferID: UInt64) {
-        lock.withLock { ids.append(transferID) }
+        ids.withLock { $0.append(transferID) }
         recorded.notify()
     }
 }
@@ -3510,20 +3514,23 @@ private final class HostClosedTransfers: @unchecked Sendable {
 /// the receiver closes its end, and a descriptor is closed exactly once.
 ///
 /// ``abandon()`` is the one caller off that queue, so it and the close share
-/// `lock`: a `shutdown(2)` decided outside the critical section the descriptor
+/// `state`'s lock: a `shutdown(2)` decided outside the critical section the descriptor
 /// is closed in lands on whatever the kernel has since handed that number to —
 /// another case's live socket in the same test host. `ClipboardTransferReceiver`
 /// holds its own lock across `cancel()` for that hazard.
-private final class ParkedDataConnection: @unchecked Sendable {
+private final class ParkedDataConnection: Sendable {
+    private struct State: Sendable {
+        var isResumed = false
+        var isAbandoned = false
+        var isEnded = false
+    }
+
     private let fd: Int32
     private let transferID: UInt64
     private let closed: HostClosedTransfers
     private let remainder: @Sendable (Int32) -> Void
     private let io: DispatchQueue
-    private let lock = NSLock()
-    private var isResumed = false
-    private var isAbandoned = false
-    private var isEnded = false
+    private let state = Mutex(State())
 
     /// Opens the connection by writing `prefix`, and keeps `remainder` — the
     /// rest of the stream — for ``resume()``.
@@ -3549,9 +3556,9 @@ private final class ParkedDataConnection: @unchecked Sendable {
     /// Writes what the hold left unwritten and half-closes, so the receiver
     /// reads the end of the stream and the transfer resolves.
     func resume() {
-        lock.withLock { isResumed = true }
+        state.withLock { $0.isResumed = true }
         io.async { [self] in
-            guard !lock.withLock({ isEnded }) else { return }
+            guard !state.withLock({ $0.isEnded }) else { return }
             remainder(fd)
             _ = shutdown(fd, SHUT_WR)
         }
@@ -3560,9 +3567,9 @@ private final class ParkedDataConnection: @unchecked Sendable {
     /// Wakes the watcher at teardown, so a connection nothing resolved is closed
     /// rather than left parked — and is not read as a cancellation.
     func abandon() {
-        lock.withLock {
-            isAbandoned = true
-            guard !isEnded else { return }
+        state.withLock { state in
+            state.isAbandoned = true
+            guard !state.isEnded else { return }
             ClipboardDataConnection.interrupt(fd: fd)
         }
     }
@@ -3570,10 +3577,10 @@ private final class ParkedDataConnection: @unchecked Sendable {
     /// Closes the descriptor once the receiver's end is gone, recording the
     /// cancellation when nothing had resumed the stream.
     private func end() {
-        let (resumed, abandoned) = lock.withLock { () -> (Bool, Bool) in
-            isEnded = true
+        let (resumed, abandoned) = state.withLock { state -> (Bool, Bool) in
+            state.isEnded = true
             ClipboardDataConnection.end(fd: fd)
-            return (isResumed, isAbandoned)
+            return (state.isResumed, state.isAbandoned)
         }
         if !resumed, !abandoned { closed.record(transferID) }
     }

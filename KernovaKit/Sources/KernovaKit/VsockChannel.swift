@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import KernovaSynchronization
 import SwiftProtobuf
 
 /// Convenience alias for the generated top-level wire message.
@@ -10,11 +11,11 @@ public typealias Frame = Kernova_V1_Frame
 /// Reads run via `FileHandle.readabilityHandler` on a background GCD queue and are
 /// emitted on `incoming`; `send` is synchronous and serialized so concurrent calls
 /// cannot interleave on the wire. The channel owns the descriptor and closes it.
-/// Keep `writeLock` and `stateLock` separate: `writeFramed` parks in a blocking
+/// Keep `writeLock` and `state` separate: `writeFramed` parks in a blocking
 /// `write(2)` while the peer's receive buffer is full, and one shared lock would
 /// hold off both the inbound reads that keep the peer draining and the close
 /// that would otherwise end the park.
-public final class VsockChannel: @unchecked Sendable {
+public final class VsockChannel: Sendable {
     /// Inbound frames, in arrival order.
     ///
     /// ``close()`` bounds delivery: no frame is handed over by a `next()` that
@@ -39,29 +40,30 @@ public final class VsockChannel: @unchecked Sendable {
     /// An object of its own rather than a field beside `closed`: `incoming`
     /// holds it, and a sequence holding the *channel* would retain it past the
     /// `deinit` that closes it.
-    private let ownerClosed: Latch
+    private let ownerClosed: Locked<Bool>
 
     /// Serializes the blocking `fileHandle.write` call inside `writeFramed`.
     ///
-    /// Held only around the write itself — never across a `stateLock`-guarded
-    /// check or teardown — so a parked write can't stall anything but other
-    /// writers.
-    private let writeLock = NSLock()
+    /// Held only around the write itself — never across teardown — so a parked
+    /// write can't stall anything but other writers.
+    private let writeLock = Locked(())
 
-    /// Guards `started`/`closed`.
-    ///
     /// Never held across a blocking call, so the inbound decode path never waits
     /// on a writer parked in `write(2)`.
-    private let stateLock = NSLock()
-    private var started = false
-    private var closed = false
+    private let state = Locked(State())
 
-    /// Decodes inbound bytes into frames.
-    ///
-    /// Fed and drained only from `handleChunk`, which always runs on the
-    /// `FileHandle`'s own serial readability GCD queue — reader-confined, no
-    /// lock needed.
-    private var decoder = StreamFrameDecoder()
+    private struct State: Sendable {
+        var started = false
+        var closed = false
+        var decoder = StreamFrameDecoder()
+
+        /// Marks the channel closed, and returns whether this call closed it.
+        mutating func close() -> Bool {
+            guard !closed else { return false }
+            closed = true
+            return true
+        }
+    }
 
     /// Ignores `SIGPIPE` process-wide so a write to a peer whose read side has
     /// closed surfaces as `EPIPE` rather than killing the process.
@@ -93,7 +95,7 @@ public final class VsockChannel: @unchecked Sendable {
 
         self.fileHandle = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
         let (stream, continuation) = AsyncThrowingStream<Frame, Error>.makeStream()
-        let ownerClosed = Latch()
+        let ownerClosed = Locked(false)
         self.ownerClosed = ownerClosed
         self.incoming = InboundFrames(base: stream, ownerClosed: ownerClosed)
         self.continuation = continuation
@@ -107,14 +109,14 @@ public final class VsockChannel: @unchecked Sendable {
 
     /// Begins reading from the underlying descriptor (idempotent).
     public func start() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard !started, !closed else { return }
-        started = true
+        state.withLock { state in
+            guard !state.started, !state.closed else { return }
+            state.started = true
 
-        fileHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            self?.handleChunk(data)
+            fileHandle.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                self?.handleChunk(data)
+            }
         }
     }
 
@@ -151,24 +153,19 @@ public final class VsockChannel: @unchecked Sendable {
     ///   `VsockChannelError.write(_)` if the underlying `FileHandle.write`
     ///   failed (the channel is torn down before the error reaches the caller).
     public func writeFramed(_ framed: Data) throws {
-        writeLock.lock()
-        guard !isClosed else {
-            writeLock.unlock()
-            throw VsockChannelError.closed
+        let writeError = try writeLock.withLock { _ throws(VsockChannelError) -> (any Error)? in
+            guard !state.withLock({ $0.closed }) else { throw .closed }
+            do {
+                try fileHandle.write(contentsOf: framed)
+                return nil
+            } catch {
+                return error
+            }
         }
 
-        let writeError: Error?
-        do {
-            try fileHandle.write(contentsOf: framed)
-            writeError = nil
-        } catch {
-            writeError = error
-        }
-        // Release the write lock before tearing down: `teardown` shuts the
-        // descriptor down and then re-acquires `writeLock` to close it, so
-        // it must never run while this call still holds the lock.
-        writeLock.unlock()
-
+        // After the write lock is released: `teardown` shuts the descriptor
+        // down and then re-acquires `writeLock` to close it, so it must never
+        // run while this call still holds the lock.
         if let writeError {
             teardown(finishWith: writeError)
             throw VsockChannelError.write(writeError)
@@ -187,44 +184,40 @@ public final class VsockChannel: @unchecked Sendable {
     public func close() {
         // Before the teardown, so no frame can be handed over between the
         // stream's `finish()` and the flag that says why it finished.
-        ownerClosed.set()
+        ownerClosed.withLock { $0 = true }
         teardown(finishWith: nil)
     }
 
     private func handleChunk(_ chunk: Data) {
-        // Holds `stateLock` across the whole decode/yield loop below, not just this
-        // check, so a concurrent `teardown` can't finish `continuation` out from
-        // under an in-flight `yield`. Safe because decode/yield never blocks.
-        stateLock.lock()
-        guard !closed else {
-            stateLock.unlock()
-            return
-        }
+        // Holds `state` across the whole decode/yield loop below, not just the
+        // closed check, so a concurrent `teardown` can't finish `continuation`
+        // out from under an in-flight `yield`. Safe because decode/yield never
+        // blocks.
+        let outcome: ChunkOutcome = state.withLock { state in
+            guard !state.closed else { return .nothing }
+            guard !chunk.isEmpty else { return .ended(nil) }
 
-        guard !chunk.isEmpty else {
-            stateLock.unlock()
-            teardown(finishWith: nil)
-            return
-        }
-
-        decoder.feed(chunk)
-        do {
-            while let payload = try decoder.nextFrame() {
-                let frame = try Frame(serializedBytes: payload)
-                continuation.yield(frame)
+            state.decoder.feed(chunk)
+            do {
+                while let payload = try state.decoder.nextFrame() {
+                    let frame = try Frame(serializedBytes: payload)
+                    continuation.yield(frame)
+                }
+                return .nothing
+            } catch {
+                return .ended(error)
             }
-            stateLock.unlock()
-        } catch {
-            stateLock.unlock()
+        }
+        if case .ended(let error) = outcome {
             teardown(finishWith: error)
         }
     }
 
-    /// `true` once the channel is closed (locally, by EOF, or by a write/decode failure).
-    private var isClosed: Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return closed
+    /// What reading one chunk leaves the channel owing: nothing, or a
+    /// teardown finishing `incoming` with the given error (`nil` for EOF).
+    private enum ChunkOutcome {
+        case nothing
+        case ended((any Error)?)
     }
 
     /// Idempotent teardown, safe to call from any context.
@@ -237,20 +230,12 @@ public final class VsockChannel: @unchecked Sendable {
     /// the lock forever. Only once that write has unwound is the descriptor closed,
     /// so the fd number isn't reclaimed while a write against it is in flight.
     private func teardown(finishWith error: Error?) {
-        stateLock.lock()
-        guard !closed else {
-            stateLock.unlock()
-            return
-        }
-        closed = true
-        stateLock.unlock()
+        guard state.withLock({ $0.close() }) else { return }
 
         fileHandle.readabilityHandler = nil
         shutdown(fileHandle.fileDescriptor, SHUT_RDWR)
 
-        writeLock.lock()
-        try? fileHandle.close()
-        writeLock.unlock()
+        writeLock.withLock { _ in try? fileHandle.close() }
 
         if let error {
             continuation.finish(throwing: error)
@@ -275,9 +260,9 @@ extension VsockChannel {
         public typealias Element = Frame
 
         private let base: AsyncThrowingStream<Frame, Error>
-        private let ownerClosed: Latch
+        private let ownerClosed: Locked<Bool>
 
-        fileprivate init(base: AsyncThrowingStream<Frame, Error>, ownerClosed: Latch) {
+        fileprivate init(base: AsyncThrowingStream<Frame, Error>, ownerClosed: Locked<Bool>) {
             self.base = base
             self.ownerClosed = ownerClosed
         }
@@ -294,10 +279,10 @@ extension VsockChannel {
         /// so ``next()`` is non-mutating and a `let` binding iterates.
         public struct AsyncIterator: AsyncIteratorProtocol {
             private let base: AsyncThrowingStream<Frame, Error>
-            private let ownerClosed: Latch
+            private let ownerClosed: Locked<Bool>
 
             fileprivate init(
-                base: AsyncThrowingStream<Frame, Error>, ownerClosed: Latch
+                base: AsyncThrowingStream<Frame, Error>, ownerClosed: Locked<Bool>
             ) {
                 self.base = base
                 self.ownerClosed = ownerClosed
@@ -314,7 +299,7 @@ extension VsockChannel {
                 while let frame = try await Self.pull(from: base) {
                     // Dropped and drained rather than returning `nil` here, so a
                     // stream finished with an error still surfaces it.
-                    guard !ownerClosed.isSet else { continue }
+                    guard !ownerClosed.withLock({ $0 }) else { continue }
                     return frame
                 }
                 return nil

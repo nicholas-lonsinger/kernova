@@ -1,6 +1,7 @@
 import AVFoundation
 import KernovaKit
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -228,7 +229,7 @@ struct VMOverviewResolverTests {
         resolver.refresh()
         #expect(resolver.resolved.networkModeLabel?.text == "Bridged \u{2013} en0 (unavailable)")
 
-        interfaces.available = [Self.wiFi]
+        interfaces.setAvailable([Self.wiFi])
         resolver.resolveNetworkModeLabel(enumerated: interfaces.interfaces())
         resolver.refresh()
 
@@ -616,18 +617,18 @@ struct VMOverviewResolverTests {
 
 /// Counts how often the host's bridgeable interfaces are enumerated, which is
 /// the cost the resolver is built to pay once per mode rather than per pass.
-private final class CountingBridgedInterfaceProvider:
-    BridgedInterfaceProviding, @unchecked Sendable
-{
+private final class CountingBridgedInterfaceProvider: BridgedInterfaceProviding {
     let available: [BridgedInterface]
-    private(set) var enumerationCount = 0
+    private let enumerations = Mutex(0)
+
+    var enumerationCount: Int { enumerations.withLock { $0 } }
 
     init(available: [BridgedInterface]) {
         self.available = available
     }
 
     func interfaces() -> [BridgedInterface] {
-        enumerationCount += 1
+        enumerations.withLock { $0 += 1 }
         return available
     }
 

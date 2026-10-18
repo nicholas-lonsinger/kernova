@@ -23,7 +23,9 @@ public protocol ClipboardWritePasteboard: AnyObject {
     /// served by its own `provider` when the OS asks for one.
     @discardableResult
     func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
+        _ items: [(
+            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
+        )]
     ) -> Bool
 
     /// Empties the pasteboard.
@@ -34,7 +36,9 @@ extension NSPasteboard: ClipboardWritePasteboard {
     /// Writes one `NSPasteboardItem` per entry, its types promised by the
     /// entry's own data provider.
     public func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
+        _ items: [(
+            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
+        )]
     ) -> Bool {
         writeObjects(
             items.map { entry in
@@ -93,14 +97,10 @@ public final class ClipboardPasteboardPublisher {
     }
 
     /// The pasteboard every write lands on.
-    ///
-    /// `nonisolated(unsafe)` only so an owner built off the main actor can
-    /// construct one, as the guest agent does; every use of it below is
-    /// main-actor isolated.
-    nonisolated(unsafe) private let pasteboard: any ClipboardWritePasteboard
+    private let pasteboard: any ClipboardWritePasteboard
 
     /// Process-lifetime owner of the lazy data providers a write promises.
-    nonisolated private let providerRegistry: LazyClipboardProviderRegistry
+    private let providerRegistry: LazyClipboardProviderRegistry
 
     /// The pasteboard's `changeCount` right after the most recent write, or `nil`
     /// before any write and after a retraction.
@@ -122,10 +122,7 @@ public final class ClipboardPasteboardPublisher {
     private var heldWrite: (changeCount: Int, promised: Bool)?
 
     /// Creates a publisher over `pasteboard`.
-    ///
-    /// `nonisolated` so an owner built off the main actor can create one; every
-    /// method on it is still main-actor isolated.
-    nonisolated public init(
+    public init(
         pasteboard: any ClipboardWritePasteboard,
         providerRegistry: LazyClipboardProviderRegistry = .shared
     ) {
@@ -145,7 +142,9 @@ public final class ClipboardPasteboardPublisher {
         let registry = providerRegistry
         var providers: [LazyClipboardDataProvider] = []
         let items = specs.map {
-            spec -> (types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider) in
+            spec -> (
+                types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
+            ) in
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
                 provide: { provide($0.rawValue) },

@@ -64,7 +64,7 @@ struct VMLibraryIntentTests {
         }
         let twin = wired.register { $0.genericMachineIdentifierData = Data([4, 5, 6]) }
         let hold = DispatchSemaphore(value: 0)
-        wired.storage.cloneHold = hold
+        wired.storage.setCloneHold(hold)
         // A throw before the release below would otherwise leave the copy
         // blocked for the rest of the process; a second signal is harmless.
         defer { hold.signal() }

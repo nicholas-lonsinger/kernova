@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 @testable import KernovaCore
 
@@ -6,26 +7,20 @@ import Foundation
 /// any path in ``failingPaths`` throws instead of landing — the file-system
 /// seam an atomic replace that fails is injected through. Every replace that
 /// lands is recorded.
-final class ReplaceFailingBundleFileAccess: VMBundleFileAccessing, @unchecked Sendable {
+final class ReplaceFailingBundleFileAccess: VMBundleFileAccessing {
     struct InjectedFailure: Error {}
 
-    private let lock = NSLock()
-    private var failing: Set<String> = []
-    private var replaced: [String] = []
+    /// Bundle-relative paths whose replace throws ``InjectedFailure``.
+    let failingPaths: Set<String>
+    private let replaced = Mutex<[String]>([])
     private let disk = CoordinatedBundleFileAccess()
 
     init(failing: Set<String> = []) {
-        self.failing = failing
-    }
-
-    /// Bundle-relative paths whose replace throws ``InjectedFailure``.
-    var failingPaths: Set<String> {
-        get { lock.withLock { failing } }
-        set { lock.withLock { failing = newValue } }
+        failingPaths = failing
     }
 
     /// Every bundle-relative path a replace landed at, in order.
-    var replacedPaths: [String] { lock.withLock { replaced } }
+    var replacedPaths: [String] { replaced.withLock { $0 } }
 
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {
         try disk.reading(bundleURL, body)
@@ -57,7 +52,7 @@ final class ReplaceFailingBundleFileAccess: VMBundleFileAccessing, @unchecked Se
         func replace(atRelativePath relativePath: String, with data: Data) throws {
             if owner.failingPaths.contains(relativePath) { throw InjectedFailure() }
             try wrapped.replace(atRelativePath: relativePath, with: data)
-            owner.lock.withLock { owner.replaced.append(relativePath) }
+            owner.replaced.withLock { $0.append(relativePath) }
         }
     }
 }

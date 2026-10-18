@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import KernovaSynchronization
 
 /// Why a transfer's data connection stopped.
 enum ClipboardDataConnectionError: Error, Equatable {
@@ -297,17 +298,26 @@ extension Frame {
 /// `beforeWrite` runs on the writing thread ahead of each socket write, so a
 /// supersession or a cancellation is honored between writes rather than only
 /// between payloads; throwing from it stops the payload where it stands.
-final class ClipboardPayloadWriter: @unchecked Sendable {
+final class ClipboardPayloadWriter {
     private let fd: Int32
     private let clock: any EngineClock
     private let beforeWrite: (@Sendable () throws -> Void)?
 
-    private let lock = NSLock()
-    private var hasher = SHA256()
-    private var written = 0
-    private var socketSeconds: TimeInterval = 0
-    private var firstByte: EngineInstant?
-    private var firstFailure: Error?
+    private struct State {
+        var hasher = SHA256()
+        var written = 0
+        var socketSeconds: TimeInterval = 0
+        var firstByte: EngineInstant?
+        var firstFailure: (any Error)?
+
+        mutating func recordFailure(_ error: any Error) {
+            if firstFailure == nil { firstFailure = error }
+        }
+    }
+
+    /// Written from AppleArchive's worker thread and read from the caller's
+    /// after the codec returns, with no ordering documented between them.
+    private let state = Locked(State())
 
     /// Creates a writer for `fd`.
     init(
@@ -320,14 +330,14 @@ final class ClipboardPayloadWriter: @unchecked Sendable {
     }
 
     /// Payload bytes written so far.
-    var byteCount: Int { lock.withLock { written } }
+    var byteCount: Int { state.withLock { $0.written } }
 
     /// Seconds summed over every socket write — the time the peer's receive
     /// buffer held this side up.
-    var socketWait: TimeInterval { lock.withLock { socketSeconds } }
+    var socketWait: TimeInterval { state.withLock { $0.socketSeconds } }
 
     /// When the first payload byte was handed to the socket.
-    var firstByteInstant: EngineInstant? { lock.withLock { firstByte } }
+    var firstByteInstant: EngineInstant? { state.withLock { $0.firstByte } }
 
     /// The first failure a write reported, if any.
     ///
@@ -335,10 +345,10 @@ final class ClipboardPayloadWriter: @unchecked Sendable {
     /// trust the codec's own result: AppleArchive can return normally over a
     /// stream callback whose write failed, which would hand out a silently
     /// truncated payload as a complete one.
-    var failure: Error? { lock.withLock { firstFailure } }
+    var failure: (any Error)? { state.withLock { $0.firstFailure } }
 
     /// The SHA-256 over every payload byte written so far.
-    func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
+    func digest() -> Data { state.withLock { Data($0.hasher.finalize()) } }
 
     /// Writes `data` whole.
     func write(_ data: Data) throws {
@@ -353,15 +363,15 @@ final class ClipboardPayloadWriter: @unchecked Sendable {
         do {
             try ClipboardDataConnection.write(fd: fd, buffer)
         } catch {
-            lock.withLock { if firstFailure == nil { firstFailure = error } }
+            state.withLock { $0.recordFailure(error) }
             throw error
         }
         let finishedAt = clock.now
-        lock.withLock {
-            hasher.update(bufferPointer: buffer)
-            written += buffer.count
-            socketSeconds += startedAt.seconds(to: finishedAt)
-            if firstByte == nil { firstByte = finishedAt }
+        state.withLock { state in
+            state.hasher.update(bufferPointer: buffer)
+            state.written += buffer.count
+            state.socketSeconds += startedAt.seconds(to: finishedAt)
+            if state.firstByte == nil { state.firstByte = finishedAt }
         }
     }
 }
@@ -376,21 +386,47 @@ final class ClipboardPayloadWriter: @unchecked Sendable {
 /// consumer sees a payload that ends at exactly the right place, and whatever
 /// is left when the stream ends is the trailer — or, if there is less of it,
 /// proof the connection was cut short.
-///
-/// `@unchecked Sendable`: the buffered bytes belong to whichever thread is
-/// reading — one, by construction — while the running count and digest carry a
-/// lock, since a transfer reports them from wherever it finishes.
-final class ClipboardPayloadReader: @unchecked Sendable {
+final class ClipboardPayloadReader {
     private let fd: Int32
     private let bufferBytes: Int
     private let onRelease: (@Sendable (Int) -> Void)?
 
-    private let lock = NSLock()
-    private var pending = Data()
-    private var atEnd = false
-    private var hasher = SHA256()
-    private var released = 0
-    private var firstFailure: Error?
+    /// What one attempt to release payload bytes found.
+    private enum Next {
+        /// Bytes released, and the payload total released so far.
+        case run(Data, released: Int)
+        /// The stream has ended; only the trailer is left.
+        case ended
+        /// Nothing is releasable until more is read off the socket.
+        case needsFill
+    }
+
+    private struct State {
+        var pending = Data()
+        var atEnd = false
+        var hasher = SHA256()
+        var released = 0
+        var firstFailure: (any Error)?
+
+        /// Takes up to `count` releasable bytes, hashing what it releases.
+        mutating func take(upTo count: Int) -> Next {
+            let releasable = pending.count - ClipboardTransferTrailer.byteCount
+            guard releasable > 0, count > 0 else { return atEnd ? .ended : .needsFill }
+            let taken = Data(pending.prefix(min(count, releasable)))
+            pending = Data(pending.dropFirst(taken.count))
+            hasher.update(data: taken)
+            released += taken.count
+            return .run(taken, released: released)
+        }
+
+        mutating func recordFailure(_ error: any Error) {
+            if firstFailure == nil { firstFailure = error }
+        }
+    }
+
+    /// Read from AppleArchive's worker thread during an extract and from the
+    /// caller's after it returns, with no ordering documented between them.
+    private let state = Locked(State())
 
     /// Creates a reader for `fd`.
     ///
@@ -410,7 +446,7 @@ final class ClipboardPayloadReader: @unchecked Sendable {
     }
 
     /// Payload bytes released so far.
-    var byteCount: Int { lock.withLock { released } }
+    var byteCount: Int { state.withLock { $0.released } }
 
     /// The first failure a read reported, if any.
     ///
@@ -418,25 +454,28 @@ final class ClipboardPayloadReader: @unchecked Sendable {
     /// trust the codec's own result: AppleArchive rewraps whatever the source
     /// threw, so a connection that timed out under an extract reaches the
     /// driver as an archive failure and would be named one.
-    var failure: Error? { lock.withLock { firstFailure } }
+    var failure: (any Error)? { state.withLock { $0.firstFailure } }
 
     /// The SHA-256 over every payload byte released so far.
-    func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
+    func digest() -> Data { state.withLock { Data($0.hasher.finalize()) } }
 
     /// Releases up to `buffer.count` payload bytes, returning 0 once the stream
     /// has ended and only the trailer is left.
     func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
         guard let destination = buffer.baseAddress, !buffer.isEmpty else { return 0 }
         while true {
-            if let run = try take(upTo: buffer.count) {
+            switch next(upTo: buffer.count) {
+            case .run(let run, _):
                 run.withUnsafeBytes { raw in
                     guard let source = raw.baseAddress else { return }
                     destination.copyMemory(from: source, byteCount: raw.count)
                 }
                 return run.count
+            case .ended:
+                return 0
+            case .needsFill:
+                try fill()
             }
-            if atEnd { return 0 }
-            try fill()
         }
     }
 
@@ -452,12 +491,11 @@ final class ClipboardPayloadReader: @unchecked Sendable {
         // allocation. Past the cap the buffer still grows geometrically.
         result.reserveCapacity(min(count, ClipboardStreamTuning.maxInlineReserveBytes))
         while result.count < count {
-            guard let run = try take(upTo: count - result.count) else {
-                guard !atEnd else { throw ClipboardDataConnectionError.truncated }
-                try fill()
-                continue
+            switch next(upTo: count - result.count) {
+            case .run(let run, _): result.append(run)
+            case .ended: throw ClipboardDataConnectionError.truncated
+            case .needsFill: try fill()
             }
-            result.append(run)
         }
         return result
     }
@@ -467,14 +505,16 @@ final class ClipboardPayloadReader: @unchecked Sendable {
     func drain(allowance: Int) throws {
         var discarded = 0
         while true {
-            guard let run = try take(upTo: bufferBytes) else {
-                if atEnd { return }
+            switch next(upTo: bufferBytes) {
+            case .run(let run, _):
+                discarded += run.count
+                guard discarded <= allowance else {
+                    throw ClipboardDataConnectionError.trailingSurplus
+                }
+            case .ended:
+                return
+            case .needsFill:
                 try fill()
-                continue
-            }
-            discarded += run.count
-            guard discarded <= allowance else {
-                throw ClipboardDataConnectionError.trailingSurplus
             }
         }
     }
@@ -486,33 +526,35 @@ final class ClipboardPayloadReader: @unchecked Sendable {
     ///   ended without a well-formed trailer — the peer died, or its connection
     ///   was reset.
     func trailer() throws -> ClipboardTransferTrailer {
-        while !atEnd { try fill() }
-        guard let trailer = ClipboardTransferTrailer.parse(pending) else {
-            throw ClipboardDataConnectionError.truncated
+        while true {
+            let parsed = state.withLock { state -> ClipboardTransferTrailer?? in
+                guard state.atEnd else { return nil }
+                return .some(ClipboardTransferTrailer.parse(state.pending))
+            }
+            guard let parsed else {
+                try fill()
+                continue
+            }
+            guard let trailer = parsed else { throw ClipboardDataConnectionError.truncated }
+            return trailer
         }
-        return trailer
     }
 
     // MARK: - Private
 
-    /// Takes up to `count` releasable bytes, or `nil` when none are available
-    /// yet.
-    private func take(upTo count: Int) throws -> Data? {
-        let releasable = pending.count - ClipboardTransferTrailer.byteCount
-        guard releasable > 0, count > 0 else { return nil }
-        let taken = Data(pending.prefix(min(count, releasable)))
-        pending = Data(pending.dropFirst(taken.count))
-        lock.withLock {
-            hasher.update(data: taken)
-            released += taken.count
-        }
-        onRelease?(byteCount)
-        return taken
+    /// Takes up to `count` releasable bytes, reporting a release to
+    /// `onRelease`.
+    private func next(upTo count: Int) -> Next {
+        let next = state.withLock { $0.take(upTo: count) }
+        if case .run(_, let released) = next { onRelease?(released) }
+        return next
     }
 
     /// Takes one buffer off the socket, latching end of stream.
+    ///
+    /// Called only once the stream is known not to have ended: one thread
+    /// reads at a time, and only a read latches the end.
     private func fill() throws {
-        guard !atEnd else { return }
         var block = Data(count: bufferBytes)
         let got: Int
         do {
@@ -520,13 +562,15 @@ final class ClipboardPayloadReader: @unchecked Sendable {
                 try ClipboardDataConnection.read(fd: fd, into: raw)
             }
         } catch {
-            lock.withLock { if firstFailure == nil { firstFailure = error } }
+            state.withLock { $0.recordFailure(error) }
             throw error
         }
-        guard got > 0 else {
-            atEnd = true
-            return
+        state.withLock { state in
+            if got > 0 {
+                state.pending.append(block.prefix(got))
+            } else {
+                state.atEnd = true
+            }
         }
-        pending.append(block.prefix(got))
     }
 }

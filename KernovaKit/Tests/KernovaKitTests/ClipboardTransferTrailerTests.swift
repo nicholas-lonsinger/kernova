@@ -4,6 +4,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 /// The two detectors a data connection has: the 33-byte trailer that says how a
 /// payload ended, and the reader that holds those bytes back so the payload the
@@ -103,14 +104,14 @@ struct ClipboardTransferTrailerTests {
         let trailer = ClipboardTransferTrailer(ending: .complete(digest: sha256(payload)))
         let fd = try stream(payload + trailer.encoded)
         defer { ClipboardDataConnection.end(fd: fd) }
-        let released = Box(0)
-        let reader = ClipboardPayloadReader(fd: fd, bufferBytes: 1024) { released.value = $0 }
+        let released = Locked(0)
+        let reader = ClipboardPayloadReader(fd: fd, bufferBytes: 1024) { count in released.withLock { $0 = count } }
 
         let taken = try readAll(reader)
 
         #expect(taken == payload)
         #expect(reader.byteCount == payload.count)
-        #expect(released.value == payload.count)
+        #expect(released.withLock { $0 } == payload.count)
         // The only corruption detector this transport has, taken over exactly
         // the bytes the consumer got.
         #expect(reader.digest() == sha256(payload))

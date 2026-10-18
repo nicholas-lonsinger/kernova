@@ -1,17 +1,9 @@
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
-
-/// One-shot flag a `@Sendable` cancel closure can set from any thread.
-private final class AtomicFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var flag = false
-
-    var value: Bool { lock.withLock { flag } }
-    func set() { lock.withLock { flag = true } }
-}
 
 /// Records every report an operation drives its reporter to.
 @MainActor
@@ -417,12 +409,12 @@ struct ClipboardTransferOperationTests {
     func routesCancelToTheOperation() {
         let recorder = Recorder()
         let clock = GatedEngineClock()
-        let stopped = AtomicFlag()
+        let stopped = Locked(false)
         let operation = makeOperation(
-            recorder: recorder, clock: clock, onCancelRequested: { stopped.set() })
+            recorder: recorder, clock: clock, onCancelRequested: { stopped.withLock { $0 = true } })
 
         operation.requestCancel()
-        #expect(stopped.value)
+        #expect(stopped.withLock { $0 })
     }
 
     @Test("an operation with nothing to stop offers no cancel")

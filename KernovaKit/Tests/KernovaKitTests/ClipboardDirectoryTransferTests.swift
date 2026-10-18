@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 /// A folder crossing the real sender and receiver over one data connection, with
 /// no archive file at either end.
@@ -90,13 +91,13 @@ struct ClipboardDirectoryTransferTests {
     private func startCancellingOnFirstArrival(
         _ receiver: ClipboardTransferReceiver, _ collector: TransferCollector, _ transferID: UInt64
     ) {
-        let cancelled = Box(false)
+        let cancelled = Locked(false)
         receiver.start(
             onComplete: { collector.complete(transferID, $0) },
             onAbort: { collector.abort($0) },
             onActivity: { [weak receiver] in
-                guard !cancelled.value else { return }
-                cancelled.value = true
+                guard !cancelled.withLock({ $0 }) else { return }
+                cancelled.withLock { $0 = true }
                 receiver?.cancel()
             })
     }
@@ -276,13 +277,13 @@ struct ClipboardDirectoryTransferTests {
         // Cancel from inside the stream, on the extract's first figure, so a
         // whole pacing quantum of tree is on disk when the pull gives up —
         // rather than wherever the runner happened to schedule the test next.
-        let cancelled = Box(false)
+        let cancelled = Locked(false)
         receiver.start(
             onComplete: { collector.complete(transferID, $0) },
             onAbort: { collector.abort($0) },
             onProgress: { [weak receiver] _, _ in
-                guard !cancelled.value else { return }
-                cancelled.value = true
+                guard !cancelled.withLock({ $0 }) else { return }
+                cancelled.withLock { $0 = true }
                 receiver?.cancel()
             })
         try await settle(harness, transferID)
@@ -438,7 +439,7 @@ struct ClipboardDirectoryTransferTests {
         // Same outbox, same id: transfer ids are derivable, so the peer's retry
         // reuses this one. The table entry has to be gone, or the second call is
         // dropped as a duplicate and the peer waits for a reply that never comes.
-        let received = Box<ReceivedTransfer?>(nil)
+        let received = Locked<ReceivedTransfer?>(nil)
         let served = AsyncGate()
         harness.outbox.serve(
             transferID: transferID, generation: 1,
@@ -447,13 +448,13 @@ struct ClipboardDirectoryTransferTests {
             isCurrent: { _ in true },
             link: .dial {
                 try dialToPeer { far in
-                    received.value = try? receiveTransfer(fd: far)
+                    received.withLock { $0 = try? receiveTransfer(fd: far) }
                     served.notify()
                 }
             })
 
-        try await served.wait { received.value != nil }
-        let transfer = try #require(received.value)
+        try await served.wait { received.withLock { $0 } != nil }
+        let transfer = try #require(received.withLock { $0 })
         #expect(transfer.isComplete)
         let tree = try extractedClipboardArchive(transfer.payload, named: "Project")
         #expect(

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 import Testing
 
 @testable import KernovaTestSupport
@@ -97,14 +98,13 @@ struct TestAdmissionGateTests {
     }
 
     /// A `Sendable` log of the order waiters resumed in.
-    private final class OrderLog: @unchecked Sendable {
-        private let lock = NSLock()
-        private var steps: [Int] = []
+    private final class OrderLog: Sendable {
+        private let steps = Locked<[Int]>([])
         let gate = AsyncGate()
         func record(_ step: Int) {
-            lock.withLock { steps.append(step) }
+            steps.withLock { $0.append(step) }
             gate.notify()
         }
-        var entries: [Int] { lock.withLock { steps } }
+        var entries: [Int] { steps.withLock { $0 } }
     }
 }

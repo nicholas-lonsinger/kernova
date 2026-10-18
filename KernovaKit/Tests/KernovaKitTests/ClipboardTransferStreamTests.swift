@@ -4,6 +4,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 /// The per-transfer data connection end to end: a real
 /// ``ClipboardTransferSender`` and ``ClipboardTransferReceiver`` over a
@@ -350,7 +351,7 @@ struct ClipboardTransferStreamTests {
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         // False from the second write on, so the transfer is already streaming
         // when the offer is retired.
-        let writes = Box(0)
+        let writes = Locked(0)
         let transferID: UInt64 = 0xA1
         harness.pull(
             transferID: transferID, generation: 10,
@@ -360,8 +361,10 @@ struct ClipboardTransferStreamTests {
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
             isCurrent: { _ in
-                let seen = writes.value
-                writes.value = seen + 1
+                let seen = writes.withLock { count in
+                    defer { count += 1 }
+                    return count
+                }
                 return seen < 1
             })
         try await settle(harness, transferID)
@@ -471,19 +474,19 @@ struct ClipboardTransferStreamTests {
         isInline: Bool = true, onSourceUnreadable: (@Sendable () -> Void)? = nil
     ) async throws -> Bool {
         let ended = AsyncGate()
-        let outcome = Box<Bool?>(nil)
+        let outcome = Locked<Bool?>(nil)
         sender.start(
             representation: representation,
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount,
             isInline: isInline,
             isCurrent: { _ in true },
             onSourceUnreadable: onSourceUnreadable,
-            onComplete: {
-                outcome.value = $0
+            onComplete: { result in
+                outcome.withLock { $0 = result }
                 ended.notify()
             })
-        try await ended.wait { outcome.value != nil }
-        return try #require(outcome.value as Bool?)
+        try await ended.wait { outcome.withLock { $0 } != nil }
+        return try #require(outcome.withLock { $0 } as Bool?)
     }
 
     /// A peer that stops draining leaves its receive buffer full; the write
@@ -518,7 +521,7 @@ struct ClipboardTransferStreamTests {
         defer { ClipboardDataConnection.end(fd: peer) }
         let sender = ClipboardTransferSender(
             transferID: 0x1C3, generation: 28, link: .accepted(near), socketTimeout: 0.3)
-        let unreadable = Box(false)
+        let unreadable = Locked(false)
 
         // Past everything the connection can buffer, with nothing reading the
         // peer end at any point.
@@ -527,32 +530,32 @@ struct ClipboardTransferStreamTests {
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: 4 << 20, filename: "Project"),
             isInline: false,
-            onSourceUnreadable: { unreadable.value = true })
+            onSourceUnreadable: { unreadable.withLock { $0 = true } })
 
         #expect(succeeded == false)
-        #expect(unreadable.value == false)
+        #expect(unreadable.withLock { $0 } == false)
     }
 
     /// Every ending a peer can still take rides the trailer.
     @Test("a peer that is draining still gets the trailer that ends the payload")
     func aDrainedTransferWritesItsTrailer() async throws {
-        let received = Box<ReceivedTransfer?>(nil)
+        let received = Locked<ReceivedTransfer?>(nil)
         let taken = AsyncGate()
         let payload = Data("still reading".utf8)
         let sender = ClipboardTransferSender(
             transferID: 0x1C2, generation: 28,
             link: .accepted(
                 try dialToPeer { far in
-                    received.value = try? receiveTransfer(fd: far)
+                    received.withLock { $0 = try? receiveTransfer(fd: far) }
                     taken.notify()
                 }), socketTimeout: 0.3)
 
         let succeeded = try await runToCompletion(
             sender, representation: .init(uti: "public.data", data: payload))
-        try await taken.wait { received.value != nil }
+        try await taken.wait { received.withLock { $0 } != nil }
 
         #expect(succeeded)
-        #expect(try #require(received.value).isComplete)
+        #expect(try #require(received.withLock { $0 }).isComplete)
     }
 
     // MARK: - Opening the connection
@@ -566,8 +569,8 @@ struct ClipboardTransferStreamTests {
         // A key of its own for the duplicate's terminal, so an outcome recorded
         // for it cannot be mistaken for the running transfer's.
         let duplicateKey: UInt64 = 0x182
-        let begins = Box(0)
-        let duplicateBegins = Box(0)
+        let begins = Locked(0)
+        let duplicateBegins = Locked(0)
 
         // Past everything the socket can buffer, with nothing reading the peer
         // end yet: the first transfer is parked mid-payload, and registered —
@@ -581,7 +584,7 @@ struct ClipboardTransferStreamTests {
             representation: .init(uti: "public.data", data: payload),
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
             isCurrent: { _ in true }, link: .accepted(first),
-            onBegin: { begins.value += 1 },
+            onBegin: { begins.withLock { $0 += 1 } },
             onComplete: { collector.sendFinished(transferID, success: $0) })
 
         let (second, secondPeer) = try makeRawSocketPair()
@@ -591,14 +594,14 @@ struct ClipboardTransferStreamTests {
             representation: .init(uti: "public.data", data: Data("second".utf8)),
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
             isCurrent: { _ in true }, link: .accepted(second),
-            onBegin: { duplicateBegins.value += 1 },
+            onBegin: { duplicateBegins.withLock { $0 += 1 } },
             onComplete: { collector.sendFinished(duplicateKey, success: $0) })
 
         // The duplicate announces nothing: a readout told about it would reset
         // the live unit's byte count to zero and run its bar backwards.
         #expect(served == false)
-        #expect(begins.value == 1)
-        #expect(duplicateBegins.value == 0)
+        #expect(begins.withLock { $0 } == 1)
+        #expect(duplicateBegins.withLock { $0 } == 0)
 
         // The refused link is given up as `serve` returns, so its peer reaches
         // EOF instead of parking on a connection nothing owns.
@@ -966,11 +969,13 @@ struct ClipboardTransferStreamTests {
     func diskFullMidExtractStopsTheTransfer() async throws {
         let fm = FileManager.default
         // Room at the pre-flight, none once the extract is under way.
-        let checks = Box(0)
+        let checks = Locked(0)
         let harness = TransferHarness(
             freeSpaceProvider: { _ in
-                let seen = checks.value
-                checks.value = seen + 1
+                let seen = checks.withLock { count in
+                    defer { count += 1 }
+                    return count
+                }
                 return seen == 0 ? Int64(1 << 40) : 0
             }, extractPacingBytes: 4096)
         defer { harness.tearDown() }
@@ -1194,14 +1199,14 @@ struct ClipboardTransferStreamTests {
 
         // Receiver dials: request, then the sender's reply, then the bytes.
         let pullID: UInt64 = 0x171
-        let sawRequest = Box(false)
+        let sawRequest = Locked(false)
         harness.expect(
             transferID: pullID,
             plan: .init(uti: "public.utf8-plain-text", advertisedByteCount: payload.count))
         let outbox = harness.outbox
         let collector = harness.collector
         harness.openPull(transferID: pullID, generation: 23) { far, request in
-            sawRequest.value = request.transferID == pullID
+            sawRequest.withLock { $0 = request.transferID == pullID }
             outbox.serve(
                 transferID: request.transferID, generation: request.generation,
                 representation: .init(uti: "public.utf8-plain-text", data: payload),
@@ -1210,7 +1215,7 @@ struct ClipboardTransferStreamTests {
                 onComplete: { collector.sendFinished(request.transferID, success: $0) })
         }
         try await settle(harness, pullID)
-        #expect(sawRequest.value)
+        #expect(sawRequest.withLock { $0 })
         #expect(harness.collector.representation(pullID)?.inMemoryData == payload)
 
         // Sender dials: the reply is the first frame, and the bytes follow it.

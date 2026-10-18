@@ -2,6 +2,7 @@ import Foundation
 import KernovaKit
 import KernovaTestSupport
 import SwiftProtobuf
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -255,22 +256,18 @@ struct VsockGuestLogServiceTests {
 
 // MARK: - Recording emitter
 
-private final class RecordingEmitter: GuestLogEmitter, @unchecked Sendable {
-    private let lock = NSLock()
-    private var records: [Kernova_V1_LogRecord] = []
+private final class RecordingEmitter: GuestLogEmitter {
+    private let records = Mutex<[Kernova_V1_LogRecord]>([])
 
     /// Fires on every `emit`; await it instead of polling `snapshot().count`.
     let recorded = AsyncGate()
 
     func emit(_ record: Kernova_V1_LogRecord) {
-        lock.lock()
-        records.append(record)
-        lock.unlock()
+        records.withLock { $0.append(record) }
         recorded.notify()
     }
 
     func snapshot() -> [Kernova_V1_LogRecord] {
-        lock.lock(); defer { lock.unlock() }
-        return records
+        records.withLock { $0 }
     }
 }

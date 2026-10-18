@@ -1,17 +1,9 @@
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
-
-/// One-shot flag a `@Sendable` cancel closure can set from any thread.
-private final class AtomicFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var flag = false
-
-    var value: Bool { lock.withLock { flag } }
-    func set() { lock.withLock { flag = true } }
-}
 
 @Suite("ClipboardTransferReporter", .caseScoped)
 @MainActor
@@ -460,25 +452,25 @@ struct ClipboardTransferReporterTests {
     func cancelReachesTheOperationItsReadoutNamed() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
-        let olderStopped = AtomicFlag()
-        let newerStopped = AtomicFlag()
-        let older = makeOperation(reporter, onCancelRequested: { olderStopped.set() })
-        let newer = makeOperation(reporter, onCancelRequested: { newerStopped.set() })
+        let olderStopped = Locked(false)
+        let newerStopped = Locked(false)
+        let older = makeOperation(reporter, onCancelRequested: { olderStopped.withLock { $0 = true } })
+        let newer = makeOperation(reporter, onCancelRequested: { newerStopped.withLock { $0 = true } })
 
         reporter.publish(from: older, .running(snapshot(bytes: 1), since: Date()))
         reporter.publish(from: newer, .running(snapshot(bytes: 2), since: Date()))
         #expect(reporter.cancel(older.id))
 
-        #expect(olderStopped.value)
-        #expect(!newerStopped.value)
+        #expect(olderStopped.withLock { $0 })
+        #expect(!newerStopped.withLock { $0 })
     }
 
     @Test("a cancel of an operation that cannot be stopped reaches nothing else")
     func cancelOfANonCancellableOperationStopsNothing() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
-        let stopped = AtomicFlag()
-        let cancellable = makeOperation(reporter, onCancelRequested: { stopped.set() })
+        let stopped = Locked(false)
+        let cancellable = makeOperation(reporter, onCancelRequested: { stopped.withLock { $0 = true } })
         // A paste fire: the pasteboard drives it one item at a time, so there is
         // nothing a Cancel could usefully stop.
         let pasteFire = makeOperation(reporter)
@@ -487,15 +479,15 @@ struct ClipboardTransferReporterTests {
         reporter.publish(from: pasteFire, .running(snapshot(bytes: 2), since: Date()))
 
         #expect(!reporter.cancel(pasteFire.id))
-        #expect(!stopped.value)
+        #expect(!stopped.withLock { $0 })
     }
 
     @Test("a cancel for an operation that has ended reports it reached nothing")
     func cancelOfAFinishedOperationIsANoOp() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
-        let stopped = AtomicFlag()
-        let operation = makeOperation(reporter, onCancelRequested: { stopped.set() })
+        let stopped = Locked(false)
+        let operation = makeOperation(reporter, onCancelRequested: { stopped.withLock { $0 = true } })
 
         reporter.publish(from: operation, .running(snapshot(bytes: 1), since: Date()))
         reporter.publish(
@@ -506,7 +498,7 @@ struct ClipboardTransferReporterTests {
                     peerName: "macOS TEST")))
 
         #expect(!reporter.cancel(operation.id))
-        #expect(!stopped.value)
+        #expect(!stopped.withLock { $0 })
     }
 
     // MARK: - Ranking

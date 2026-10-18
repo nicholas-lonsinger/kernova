@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// The transfers this side is waiting for, one data connection each.
 ///
@@ -9,12 +10,12 @@ import KernovaLogging
 /// dials) or adopts one its listener accepted (``adopt(fd:reply:)``). Every
 /// callback fires off the owning actor, and the terminal fires exactly once,
 /// on the transfer's own queue.
-final class ClipboardTransferInbox: @unchecked Sendable {
+final class ClipboardTransferInbox: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferInbox")
 
     /// What one awaited transfer expects, and who to tell when it resolves.
-    private struct Awaiter {
+    private struct Awaiter: Sendable {
         let plan: ClipboardTransferReceiver.Plan
         let onComplete: @Sendable (ClipboardContent.Representation) -> Void
         let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
@@ -29,19 +30,26 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     private let extractPacingBytes: Int
     private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
 
-    private let lock = NSLock()
-    private var awaiters: [UInt64: Awaiter] = [:]
-    private var live: [UInt64: ClipboardTransferReceiver] = [:]
+    private struct State: Sendable {
+        var awaiters: [UInt64: Awaiter] = [:]
+        var live: [UInt64: ClipboardTransferReceiver] = [:]
+        #if DEBUG
+        var receiverFinishedHook: (@Sendable (UInt64) -> Void)?
+        var finishedHook: (@Sendable (UInt64) -> Void)? { receiverFinishedHook }
+        #else
+        var finishedHook: (@Sendable (UInt64) -> Void)? { nil }
+        #endif
+    }
+
+    private let state = Locked(State())
 
     #if DEBUG
-    /// Fired after a live receiver's terminal has been processed — its
-    /// connection already closed — for a test sequencing a peer against the
-    /// teardown rather than against the awaiter's own resolution.
-    var onReceiverFinishedForTesting: (@Sendable (UInt64) -> Void)? {
-        get { lock.withLock { receiverFinishedHook } }
-        set { lock.withLock { receiverFinishedHook = newValue } }
+    /// Installs `hook`, fired after a live receiver's terminal has been
+    /// processed — its connection already closed — for a test sequencing a peer
+    /// against the teardown rather than against the awaiter's own resolution.
+    func setOnReceiverFinishedForTesting(_ hook: @escaping @Sendable (UInt64) -> Void) {
+        state.withLock { $0.receiverFinishedHook = hook }
     }
-    private var receiverFinishedHook: (@Sendable (UInt64) -> Void)?
     #endif
 
     /// Creates an inbox for one peer.
@@ -86,8 +94,8 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil,
         onActivity: (@Sendable () -> Void)? = nil
     ) {
-        let displaced: Bool = lock.withLock {
-            let prior = awaiters.updateValue(
+        let displaced: Bool = state.withLock {
+            let prior = $0.awaiters.updateValue(
                 Awaiter(
                     plan: plan, onComplete: onComplete, onAbort: onAbort, onProgress: onProgress,
                     onActivity: onActivity),
@@ -104,8 +112,8 @@ final class ClipboardTransferInbox: @unchecked Sendable {
 
     /// Deregisters a pull's expectation without firing it.
     func cancelAwait(_ transferID: UInt64) {
-        let (removed, receiver) = lock.withLock {
-            (awaiters.removeValue(forKey: transferID) != nil, live[transferID])
+        let (removed, receiver) = state.withLock {
+            ($0.awaiters.removeValue(forKey: transferID) != nil, $0.live[transferID])
         }
         guard removed else { return }
         receiver?.cancel()
@@ -120,7 +128,7 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         transferID: UInt64, generation: UInt64, maxAcceptByteCount: UInt64,
         dial: @escaping @Sendable () throws -> Int32
     ) {
-        guard let awaiter = lock.withLock({ awaiters[transferID] }) else { return }
+        guard let awaiter = state.withLock({ $0.awaiters[transferID] }) else { return }
         let request = Kernova_V1_ClipboardTransferRequest.with {
             $0.generation = generation
             $0.transferID = transferID
@@ -139,7 +147,7 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     /// cancelled — is closed rather than served, which is the refusal a peer
     /// sees for both.
     func adopt(fd: Int32, reply: Kernova_V1_ClipboardTransferReply) {
-        guard let awaiter = lock.withLock({ awaiters[reply.transferID] }) else {
+        guard let awaiter = state.withLock({ $0.awaiters[reply.transferID] }) else {
             #log(
                 Self.logger, .debug,
                 "Closing a data connection for clipboard transfer \(reply.transferID, privacy: .public) — nothing is awaiting it"
@@ -185,9 +193,9 @@ final class ClipboardTransferInbox: @unchecked Sendable {
             extractPacingBytes: extractPacingBytes, onTransferTimed: onTransferTimed)
         // Ignore a second connection for an id already streaming rather than
         // let it displace the first, which would orphan an open connection.
-        let inserted = lock.withLock { () -> Bool in
-            guard live[transferID] == nil else { return false }
-            live[transferID] = receiver
+        let inserted = state.withLock { state -> Bool in
+            guard state.live[transferID] == nil else { return false }
+            state.live[transferID] = receiver
             return true
         }
         guard inserted else {
@@ -211,18 +219,16 @@ final class ClipboardTransferInbox: @unchecked Sendable {
 
     /// Delivers one transfer's terminal to its awaiter, exactly once.
     private func finish(_ transferID: UInt64, _ deliver: (Awaiter) -> Void) {
-        let awaiter = lock.withLock { () -> Awaiter? in
-            live[transferID] = nil
-            return awaiters.removeValue(forKey: transferID)
+        let (awaiter, finishedHook) = state.withLock { state in
+            state.live[transferID] = nil
+            return (state.awaiters.removeValue(forKey: transferID), state.finishedHook)
         }
         if let awaiter { deliver(awaiter) }
-        #if DEBUG
-        onReceiverFinishedForTesting?(transferID)
-        #endif
+        finishedHook?(transferID)
     }
 
     private func awaiter(_ transferID: UInt64) -> Awaiter? {
-        lock.withLock { awaiters[transferID] }
+        state.withLock { $0.awaiters[transferID] }
     }
 
     /// Interrupts every live receiver whose id matches `predicate`, and fires
@@ -237,12 +243,12 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     /// later terminal is idempotent with this — whichever removes the awaiter
     /// first wins.
     private func cancelMatching(_ predicate: (UInt64) -> Bool) {
-        let (receivers, matched) = lock.withLock {
-            () -> ([ClipboardTransferReceiver], [UInt64: Awaiter]) in
-            let receivers = live.filter { predicate($0.key) }.map(\.value)
+        let (receivers, matched) = state.withLock {
+            state -> ([ClipboardTransferReceiver], [UInt64: Awaiter]) in
+            let receivers = state.live.filter { predicate($0.key) }.map(\.value)
             var taken: [UInt64: Awaiter] = [:]
-            for id in awaiters.keys.filter(predicate) {
-                taken[id] = awaiters.removeValue(forKey: id)
+            for id in state.awaiters.keys.filter(predicate) {
+                taken[id] = state.awaiters.removeValue(forKey: id)
             }
             return (receivers, taken)
         }

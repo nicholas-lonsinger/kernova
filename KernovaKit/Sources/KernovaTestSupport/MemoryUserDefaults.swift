@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 // MARK: - MemoryUserDefaults
 
@@ -10,6 +11,9 @@ import Foundation
 /// through `removeObject(forKey:)`. So a value written here reaches no
 /// persistent domain and reads back with Foundation's own coercion.
 ///
+/// Each value is held as its binary property-list encoding, so a read returns
+/// a fresh copy, as a persistent domain's would.
+///
 /// Only that trio is in memory. `dictionaryRepresentation()` bypasses it and
 /// resolves against the host's own search list — the suite plus the
 /// application and global domains — where nothing written here appears.
@@ -18,13 +22,15 @@ public final class MemoryUserDefaults: UserDefaults {
     public static let suiteName =
         "test.kernova.memory.pid\(ProcessInfo.processInfo.processIdentifier)"
 
-    private let lock = NSLock()
-    nonisolated(unsafe) private var storage: [String: Any] = [:]
+    private let storage = Locked<[String: Data]>([:])
 
     public override func object(forKey defaultName: String) -> Any? {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage[defaultName]
+        guard let encoded = storage.withLock({ $0[defaultName] }) else { return nil }
+        do {
+            return try PropertyListSerialization.propertyList(from: encoded, format: nil)
+        } catch {
+            preconditionFailure("A stored property list failed to decode: \(error)")
+        }
     }
 
     public override func set(_ value: Any?, forKey defaultName: String) {
@@ -35,15 +41,17 @@ public final class MemoryUserDefaults: UserDefaults {
         precondition(
             PropertyListSerialization.propertyList(value, isValidFor: .binary),
             "\(type(of: value)) is not a property list value, which UserDefaults requires")
-        lock.lock()
-        defer { lock.unlock() }
-        storage[defaultName] = value
+        let encoded: Data
+        do {
+            encoded = try PropertyListSerialization.data(fromPropertyList: value, format: .binary, options: 0)
+        } catch {
+            preconditionFailure("\(type(of: value)) failed to encode as a property list: \(error)")
+        }
+        storage.withLock { $0[defaultName] = encoded }
     }
 
     public override func removeObject(forKey defaultName: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        storage[defaultName] = nil
+        storage.withLock { $0[defaultName] = nil }
     }
 }
 

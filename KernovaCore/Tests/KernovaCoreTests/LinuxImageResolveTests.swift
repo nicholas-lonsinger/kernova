@@ -1,5 +1,6 @@
 import Foundation
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -278,32 +279,44 @@ struct SafeFilenameTests {
 /// the reason spelled out on the latter: the handler is a global, and Swift
 /// Testing runs suites in parallel, so sharing one lets two suites clobber each
 /// other's handler.
-final class ResolveStubURLProtocol: URLProtocol, @unchecked Sendable {
+final class ResolveStubURLProtocol: URLProtocol {
     struct Reply {
         var statusCode: Int
         var body: Data
         var headers: [String: String] = [:]
     }
 
-    nonisolated(unsafe) static var handler: ((URLRequest) -> Reply)?
+    private struct State {
+        var handler: (@Sendable (URLRequest) -> Reply)?
+        var requestedURLs: [URL] = []
+    }
 
-    private static let recordLock = NSLock()
-    nonisolated(unsafe) private static var requestedURLsStorage: [URL] = []
+    private static let state = Mutex(State())
+
+    /// Sets what every later request is answered with.
+    static func setHandler(_ handler: (@Sendable (URLRequest) -> Reply)?) {
+        state.withLock { $0.handler = handler }
+    }
 
     /// Every URL the stub was asked for since the last `reset()`.
-    static var requestedURLs: [URL] { recordLock.withLock { requestedURLsStorage } }
+    static var requestedURLs: [URL] { state.withLock { $0.requestedURLs } }
 
     /// Clears the handler and everything recorded about the requests it served.
     static func reset() {
-        handler = nil
-        recordLock.withLock { requestedURLsStorage = [] }
+        state.withLock { $0 = State() }
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = Self.handler, let url = request.url else {
+        let url = request.url
+        let handler = Self.state.withLock { state -> (@Sendable (URLRequest) -> Reply)? in
+            guard let handler = state.handler, let url else { return nil }
+            state.requestedURLs.append(url)
+            return handler
+        }
+        guard let handler, let url else {
             client?.urlProtocol(
                 self,
                 didFailWithError: NSError(
@@ -311,7 +324,6 @@ final class ResolveStubURLProtocol: URLProtocol, @unchecked Sendable {
                     userInfo: [NSLocalizedDescriptionKey: "No handler set"]))
             return
         }
-        Self.recordLock.withLock { Self.requestedURLsStorage.append(url) }
         let reply = handler(request)
         var headers = reply.headers
         if headers["Content-Length"] == nil { headers["Content-Length"] = "\(reply.body.count)" }
@@ -376,7 +388,7 @@ struct LinuxImageResolveServiceTests {
     /// the ISO with `isoSize`.
     private func serve(manifest: String, manifestStatus: Int = 200, isoSize: Int = 3_540_299_776) {
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { request in
+        ResolveStubURLProtocol.setHandler { request in
             guard request.url?.lastPathComponent.hasSuffix(".iso") == true else {
                 return ResolveStubURLProtocol.Reply(
                     statusCode: manifestStatus, body: Data(manifest.utf8))
@@ -505,7 +517,7 @@ struct LinuxImageResolveServiceTests {
     @Test("A redirect off the manifest's host is refused, and its target never requested")
     func refusesOffHostManifestRedirect() async {
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { request in
+        ResolveStubURLProtocol.setHandler { request in
             guard request.url?.host() == "cdimage.ubuntu.com" else {
                 return ResolveStubURLProtocol.Reply(
                     statusCode: 200, body: Data(ubuntuManifest.utf8))
@@ -532,7 +544,7 @@ struct LinuxImageResolveServiceTests {
     func followsSameHostManifestRedirect() async throws {
         let moved = "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/SHA256SUMS.txt"
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { request in
+        ResolveStubURLProtocol.setHandler { request in
             guard let url = request.url else {
                 return ResolveStubURLProtocol.Reply(statusCode: 500, body: Data())
             }
@@ -626,7 +638,7 @@ struct LinuxImageResolveServiceTests {
     @Test("A mirror that will not state the ISO's size resolves to nothing")
     func refusesWhenSizeIsUnavailable() async {
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { request in
+        ResolveStubURLProtocol.setHandler { request in
             guard request.url?.lastPathComponent.hasSuffix(".iso") == true else {
                 return ResolveStubURLProtocol.Reply(
                     statusCode: 200, body: Data(ubuntuManifest.utf8))
@@ -648,7 +660,7 @@ struct LinuxImageResolveServiceTests {
     @Test("The size is read off the resolved ISO, falling back to a ranged GET")
     func readsSizeThroughRangedGetWhenHeadIsRefused() async throws {
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { request in
+        ResolveStubURLProtocol.setHandler { request in
             guard request.url?.lastPathComponent.hasSuffix(".iso") == true else {
                 return ResolveStubURLProtocol.Reply(
                     statusCode: 200, body: Data(ubuntuManifest.utf8))
@@ -675,7 +687,7 @@ struct LinuxImageResolveServiceTests {
     /// Answers every request with `statusCode` and a stated `size`.
     private func serveISO(statusCode: Int = 200, size: Int = 1_073_741_824) {
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { _ in
+        ResolveStubURLProtocol.setHandler { _ in
             ResolveStubURLProtocol.Reply(
                 statusCode: statusCode, body: Data(), headers: ["Content-Length": "\(size)"])
         }
@@ -737,7 +749,7 @@ struct LinuxImageResolveServiceTests {
     @Test("A server that states no size leaves the transfer unbounded, so it is refused")
     func refusesPastedURLWithoutSize() async {
         ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { request in
+        ResolveStubURLProtocol.setHandler { request in
             // HEAD refused, and the ranged GET answers 200 — the whole file,
             // which is neither a size nor something to read.
             ResolveStubURLProtocol.Reply(

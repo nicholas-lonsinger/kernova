@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -10,29 +11,32 @@ import Testing
 struct BoundedWorkQueueTests {
     /// Counts jobs as they start and finish, and reports the high-water mark of
     /// how many ran at once.
-    private final class RunTally: @unchecked Sendable {
-        private let lock = NSLock()
-        private var running = 0
-        private var peak = 0
-        private var finished = 0
+    private final class RunTally: Sendable {
+        private struct Counts: Sendable {
+            var running = 0
+            var peak = 0
+            var finished = 0
+        }
+
+        private let counts = Locked(Counts())
         let gate = AsyncGate()
 
-        var concurrentPeak: Int { lock.withLock { peak } }
-        var runningNow: Int { lock.withLock { running } }
-        var finishedCount: Int { lock.withLock { finished } }
+        var concurrentPeak: Int { counts.withLock { $0.peak } }
+        var runningNow: Int { counts.withLock { $0.running } }
+        var finishedCount: Int { counts.withLock { $0.finished } }
 
         func began() {
-            lock.withLock {
-                running += 1
-                peak = max(peak, running)
+            counts.withLock { counts in
+                counts.running += 1
+                counts.peak = max(counts.peak, counts.running)
             }
             gate.notify()
         }
 
         func ended() {
-            lock.withLock {
-                running -= 1
-                finished += 1
+            counts.withLock { counts in
+                counts.running -= 1
+                counts.finished += 1
             }
             gate.notify()
         }

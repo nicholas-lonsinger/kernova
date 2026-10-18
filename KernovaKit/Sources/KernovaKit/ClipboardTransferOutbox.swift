@@ -1,18 +1,18 @@
 import Foundation
+import KernovaSynchronization
 
 /// The transfers this side is serving, one data connection each.
 ///
 /// Owner logic — which requests are answered and which are refused — lives
 /// above this; the outbox turns a verdict into a connection, keeps the live
 /// transfers reachable for supersession, and forgets each one as it ends.
-final class ClipboardTransferOutbox: @unchecked Sendable {
+final class ClipboardTransferOutbox: Sendable {
     private let clock: any EngineClock
     private let socketTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
     private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
 
-    private let lock = NSLock()
-    private var live: [UInt64: ClipboardTransferSender] = [:]
+    private let live = Locked<[UInt64: ClipboardTransferSender]>([:])
 
     /// Where a refusal's own blocking dial and write run, off whatever actor
     /// decided it.
@@ -83,7 +83,7 @@ final class ClipboardTransferOutbox: @unchecked Sendable {
             transferID: transferID, generation: generation, link: link, clock: clock,
             socketTimeout: socketTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
             onTransferTimed: onTransferTimed)
-        let inserted = lock.withLock { () -> Bool in
+        let inserted = live.withLock { live -> Bool in
             guard live[transferID] == nil else { return false }
             live[transferID] = sender
             return true
@@ -135,18 +135,18 @@ final class ClipboardTransferOutbox: @unchecked Sendable {
     /// Retires every in-flight transfer of a superseded offer generation, so
     /// each one's trailer tells the peer why its bytes stopped.
     func cancel(generation: UInt64) {
-        let affected = lock.withLock { live.values.filter { $0.generation == generation } }
+        let affected = live.withLock { $0.values.filter { $0.generation == generation } }
         for sender in affected { sender.cancel(.superseded) }
     }
 
     /// Retires every in-flight transfer — a channel teardown or a capability
     /// going away.
     func cancelAll() {
-        let all = lock.withLock { Array(live.values) }
+        let all = live.withLock { Array($0.values) }
         for sender in all { sender.cancel(.cancelled) }
     }
 
     private func forget(_ transferID: UInt64) {
-        lock.withLock { live[transferID] = nil }
+        live.withLock { $0[transferID] = nil }
     }
 }

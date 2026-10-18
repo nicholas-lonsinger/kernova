@@ -217,7 +217,7 @@ struct VMLibraryAdoptionTests {
         let gate = GatedStep()
         // A discard that fails still leaves nothing a reconcile can adopt: the
         // staged tree is under the hidden staging directory.
-        storage.discardStagedBundleError = CocoaError(.fileWriteNoPermission)
+        storage.setDiscardStagedBundleError(CocoaError(.fileWriteNoPermission))
 
         let arrival = library.beginGatedArrival(named: "Cancelled", gate: gate)
         try await gate.entered.wait { gate.hasEntered }

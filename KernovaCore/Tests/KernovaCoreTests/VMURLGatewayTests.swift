@@ -20,26 +20,25 @@ struct VMURLGatewayTests {
 
     /// A readiness await the test holds open, so a verb's wait for the first
     /// library read is observable rather than instantaneous.
-    private final class ReadinessGate: @unchecked Sendable {
+    @MainActor
+    private final class ReadinessGate {
         /// Fires when the gateway starts waiting, and again when it is let go.
         private let gate = AsyncGate()
-        private let lock = NSLock()
-        private var waiting = false
         private var isOpen = false
 
         /// Whether the gateway is parked on the readiness await.
-        var isWaiting: Bool { lock.withLock { waiting } }
+        private(set) var isWaiting = false
 
         /// Suspends until ``open()``, as the app's first library read does.
         func wait() async {
-            lock.withLock { waiting = true }
+            isWaiting = true
             gate.notify()
-            try? await gate.wait { self.lock.withLock { self.isOpen } }
+            try? await gate.wait { self.isOpen }
         }
 
         /// Lands the library read.
         func open() {
-            lock.withLock { isOpen = true }
+            isOpen = true
             gate.notify()
         }
 

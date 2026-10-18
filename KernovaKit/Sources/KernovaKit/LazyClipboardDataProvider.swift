@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// Serves a clipboard offer's representations to a pasteboard lazily.
 ///
@@ -14,22 +15,22 @@ import KernovaLogging
 /// loop, which drains a retract of the very write being served — is held until
 /// the fire returns, so the owner never lets go under the executing frame.
 ///
-/// `@unchecked Sendable`: the registry holding a provider is shared across
-/// threads, the two callbacks arrive on the pasteboard server's thread for the
-/// owner, and the fire-depth bookkeeping they share is lock-guarded.
-public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProvider,
-    @unchecked Sendable
-{
-    private let provide: (NSPasteboard.PasteboardType) -> Data?
-    private let onFinished: (LazyClipboardDataProvider) -> Void
+/// A lock rather than main-actor isolation: AppKit marks both callbacks
+/// `NS_SWIFT_NONISOLATED`, and their arrival on the main run loop is only
+/// observed (`NestedEventLoopWait`).
+public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProvider, Sendable {
+    private struct State: Sendable {
+        /// Fires on the stack right now — a fire can nest another for a sibling
+        /// flavor of the same item.
+        var fireDepth = 0
+        /// Whether the pasteboard finished with this provider inside a fire, so
+        /// the outermost fire's return owes `onFinished`.
+        var finishedWhileFiring = false
+    }
 
-    private let lock = NSLock()
-    /// Fires on the stack right now — a fire can nest another for a sibling
-    /// flavor of the same item.
-    private var fireDepth = 0
-    /// Whether the pasteboard finished with this provider inside a fire, so the
-    /// outermost fire's return owes `onFinished`.
-    private var finishedWhileFiring = false
+    private let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
+    private let onFinished: @Sendable (LazyClipboardDataProvider) -> Void
+    private let state = Locked(State())
 
     // Same category as `LazyClipboardProviderRegistry`, so a fire and the
     // release of the provider that served it read as one sequence.
@@ -42,8 +43,8 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
     ///   - onFinished: called when the pasteboard no longer needs this provider,
     ///     so the owner can drop its strong reference.
     public init(
-        provide: @escaping (NSPasteboard.PasteboardType) -> Data?,
-        onFinished: @escaping (LazyClipboardDataProvider) -> Void
+        provide: @escaping @Sendable (NSPasteboard.PasteboardType) -> Data?,
+        onFinished: @escaping @Sendable (LazyClipboardDataProvider) -> Void
     ) {
         self.provide = provide
         self.onFinished = onFinished
@@ -56,17 +57,17 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
         item: NSPasteboardItem,
         provideDataForType type: NSPasteboard.PasteboardType
     ) {
-        lock.withLock { fireDepth += 1 }
+        state.withLock { $0.fireDepth += 1 }
         let data = provide(type)
         #log(
             Self.logger, .debug,
             "Provided \(data?.count ?? 0, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
         )
         if let data { item.setData(data, forType: type) }
-        let owesFinish = lock.withLock { () -> Bool in
-            fireDepth -= 1
-            guard fireDepth == 0, finishedWhileFiring else { return false }
-            finishedWhileFiring = false
+        let owesFinish = state.withLock { state -> Bool in
+            state.fireDepth -= 1
+            guard state.fireDepth == 0, state.finishedWhileFiring else { return false }
+            state.finishedWhileFiring = false
             return true
         }
         guard owesFinish else { return }
@@ -81,9 +82,9 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
     /// this provider, so its strong reference can be dropped — after the fire in
     /// progress returns, if there is one.
     public func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) {
-        let deferred = lock.withLock { () -> Bool in
-            guard fireDepth > 0 else { return false }
-            finishedWhileFiring = true
+        let deferred = state.withLock { state -> Bool in
+            guard state.fireDepth > 0 else { return false }
+            state.finishedWhileFiring = true
             return true
         }
         guard !deferred else { return }

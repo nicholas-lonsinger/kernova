@@ -2,6 +2,7 @@ import Foundation
 import KernovaTestSupport
 
 @testable import KernovaKit
+import KernovaSynchronization
 
 // Harnesses for the `ClipboardEndpoint` suites: `EndpointPair` runs both ends of
 // one channel through real endpoints, `RawPeerHarness` runs one real endpoint
@@ -22,7 +23,7 @@ final class EndpointSide {
     let clock: GatedEngineClock
     let channel: VsockChannel
     /// The ceiling `maxPasteBytes` reads, so a test can move it mid-connection.
-    let pasteLimit: Box<Int>
+    let pasteLimit: Locked<Int>
 
     init(
         channel: VsockChannel,
@@ -39,7 +40,7 @@ final class EndpointSide {
         dataSocketTimeout: TimeInterval = testWaitBackstop
     ) {
         self.channel = channel
-        self.pasteLimit = Box(pasteLimit)
+        self.pasteLimit = Locked(pasteLimit)
         let clock = GatedEngineClock()
         self.clock = clock
         if receives {
@@ -51,7 +52,7 @@ final class EndpointSide {
         let limit = self.pasteLimit
         var configuration = ClipboardEndpoint.Configuration(
             role: role, kind: kind, label: label, peerName: peerName,
-            maxPasteBytes: { limit.value }, staging: staging)
+            maxPasteBytes: { limit.withLock { $0 } }, staging: staging)
         configuration.lazyPullTimeout = lazyPullTimeout
         configuration.progressRevealDelay = 0
         configuration.progressIdleGap = 0

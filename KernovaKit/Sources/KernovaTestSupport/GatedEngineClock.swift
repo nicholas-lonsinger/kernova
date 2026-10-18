@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 /// An `EngineClock` that parks every `sleep` until the test releases it,
 /// recording the interval each caller asked for.
@@ -16,7 +17,7 @@ import KernovaKit
 /// only when released, and the reading moves only in ``advance(seconds:)`` — so
 /// a deadline measured against it ages exactly as much as the test says, and
 /// releasing one loop's sleep cannot age another's at all.
-public final class GatedEngineClock: EngineClock, @unchecked Sendable {
+public final class GatedEngineClock: EngineClock, Sendable {
     /// A `sleep` call parked on the gate.
     public struct ParkedSleep: Sendable, Equatable {
         /// Identifies the call; unique for the clock's lifetime.
@@ -35,41 +36,83 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     }
 
     /// One parked `sleep` call: its identity, what it asked for, and the
-    /// continuation to resume once the test releases it.
-    ///
-    /// A reference type so the continuation can be filled in after the sleeper
-    /// is registered; it is mutated only under the lock, and only while
-    /// ``sleepers`` still holds it.
-    private final class Sleeper {
+    /// continuation to resume once the test releases it — `nil` until the
+    /// sleeper reaches its park.
+    private struct Sleeper: Sendable {
         let id: Int
         let seconds: TimeInterval
         var continuation: CheckedContinuation<Void, Error>?
+    }
 
-        init(id: Int, seconds: TimeInterval) {
-            self.id = id
-            self.seconds = seconds
+    private struct State: Sendable {
+        var sleepers: [Sleeper] = []
+        var requested: [TimeInterval] = []
+        var nanoseconds: UInt64 = 0
+
+        /// Outcomes for sleeps settled before their continuation was installed
+        /// — a release racing the registration. Consumed by that registration.
+        var settledEarly: [Int: Outcome] = [:]
+        var nextID = 1
+
+        /// Continuations of sleeps released by ``releaseHeld(_:)``, kept until
+        /// ``resume(_:)``; `nil` while the caller has not reached its park yet.
+        var held: [Int: CheckedContinuation<Void, Error>?] = [:]
+
+        /// Held sleeps ``resume(_:)`` reached before their caller parked.
+        var resumedEarly: Set<Int> = []
+
+        /// The task each ``schedule(after:_:)`` call returned, by sleep id.
+        var scheduled: [Int: Task<Void, Never>] = [:]
+
+        /// Records a sleep of `interval` as parked, and returns its id.
+        mutating func register(_ interval: TimeInterval) -> Int {
+            let id = nextID
+            nextID += 1
+            sleepers.append(Sleeper(id: id, seconds: interval))
+            requested.append(interval)
+            return id
+        }
+
+        /// Hands sleep `id` the continuation its caller parked on, or returns
+        /// the outcome a settle that raced the park left for the caller to act
+        /// on.
+        mutating func install(
+            _ continuation: CheckedContinuation<Void, Error>, for id: Int
+        ) -> Outcome? {
+            guard let outcome = settledEarly.removeValue(forKey: id) else {
+                if let index = sleepers.firstIndex(where: { $0.id == id }) {
+                    sleepers[index].continuation = continuation
+                }
+                return nil
+            }
+            guard outcome == .held, resumedEarly.remove(id) == nil else { return outcome }
+            held[id] = continuation
+            return nil
+        }
+
+        /// Removes sleep `id` from the parked set as `outcome`, and returns it;
+        /// `nil` once it has already been settled.
+        mutating func settle(id: Int, as outcome: Outcome) -> Sleeper? {
+            guard let index = sleepers.firstIndex(where: { $0.id == id }) else { return nil }
+            let sleeper = sleepers.remove(at: index)
+            if outcome == .held { held[id] = .some(sleeper.continuation) }
+            if sleeper.continuation == nil { settledEarly[id] = outcome }
+            return sleeper
+        }
+
+        /// Takes the continuation of held sleep `id` for the caller to resume,
+        /// or notes the resume for a caller that has not parked yet.
+        mutating func resumeHeld(id: Int) -> CheckedContinuation<Void, Error>? {
+            guard let entry = held.removeValue(forKey: id) else { return nil }
+            guard let continuation = entry else {
+                resumedEarly.insert(id)
+                return nil
+            }
+            return continuation
         }
     }
 
-    private let lock = NSLock()
-    private var sleepers: [Sleeper] = []
-    private var requested: [TimeInterval] = []
-    private var nanoseconds: UInt64 = 0
-
-    /// Outcomes for sleeps settled before their continuation was installed —
-    /// a release racing the registration. Consumed by that registration.
-    private var settledEarly: [Int: Outcome] = [:]
-    private var nextID = 1
-
-    /// Continuations of sleeps released by ``releaseHeld(_:)``, kept until
-    /// ``resume(_:)``; `nil` while the caller has not reached its park yet.
-    private var held: [Int: CheckedContinuation<Void, Error>?] = [:]
-
-    /// Held sleeps ``resume(_:)`` reached before their caller parked.
-    private var resumedEarly: Set<Int> = []
-
-    /// The task each ``schedule(after:_:)`` call returned, by sleep id.
-    private var scheduled: [Int: Task<Void, Never>] = [:]
+    private let state = Locked(State())
 
     /// Fires whenever a `sleep` call parks; await it instead of polling
     /// ``parked`` or ``requestedSeconds``.
@@ -84,25 +127,25 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
 
     /// The reading as last advanced; zero until a test moves it.
     public var now: EngineInstant {
-        EngineInstant(nanoseconds: lock.withLock { nanoseconds })
+        EngineInstant(nanoseconds: state.withLock { $0.nanoseconds })
     }
 
     /// Moves the reading forward by `seconds`, ageing every deadline measured
     /// against this clock without releasing anything parked on it.
     public func advance(seconds: TimeInterval) {
         let span = schedulable(seconds)
-        lock.withLock { nanoseconds &+= UInt64(span * 1_000_000_000) }
+        state.withLock { $0.nanoseconds &+= UInt64(span * 1_000_000_000) }
     }
 
     /// The sleeps currently parked, in the order they were requested.
     public var parked: [ParkedSleep] {
-        lock.withLock { sleepers.map { ParkedSleep(id: $0.id, seconds: $0.seconds) } }
+        state.withLock { $0.sleepers.map { ParkedSleep(id: $0.id, seconds: $0.seconds) } }
     }
 
     /// Every interval a caller has asked to sleep for, in request order —
     /// released and parked alike. The cadence log a test asserts against.
     public var requestedSeconds: [TimeInterval] {
-        lock.withLock { requested }
+        state.withLock { $0.requested }
     }
 
     /// Resumes a parked sleep, letting its caller run on.
@@ -124,21 +167,13 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
 
     /// Lets the caller of a sleep released by ``releaseHeld(_:)`` run on.
     public func resume(_ sleep: ParkedSleep) {
-        let continuation: CheckedContinuation<Void, Error>? = lock.withLock {
-            guard let entry = held.removeValue(forKey: sleep.id) else { return nil }
-            guard let continuation = entry else {
-                resumedEarly.insert(sleep.id)
-                return nil
-            }
-            return continuation
-        }
-        continuation?.resume()
+        state.withLock { $0.resumeHeld(id: sleep.id) }?.resume()
     }
 
     /// Waits until the work ``schedule(after:_:)`` armed with `sleep` has
     /// finished — run, or returned without running.
     public func completion(of sleep: ParkedSleep) async {
-        await lock.withLock { scheduled[sleep.id] }?.value
+        await state.withLock { $0.scheduled[sleep.id] }?.value
     }
 
     /// Parks until the test releases this call, throwing `CancellationError` if
@@ -159,19 +194,13 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
             do { try await park(id) } catch { return }
             await body()
         }
-        lock.withLock { scheduled[id] = task }
+        state.withLock { $0.scheduled[id] = task }
         return task
     }
 
     /// Records a sleep of `interval` as parked and announces it.
     private func register(_ interval: TimeInterval) -> Int {
-        let id: Int = lock.withLock {
-            let id = nextID
-            nextID += 1
-            sleepers.append(Sleeper(id: id, seconds: interval))
-            requested.append(interval)
-            return id
-        }
+        let id = state.withLock { $0.register(interval) }
         sleepRequested.notify()
         parkedChanged.notify()
         return id
@@ -185,16 +214,7 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
                 // A release or a cancellation racing this registration settles
                 // the sleep before there is a continuation to resume, so it
                 // leaves the outcome here for us to act on instead.
-                let early: Outcome? = lock.withLock {
-                    guard let outcome = settledEarly.removeValue(forKey: id) else {
-                        sleepers.first { $0.id == id }?.continuation = continuation
-                        return nil
-                    }
-                    guard outcome == .held, resumedEarly.remove(id) == nil else { return outcome }
-                    held[id] = continuation
-                    return nil
-                }
-                switch early {
+                switch state.withLock({ $0.install(continuation, for: id) }) {
                 case .released, .held: continuation.resume()
                 case .cancelled: continuation.resume(throwing: CancellationError())
                 case nil: break
@@ -211,14 +231,7 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// A settled sleep leaves ``sleepers``, so its presence there is what makes
     /// this fire at most once per call.
     private func settle(id: Int, as outcome: Outcome) {
-        let removed: Sleeper? = lock.withLock {
-            guard let index = sleepers.firstIndex(where: { $0.id == id }) else { return nil }
-            let sleeper = sleepers.remove(at: index)
-            if outcome == .held { held[id] = .some(sleeper.continuation) }
-            if sleeper.continuation == nil { settledEarly[id] = outcome }
-            return sleeper
-        }
-        guard let removed else { return }
+        guard let removed = state.withLock({ $0.settle(id: id, as: outcome) }) else { return }
         parkedChanged.notify()
         guard let continuation = removed.continuation else { return }
         switch outcome {

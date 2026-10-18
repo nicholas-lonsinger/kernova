@@ -1,5 +1,6 @@
 import AppleArchive
 import Foundation
+import KernovaSynchronization
 import System
 
 /// Why an extract was stopped by the consumer rather than by the archive.
@@ -66,7 +67,7 @@ extension ClipboardSequentialArchiveStream {
 }
 
 /// Write-only adapter handing every encoded byte straight to a data connection.
-final class ClipboardArchivePayloadSink: ClipboardSequentialArchiveStream, @unchecked Sendable {
+final class ClipboardArchivePayloadSink: ClipboardSequentialArchiveStream {
     private let writer: ClipboardPayloadWriter
 
     init(writer: ClipboardPayloadWriter) {
@@ -80,7 +81,7 @@ final class ClipboardArchivePayloadSink: ClipboardSequentialArchiveStream, @unch
 }
 
 /// Read-only adapter pulling archive bytes straight off a data connection.
-final class ClipboardArchivePayloadSource: ClipboardSequentialArchiveStream, @unchecked Sendable {
+final class ClipboardArchivePayloadSource: ClipboardSequentialArchiveStream {
     private let reader: ClipboardPayloadReader
 
     init(reader: ClipboardPayloadReader) {
@@ -105,7 +106,7 @@ final class ClipboardArchivePayloadSource: ClipboardSequentialArchiveStream, @un
 /// Every operation forwards, including the random-access ones: staying
 /// transparent means an unexpected seek from the codec still works and only
 /// makes the count approximate, instead of failing a transfer.
-final class ClipboardArchiveCountingStream: ArchiveByteStreamProtocol, @unchecked Sendable {
+final class ClipboardArchiveCountingStream: ArchiveByteStreamProtocol {
     private let upstream: ArchiveByteStream
     /// Called once the running total has advanced by at least `pacingBytes`.
     ///
@@ -113,12 +114,26 @@ final class ClipboardArchiveCountingStream: ArchiveByteStreamProtocol, @unchecke
     private let onAdvance: ((Int) throws -> Void)?
     private let pacingBytes: Int
 
-    private let lock = NSLock()
-    private var total = 0
-    private var reportedAt = 0
+    private struct State {
+        var total = 0
+        var reportedAt = 0
+
+        /// Adds `count` to the total, returning the new total when at least
+        /// `pacingBytes` have accumulated since the last one returned.
+        mutating func advance(by count: Int, pacingBytes: Int) -> Int? {
+            total += count
+            guard total - reportedAt >= pacingBytes else { return nil }
+            reportedAt = total
+            return total
+        }
+    }
+
+    /// AppleArchive's worker thread advances it, and the caller's thread reads
+    /// it after the codec returns, with no ordering documented between them.
+    private let state = Locked(State())
 
     /// Total bytes forwarded so far.
-    var byteCount: Int { lock.withLock { total } }
+    var byteCount: Int { state.withLock { $0.total } }
 
     init(
         upstream: ArchiveByteStream, pacingBytes: Int = 1 << 20,
@@ -130,12 +145,7 @@ final class ClipboardArchiveCountingStream: ArchiveByteStreamProtocol, @unchecke
     }
 
     private func advance(_ count: Int) throws {
-        let due: Int? = lock.withLock {
-            total += count
-            guard total - reportedAt >= pacingBytes else { return nil }
-            reportedAt = total
-            return total
-        }
+        let due = state.withLock { $0.advance(by: count, pacingBytes: pacingBytes) }
         if let due { try onAdvance?(due) }
     }
 
@@ -180,33 +190,23 @@ final class ClipboardArchiveCountingStream: ArchiveByteStreamProtocol, @unchecke
 
 // MARK: - Pipeline scaffolding
 
-/// A lock-guarded counter shared between an archive pipeline and whoever reads
-/// its progress.
-final class ArchiveByteCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored = 0
-
-    /// The running total.
-    var value: Int {
-        get { lock.withLock { stored } }
-        set { lock.withLock { stored = newValue } }
-    }
-}
-
 /// The consumer's own reason for stopping a pipeline, kept apart from whatever
 /// the archive reports.
 ///
 /// AppleArchive wraps an error thrown out of a stream callback in one of its
 /// own, so the reason the *consumer* refused would otherwise reach the caller as
 /// a generic archive failure — and a refusal has to be reported as what it is.
-final class ArchiveRefusalBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: Error?
+final class ArchiveRefusalBox: Sendable {
+    private let first = Locked<(any Error)?>(nil)
 
     /// The first refusal recorded, if any.
-    var value: Error? {
-        get { lock.withLock { stored } }
-        set { lock.withLock { if stored == nil { stored = newValue } } }
+    var recorded: (any Error)? { first.withLock { $0 } }
+
+    /// Records `error`, unless a refusal was already recorded.
+    func record(_ error: any Error) {
+        first.withLock { first in
+            if first == nil { first = error }
+        }
     }
 
     /// Wraps `body` so the reason it throws for survives being rewrapped.
@@ -216,7 +216,7 @@ final class ArchiveRefusalBox: @unchecked Sendable {
             do {
                 try body(total)
             } catch {
-                self.value = error
+                self.record(error)
                 throw error
             }
         }
@@ -280,7 +280,7 @@ enum ClipboardArchiveCodec {
     ///   archive was written and every stream closed cleanly.
     static func encode<Sink: ArchiveByteStreamProtocol & AnyObject>(
         _ source: ClipboardArchiveSource, into sink: Sink,
-        counted: ArchiveByteCounter, pacingBytes: Int = 1,
+        counted: Locked<Int>, pacingBytes: Int = 1,
         onOutputAdvanced: (@Sendable (Int) throws -> Void)? = nil
     ) -> Error? {
         var closes = ArchiveCloseTracker()
@@ -302,7 +302,7 @@ enum ClipboardArchiveCodec {
             let counter = ClipboardArchiveCountingStream(
                 upstream: compressStream, pacingBytes: pacingBytes
             ) { total in
-                counted.value = total
+                counted.withLock { $0 = total }
                 try onOutputAdvanced?(total)
             }
             guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
@@ -310,7 +310,8 @@ enum ClipboardArchiveCodec {
             }
             defer {
                 closes.close { try countedStream.close() }
-                counted.value = counter.byteCount
+                let total = counter.byteCount
+                counted.withLock { $0 = total }
             }
 
             guard let encodeStream = ArchiveStream.encodeStream(writingTo: countedStream)
@@ -353,7 +354,7 @@ enum ClipboardArchiveCodec {
     ///   archive was unpacked and every stream closed cleanly.
     static func extract<Source: ArchiveByteStreamProtocol & AnyObject>(
         from source: Source, into destinationURL: URL,
-        counted: ArchiveByteCounter, pacingBytes: Int,
+        counted: Locked<Int>, pacingBytes: Int,
         onOutputAdvanced: (@Sendable (Int) throws -> Void)?
     ) -> Error? {
         var closes = ArchiveCloseTracker()
@@ -374,7 +375,7 @@ enum ClipboardArchiveCodec {
             let counter = ClipboardArchiveCountingStream(
                 upstream: decompressStream, pacingBytes: pacingBytes
             ) { total in
-                counted.value = total
+                counted.withLock { $0 = total }
                 try onOutputAdvanced?(total)
             }
             guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
@@ -382,7 +383,8 @@ enum ClipboardArchiveCodec {
             }
             defer {
                 closes.close { try countedStream.close() }
-                counted.value = counter.byteCount
+                let total = counter.byteCount
+                counted.withLock { $0 = total }
             }
 
             guard let decodeStream = ArchiveStream.decodeStream(readingFrom: countedStream)

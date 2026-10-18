@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -189,7 +190,7 @@ struct MacOSVersionTests {
 /// global, and Swift Testing runs suites in parallel, so sharing it lets this
 /// suite and `DownloadServiceTests` clobber each other's handler.
 /// `.serialized` orders tests *within* a suite and does not prevent that.
-final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
+final class ProbeStubURLProtocol: URLProtocol {
     struct Reply {
         var statusCode: Int
         var body: Data
@@ -209,43 +210,50 @@ final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
     /// How much of a withheld body is delivered to surface the response.
     static let bodyPrimerBytes = 1024
 
-    nonisolated(unsafe) static var handler: ((URLRequest) -> Reply)?
+    private struct State {
+        var handler: (@Sendable (URLRequest) -> Reply)?
+        var deliveredBodyBytes = 0
+        var requestedRanges: [String] = []
+    }
 
-    private static let recordLock = NSLock()
-    nonisolated(unsafe) private static var deliveredBodyBytesStorage = 0
-    nonisolated(unsafe) private static var requestedRangesStorage: [String] = []
+    private static let state = Mutex(State())
+
+    /// Sets what every later request is answered with.
+    static func setHandler(_ handler: (@Sendable (URLRequest) -> Reply)?) {
+        state.withLock { $0.handler = handler }
+    }
 
     /// Body bytes handed to a client since the last `reset()`.
-    static var deliveredBodyBytes: Int { recordLock.withLock { deliveredBodyBytesStorage } }
+    static var deliveredBodyBytes: Int { state.withLock { $0.deliveredBodyBytes } }
 
     /// Every `Range` header value the stub was asked for since the last `reset()`.
-    static var requestedRanges: [String] { recordLock.withLock { requestedRangesStorage } }
+    static var requestedRanges: [String] { state.withLock { $0.requestedRanges } }
 
     /// Clears the handler and everything recorded about the requests it served.
     static func reset() {
-        handler = nil
-        recordLock.withLock {
-            deliveredBodyBytesStorage = 0
-            requestedRangesStorage = []
-        }
+        state.withLock { $0 = State() }
     }
 
-    private let cancelled = DispatchSemaphore(value: 0)
+    /// A withheld reply's body, for the deliveries `startLoading` schedules.
+    private var withheldBody = Data()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = Self.handler, let url = request.url else {
+        let range = request.value(forHTTPHeaderField: "Range")
+        let handler = Self.state.withLock { state -> (@Sendable (URLRequest) -> Reply)? in
+            guard let handler = state.handler, request.url != nil else { return nil }
+            if let range { state.requestedRanges.append(range) }
+            return handler
+        }
+        guard let handler, let url = request.url else {
             client?.urlProtocol(
                 self,
                 didFailWithError: NSError(
                     domain: "ProbeStubURLProtocol", code: -1,
                     userInfo: [NSLocalizedDescriptionKey: "No handler set"]))
             return
-        }
-        if let range = request.value(forHTTPHeaderField: "Range") {
-            Self.recordLock.withLock { Self.requestedRangesStorage.append(range) }
         }
         let reply = handler(request)
         var headers = reply.headers
@@ -262,29 +270,33 @@ final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
             deliver(reply.body)
             return
         }
-        // On a GCD thread, never the cooperative pool: this parks until the
-        // client cancels, and `stopLoading` has to be free to run meanwhile.
-        // The primer belongs here rather than above because nothing handed to
-        // the client reaches it until `startLoading` has returned.
-        DispatchQueue.global().async { [self] in
-            // A raw semaphore wait bypasses the stopwatch helpers, so arm the
-            // session activity itself.
-            armTestSessionActivity()
-            deliver(reply.body.prefix(Self.bodyPrimerBytes), finishing: false)
-            let backstop =
-                DispatchTime.now() + .seconds(Int(testWaitBackstop))
-            guard cancelled.wait(timeout: backstop) == .timedOut else { return }
-            deliver(reply.body.dropFirst(Self.bodyPrimerBytes))
-        }
+        // Both deliveries run on this loading thread's run loop, where
+        // `stopLoading` cancels them. The primer is scheduled rather than
+        // delivered here because nothing handed to the client reaches it until
+        // `startLoading` has returned. A run-loop timer bypasses the stopwatch
+        // helpers, so the session activity is armed here.
+        armTestSessionActivity()
+        withheldBody = reply.body
+        let modes = [RunLoop.Mode.default] + (RunLoop.current.currentMode.map { [$0] } ?? [])
+        perform(#selector(deliverPrimer), with: nil, afterDelay: 0, inModes: modes)
+        perform(#selector(deliverRemainder), with: nil, afterDelay: testWaitBackstop, inModes: modes)
     }
 
     override func stopLoading() {
-        cancelled.signal()
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
+    }
+
+    @objc private func deliverPrimer() {
+        deliver(withheldBody.prefix(Self.bodyPrimerBytes), finishing: false)
+    }
+
+    @objc private func deliverRemainder() {
+        deliver(withheldBody.dropFirst(Self.bodyPrimerBytes))
     }
 
     private func deliver(_ body: Data, finishing: Bool = true) {
         if !body.isEmpty {
-            Self.recordLock.withLock { Self.deliveredBodyBytesStorage += body.count }
+            Self.state.withLock { $0.deliveredBodyBytes += body.count }
             client?.urlProtocol(self, didLoad: body)
         }
         if finishing { client?.urlProtocolDidFinishLoading(self) }
@@ -414,7 +426,7 @@ struct RestoreImageProbeServiceTests {
     /// and range requests out of the same bytes.
     private func serve(total: Int, body: Data, headStatus: Int = 200) {
         ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.handler = { request in
+        ProbeStubURLProtocol.setHandler { request in
             if request.httpMethod == "HEAD" {
                 return ProbeStubURLProtocol.Reply(
                     statusCode: headStatus, body: Data(),
@@ -478,7 +490,7 @@ struct RestoreImageProbeServiceTests {
     @Test("A non-HTTPS URL is refused before any request")
     func refusesInsecureURL() async throws {
         let http = try #require(URL(string: "http://updates.cdn-apple.com/x/R.ipsw"))
-        ProbeStubURLProtocol.handler = { _ in
+        ProbeStubURLProtocol.setHandler { _ in
             Issue.record("The probe issued a request for a non-HTTPS URL")
             return ProbeStubURLProtocol.Reply(statusCode: 200, body: Data(), headers: [:])
         }
@@ -493,7 +505,7 @@ struct RestoreImageProbeServiceTests {
     func sizeRefusesInsecureURL() async throws {
         let http = try #require(URL(string: "http://updates.cdn-apple.com/x/R.ipsw"))
         ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.handler = { _ in
+        ProbeStubURLProtocol.setHandler { _ in
             Issue.record("The size read issued a request for a non-HTTPS URL")
             return ProbeStubURLProtocol.Reply(statusCode: 200, body: Data(), headers: [:])
         }
@@ -507,7 +519,7 @@ struct RestoreImageProbeServiceTests {
     @Test("A server stating a length of zero is refused, not reported as a size")
     func refusesZeroLength() async {
         ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.handler = { request in
+        ProbeStubURLProtocol.setHandler { request in
             if request.httpMethod == "HEAD" {
                 return ProbeStubURLProtocol.Reply(
                     statusCode: 200, body: Data(), headers: ["Content-Length": "0"])
@@ -531,7 +543,7 @@ struct RestoreImageProbeServiceTests {
     @Test("A URL that answers nothing but 404 is refused with its status")
     func refusesMissingImage() async {
         ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.handler = { _ in
+        ProbeStubURLProtocol.setHandler { _ in
             ProbeStubURLProtocol.Reply(statusCode: 404, body: Data(), headers: [:])
         }
         defer { ProbeStubURLProtocol.reset() }
@@ -558,7 +570,7 @@ struct RestoreImageProbeServiceTests {
     @Test("A server that answers a ranged read with the whole file is abandoned unread")
     func abandonsRangeIgnoringServer() async {
         ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.handler = { request in
+        ProbeStubURLProtocol.setHandler { request in
             if request.httpMethod == "HEAD" {
                 return ProbeStubURLProtocol.Reply(
                     statusCode: 200, body: Data(),
@@ -580,7 +592,7 @@ struct RestoreImageProbeServiceTests {
     @Test("A range-ignoring server is refused while its size is still being read")
     func abandonsRangeIgnoringServerWithoutHead() async {
         ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.handler = { request in
+        ProbeStubURLProtocol.setHandler { request in
             if request.httpMethod == "HEAD" {
                 return ProbeStubURLProtocol.Reply(statusCode: 405, body: Data(), headers: [:])
             }
