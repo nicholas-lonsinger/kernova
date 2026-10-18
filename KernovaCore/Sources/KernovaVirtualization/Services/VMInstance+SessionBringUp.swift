@@ -16,7 +16,7 @@ extension VMInstance {
     /// `nil` for the same reason ``attachSession(_:from:)`` returns `nil`, and
     /// the caller must not proceed to start anything.
     func bringUpSession(
-        _ context: borrowing VMBringUpContext, with result: ConfigurationBuilder.BuildResult
+        _ context: borrowing VMBringUpContext, with result: sending ConfigurationBuilder.BuildResult
     ) async -> VMSession? {
         adoptBuildProducts(context, result.products)
         guard let session = await attachSession(context, from: result) else { return nil }
@@ -34,14 +34,16 @@ extension VMInstance {
     /// `nil` exactly when ``VMActivity/beginSession(_:_:)`` is; the
     /// just-created `VZVirtualMachine` is then released with its session.
     func attachSession(
-        _ context: borrowing VMBringUpContext, from result: ConfigurationBuilder.BuildResult
+        _ context: borrowing VMBringUpContext, from result: sending ConfigurationBuilder.BuildResult
     ) async -> VMSession? {
-        // The configuration was assembled off-main and is handed over whole:
-        // nothing touches it after the VM is created from it.
-        nonisolated(unsafe) let vzConfig = result.configuration
-        let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
+        // Read before the send: region analysis treats `result` as one value,
+        // so no field of it is readable once `configuration` is sent.
+        let networks = result.products.vmnetNetworks
+        let recovery = result.attachmentRecovery
+        let session = await VMSession.make(configuration: result.configuration, events: makeSessionEvents())
         guard let sessionContext = beginSession(context, session) else { return nil }
-        await setupNetworkAttachmentCoordinator(for: session, in: sessionContext, from: result)
+        await setupNetworkAttachmentCoordinator(
+            for: session, in: sessionContext, networks: networks, recovery: recovery)
         return session
     }
 
@@ -49,13 +51,12 @@ extension VMInstance {
     /// prior one.
     private func setupNetworkAttachmentCoordinator(
         for session: VMSession, in context: VMSessionContext,
-        from result: ConfigurationBuilder.BuildResult
+        networks: VmnetSessionNetworks, recovery: ConfigurationBuilder.AttachmentRecoverySources
     ) async {
         context.networkAttachmentCoordinator?.stop()
         context.networkAttachmentCoordinator = nil
         context.networkAttachmentPending = false
         guard configuration.networkEnabled, session.hasNetworkDevice else { return }
-        let networks = result.products.vmnetNetworks
         let initialPlan = await session.inspectNetworkAttachment { attachment in
             VZNetworkDeviceHandle.plan(of: attachment, in: networks)
         }
@@ -64,11 +65,11 @@ extension VMInstance {
             vmName: name,
             device: VZNetworkDeviceHandle(
                 session: session, initialPlan: initialPlan, vmnetNetworks: networks,
-                vmnetAttachments: result.vmnetAttachments),
-            interfaces: result.bridgedInterfaces,
+                vmnetAttachments: recovery.vmnetAttachments),
+            interfaces: recovery.bridgedInterfaces,
             linkObserver: HostNetworkLinkObserver(),
             vmnetNetworks: networks,
-            entitlements: result.entitlements,
+            entitlements: recovery.entitlements,
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
             onPendingChange: { [weak context] pending in

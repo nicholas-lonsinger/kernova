@@ -3,6 +3,47 @@ import KernovaCore
 import KernovaLogging
 import Virtualization
 
+// MARK: - Queue Isolation
+
+/// Isolation to one VM's queue before its session exists.
+///
+/// `VMSession` cannot create its own VM: an actor's initializer is isolated
+/// only once every stored property is set, and the VM is what sets them.
+private actor VMQueueIsolation {
+    nonisolated let queue: DispatchSerialQueue
+
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        queue.asUnownedSerialExecutor()
+    }
+
+    init(queue: DispatchSerialQueue) {
+        self.queue = queue
+    }
+
+    func makeSession(
+        id: UUID, configuration: sending VZVirtualMachineConfiguration, events: VMSessionEvents
+    ) -> VMSession {
+        let vm = VZVirtualMachine(configuration: configuration, queue: queue)
+        // Read outside `assert`: its autoclosure would capture `vm`.
+        let vmQueue = vm.queue
+        assert(vmQueue === queue)
+        let adapter = VMDelegateAdapter(sessionID: id, events: events)
+        vm.delegate = adapter
+        // A controller's delegate must be set on the VM's queue, which is this
+        // one, and its callback arrives here too.
+        var usbAdapter: AnyObject?
+        if #available(macOS 27.0, *) {
+            let usb = VMUSBControllerDelegateAdapter(sessionID: id, events: events)
+            for controller in vm.usbControllers {
+                controller.delegate = usb
+            }
+            usbAdapter = usb
+        }
+        return VMSession(
+            id: id, queue: queue, vm: vm, delegateAdapter: adapter, usbDelegateAdapter: usbAdapter)
+    }
+}
+
 // MARK: - Display Handle
 
 /// Carries a `VZVirtualMachine` from its session to the one main-actor site
@@ -42,9 +83,9 @@ package struct VMDisplayHandle: @unchecked Sendable {
 /// queue the VM was created with.
 ///
 /// `VZVirtualMachine.queue`'s documentation states the rule this actor
-/// enforces: "Other properties or function calls on VZVirtualMachine must
-/// happen on this queue. The framework also invokes any completion handlers
-/// from asynchronous functions on this queue."
+/// enforces: "Other properties or function calls on the VZVirtualMachine must
+/// happen on this queue. The completion handlers from the asynchronous
+/// functions are also invoked on this queue."
 package actor VMSession: VMSessionOperating {
     /// The queue this VM was created with, and this actor's executor.
     nonisolated let queue: DispatchSerialQueue
@@ -77,7 +118,7 @@ package actor VMSession: VMSessionOperating {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSession")
 
-    private init(
+    fileprivate init(
         id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine,
         delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?
     ) {
@@ -94,35 +135,11 @@ package actor VMSession: VMSessionOperating {
 
     /// Creates the `VZVirtualMachine` on its own serial queue and wraps it in
     /// a session delivering into `events`.
-    static func make(configuration: VZVirtualMachineConfiguration, events: VMSessionEvents) async -> VMSession {
+    static func make(configuration: sending VZVirtualMachineConfiguration, events: VMSessionEvents) async -> VMSession {
         let id = UUID()
         let queue = DispatchSerialQueue(label: "app.kernova.vm.\(id.uuidString)", qos: .userInteractive)
-        nonisolated(unsafe) let configuration = configuration
-        return await withCheckedContinuation { continuation in
-            queue.async {
-                // `nonisolated(unsafe)`: both are born here and handed to the
-                // actor whole — the `vm.delegate` reference between them is
-                // what region analysis cannot see through.
-                nonisolated(unsafe) let vm = VZVirtualMachine(configuration: configuration, queue: queue)
-                assert(vm.queue === queue)
-                nonisolated(unsafe) let adapter = VMDelegateAdapter(sessionID: id, events: events)
-                vm.delegate = adapter
-                // A controller's delegate must be set on the VM's queue, which
-                // is this one, and its callback arrives here too.
-                nonisolated(unsafe) var usbAdapter: AnyObject?
-                if #available(macOS 27.0, *) {
-                    let usb = VMUSBControllerDelegateAdapter(sessionID: id, events: events)
-                    for controller in vm.usbControllers {
-                        controller.delegate = usb
-                    }
-                    usbAdapter = usb
-                }
-                continuation.resume(
-                    returning: VMSession(
-                        id: id, queue: queue, vm: vm, delegateAdapter: adapter,
-                        usbDelegateAdapter: usbAdapter))
-            }
-        }
+        return await VMQueueIsolation(queue: queue)
+            .makeSession(id: id, configuration: configuration, events: events)
     }
 
     // MARK: - Lifecycle

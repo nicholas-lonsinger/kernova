@@ -22,12 +22,12 @@ struct ValidatedConfigurationTests {
         "BuildResult includes clipboard pipes when clipboard sharing is enabled",
         .enabled(if: VZVirtualMachine.isSupported)
     )
-    func clipboardPipesWhenEnabled() throws {
+    func clipboardPipesWhenEnabled() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         var config = VMConfiguration.testLinux()
         config.clipboardSharingEnabled = true
 
-        let result = try ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
 
         #expect(result.products.clipboardInputPipe != nil)
         #expect(result.products.clipboardOutputPipe != nil)
@@ -37,12 +37,12 @@ struct ValidatedConfigurationTests {
         "BuildResult has nil clipboard pipes when clipboard sharing is disabled",
         .enabled(if: VZVirtualMachine.isSupported)
     )
-    func clipboardPipesWhenDisabled() throws {
+    func clipboardPipesWhenDisabled() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         var config = VMConfiguration.testLinux()
         config.clipboardSharingEnabled = false
 
-        let result = try ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
 
         #expect(result.products.clipboardInputPipe == nil)
         #expect(result.products.clipboardOutputPipe == nil)
@@ -59,13 +59,15 @@ struct ValidatedConfigurationTests {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         var config = VMConfiguration.testLinux()
         config.networkEnabled = networkEnabled
-        let result = try ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+
+        let builtWithSocket = !result.configuration.socketDevices.isEmpty
 
         let session = await VMSession.make(
             configuration: result.configuration, events: VMSessionEvents(handle: { _, _ in }))
 
         #expect(session.hasNetworkDevice == networkEnabled)
         #expect(session.hasUSBController)
-        #expect(session.hasVirtioSocketDevice == !result.configuration.socketDevices.isEmpty)
+        #expect(session.hasVirtioSocketDevice == builtWithSocket)
     }
 }

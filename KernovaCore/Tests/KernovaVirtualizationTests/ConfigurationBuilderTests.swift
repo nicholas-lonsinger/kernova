@@ -69,12 +69,12 @@ struct ConfigurationBuilderTests {
     // MARK: - Boot Validation
 
     @Test("Builder throws when the default main disk file is missing")
-    func efiBootWithoutDisk() throws {
+    func efiBootWithoutDisk() async throws {
         let bundleURL = try scratch.makeEngineBundle()
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: VMConfiguration.testLinux(), bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: VMConfiguration.testLinux(), bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e
@@ -106,15 +106,15 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for kernel boot without kernel path")
-    func kernelBootWithoutPath() throws {
+    func kernelBootWithoutPath() async throws {
         let bundleURL = try scratch.makeEngineBundle()
 
         let config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .missingKernelPath = e
@@ -124,30 +124,30 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for macOS boot without hardware model")
-    func macOSBootWithoutHardwareModel() throws {
+    func macOSBootWithoutHardwareModel() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let config = VMConfiguration(
             name: "Test macOS", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         let builder = ConfigurationBuilder.testing()
-        #expect(throws: (any Error).self) {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect(throws: (any Error).self) {
+            try await builder.build(from: config, bundleURL: bundleURL)
         }
     }
 
     // MARK: - Shared Directory Validation
 
     @Test("Builder throws for missing shared directory path")
-    func builderThrowsForMissingSharedDirectoryPath() throws {
+    func builderThrowsForMissingSharedDirectoryPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let share = SharedDirectory(path: "/nonexistent/path/\(UUID().uuidString)")
         let config = VMConfiguration.testLinux(sharedDirectories: [share])
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             // The entry is named the way the Sharing pane names its row.
             guard let e = error as? ConfigurationBuilderError,
@@ -158,7 +158,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for shared path that is a file")
-    func builderThrowsForSharedPathThatIsAFile() throws {
+    func builderThrowsForSharedPathThatIsAFile() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a file (not a directory) to use as the shared path
@@ -170,8 +170,8 @@ struct ConfigurationBuilderTests {
         ])
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotADirectory = e
@@ -181,7 +181,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for non-writable read-write share")
-    func builderThrowsForNonWritableReadWriteShare() throws {
+    func builderThrowsForNonWritableReadWriteShare() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a read-only directory
@@ -199,8 +199,8 @@ struct ConfigurationBuilderTests {
         ])
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotWritable(_, _, let label) = e
@@ -210,7 +210,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for dangling symlink as shared directory")
-    func builderThrowsForDanglingSymlinkSharedDirectory() throws {
+    func builderThrowsForDanglingSymlinkSharedDirectory() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a symlink pointing to a nonexistent target
@@ -223,8 +223,8 @@ struct ConfigurationBuilderTests {
         ])
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotFound = e
@@ -234,7 +234,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for symlink to file as shared directory")
-    func builderThrowsForSymlinkToFileAsSharedDirectory() throws {
+    func builderThrowsForSymlinkToFileAsSharedDirectory() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a regular file, then symlink to it
@@ -248,8 +248,8 @@ struct ConfigurationBuilderTests {
         ])
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotADirectory = e
@@ -288,7 +288,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder follows symlink to valid shared directory")
-    func builderFollowsSymlinkToValidSharedDirectory() throws {
+    func builderFollowsSymlinkToValidSharedDirectory() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real directory and a symlink to it
@@ -306,7 +306,7 @@ struct ConfigurationBuilderTests {
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink should be resolved and accepted.
         do {
-            _ = try builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -317,7 +317,7 @@ struct ConfigurationBuilderTests {
     // MARK: - Kernel / Initrd Path Validation
 
     @Test("Builder throws for nonexistent kernel path")
-    func builderThrowsForNonexistentKernelPath() throws {
+    func builderThrowsForNonexistentKernelPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         var config = VMConfiguration(
@@ -326,8 +326,8 @@ struct ConfigurationBuilderTests {
         config.kernelPath = "/nonexistent/\(UUID().uuidString)/vmlinuz"
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelNotFound = e
@@ -337,7 +337,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for nonexistent initrd path")
-    func builderThrowsForNonexistentInitrdPath() throws {
+    func builderThrowsForNonexistentInitrdPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
@@ -351,8 +351,8 @@ struct ConfigurationBuilderTests {
         config.initrdPath = "/nonexistent/\(UUID().uuidString)/initrd.img"
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .initrdNotFound = e
@@ -364,7 +364,7 @@ struct ConfigurationBuilderTests {
     // MARK: - Removable Media
 
     @Test("Builder throws for nonexistent removable media path")
-    func builderThrowsForNonexistentRemovableMediaPath() throws {
+    func builderThrowsForNonexistentRemovableMediaPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         var config = VMConfiguration(
@@ -375,8 +375,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaNotFound = e
@@ -386,7 +386,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Attach failure for removable media throws typed error with item identity")
-    func removableMediaAttachFailureThrowsTypedError() throws {
+    func removableMediaAttachFailureThrowsTypedError() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // 100 bytes is not a multiple of the 512-byte sector size, so
@@ -405,8 +405,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaAttachFailed(let id, let path, let label, _) = e
@@ -416,7 +416,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Attach failure for external storage disk throws typed error with item identity")
-    func storageDiskAttachFailureThrowsTypedError() throws {
+    func storageDiskAttachFailureThrowsTypedError() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Unaligned size — see the removable-media counterpart above.
@@ -435,8 +435,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskAttachFailed(let id, let path, let label, _) = e
@@ -510,7 +510,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for non-writable removable media when readOnly is false")
-    func builderThrowsForNonWritableRemovableMedia() throws {
+    func builderThrowsForNonWritableRemovableMedia() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("readonly.iso").path(percentEncoded: false)
@@ -524,8 +524,8 @@ struct ConfigurationBuilderTests {
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: false)]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaNotWritable = e
@@ -590,7 +590,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for nonexistent external storage disk")
-    func builderThrowsForNonexistentStorageDisk() throws {
+    func builderThrowsForNonexistentStorageDisk() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         var config = VMConfiguration(
@@ -608,8 +608,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e
@@ -619,7 +619,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for directory as external storage disk")
-    func builderThrowsForDirectoryAsStorageDisk() throws {
+    func builderThrowsForDirectoryAsStorageDisk() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("disk-dir")
@@ -640,8 +640,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskPathIsDirectory = e
@@ -651,7 +651,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for non-writable read-write external storage disk")
-    func builderThrowsForNonWritableStorageDisk() throws {
+    func builderThrowsForNonWritableStorageDisk() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
@@ -668,8 +668,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotWritable = e
@@ -679,7 +679,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder accepts read-only storage disk for non-writable file")
-    func builderAcceptsReadOnlyStorageDisk() throws {
+    func builderAcceptsReadOnlyStorageDisk() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
@@ -697,7 +697,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         do {
-            _ = try builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -706,7 +706,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder accepts read-only share for non-writable directory")
-    func builderAcceptsReadOnlyShareForNonWritableDirectory() throws {
+    func builderAcceptsReadOnlyShareForNonWritableDirectory() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a read-only directory
@@ -727,7 +727,7 @@ struct ConfigurationBuilderTests {
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — shared directory validation should pass.
         do {
-            _ = try builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -741,7 +741,7 @@ struct ConfigurationBuilderTests {
     // MARK: - Directory-as-File Tests (Kernel / Initrd / Disk Image)
 
     @Test("Builder throws for directory as kernel path")
-    func builderThrowsForDirectoryAsKernelPath() throws {
+    func builderThrowsForDirectoryAsKernelPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
@@ -753,8 +753,8 @@ struct ConfigurationBuilderTests {
         config.kernelPath = dirPath.path(percentEncoded: false)
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelPathIsDirectory = e
@@ -764,7 +764,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for directory as initrd path")
-    func builderThrowsForDirectoryAsInitrdPath() throws {
+    func builderThrowsForDirectoryAsInitrdPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
@@ -781,8 +781,8 @@ struct ConfigurationBuilderTests {
         config.initrdPath = dirPath.path(percentEncoded: false)
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .initrdPathIsDirectory = e
@@ -792,7 +792,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("Builder throws for directory as removable media path")
-    func builderThrowsForDirectoryAsRemovableMediaPath() throws {
+    func builderThrowsForDirectoryAsRemovableMediaPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("iso-dir")
@@ -806,8 +806,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaPathIsDirectory = e
@@ -819,7 +819,7 @@ struct ConfigurationBuilderTests {
     // MARK: - Symlink-to-Directory Tests (Kernel / Initrd / Disk Image)
 
     @Test("Builder throws for symlink to directory as kernel path")
-    func builderThrowsForSymlinkToDirectoryAsKernelPath() throws {
+    func builderThrowsForSymlinkToDirectoryAsKernelPath() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
@@ -834,8 +834,8 @@ struct ConfigurationBuilderTests {
         config.kernelPath = symlinkPath
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelPathIsDirectory = e
@@ -847,7 +847,7 @@ struct ConfigurationBuilderTests {
     // MARK: - Happy-Path Symlink Tests
 
     @Test("Builder follows symlink to valid kernel file")
-    func builderFollowsSymlinkToValidKernelFile() throws {
+    func builderFollowsSymlinkToValidKernelFile() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Create a real kernel file and a symlink to it
@@ -865,7 +865,7 @@ struct ConfigurationBuilderTests {
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink to kernel file should be resolved and accepted.
         do {
-            _ = try builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -1293,7 +1293,7 @@ struct ConfigurationBuilderTests {
     // MARK: - Path-Traversal Containment
 
     @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")
-    func internalStorageDiskRejectsPathTraversal() throws {
+    func internalStorageDiskRejectsPathTraversal() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
 
         // Marking the entry `isInternal: true` opts into bundle-containment
@@ -1313,8 +1313,8 @@ struct ConfigurationBuilderTests {
         ]
 
         let builder = ConfigurationBuilder.testing()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e

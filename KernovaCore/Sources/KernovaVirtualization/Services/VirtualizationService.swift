@@ -575,21 +575,16 @@ package final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds a VZ configuration off the main actor to avoid blocking the UI,
-    /// first creating the EFI variable store an EFI boot reads when the bundle
-    /// holds none.
+    /// Builds a VZ configuration, first creating the EFI variable store an EFI
+    /// boot reads when the bundle holds none.
     private func buildConfiguration(
         for instance: VMInstance, _ context: borrowing VMOperationContext
-    ) async throws -> ConfigurationBuilder.BuildResult {
-        let builder = configBuilder
+    ) async throws -> sending ConfigurationBuilder.BuildResult {
         let config = instance.effectiveConfiguration
-        let bundleURL = context.bundle.url
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }
-        return try await Task.detached {
-            try builder.build(from: config, bundleURL: bundleURL)
-        }.value
+        return try await configBuilder.build(from: config, bundleURL: context.bundle.url)
     }
 
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes,
