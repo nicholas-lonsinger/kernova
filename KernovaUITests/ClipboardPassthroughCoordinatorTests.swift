@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import KernovaCore
@@ -759,10 +760,9 @@ struct ClipboardPassthroughCoordinatorTests {
         }
 
         // Paste-time provider surface: every fire is a byte pull, counted here.
-        @ObservationIgnored private let fireLock = NSLock()
-        @ObservationIgnored nonisolated(unsafe) private var fireCountStorage = 0
-        nonisolated var pasteFireCount: Int { fireLock.withLock { fireCountStorage } }
-        nonisolated private func recordFire() { fireLock.withLock { fireCountStorage += 1 } }
+        @ObservationIgnored private let fireCount = Mutex(0)
+        nonisolated var pasteFireCount: Int { fireCount.withLock { $0 } }
+        nonisolated private func recordFire() { fireCount.withLock { $0 += 1 } }
 
         nonisolated func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
             recordFire()

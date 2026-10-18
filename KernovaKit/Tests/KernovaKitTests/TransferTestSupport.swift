@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -101,77 +102,80 @@ func randomBytes(count: Int) throws -> Data {
 // MARK: - Collector
 
 /// Gathers what both halves of a transfer report.
-final class TransferCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var completed: [UInt64: ClipboardContent.Representation] = [:]
-    private var aborts: [ClipboardStreamAbortInfo] = []
-    private var sendOutcomes: [UInt64: Bool] = [:]
-    private var inboundTimings: [ClipboardTransferMetrics] = []
-    private var outboundTimings: [ClipboardTransferMetrics] = []
-    private var received: [(bytes: Int, total: Int)] = []
-    private var sent: [(bytes: Int, total: Int)] = []
+final class TransferCollector: Sendable {
+    private struct Collected: Sendable {
+        var completed: [UInt64: ClipboardContent.Representation] = [:]
+        var aborts: [ClipboardStreamAbortInfo] = []
+        var sendOutcomes: [UInt64: Bool] = [:]
+        var inboundTimings: [ClipboardTransferMetrics] = []
+        var outboundTimings: [ClipboardTransferMetrics] = []
+        var received: [(bytes: Int, total: Int)] = []
+        var sent: [(bytes: Int, total: Int)] = []
+    }
+
+    private let collected = Locked(Collected())
 
     /// Fires on every recorded event; await it instead of polling.
     let gate = AsyncGate()
 
     func complete(_ id: UInt64, _ representation: ClipboardContent.Representation) {
-        lock.withLock { completed[id] = representation }
+        collected.withLock { $0.completed[id] = representation }
         gate.notify()
     }
 
     func abort(_ info: ClipboardStreamAbortInfo) {
-        lock.withLock { aborts.append(info) }
+        collected.withLock { $0.aborts.append(info) }
         gate.notify()
     }
 
     func sendFinished(_ id: UInt64, success: Bool) {
-        lock.withLock { sendOutcomes[id] = success }
+        collected.withLock { $0.sendOutcomes[id] = success }
         gate.notify()
     }
 
     func timedInbound(_ metrics: ClipboardTransferMetrics) {
-        lock.withLock { inboundTimings.append(metrics) }
+        collected.withLock { $0.inboundTimings.append(metrics) }
         gate.notify()
     }
 
     func timedOutbound(_ metrics: ClipboardTransferMetrics) {
-        lock.withLock { outboundTimings.append(metrics) }
+        collected.withLock { $0.outboundTimings.append(metrics) }
         gate.notify()
     }
 
     func receiveProgress(_ bytes: Int, _ total: Int) {
-        lock.withLock { received.append((bytes, total)) }
+        collected.withLock { $0.received.append((bytes, total)) }
         gate.notify()
     }
 
     func sendProgress(_ bytes: Int, _ total: Int) {
-        lock.withLock { sent.append((bytes, total)) }
+        collected.withLock { $0.sent.append((bytes, total)) }
         gate.notify()
     }
 
     /// The representation one transfer delivered, if it completed.
     func representation(_ id: UInt64) -> ClipboardContent.Representation? {
-        lock.withLock { completed[id] }
+        collected.withLock { $0.completed[id] }
     }
     /// Every abort delivered, in order.
-    var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
+    var abortInfos: [ClipboardStreamAbortInfo] { collected.withLock { $0.aborts } }
     /// How many aborts were delivered.
-    var abortCount: Int { lock.withLock { aborts.count } }
+    var abortCount: Int { collected.withLock { $0.aborts.count } }
     /// Whether one transfer's send reported success, or `nil` if it has not
     /// finished.
-    func sendOutcome(_ id: UInt64) -> Bool? { lock.withLock { sendOutcomes[id] } }
+    func sendOutcome(_ id: UInt64) -> Bool? { collected.withLock { $0.sendOutcomes[id] } }
     /// How many sends have finished.
-    var sendCount: Int { lock.withLock { sendOutcomes.count } }
+    var sendCount: Int { collected.withLock { $0.sendOutcomes.count } }
     /// Metrics the *receiver* reported, kept apart from the sender's so a test
     /// asserting one direction reported nothing cannot be satisfied by the
     /// other.
-    var inboundMetrics: [ClipboardTransferMetrics] { lock.withLock { inboundTimings } }
+    var inboundMetrics: [ClipboardTransferMetrics] { collected.withLock { $0.inboundTimings } }
     /// Metrics the *sender* reported.
-    var outboundMetrics: [ClipboardTransferMetrics] { lock.withLock { outboundTimings } }
+    var outboundMetrics: [ClipboardTransferMetrics] { collected.withLock { $0.outboundTimings } }
     /// Every `(bytesReceived, totalBytes)` the receiving side reported.
-    var receiveProgressReports: [(bytes: Int, total: Int)] { lock.withLock { received } }
+    var receiveProgressReports: [(bytes: Int, total: Int)] { collected.withLock { $0.received } }
     /// Every `(bytesSent, totalBytes)` the sending side reported.
-    var sendProgressReports: [(bytes: Int, total: Int)] { lock.withLock { sent } }
+    var sendProgressReports: [(bytes: Int, total: Int)] { collected.withLock { $0.sent } }
 }
 
 // MARK: - Staging
@@ -182,9 +186,14 @@ final class TransferCollector: @unchecked Sendable {
 /// A receiver reserves its own extract destination, so the root its free-space
 /// guard is queried against is the only handle a test has on what a transfer put
 /// on disk — and every archived transfer queries it before it reserves anything.
-final class StagingProbe: @unchecked Sendable {
+final class StagingProbe: Sendable {
+    private struct Seen: Sendable {
+        var queries = 0
+        var root: URL?
+    }
+
     private let answer: @Sendable (Int) -> Int64
-    private let state = Box<(queries: Int, root: URL?)>((0, nil))
+    private let seen = Locked(Seen())
 
     /// - Parameter freeSpace: answers the *n*th query, counted from zero, so a
     ///   test can be roomy at the pre-flight and full from the next check on.
@@ -195,18 +204,23 @@ final class StagingProbe: @unchecked Sendable {
     /// The provider to hand a ``TransferHarness``.
     var provider: ClipboardFileStaging.FreeSpaceProvider {
         { [self] url in
-            let seen = state.value.queries
-            state.value = (seen + 1, url)
-            return answer(seen)
+            let query = seen.withLock { seen in
+                defer {
+                    seen.queries += 1
+                    seen.root = url
+                }
+                return seen.queries
+            }
+            return answer(query)
         }
     }
 
     /// How many times a transfer asked whether it had room.
-    var queryCount: Int { state.value.queries }
+    var queryCount: Int { seen.withLock { $0.queries } }
 
     /// Every file staged under the root a transfer asked about.
     func stagedFiles() throws -> [URL] {
-        materializedFiles(under: try #require(state.value.root))
+        materializedFiles(under: try #require(seen.withLock { $0.root }))
     }
 }
 
@@ -220,7 +234,7 @@ final class StagingProbe: @unchecked Sendable {
 /// accepted end. ``push(transferID:generation:plan:representation:...)`` is the
 /// host-receives order — the sender dials and writes the reply, the receiver
 /// adopts the accepted end. Both run the shipping code on both ends.
-final class TransferHarness: @unchecked Sendable {
+final class TransferHarness: Sendable {
     private let staging: ClipboardFileStaging
     private let stagingRoot = TestStagingRoot()
     private let socketTimeout: TimeInterval
@@ -258,7 +272,7 @@ final class TransferHarness: @unchecked Sendable {
         -> @Sendable (UInt64) -> Bool
     {
         let tornDown = DispatchSemaphore(value: 0)
-        inbox.onReceiverFinishedForTesting = { _ in tornDown.signal() }
+        inbox.setOnReceiverFinishedForTesting { _ in tornDown.signal() }
         let cancelled = Box(false)
         return { _ in
             guard cancelled.value else {

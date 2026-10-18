@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// One peer's pull of a single representation, however it reached this side.
 ///
@@ -49,43 +50,22 @@ public struct ClipboardPullRequest: Sendable {
 /// indices failed once it asked for them. Keyed by index rather than counted,
 /// so a representation the peer asks for twice is one item however often it
 /// fails.
-///
-/// `@unchecked Sendable`: `indices` is read and written under `lock`, and
-/// `skippedBeforeOffer` is immutable.
-private final class UnreadableReps: @unchecked Sendable {
+private final class UnreadableReps: Sendable {
     /// Items left out of the offer, which have no rep index of their own —
     /// the peer was never told they existed.
     let skippedBeforeOffer: Int
-    private let lock = NSLock()
-    private var indices: Set<Int> = []
+    private let indices = Locked<Set<Int>>([])
 
     init(skippedBeforeOffer: Int) {
         self.skippedBeforeOffer = skippedBeforeOffer
     }
 
     func record(repIndex: Int) {
-        lock.withLock { _ = indices.insert(repIndex) }
+        indices.withLock { _ = $0.insert(repIndex) }
     }
 
     /// How many of the gesture's items this side had nothing to send for.
-    var count: Int { lock.withLock { skippedBeforeOffer + indices.count } }
-}
-
-/// How many times one offer's bytes have moved, counted from whichever queue is
-/// serving it.
-///
-/// A number rather than a timestamp: the deadline that reads it samples the
-/// count when it arms and again when it fires, so "moved since" needs no clock
-/// of its own and no second time source to keep in step with the injected one.
-///
-/// `@unchecked Sendable`: `value` is read and written under `lock`.
-private final class ActivityCount: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: UInt64 = 0
-
-    func bump() { lock.withLock { value &+= 1 } }
-
-    var count: UInt64 { lock.withLock { value } }
+    var count: Int { skippedBeforeOffer + indices.withLock { $0.count } }
 }
 
 /// What this side has offered the peer, and the transfers it serves in answer.
@@ -103,9 +83,10 @@ public final class ClipboardOutboundOffers {
     private final class Entry {
         let generation: UInt64
         let content: ClipboardContent
-        /// Read from each transfer's own queue to decide whether the offer is
-        /// still wanted; zeroed once it is not, which aborts its transfers.
-        let live = AtomicGeneration()
+        /// The generation the offer is still wanted at, read from each
+        /// transfer's own queue; zeroed once it is not, which aborts its
+        /// transfers.
+        let live: Locked<UInt64>
         /// The readout measuring this offer, opened up front for a drop and on
         /// the peer's first request for a clipboard offer.
         var operation: ClipboardTransferOperation?
@@ -117,9 +98,12 @@ public final class ClipboardOutboundOffers {
         /// The deadline armed for this offer, which is armed in every state but
         /// "something else is streaming"; a stand-down cancels it.
         var claimDeadline: Task<Void, Never>?
-        /// How far this offer's bytes have got, in events, so its deadline can
-        /// tell a peer that has gone quiet from one still moving them.
-        let activity = ActivityCount()
+        /// How many times this offer's bytes have moved, counted from whichever
+        /// queue is serving it, so its deadline can tell a peer that has gone
+        /// quiet from one still moving them. A count rather than a timestamp:
+        /// the deadline samples it when it arms and again when it fires, so
+        /// "moved since" needs no clock of its own.
+        let activity = Locked<UInt64>(0)
         /// The items of this drop this side had nothing to send for, so the
         /// verdict can say what it left out.
         let unreadable: UnreadableReps
@@ -134,7 +118,7 @@ public final class ClipboardOutboundOffers {
             self.generation = generation
             self.content = content
             self.unreadable = UnreadableReps(skippedBeforeOffer: skippedBeforeOffer)
-            live.set(generation)
+            self.live = Locked(generation)
         }
     }
 
@@ -435,14 +419,14 @@ public final class ClipboardOutboundOffers {
             // A drop always lands as a file in the guest's Downloads; nothing
             // about it is pasteboard-inline.
             isInline: isClipboard && representation.shouldInlineOnPasteboard,
-            isCurrent: { live.isCurrent($0) },
+            isCurrent: { generation in live.withLock { $0 == generation } },
             link: link,
             onBegin: {
-                activity.bump()
+                activity.withLock { $0 &+= 1 }
                 operation.unitBegan(id: xid, expectedBytes: expectedBytes, name: unitName)
             },
             onProgress: { sent, total in
-                activity.bump()
+                activity.withLock { $0 &+= 1 }
                 operation.unitProgressed(
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
@@ -451,7 +435,7 @@ public final class ClipboardOutboundOffers {
             // skips it and keeps pulling, and this is what lets the verdict name
             // how many were left behind.
             onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
-            // No `activity.bump()` here: activity is bytes moving, and a
+            // No `activity` count here: activity is bytes moving, and a
             // transfer's end is the start of the wait for the peer's next move
             // — its next pull, or its `DropComplete` — which is exactly what
             // the liveness window is there to bound.
@@ -498,7 +482,7 @@ public final class ClipboardOutboundOffers {
             entry.isCancelled = true
             // Zeroed first, so a transfer between writes sees the job is gone
             // and aborts itself rather than racing the explicit cancel below.
-            entry.live.set(0)
+            entry.live.withLock { $0 = 0 }
             session.outbox?.cancel(generation: generation)
             try? session.sendRelease(generation: generation)
             forget(entry)
@@ -518,7 +502,7 @@ public final class ClipboardOutboundOffers {
     public func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
         guard let entry = entries[complete.generation] else { return }
         forget(entry)
-        entry.live.set(0)
+        entry.live.withLock { $0 = 0 }
         // Ahead of the readout's terminal: the peer has said what became of the
         // drop, so nothing will be pulled from what this side staged for it.
         onDropSettled(complete.generation)
@@ -594,7 +578,7 @@ public final class ClipboardOutboundOffers {
         pasteOperation?.operation.abandon()
         pasteOperation = nil
         for entry in entries.values {
-            entry.live.set(0)
+            entry.live.withLock { $0 = 0 }
             forget(entry)
         }
         currentGeneration = 0
@@ -627,7 +611,7 @@ public final class ClipboardOutboundOffers {
     private func armClaimDeadline(for entry: Entry) {
         guard entry.claimDeadline == nil else { return }
         let generation = entry.generation
-        let activity = entry.activity.count
+        let activity = entry.activity.withLock { $0 }
         entry.claimDeadline = clock.schedule(after: ClipboardStreamTuning.dropClaimTimeout) {
             @MainActor [weak self] in
             guard !Task.isCancelled else { return }
@@ -651,12 +635,12 @@ public final class ClipboardOutboundOffers {
         // An inactivity window, never an absolute deadline: a job that has moved
         // since this was armed starts the clock again rather than being called
         // off for needing more than one window to stream.
-        guard entry.activity.count == activityWhenArmed else {
+        guard entry.activity.withLock({ $0 }) == activityWhenArmed else {
             armClaimDeadlines()
             return
         }
         let wasClaimed = entry.isClaimed
-        entry.live.set(0)
+        entry.live.withLock { $0 = 0 }
         forget(entry)
         // The peer may be wedged rather than gone, so the release is what stops
         // it pulling an offer this side has already answered for.
@@ -672,7 +656,7 @@ public final class ClipboardOutboundOffers {
 
     /// Drops `entry` from the live set and ends the transfers still riding it.
     private func retire(_ entry: Entry) {
-        entry.live.set(0)
+        entry.live.withLock { $0 = 0 }
         forget(entry)
         if entry.generation == currentGeneration { currentGeneration = 0 }
     }

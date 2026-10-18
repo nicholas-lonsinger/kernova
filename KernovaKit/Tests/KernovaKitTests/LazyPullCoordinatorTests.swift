@@ -1,65 +1,70 @@
 import Foundation
-import Testing
+import KernovaSynchronization
 import KernovaTestSupport
+import Testing
 
 @testable import KernovaKit
 
 @Suite("LazyPullCoordinator", .caseScoped)
 struct LazyPullCoordinatorTests {
     // No-signal polls — `pendingSlotCountForTesting` and `waiterCountForTesting`
-    // are NSLock-guarded SUT state, not @Observable, and neither slot nor waiter
+    // are lock-guarded SUT state, not @Observable, and neither slot nor waiter
     // registration publishes anything a test could arm on. Stated once for the
     // suite: every poll below is one of these two reads.
 
     /// A `Sendable` slot to ferry a representation out of an off-actor awaiter
     /// closure.
-    private final class RepBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var rep: ClipboardContent.Representation?
-        private var abort: ClipboardStreamAbortInfo?
-        func setRep(_ r: ClipboardContent.Representation) { lock.withLock { rep = r } }
-        func setAbort(_ a: ClipboardStreamAbortInfo) { lock.withLock { abort = a } }
-        var representation: ClipboardContent.Representation? { lock.withLock { rep } }
-        var abortInfo: ClipboardStreamAbortInfo? { lock.withLock { abort } }
+    private final class RepBox: Sendable {
+        private struct Received: Sendable {
+            var representation: ClipboardContent.Representation?
+            var abort: ClipboardStreamAbortInfo?
+        }
+
+        private let received = Locked(Received())
+        func setRep(_ r: ClipboardContent.Representation) { received.withLock { $0.representation = r } }
+        func setAbort(_ a: ClipboardStreamAbortInfo) { received.withLock { $0.abort = a } }
+        var representation: ClipboardContent.Representation? { received.withLock { $0.representation } }
+        var abortInfo: ClipboardStreamAbortInfo? { received.withLock { $0.abort } }
     }
 
     /// A `Sendable` tally for off-actor `onProgress` callbacks that also captures
     /// the latest `(bytes, total)` and whether the byte counts were monotonic.
-    private final class ProgressCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        private var lastBytes = 0
-        private var lastTotalBytes = 0
-        private var monotonic = true
+    private final class ProgressCounter: Sendable {
+        private struct Figures: Sendable {
+            var count = 0
+            var lastBytes = 0
+            var lastTotal = 0
+            var monotonic = true
+        }
+
+        private let figures = Locked(Figures())
         func bump(bytes: Int, total: Int) {
-            lock.withLock {
-                if bytes < lastBytes { monotonic = false }
-                count += 1
-                lastBytes = bytes
-                lastTotalBytes = total
+            figures.withLock { figures in
+                if bytes < figures.lastBytes { figures.monotonic = false }
+                figures.count += 1
+                figures.lastBytes = bytes
+                figures.lastTotal = total
             }
         }
-        var value: Int { lock.withLock { count } }
-        var lastBytesReceived: Int { lock.withLock { lastBytes } }
-        var lastTotal: Int { lock.withLock { lastTotalBytes } }
-        var isMonotonic: Bool { lock.withLock { monotonic } }
+        var value: Int { figures.withLock { $0.count } }
+        var lastBytesReceived: Int { figures.withLock { $0.lastBytes } }
+        var lastTotal: Int { figures.withLock { $0.lastTotal } }
+        var isMonotonic: Bool { figures.withLock { $0.monotonic } }
     }
 
     /// A `Sendable` call counter for a closure two joining pulls share.
-    private final class Tally: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        func bump() { lock.withLock { count += 1 } }
-        var value: Int { lock.withLock { count } }
+    private final class Tally: Sendable {
+        private let count = Locked(0)
+        func bump() { count.withLock { $0 += 1 } }
+        var value: Int { count.withLock { $0 } }
     }
 
     /// A `Sendable` log of labelled steps, for a test asserting the order two
     /// closures ran in.
-    private final class OrderLog: @unchecked Sendable {
-        private let lock = NSLock()
-        private var steps: [String] = []
-        func record(_ step: String) { lock.withLock { steps.append(step) } }
-        var entries: [String] { lock.withLock { steps } }
+    private final class OrderLog: Sendable {
+        private let steps = Locked<[String]>([])
+        func record(_ step: String) { steps.withLock { $0.append(step) } }
+        var entries: [String] { steps.withLock { $0 } }
     }
 
     /// Runs the blocking `pull` on a dedicated thread so the test's

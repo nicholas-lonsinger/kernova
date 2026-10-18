@@ -8,9 +8,12 @@ import KernovaLogging
 /// Guest-side clipboard agent that talks to the host's `VsockClipboardService`
 /// on `KernovaVsockPort.clipboard`.
 ///
-/// All mutable state is accessed exclusively on the main dispatch queue.
-final class VsockGuestClipboardAgent: @unchecked Sendable {
-    private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "VsockGuestClipboardAgent")
+/// `start`, `stop` and `applyPolicy` are called off the main actor and hop to
+/// it.
+@MainActor
+final class VsockGuestClipboardAgent {
+    nonisolated private static let logger = KernovaLogger(
+        subsystem: "app.kernova.macosagent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
 
     /// What the paste progress readout calls the machine the bytes come from —
@@ -18,7 +21,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// handshake.
     private static let pasteSourceName = "Mac"
 
-    private let client: VsockGuestClient
+    nonisolated private let client: VsockGuestClient
     private let pasteboard: any ClipboardPasteboard
 
     /// Opens one transfer's data connection to the host; tests hand over a
@@ -47,7 +50,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// waiting for the user to open the dropdown.
     private let onClipboardNotice: @Sendable () -> Void
 
-    // MARK: - Main-queue state
+    // MARK: - State
 
     /// Live channel for the current connection, if any.
     private var liveChannel: VsockChannel?
@@ -65,11 +68,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private var endpoint: ClipboardEndpoint?
 
     #if DEBUG
-    /// Test seam, readable from any thread: reads on the main queue that owns it.
-    var liveChannelForTesting: VsockChannel? { MainActorBridge.sync { liveChannel } }
+    /// Test seam, readable from any thread: reads on the main actor that owns it.
+    nonisolated var liveChannelForTesting: VsockChannel? { MainActorBridge.sync { liveChannel } }
 
-    /// Test seam, readable from any thread: reads on the main queue that owns it.
-    var inboundPromiseGenerationForTesting: UInt64? {
+    /// Test seam, readable from any thread: reads on the main actor that owns it.
+    nonisolated var inboundPromiseGenerationForTesting: UInt64? {
         MainActorBridge.sync { endpoint?.inboundOffer?.generation }
     }
     #endif
@@ -124,43 +127,36 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `PolicyUpdate` — which is also what turns sharing on, so no paste is ever
     /// gated on the placeholder.
     ///
-    /// Main-queue confined, like `enabled`: the endpoint reads it at each gate
-    /// check, on the agent's main thread.
+    /// The endpoint reads it at each gate check, on the main actor.
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
     #if DEBUG
-    /// Test seam, readable from any thread: reads on the main queue that owns it.
-    var isEnabledForTesting: Bool { MainActorBridge.sync { enabled } }
+    /// Test seam, readable from any thread: reads on the main actor that owns it.
+    nonisolated var isEnabledForTesting: Bool { MainActorBridge.sync { enabled } }
 
-    /// Fires on the main queue once a copy's off-main file resolve has landed —
+    /// Fires on the main actor once a copy's off-main file resolve has landed —
     /// whether or not it offered — so a test can await the walk instead of
     /// polling for its side effects.
     var onFileResolveCompletedForTesting: (() -> Void)?
 
     /// Delivers a control frame as the consume loop's main-queue hop would, but
-    /// synchronously on the caller's main-queue turn, so a test can order it
+    /// synchronously on the caller's main-actor turn, so a test can order it
     /// against a poll's own asynchronous completion.
     func handleControlFrameForTesting(_ frame: Frame) {
-        dispatchPrecondition(condition: .onQueue(.main))
-        MainActor.assumeIsolated { endpoint?.handleControlFrameForTesting(frame) }
+        endpoint?.handleControlFrameForTesting(frame)
     }
 
     /// Test seam for the applied ceiling, so a test can wait for a pushed policy
     /// to land instead of polling for its side effects; readable from any
-    /// thread, it reads on the main queue that owns it.
-    var pasteLimitForTesting: Int { MainActorBridge.sync { maxPasteBytes } }
+    /// thread, it reads on the main actor that owns it.
+    nonisolated var pasteLimitForTesting: Int { MainActorBridge.sync { maxPasteBytes } }
     #endif
 
     /// Most recent clipboard activity, surfaced to the menu-bar UI.
     private var clipboardActivityStorage: ClipboardActivity = .disabled
 
     /// The most recent clipboard activity, for the menu-bar status line.
-    ///
-    /// The caller must be on the main queue.
-    var clipboardActivity: ClipboardActivity {
-        dispatchPrecondition(condition: .onQueue(.main))
-        return clipboardActivityStorage
-    }
+    var clipboardActivity: ClipboardActivity { clipboardActivityStorage }
 
     // MARK: - Init
 
@@ -224,7 +220,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    func start() {
+    nonisolated func start() {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
@@ -237,8 +233,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// One call rather than a setter per field — the control agent delivers the
     /// policy off-main, and two independently scheduled hops could apply a
     /// snapshot's halves out of order.
-    func applyPolicy(enabled: Bool, maxPasteBytes: Int) {
-        DispatchQueue.main.async { [weak self] in
+    nonisolated func applyPolicy(enabled: Bool, maxPasteBytes: Int) {
+        MainActorBridge.async { [weak self] in
             self?.maxPasteBytes = maxPasteBytes
             self?.applyEnabledOnMain(enabled)
         }
@@ -271,9 +267,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Tears down the connection and the poll timer.
     ///
     /// Receive staging stays in place — see `applyEnabledOnMain`.
-    func stop() {
+    nonisolated func stop() {
         client.stop()
-        DispatchQueue.main.async { [weak self] in
+        MainActorBridge.async { [weak self] in
             self?.pollingTimer?.invalidate()
             self?.pollingTimer = nil
             self?.teardownConnectionState()
@@ -281,10 +277,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         #log(Self.logger, .notice, "Vsock clipboard agent stopped")
     }
 
-    /// Clears per-connection streaming + pending state on the main queue.
+    /// Clears per-connection streaming + pending state.
     private func teardownConnectionState() {
-        MainActorBridge.sync {
-            guard let endpoint else { return }
+        if let endpoint {
             nextLocalGeneration = endpoint.nextGeneration
             // Unblocks any provider thread waiting on a pull (returns empty).
             // The offers it holds stay servable from their cache, which is what
@@ -311,42 +306,36 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
-        let endpoint = await MainActor.run { () -> ClipboardEndpoint in
-            let endpoint = ClipboardEndpoint(
-                channel: channel,
-                configuration: ClipboardEndpoint.Configuration(
-                    role: .guest, kind: .clipboard, label: "clipboard",
-                    peerName: Self.pasteSourceName,
-                    maxPasteBytes: { [weak self] in
-                        self?.maxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-                    },
-                    staging: self.staging,
-                    progressRevealDelay: self.progressRevealDelay,
-                    progressIdleGap: self.progressIdleGap,
-                    clock: self.clock,
-                    dataLink: .dials(
-                        port: KernovaVsockPort.clipboardData, connect: self.dataDialer),
-                    // A brand-new host has no record of prior offers; the fresh
-                    // dedup latch is what re-announces the standing snapshot.
-                    firstGeneration: self.nextLocalGeneration),
-                reporter: self.reporter)
-            self.connectionTag = endpoint.connectionTag
-            self.liveChannel = channel
-            self.endpoint = endpoint
-            endpoint.delegate = self
-            self.lastPasteboardChangeCount = Self.unobservedChangeCount
-            endpoint.start()
-            #log(
-                Self.logger, .notice,
-                "Vsock clipboard connected to host (conn=\(endpoint.connectionTag, privacy: .public))"
-            )
-            return endpoint
-        }
+        let endpoint = ClipboardEndpoint(
+            channel: channel,
+            configuration: ClipboardEndpoint.Configuration(
+                role: .guest, kind: .clipboard, label: "clipboard",
+                peerName: Self.pasteSourceName,
+                maxPasteBytes: { [weak self] in
+                    self?.maxPasteBytes ?? ClipboardPasteLimit.defaultBytes
+                },
+                staging: staging,
+                progressRevealDelay: progressRevealDelay,
+                progressIdleGap: progressIdleGap,
+                clock: clock,
+                dataLink: .dials(port: KernovaVsockPort.clipboardData, connect: dataDialer),
+                // A brand-new host has no record of prior offers; the fresh
+                // dedup latch is what re-announces the standing snapshot.
+                firstGeneration: nextLocalGeneration),
+            reporter: reporter)
+        connectionTag = endpoint.connectionTag
+        liveChannel = channel
+        self.endpoint = endpoint
+        endpoint.delegate = self
+        lastPasteboardChangeCount = Self.unobservedChangeCount
+        endpoint.start()
+        #log(
+            Self.logger, .notice,
+            "Vsock clipboard connected to host (conn=\(endpoint.connectionTag, privacy: .public))"
+        )
 
         await endpoint.waitUntilEnded()
-        await MainActor.run {
-            self.teardownIfCurrent(channel)
-        }
+        teardownIfCurrent(channel)
     }
 
     /// Mirrors what the connection just did onto the menu-bar status line.
@@ -367,7 +356,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    // MARK: - Pasteboard polling (main queue)
+    // MARK: - Pasteboard polling
 
     private func startPolling() {
         // Default mode only: a tick that would land inside a tracking or modal
@@ -376,7 +365,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pollingTimer = Timer.scheduledTimer(withTimeInterval: Self.pollingInterval, repeats: true) {
             [weak self] _ in
             // The main run loop fires this on the main thread.
-            self?.checkClipboardChange()
+            MainActor.assumeIsolated { self?.checkClipboardChange() }
         }
     }
 
@@ -390,7 +379,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // what keeps the first poll of a connection from pulling the Mac's own
         // content back and offering it as a guest copy. The publisher outlives
         // the connections, so the latch does too.
-        guard currentCount != MainActorBridge.sync({ publisher.lastWriteChangeCount }) else {
+        guard currentCount != publisher.lastWriteChangeCount else {
             lastPasteboardChangeCount = currentCount
             return
         }
@@ -408,9 +397,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // — so a guest copy and a Mac copy are judged identically. What is left
         // here is this side's own bookkeeping: the staging-root exclusion, the
         // change-count gates, and the guest menu's account of the gesture.
-        let snapshot = MainActorBridge.sync {
-            ClipboardPasteboardReader.readSnapshot(from: self.pasteboard, allowsBinary: true)
-        }
+        let snapshot = ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: true)
         switch snapshot {
         case .suppressed(let reason):
             #log(
@@ -472,7 +459,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ) {
         // The pasteboard still moved on, so the host's previous offer is retired
         // rather than left serving a copy the user has replaced.
-        let released = MainActorBridge.sync { endpoint?.release() ?? false }
+        let released = endpoint?.release() ?? false
         lastPasteboardChangeCount = changeCount
         guard pasteboardHeldSomething, watchedItArrive else {
             // Nobody's copy came up short here, so the only line that can be
@@ -503,7 +490,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         _ content: ClipboardContent, skipped: Int, watchedItArrive: Bool, changeCount: Int
     ) {
         guard let endpoint else { return }
-        switch MainActorBridge.sync({ endpoint.offer(content) }) {
+        switch endpoint.offer(content) {
         case .sent, .duplicate:
             // Content the host already holds is as good as sent: the poll rebuilds
             // the same snapshot each tick, so the gate is what keeps it from
@@ -542,7 +529,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         resolveInFlight = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let intake = ClipboardPasteboardReader.resolve(filesAt: urls, unresolved: unresolved)
-            DispatchQueue.main.async { [weak self] in
+            MainActorBridge.async { [weak self] in
                 guard let self else { return }
                 // A stale walk must not touch the live connection's in-flight
                 // flag or bookkeeping — leave the newer walk's
@@ -584,7 +571,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// The post-write `changeCount` is recorded immediately so the 0.5 s poll
     /// does not read — and thereby self-trigger — our own promise.
-    @MainActor
     private func registerPromise(
         for offer: ClipboardEndpoint.InboundOffer, on endpoint: ClipboardEndpoint
     ) {
@@ -626,7 +612,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Clears the promise the host has withdrawn, unless the user has copied
     /// over it since — then whatever they copied stays.
-    @MainActor
     private func retractPromise() {
         guard publisher.retractPromisedWrite() else { return }
         // The clear moved the pasteboard on; leaving the gate behind would have

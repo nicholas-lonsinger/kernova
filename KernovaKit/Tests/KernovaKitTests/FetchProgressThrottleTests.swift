@@ -18,15 +18,19 @@ struct FetchProgressCoalescerTests {
 
     @Test("the watermark advances, so a repeated byte count is refused")
     func watermarkAdvances() {
-        let coalescer = FetchProgressCoalescer()
+        var coalescer = FetchProgressCoalescer()
         let now = EngineInstant(nanoseconds: 0)
-        #expect(coalescer.shouldForward(bytesTransferred: 500_000, totalBytes: total, at: now))
+        let first = coalescer.shouldForward(bytesTransferred: 500_000, totalBytes: total, at: now)
+        #expect(first)
         // Same count again: no forward progress, and it isn't the final chunk.
-        #expect(!coalescer.shouldForward(bytesTransferred: 500_000, totalBytes: total, at: now))
+        let repeated = coalescer.shouldForward(bytesTransferred: 500_000, totalBytes: total, at: now)
+        #expect(!repeated)
         // A regressed count (a reordered callback) is refused too.
-        #expect(!coalescer.shouldForward(bytesTransferred: 400_000, totalBytes: total, at: now))
+        let regressed = coalescer.shouldForward(bytesTransferred: 400_000, totalBytes: total, at: now)
+        #expect(!regressed)
         // The final chunk always forwards, however close to the last one.
-        #expect(coalescer.shouldForward(bytesTransferred: total, totalBytes: total, at: now))
+        let final = coalescer.shouldForward(bytesTransferred: total, totalBytes: total, at: now)
+        #expect(final)
     }
 }
 

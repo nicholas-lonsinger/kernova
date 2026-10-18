@@ -1,19 +1,23 @@
 import Foundation
+import KernovaSynchronization
 
-/// A `@Sendable`-safe mutable cell — lets a synchronous test closure record what
-/// it observed from a concurrency-checked context.
-public final class Box<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: T
+/// A mutable cell a synchronous test closure records what it observed into
+/// from a concurrency-checked context.
+public final class Box<T> {
+    private let cell: Locked<T>
+
     /// Creates a cell holding `value`.
-    public init(_ value: T) { stored = value }
+    public init(_ value: T) { cell = Locked(value) }
 
-    /// The current value; reads and writes are serialized.
+    /// The current value; each read and each write takes the lock once, so a
+    /// read-modify-write through it is two holds.
     public var value: T {
-        get { lock.withLock { stored } }
-        set { lock.withLock { stored = newValue } }
+        get { cell.withLock { $0 } }
+        set { cell.withLock { $0 = newValue } }
     }
 }
+
+extension Box: Sendable where T: Sendable {}
 
 /// Every regular file anywhere under `directory` (recursive).
 ///

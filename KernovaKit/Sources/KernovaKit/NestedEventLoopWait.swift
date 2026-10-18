@@ -25,7 +25,7 @@ import Foundation
 /// nested `nextEvent`/`sendEvent` loop there dispatches input, drains the main
 /// queue and runs `MainActor` work, while a plain `RunLoop.run` drops the input
 /// it receives.
-final class NestedEventLoopWait: @unchecked Sendable {
+final class NestedEventLoopWait: Sendable {
     /// Marks the wake event apart from application-defined events posted by
     /// anyone else.
     private static let wakeSubtype: Int16 = 0x4C50

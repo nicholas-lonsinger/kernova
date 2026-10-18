@@ -41,27 +41,27 @@ struct LazyClipboardDataProviderTests {
     @Test("provideDataForType is invoked with the exact type requested")
     func passesRequestedTypeThrough() {
         let fileType = NSPasteboard.PasteboardType.fileURL
-        let box = TypeBox()
+        let requested = Box<NSPasteboard.PasteboardType?>(nil)
         let provider = LazyClipboardDataProvider(
             provide: {
-                box.requested = $0
+                requested.value = $0
                 return nil
             },
             onFinished: { _ in })
 
         provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: fileType)
-        #expect(box.requested == fileType)
+        #expect(requested.value == fileType)
     }
 
     @Test("pasteboardFinishedWithDataProvider invokes onFinished with self")
     func finishedFiresOnFinished() {
-        let box = ProviderBox()
+        let finished = Box<LazyClipboardDataProvider?>(nil)
         let provider = LazyClipboardDataProvider(
             provide: { _ in nil },
-            onFinished: { box.finished = $0 })
+            onFinished: { finished.value = $0 })
 
         provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
-        #expect(box.finished === provider)
+        #expect(finished.value === provider)
     }
 
     /// A provider whose `provide` runs `insideFire` with the provider itself, the
@@ -69,7 +69,7 @@ struct LazyClipboardDataProviderTests {
     /// finish releases it from `registry` and counts on `finishes`.
     private func makeRetainedProvider(
         registry: LazyClipboardProviderRegistry, finishes: Box<Int>, finished: AsyncGate,
-        bytes: Data, insideFire: @escaping (LazyClipboardDataProvider) -> Void
+        bytes: Data, insideFire: @escaping @Sendable (LazyClipboardDataProvider) -> Void
     ) -> LazyClipboardDataProvider {
         let holder = Box<LazyClipboardDataProvider?>(nil)
         let provider = LazyClipboardDataProvider(
@@ -94,14 +94,13 @@ struct LazyClipboardDataProviderTests {
         let finished = AsyncGate()
         let finishes = Box(0)
         let finishesSeenInsideFire = Box(-1)
-        let pasteboard = NSPasteboard.withUniqueName()
         let provider = makeRetainedProvider(
             registry: registry, finishes: finishes, finished: finished, bytes: bytes
         ) { provider in
             // What a retract of the write being served does from inside the
             // fire's event loop: the pasteboard finishes with the provider, whose
             // owner — the only strong reference in production — would let go.
-            provider.pasteboardFinishedWithDataProvider(pasteboard)
+            provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
             finishesSeenInsideFire.value = finishes.value
         }
 
@@ -122,7 +121,6 @@ struct LazyClipboardDataProviderTests {
         let finished = AsyncGate()
         let finishes = Box(0)
         let finishesSeenAfterNestedFire = Box(-1)
-        let pasteboard = NSPasteboard.withUniqueName()
         let depth = Box(0)
         let provider = makeRetainedProvider(
             registry: registry, finishes: finishes, finished: finished, bytes: bytes
@@ -135,7 +133,7 @@ struct LazyClipboardDataProviderTests {
                 provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: .fileURL)
                 finishesSeenAfterNestedFire.value = finishes.value
             } else {
-                provider.pasteboardFinishedWithDataProvider(pasteboard)
+                provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
             }
         }
 
@@ -146,17 +144,5 @@ struct LazyClipboardDataProviderTests {
         #expect(finishesSeenAfterNestedFire.value == 0)
         try await finished.wait { finishes.value == 1 }
         #expect(registry.countForTesting == 0)
-    }
-
-    /// Reference box so an escaping callback can record what type it saw without
-    /// a mutable value capture.
-    private final class TypeBox {
-        var requested: NSPasteboard.PasteboardType?
-    }
-
-    /// Reference box so the `onFinished` callback can record the provider it was
-    /// handed.
-    private final class ProviderBox {
-        var finished: LazyClipboardDataProvider?
     }
 }

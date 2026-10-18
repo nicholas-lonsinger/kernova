@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// One connection's control channel and the two transfer tables riding beside
 /// it, for either end of either clipboard channel.
@@ -79,14 +80,14 @@ public final class ClipboardControlSession {
     /// be holding the main thread inside a tracking or modal loop, which runs
     /// nothing queued to main until it returns — and what would resolve it is
     /// that connection. [M1]
-    private let inboxHolder = InboxHolder()
+    private let inboxHolder = Locked<ClipboardTransferInbox?>(nil)
     private var outboxStorage: ClipboardTransferOutbox?
     private var consumeTask: Task<Void, Never>?
 
     /// Latched before the pulls a teardown cancels are woken, so a paste fire
     /// that wakes cancelled can tell the end of its session from a supersession
     /// or a release, which raise their own explainer.
-    private let endedFlag = Latch()
+    private let endedFlag = Locked(false)
 
     /// Latched by `stop()` alone, so a control frame queued to main before the
     /// teardown is dropped rather than delivered.
@@ -95,7 +96,7 @@ public final class ClipboardControlSession {
     /// that sent a frame and then closed — a `DropComplete`, a
     /// `ClipboardRelease` — is still owed its delivery, while a local `stop()`
     /// is this side deciding it is done listening.
-    private let stoppedFlag = Latch()
+    private let stoppedFlag = Locked(false)
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardControlSession")
@@ -143,7 +144,7 @@ public final class ClipboardControlSession {
     ///
     /// `nonisolated` so an arriving data connection can be adopted from the
     /// thread that read its header — see `inboxHolder`.
-    nonisolated var inbox: ClipboardTransferInbox? { inboxHolder.value }
+    nonisolated var inbox: ClipboardTransferInbox? { inboxHolder.withLock { $0 } }
 
     /// The transfers this side is serving, or `nil` before `start()` and after
     /// `stop()`.
@@ -176,11 +177,11 @@ public final class ClipboardControlSession {
     ///
     /// `nonisolated` so a paste-time fire can read it from whichever thread the
     /// pasteboard server fired on.
-    nonisolated public var hasEnded: Bool { endedFlag.isSet }
+    nonisolated public var hasEnded: Bool { endedFlag.withLock { $0 } }
 
     /// Whether `stop()` has run — this side deciding it is done listening,
     /// which is what a queued control frame is dropped for.
-    nonisolated public var hasStopped: Bool { stoppedFlag.isSet }
+    nonisolated public var hasStopped: Bool { stoppedFlag.withLock { $0 } }
 
     /// Opens the transfer tables and starts draining the channel; idempotent.
     ///
@@ -213,8 +214,9 @@ public final class ClipboardControlSession {
                     )
                 })
         }
+        var inbox: ClipboardTransferInbox?
         if let staging, Self.receives(role: role, kind: kind) {
-            inboxHolder.value = ClipboardTransferInbox(
+            inbox = ClipboardTransferInbox(
                 staging: staging, socketTimeout: dataSocketTimeout,
                 onTransferTimed: { metrics in
                     #log(
@@ -224,9 +226,9 @@ public final class ClipboardControlSession {
                 })
         }
 
+        inboxHolder.withLock { $0 = inbox }
         let channel = self.channel
         let endedFlag = self.endedFlag
-        let inbox = inboxHolder.value
         consumeTask = Task.detached {
             await Self.consume(
                 channel: channel, label: label, connectionTag: tag, subject: subject,
@@ -254,12 +256,15 @@ public final class ClipboardControlSession {
         consumeTask?.cancel()
         consumeTask = nil
         // Marked before any wake, so a paste fire this cancels explains itself.
-        endedFlag.set()
-        stoppedFlag.set()
+        endedFlag.withLock { $0 = true }
+        stoppedFlag.withLock { $0 = true }
+        let inbox = inboxHolder.withLock { inbox in
+            defer { inbox = nil }
+            return inbox
+        }
         outboxStorage?.cancelAll()
-        inboxHolder.value?.cancelAll()
+        inbox?.cancelAll()
         outboxStorage = nil
-        inboxHolder.value = nil
         channel.close()
     }
 
@@ -283,7 +288,7 @@ public final class ClipboardControlSession {
         connectionTag: ClipboardConnectionTag,
         subject: String,
         inbox: ClipboardTransferInbox?,
-        endedFlag: Latch,
+        endedFlag: Locked<Bool>,
         onEnded: @Sendable () -> Void,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
@@ -306,7 +311,7 @@ public final class ClipboardControlSession {
         // Channel closed — wake any parked pull so a materialize doesn't hang
         // forever. Marked ended first, so a paste fire that wakes here can tell
         // this teardown from a supersession and explain itself.
-        endedFlag.set()
+        endedFlag.withLock { $0 = true }
         inbox?.cancelAll()
         onEnded()
     }
@@ -365,16 +370,5 @@ public final class ClipboardControlSession {
         try? channel.send(
             .dropComplete(
                 generation: generation, outcome: outcome, code: code, message: message))
-    }
-}
-
-/// Holds one session's inbox where any thread can read it.
-private final class InboxHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: ClipboardTransferInbox?
-
-    var value: ClipboardTransferInbox? {
-        get { lock.withLock { stored } }
-        set { lock.withLock { stored = newValue } }
     }
 }

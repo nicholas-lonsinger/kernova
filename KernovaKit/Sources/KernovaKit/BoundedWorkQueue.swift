@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 /// Runs blocking jobs on a concurrent queue, no more than `width` of them at a
 /// time.
@@ -13,14 +14,37 @@ import Foundation
 /// FIFO among the jobs that wait. A submitted job always runs: the queue keeps
 /// itself alive until every one of them has, so an owner that goes away first
 /// still leaves each job to release what it holds.
-final class BoundedWorkQueue: @unchecked Sendable {
+final class BoundedWorkQueue: Sendable {
+    private struct State: Sendable {
+        /// Jobs admitted and not yet finished — one worker each.
+        var running = 0
+        var waiting: [@Sendable () -> Void] = []
+
+        /// Admits `job` to a slot when one is free under `width`, else queues
+        /// it.
+        mutating func admit(_ job: @escaping @Sendable () -> Void, width: Int) -> Bool {
+            guard running < width else {
+                waiting.append(job)
+                return false
+            }
+            running += 1
+            return true
+        }
+
+        /// The next queued job for a slot that just freed, or `nil` after
+        /// giving the slot up.
+        mutating func next() -> (@Sendable () -> Void)? {
+            guard !waiting.isEmpty else {
+                running -= 1
+                return nil
+            }
+            return waiting.removeFirst()
+        }
+    }
+
     private let queue: DispatchQueue
     private let width: Int
-
-    private let lock = NSLock()
-    /// Jobs admitted and not yet finished — one worker each.
-    private var running = 0
-    private var waiting: [@Sendable () -> Void] = []
+    private let state = Locked(State())
 
     /// Creates a queue running at most `width` jobs at once on `queue`.
     init(width: Int, queue: DispatchQueue) {
@@ -30,14 +54,7 @@ final class BoundedWorkQueue: @unchecked Sendable {
 
     /// Runs `job` now, or as soon as a slot frees.
     func submit(_ job: @escaping @Sendable () -> Void) {
-        let admitted = lock.withLock { () -> Bool in
-            guard running < width else {
-                waiting.append(job)
-                return false
-            }
-            running += 1
-            return true
-        }
+        let admitted = state.withLock { $0.admit(job, width: width) }
         guard admitted else { return }
         // `self` is captured strongly: the worker this slot occupies is what
         // drains the jobs queued behind it.
@@ -45,22 +62,16 @@ final class BoundedWorkQueue: @unchecked Sendable {
             var next: (@Sendable () -> Void)? = job
             while let run = next {
                 run()
-                next = lock.withLock { () -> (@Sendable () -> Void)? in
-                    guard !waiting.isEmpty else {
-                        running -= 1
-                        return nil
-                    }
-                    return waiting.removeFirst()
-                }
+                next = state.withLock { $0.next() }
             }
         }
     }
 
     #if DEBUG
     /// Jobs running right now, which is also the workers this queue holds.
-    var runningCountForTesting: Int { lock.withLock { running } }
+    var runningCountForTesting: Int { state.withLock { $0.running } }
 
     /// Jobs submitted and waiting for a slot.
-    var waitingCountForTesting: Int { lock.withLock { waiting.count } }
+    var waitingCountForTesting: Int { state.withLock { $0.waiting.count } }
     #endif
 }

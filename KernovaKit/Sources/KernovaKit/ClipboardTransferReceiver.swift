@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// Reassembles one clipboard representation off its own vsock data connection.
 ///
@@ -17,7 +18,7 @@ import KernovaLogging
 /// size and SHA-256 both — before anything is delivered. Each running signal
 /// has exactly one producer — the payload figure the stage that counts the
 /// payload, arriving bytes the wire reader — so the figure only ever climbs.
-final class ClipboardTransferReceiver: @unchecked Sendable {
+final class ClipboardTransferReceiver: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferReceiver")
 
@@ -103,9 +104,12 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
 
     private let queue: DispatchQueue
-    private let lock = NSLock()
-    private var descriptor: Int32?
-    private var isCancelled = false
+    private struct State: Sendable {
+        var descriptor: Int32?
+        var isCancelled = false
+    }
+
+    private let state = Locked(State())
 
     /// Creates a receiver for one transfer.
     ///
@@ -187,16 +191,16 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         // The shutdown happens under the lock the descriptor is cleared under,
         // so a cancellation racing the connection's own close can never reach a
         // descriptor number the system has already handed to someone else.
-        lock.withLock {
-            isCancelled = true
-            guard let descriptor else { return }
+        state.withLock { state in
+            state.isCancelled = true
+            guard let descriptor = state.descriptor else { return }
             ClipboardDataConnection.interrupt(fd: descriptor)
         }
     }
 
     // MARK: - Private
 
-    private var cancelled: Bool { lock.withLock { isCancelled } }
+    private var cancelled: Bool { state.withLock { $0.isCancelled } }
 
     private func run(
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
@@ -260,11 +264,14 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             }
         }
         ClipboardDataConnection.applySocketOptions(fd: fd, timeout: socketTimeout)
-        lock.withLock { descriptor = fd }
+        let cancelledWhileOpening = state.withLock { state in
+            state.descriptor = fd
+            return state.isCancelled
+        }
         // A cancellation that landed while the connection was being opened had
         // nothing to interrupt, so honor it here rather than start a transfer
         // nobody is waiting on.
-        guard !cancelled else {
+        guard !cancelledWhileOpening else {
             closeConnection(fd)
             throw cancellationStop
         }
@@ -286,7 +293,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
 
     /// Ends the connection and forgets its descriptor.
     private func closeConnection(_ fd: Int32) {
-        lock.withLock { descriptor = nil }
+        state.withLock { $0.descriptor = nil }
         ClipboardDataConnection.end(fd: fd)
     }
 
@@ -412,7 +419,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             throw ReceiveStop(code: .stageError, message: "Cannot open the extract destination")
         }
 
-        let counted = ArchiveByteCounter()
+        let counted = Locked(0)
         let refusal = ArchiveRefusalBox()
         let staging = self.staging
         let guarded = refusal.guarding { [self] written in
@@ -440,7 +447,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             from: ClipboardArchivePayloadSource(reader: reader), into: destination,
             counted: counted, pacingBytes: extractPacingBytes, onOutputAdvanced: guarded)
 
-        if let refused = refusal.value {
+        if let refused = refusal.recorded {
             try? FileManager.default.removeItem(at: destination)
             throw stop(for: refused)
         }
@@ -467,7 +474,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     /// Turns the extracted tree into the representation the pull asked for.
     private func finishStaged(
         reply: Kernova_V1_ClipboardTransferReply, at destination: URL,
-        counted: ArchiveByteCounter, reader: ClipboardPayloadReader
+        counted: Locked<Int>, reader: ClipboardPayloadReader
     ) throws -> (representation: ClipboardContent.Representation, byteCount: Int) {
         let digest = reader.digest()
         if plan.extractsDirectoryNamed != nil {
@@ -475,7 +482,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             // tree's, not the compressed count the wire carried — which can be
             // ~100× lower and disagrees with the uncompressed estimate the offer
             // advertised for the same folder.
-            let treeByteCount = counted.value
+            let treeByteCount = counted.withLock { $0 }
             return (
                 ClipboardContent.Representation(
                     uti: plan.uti, fileURL: destination, byteCount: treeByteCount,

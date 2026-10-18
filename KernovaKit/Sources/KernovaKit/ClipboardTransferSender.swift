@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 /// How a transfer's data connection is obtained.
 ///
@@ -37,7 +38,7 @@ public enum ClipboardTransferLink: Sendable {
 /// socket writes are one call stack, and `write(2)` parking on a full send
 /// buffer *is* the flow control. Nothing above it counts credit
 /// (docs/research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
-final class ClipboardTransferSender: @unchecked Sendable {
+final class ClipboardTransferSender: Sendable {
     /// Why this side stopped streaming, carried out through AppleArchive, which
     /// rewraps whatever a stream callback throws.
     private enum SenderStop: Error {
@@ -56,8 +57,7 @@ final class ClipboardTransferSender: @unchecked Sendable {
     private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
 
     private let queue: DispatchQueue
-    private let lock = NSLock()
-    private var retiredAs: ClipboardStreamAbortCode?
+    private let retiredAs = Locked<ClipboardStreamAbortCode?>(nil)
     /// The first stop this side raised, kept apart from what the archive
     /// reports, since AppleArchive rewraps an error thrown out of a callback.
     private let stopBox = ArchiveRefusalBox()
@@ -148,12 +148,14 @@ final class ClipboardTransferSender: @unchecked Sendable {
     /// it in the trailer; one that stopped reading until the send timeout
     /// released the parked write gets no trailer, only the close.
     func cancel(_ code: ClipboardStreamAbortCode) {
-        lock.withLock { if retiredAs == nil { retiredAs = code } }
+        retiredAs.withLock { retiredAs in
+            if retiredAs == nil { retiredAs = code }
+        }
     }
 
     // MARK: - Private
 
-    private var retirement: ClipboardStreamAbortCode? { lock.withLock { retiredAs } }
+    private var retirement: ClipboardStreamAbortCode? { retiredAs.withLock { $0 } }
 
     /// What crosses the wire: raw bytes for an inline payload the receiver can
     /// hold resident, an archive for everything else.
@@ -233,7 +235,7 @@ final class ClipboardTransferSender: @unchecked Sendable {
             if let code = retirement { try raise(code) }
             guard isCurrent(generation) else { try raise(.superseded) }
         }
-        let counted = ArchiveByteCounter()
+        let counted = Locked(0)
         var failure: (code: ClipboardStreamAbortCode, stalled: Bool)?
         do {
             switch payload {
@@ -286,7 +288,7 @@ final class ClipboardTransferSender: @unchecked Sendable {
         case .raw(let data): payloadByteCount = data.count
         case .archived(.file(_, _, let byteCount)): payloadByteCount = byteCount
         case .archived(.blob(let data, _)): payloadByteCount = data.count
-        case .archived(.directory): payloadByteCount = counted.value
+        case .archived(.directory): payloadByteCount = counted.withLock { $0 }
         }
         let completedAt = clock.now
         onTransferTimed(
@@ -405,7 +407,7 @@ final class ClipboardTransferSender: @unchecked Sendable {
     /// requester's ceiling in payload units as the archive is produced.
     private func stream(
         _ source: ClipboardArchiveSource, through writer: ClipboardPayloadWriter,
-        counted: ArchiveByteCounter, maxAcceptByteCount: UInt64,
+        counted: Locked<Int>, maxAcceptByteCount: UInt64,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?
     ) throws {
         let ceiling = maxAcceptByteCount
@@ -432,14 +434,14 @@ final class ClipboardTransferSender: @unchecked Sendable {
         // success over a callback whose write failed, which would end the
         // transfer with a completion trailer over a payload the peer never
         // received.
-        if let failure = writer.failure ?? failure { throw stopBox.value ?? failure }
+        if let failure = writer.failure ?? failure { throw stopBox.recorded ?? failure }
     }
 
     /// Records and throws this side's own reason for stopping, so it survives
     /// AppleArchive rewrapping whatever a stream callback throws.
     private func raise(_ code: ClipboardStreamAbortCode) throws -> Never {
         let stop = SenderStop.abort(code)
-        stopBox.value = stop
+        stopBox.record(stop)
         throw stop
     }
 

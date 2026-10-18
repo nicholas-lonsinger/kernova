@@ -31,15 +31,12 @@ enum FetchProgressThrottle {
 }
 
 /// The stateful half of the throttle: owns one consumer's watermarks and
-/// answers "forward this update?" under its own lock.
+/// answers "forward this update?".
 ///
 /// `ClipboardTransferOperation` holds one per *operation* — the aggregate is a
 /// single byte stream even when several transfers feed it — so every progress
 /// surface republishes at one shared policy.
-///
-/// `@unchecked Sendable`: every stored property is guarded by `lock`.
-final class FetchProgressCoalescer: @unchecked Sendable {
-    private let lock = NSLock()
+struct FetchProgressCoalescer: Sendable {
     private var lastForwardedBytes: UInt64 = 0
     /// When the last update was forwarded; `nil` until the first, so the first
     /// forward chunk always passes (elapsed reads as effectively infinite).
@@ -56,26 +53,22 @@ final class FetchProgressCoalescer: @unchecked Sendable {
     /// Without it the watermarks would still describe the last *throttled*
     /// forward, so the next update would measure its delta from a byte count
     /// already on screen and sail through the policy however small it was.
-    func markForwarded(bytesTransferred: UInt64, at now: EngineInstant) {
-        lock.withLock {
-            lastForwardedBytes = max(lastForwardedBytes, bytesTransferred)
-            lastForwardAt = now
-        }
+    mutating func markForwarded(bytesTransferred: UInt64, at now: EngineInstant) {
+        lastForwardedBytes = max(lastForwardedBytes, bytesTransferred)
+        lastForwardAt = now
     }
 
     /// Whether `(bytesTransferred, totalBytes)`, observed at `now`, should be
     /// forwarded, advancing the watermarks when it should.
-    func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64, at now: EngineInstant) -> Bool {
-        lock.withLock {
-            let elapsed = lastForwardAt.map { $0.seconds(to: now) } ?? .greatestFiniteMagnitude
-            guard
-                FetchProgressThrottle.shouldPush(
-                    bytes: bytesTransferred, total: totalBytes,
-                    lastPushedBytes: lastForwardedBytes, elapsedSinceLastPush: elapsed)
-            else { return false }
-            lastForwardedBytes = bytesTransferred
-            lastForwardAt = now
-            return true
-        }
+    mutating func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64, at now: EngineInstant) -> Bool {
+        let elapsed = lastForwardAt.map { $0.seconds(to: now) } ?? .greatestFiniteMagnitude
+        guard
+            FetchProgressThrottle.shouldPush(
+                bytes: bytesTransferred, total: totalBytes,
+                lastPushedBytes: lastForwardedBytes, elapsedSinceLastPush: elapsed)
+        else { return false }
+        lastForwardedBytes = bytesTransferred
+        lastForwardAt = now
+        return true
     }
 }

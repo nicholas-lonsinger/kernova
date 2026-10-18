@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 /// Shared parameters for archived clipboard transfers — every file, folder and
 /// oversize inline payload, which cross the wire as an AppleArchive (LZ4).
@@ -89,7 +90,7 @@ extension ClipboardArchive {
     public static func archiveBytes(of source: ClipboardArchiveSource) throws -> Data {
         let sink = ClipboardArchiveDataSink()
         if let failure = ClipboardArchiveCodec.encode(
-            source, into: sink, counted: ArchiveByteCounter())
+            source, into: sink, counted: Locked(0))
         {
             throw failure
         }
@@ -104,7 +105,7 @@ extension ClipboardArchive {
     public static func extract(_ bytes: Data, into destinationURL: URL) throws {
         if let failure = ClipboardArchiveCodec.extract(
             from: ClipboardArchiveDataSource(bytes: bytes), into: destinationURL,
-            counted: ArchiveByteCounter(), pacingBytes: ClipboardStreamTuning.extractPacingBytes,
+            counted: Locked(0), pacingBytes: ClipboardStreamTuning.extractPacingBytes,
             onOutputAdvanced: nil)
         {
             throw failure
@@ -113,25 +114,21 @@ extension ClipboardArchive {
 }
 
 /// Collects every encoded byte into one buffer.
-private final class ClipboardArchiveDataSink: ClipboardSequentialArchiveStream, @unchecked Sendable {
-    private let lock = NSLock()
-    private var collected = Data()
+final class ClipboardArchiveDataSink: ClipboardSequentialArchiveStream {
+    private let collected = Locked(Data())
 
-    var bytes: Data { lock.withLock { collected } }
+    var bytes: Data { collected.withLock { $0 } }
 
     func write(from buffer: UnsafeRawBufferPointer) throws -> Int {
-        lock.withLock { collected.append(contentsOf: buffer) }
+        collected.withLock { $0.append(contentsOf: buffer) }
         return buffer.count
     }
 }
 
 /// Hands one buffer's bytes to the decoder in reads.
-private final class ClipboardArchiveDataSource: ClipboardSequentialArchiveStream,
-    @unchecked Sendable
-{
-    private let lock = NSLock()
+final class ClipboardArchiveDataSource: ClipboardSequentialArchiveStream {
     private let bytes: Data
-    private var offset = 0
+    private let offset = Locked(0)
 
     init(bytes: Data) {
         self.bytes = bytes
@@ -139,7 +136,7 @@ private final class ClipboardArchiveDataSource: ClipboardSequentialArchiveStream
 
     func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
         guard let destination = buffer.baseAddress else { return 0 }
-        return lock.withLock {
+        return offset.withLock { offset in
             let take = min(buffer.count, bytes.count - offset)
             guard take > 0 else { return 0 }
             let start = bytes.index(bytes.startIndex, offsetBy: offset)

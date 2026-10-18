@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 /// The result of a lazy pull: a materialized representation, or why no bytes
 /// arrived.
@@ -53,14 +54,11 @@ public enum LazyPullOutcome: Sendable {
 /// not a joiner, and not any waiter once it has its outcome, since by then the
 /// slot has released the id and the next `pull` or `join` for it starts a fresh
 /// pull.
-final class LazyPullCoordinator: @unchecked Sendable {
+final class LazyPullCoordinator: Sendable {
     /// One caller waiting on a pull; ``leave(_:)`` takes the handle back.
-    ///
-    /// `@unchecked Sendable`: `resolvedOutcome` is read and written under the
-    /// waiter's own `lock`, and everything else is immutable.
-    final class Waiter: @unchecked Sendable {
+    final class Waiter: Sendable {
         /// How this waiter is told its outcome.
-        fileprivate enum Wakeup {
+        fileprivate enum Wakeup: Sendable {
             /// A held thread: its semaphore, plus the event loop the wait is
             /// running when it holds the main run loop's base.
             case synchronous(DispatchSemaphore, NestedEventLoopWait?)
@@ -71,8 +69,9 @@ final class LazyPullCoordinator: @unchecked Sendable {
         fileprivate let transferID: UInt64
         fileprivate let onProgress: (@Sendable (Int, Int) -> Void)?
         private let wakeup: Wakeup
-        private let lock = NSLock()
-        private var resolvedOutcome: LazyPullOutcome?
+        /// Set once, by whichever of the slot's end and a ``leave(_:)`` comes
+        /// first; the held thread's wait reads it.
+        private let resolvedOutcome = Locked<LazyPullOutcome?>(nil)
 
         fileprivate init(
             transferID: UInt64, wakeup: Wakeup, onProgress: (@Sendable (Int, Int) -> Void)?
@@ -83,13 +82,13 @@ final class LazyPullCoordinator: @unchecked Sendable {
         }
 
         /// This waiter's outcome, once the slot has handed it one.
-        fileprivate var outcome: LazyPullOutcome? { lock.withLock { resolvedOutcome } }
+        fileprivate var outcome: LazyPullOutcome? { resolvedOutcome.withLock { $0 } }
 
         /// Hands `outcome` over exactly once, waking the thread or calling back.
         fileprivate func resolve(_ outcome: LazyPullOutcome) {
-            let isFirst = lock.withLock { () -> Bool in
-                guard resolvedOutcome == nil else { return false }
-                resolvedOutcome = outcome
+            let isFirst = resolvedOutcome.withLock { resolved -> Bool in
+                guard resolved == nil else { return false }
+                resolved = outcome
                 return true
             }
             guard isFirst else { return }
@@ -105,39 +104,96 @@ final class LazyPullCoordinator: @unchecked Sendable {
 
     /// One in-flight pull and every waiter on it.
     ///
-    /// `@unchecked Sendable`: the mutable state is read and written under the
-    /// slot's own `lock`, which is taken while the coordinator's `lock` is held
-    /// and never the reverse. `retire` runs under the coordinator's lock alone.
-    private final class Slot: @unchecked Sendable {
-        let transferID: UInt64
+    /// A slot is live exactly while it is in ``State/slots``: every route that
+    /// ends it removes it in the same critical section.
+    private struct Slot: Sendable {
+        /// Tells this pull apart from a later one that takes the same id.
+        let serial: UInt64
         /// The starter's inactivity window, governing every waiter on this pull.
         let timeout: TimeInterval
         /// Releases what the starter registered, for every route out but the
         /// awaiter's own delivery.
         let retire: @Sendable () -> Void
-        let lock = NSLock()
         var waiters: [Waiter] = []
-        var resolved = false
         /// Whether `start` has returned, so there is a registration for `retire`
         /// to release.
         var started = false
-        /// Set when the slot ended while `start` was still running: the starting
-        /// thread owes the `retire` nothing could run yet.
-        var retireOwed = false
         /// Set by `recordActivity`, consumed by each backstop tick: a window that
         /// saw bytes arrive re-arms instead of timing the pull out.
         var sawActivity = false
-        var backstop: DispatchSourceTimer?
+        var backstop: (any DispatchSourceTimer)?
+    }
 
-        init(transferID: UInt64, timeout: TimeInterval, retire: @escaping @Sendable () -> Void) {
-            self.transferID = transferID
-            self.timeout = timeout
-            self.retire = retire
+    private struct State: Sendable {
+        var slots: [UInt64: Slot] = [:]
+        var lastSerial: UInt64 = 0
+        /// The `retire` of each slot that ended while its `start` was still
+        /// running, keyed by serial: the starting thread owes it once `start`
+        /// returns.
+        var owedRetires: [UInt64: @Sendable () -> Void] = [:]
+
+        /// Adds `waiter` to the live pull for its id, or creates the pull with
+        /// `waiter` as its starter.
+        mutating func enter(
+            _ waiter: Waiter, timeout: TimeInterval, retire: @escaping @Sendable () -> Void
+        ) -> (slot: Slot, isStarter: Bool) {
+            if var existing = slots[waiter.transferID] {
+                existing.waiters.append(waiter)
+                slots[waiter.transferID] = existing
+                return (existing, false)
+            }
+            lastSerial &+= 1
+            let slot = Slot(serial: lastSerial, timeout: timeout, retire: retire, waiters: [waiter])
+            slots[waiter.transferID] = slot
+            return (slot, true)
+        }
+
+        /// Records that the starter's `start` returned, paying the `retire` a
+        /// slot that ended meanwhile left owed.
+        ///
+        /// Paid only while the id is free: a fresh pull that took it meanwhile
+        /// owns the registration under it now, and its own end releases it.
+        mutating func markStarted(transferID: UInt64, serial: UInt64) {
+            if slots[transferID]?.serial == serial {
+                slots[transferID]?.started = true
+                return
+            }
+            if let retire = owedRetires.removeValue(forKey: serial), slots[transferID] == nil {
+                retire()
+            }
+        }
+
+        /// Ends the live slot for `transferID` — only the one `serial` names,
+        /// when given — and returns it.
+        ///
+        /// `retiring` is true for every route but the awaiter's own delivery,
+        /// where the receiver has already dropped the registration itself.
+        mutating func end(_ transferID: UInt64, serial: UInt64? = nil, retiring: Bool) -> Slot? {
+            guard let slot = slots[transferID], serial.map({ $0 == slot.serial }) ?? true else {
+                return nil
+            }
+            slots[transferID] = nil
+            if retiring { retire(slot) }
+            return slot
+        }
+
+        /// Releases what `start` registered for `slot`, or leaves the debt to
+        /// the thread still inside `start`.
+        ///
+        /// Runs in the critical section that freed the id: freeing it and
+        /// releasing the awaiter registered against it are one step, so a fresh
+        /// pull that takes the id next cannot have its own awaiter deregistered
+        /// — or its reply blacklisted — by the slot it replaced.
+        mutating func retire(_ slot: Slot) {
+            if slot.started {
+                slot.retire()
+            } else {
+                owedRetires[slot.serial] = slot.retire
+            }
         }
     }
 
-    private let lock = NSLock()
-    private var slots: [UInt64: Slot] = [:]
+    private let state = Locked(State())
     /// Where every slot's inactivity backstop fires — off the threads the pulls
     /// themselves hold.
     private let backstopQueue = DispatchQueue(label: "app.kernova.lazy-pull-backstop")
@@ -199,16 +255,16 @@ final class LazyPullCoordinator: @unchecked Sendable {
         let waiter = Waiter(
             transferID: transferID, wakeup: .synchronous(semaphore, eventLoop),
             onProgress: onProgress)
-        let slot = enter(waiter, timeout: timeout, retire: retire, start: start)
+        let slotTimeout = enter(waiter, timeout: timeout, retire: retire, start: start)
         while true {
             // Each wait holds one slice and re-checks: the waiter's own outcome,
             // never the wait's return, decides — so a signal racing the deadline
             // is still honored, and the timeout *decision* stays the slot timer's
             // alone.
             if let eventLoop {
-                eventLoop.wait(timeout: slot.timeout) { waiter.outcome != nil }
+                eventLoop.wait(timeout: slotTimeout) { waiter.outcome != nil }
             } else {
-                _ = semaphore.wait(timeout: .now() + slot.timeout)
+                _ = semaphore.wait(timeout: .now() + slotTimeout)
             }
             if let outcome = waiter.outcome { return outcome }
         }
@@ -245,38 +301,30 @@ final class LazyPullCoordinator: @unchecked Sendable {
     ///   an outcome leaves nothing behind and reports `true`.
     @discardableResult
     func leave(_ waiter: Waiter) -> Bool {
-        var abandoned: Slot?
-        let survives: Bool = lock.withLock {
-            guard let slot = slots[waiter.transferID] else { return true }
-            let stillWanted: Bool = slot.lock.withLock {
-                guard let index = slot.waiters.firstIndex(where: { $0 === waiter }) else {
-                    return true
-                }
-                slot.waiters.remove(at: index)
-                guard slot.waiters.isEmpty else { return true }
-                slot.resolved = true
-                return false
+        let abandoned = state.withLock { state -> Slot? in
+            guard var slot = state.slots[waiter.transferID],
+                let index = slot.waiters.firstIndex(where: { $0 === waiter })
+            else { return nil }
+            slot.waiters.remove(at: index)
+            guard slot.waiters.isEmpty else {
+                state.slots[waiter.transferID] = slot
+                return nil
             }
-            guard !stillWanted else { return true }
-            slots[slot.transferID] = nil
-            retireSlot(slot)
-            abandoned = slot
-            return false
+            return state.end(waiter.transferID, serial: slot.serial, retiring: true)
         }
         waiter.resolve(.cancelled)
-        if let abandoned { cancelBackstop(abandoned) }
-        return survives
+        abandoned?.backstop?.cancel()
+        return abandoned == nil
     }
 
     /// Fans one transfer's payload figure out to every waiter's `onProgress`.
     ///
     /// Off-actor; progress for a resolved or unknown pull is a no-op. The fanout
-    /// runs under the slot's lock together with that check, so a figure landing
-    /// after the pull's terminal cannot reopen a readout the terminal closed.
+    /// runs under the lock together with that check, so a figure landing after
+    /// the pull's terminal cannot reopen a readout the terminal closed.
     func progress(_ transferID: UInt64, bytesReceived: Int, totalBytes: Int) {
-        guard let slot = lock.withLock({ slots[transferID] }) else { return }
-        slot.lock.withLock {
-            guard !slot.resolved else { return }
+        state.withLock { state in
+            guard let slot = state.slots[transferID] else { return }
             for waiter in slot.waiters { waiter.onProgress?(bytesReceived, totalBytes) }
         }
     }
@@ -287,11 +335,7 @@ final class LazyPullCoordinator: @unchecked Sendable {
     /// Off-actor and idempotent; activity for a resolved or unknown pull is a
     /// no-op.
     func recordActivity(_ transferID: UInt64) {
-        guard let slot = lock.withLock({ slots[transferID] }) else { return }
-        slot.lock.withLock {
-            guard !slot.resolved else { return }
-            slot.sawActivity = true
-        }
+        state.withLock { $0.slots[transferID]?.sawActivity = true }
     }
 
     /// Resolves the pull for `transferID` with a completed representation.
@@ -299,14 +343,14 @@ final class LazyPullCoordinator: @unchecked Sendable {
     /// Off-actor and idempotent: a duplicate or post-timeout delivery is a
     /// no-op.
     func deliver(_ transferID: UInt64, _ representation: ClipboardContent.Representation) {
-        resolve(transferID, .delivered(representation), retiring: false)
+        finish(state.withLock { $0.end(transferID, retiring: false) }, .delivered(representation))
     }
 
     /// Resolves the pull for `transferID` with a failure.
     ///
     /// Off-actor, idempotent.
     func abort(_ transferID: UInt64, _ info: ClipboardStreamAbortInfo) {
-        resolve(transferID, .aborted(info), retiring: false)
+        finish(state.withLock { $0.end(transferID, retiring: false) }, .aborted(info))
     }
 
     /// Resolves every waiter of every pull with `.cancelled`, retiring each slot.
@@ -314,152 +358,87 @@ final class LazyPullCoordinator: @unchecked Sendable {
     /// Called on channel teardown, a superseding offer, or a `ClipboardRelease`
     /// so an in-flight paste returns empty instead of blocking to the timeout.
     func failAll() {
-        let pending = lock.withLock { Array(slots.values) }
-        for slot in pending { resolveSlot(slot, .cancelled, retiring: true) }
+        let ended = state.withLock { state in
+            Array(state.slots.keys).compactMap { state.end($0, retiring: true) }
+        }
+        for slot in ended { finish(slot, .cancelled) }
     }
 
     // MARK: - Private
 
     /// Registers `waiter` on the pull for its id, creating and starting the pull
     /// when it is the first to ask.
+    ///
+    /// - Returns: the pull's inactivity window.
     private func enter(
         _ waiter: Waiter, timeout: TimeInterval, retire: @escaping @Sendable () -> Void,
         start: () -> Void
-    ) -> Slot {
-        let (slot, isStarter): (Slot, Bool) = lock.withLock {
-            // A slot leaves `slots` in the same critical section that marks it
-            // resolved, so one found here is always still live.
-            if let existing = slots[waiter.transferID] {
-                existing.lock.withLock { existing.waiters.append(waiter) }
-                return (existing, false)
-            }
-            let slot = Slot(transferID: waiter.transferID, timeout: timeout, retire: retire)
-            slot.waiters.append(waiter)
-            slots[waiter.transferID] = slot
-            return (slot, true)
-        }
-        guard isStarter else { return slot }
-        armBackstop(slot)
+    ) -> TimeInterval {
+        let (slot, isStarter) = state.withLock { $0.enter(waiter, timeout: timeout, retire: retire) }
+        guard isStarter else { return slot.timeout }
+        armBackstop(transferID: waiter.transferID, slot: slot)
         // Outside the lock, and only for the call that created the slot: one
         // awaiter and one request per pull, however many waiters join it.
         start()
         // The registration exists from here on, so anything that ended the slot
         // while `start` ran — a channel close, a release, the backstop — left the
-        // release of that registration to this thread. Identity-checked like
-        // `resolveSlot`'s removal: a fresh pull that took the id meanwhile owns
-        // the registration under it now, and its own end releases it.
-        lock.withLock {
-            let owed = slot.lock.withLock { () -> Bool in
-                let owed = slot.retireOwed
-                slot.started = true
-                slot.retireOwed = false
-                return owed
-            }
-            if owed, slots[slot.transferID] == nil { slot.retire() }
-        }
-        return slot
-    }
-
-    /// Releases what `start` registered for `slot`, or leaves the debt to the
-    /// thread still inside `start`.
-    ///
-    /// Caller holds the coordinator's `lock` and not `slot.lock`: freeing the id
-    /// and releasing the awaiter registered against it are one step, so a fresh
-    /// pull that takes the id next cannot have its own awaiter deregistered — or
-    /// its reply blacklisted — by the slot it replaced.
-    private func retireSlot(_ slot: Slot) {
-        let started = slot.lock.withLock { () -> Bool in
-            guard slot.started else {
-                slot.retireOwed = true
-                return false
-            }
-            return true
-        }
-        if started { slot.retire() }
+        // release of that registration to this thread.
+        state.withLock { $0.markStarted(transferID: waiter.transferID, serial: slot.serial) }
+        return slot.timeout
     }
 
     /// Arms the slot's inactivity backstop: a window that sees no bytes arrive
     /// resolves the pull `.timedOut`.
-    private func armBackstop(_ slot: Slot) {
+    private func armBackstop(transferID: UInt64, slot: Slot) {
+        let serial = slot.serial
         let timer = DispatchSource.makeTimerSource(queue: backstopQueue)
         timer.schedule(deadline: .now() + slot.timeout, repeating: slot.timeout)
-        timer.setEventHandler { [weak self, weak slot] in
-            guard let self, let slot else { return }
-            self.backstopFired(slot)
+        timer.setEventHandler { [weak self] in
+            self?.backstopFired(transferID, serial: serial)
         }
         // Resumed before it is handed over, so the store-or-cancel below can
         // never release a suspended source.
         timer.resume()
-        let alreadyResolved = slot.lock.withLock { () -> Bool in
-            guard !slot.resolved else { return true }
-            slot.backstop = timer
-            return false
-        }
-        if alreadyResolved { timer.cancel() }
-    }
-
-    private func cancelBackstop(_ slot: Slot) {
-        let timer = slot.lock.withLock { () -> DispatchSourceTimer? in
-            defer { slot.backstop = nil }
-            return slot.backstop
-        }
-        timer?.cancel()
-    }
-
-    /// One backstop window boundary: re-arm if bytes arrived inside it, else
-    /// give the pull up.
-    private func backstopFired(_ slot: Slot) {
-        let expired = slot.lock.withLock { () -> Bool in
-            guard !slot.resolved else { return false }
-            guard !slot.sawActivity else {
-                slot.sawActivity = false
-                return false
-            }
+        let stored = state.withLock { state -> Bool in
+            guard state.slots[transferID]?.serial == serial else { return false }
+            state.slots[transferID]?.backstop = timer
             return true
         }
-        guard expired else { return }
-        resolveSlot(slot, .timedOut, retiring: true)
+        if !stored { timer.cancel() }
     }
 
-    private func resolve(_ transferID: UInt64, _ outcome: LazyPullOutcome, retiring: Bool) {
-        guard let slot = lock.withLock({ slots[transferID] }) else { return }
-        resolveSlot(slot, outcome, retiring: retiring)
-    }
-
-    /// Ends `slot`, handing `outcome` to every waiter on it. Idempotent.
-    ///
-    /// `retiring` is true for every route but the awaiter's own delivery, where
-    /// the receiver has already dropped the registration itself.
-    private func resolveSlot(_ slot: Slot, _ outcome: LazyPullOutcome, retiring: Bool) {
-        let waiters: [Waiter]? = lock.withLock {
-            let taken: [Waiter]? = slot.lock.withLock {
-                guard !slot.resolved else { return nil }
-                slot.resolved = true
-                defer { slot.waiters.removeAll() }
-                return slot.waiters
+    /// One backstop window boundary for the pull `serial` names, or for the
+    /// live pull when `nil`: re-arm if bytes arrived inside it, else give the
+    /// pull up.
+    private func backstopFired(_ transferID: UInt64, serial: UInt64?) {
+        let expired = state.withLock { state -> Slot? in
+            guard let slot = state.slots[transferID], serial.map({ $0 == slot.serial }) ?? true
+            else { return nil }
+            guard !slot.sawActivity else {
+                state.slots[transferID]?.sawActivity = false
+                return nil
             }
-            guard taken != nil else { return nil }
-            // Identity-checked: a fresh pull for the same id may already own the
-            // key, and removing unconditionally would evict its live slot.
-            if slots[slot.transferID] === slot { slots[slot.transferID] = nil }
-            if retiring { retireSlot(slot) }
-            return taken
+            return state.end(transferID, serial: slot.serial, retiring: true)
         }
-        guard let waiters else { return }
-        cancelBackstop(slot)
-        for waiter in waiters { waiter.resolve(outcome) }
+        finish(expired, .timedOut)
+    }
+
+    /// Hands `outcome` to every waiter of a slot just ended, if one was.
+    private func finish(_ slot: Slot?, _ outcome: LazyPullOutcome) {
+        guard let slot else { return }
+        slot.backstop?.cancel()
+        for waiter in slot.waiters { waiter.resolve(outcome) }
     }
 
     #if DEBUG
     /// Number of pulls in flight.
     ///
     /// Test-only.
-    var pendingSlotCountForTesting: Int { lock.withLock { slots.count } }
+    var pendingSlotCountForTesting: Int { state.withLock { $0.slots.count } }
 
     /// Waiters sharing the pull for `transferID`. Test-only.
     func waiterCountForTesting(_ transferID: UInt64) -> Int {
-        guard let slot = lock.withLock({ slots[transferID] }) else { return 0 }
-        return slot.lock.withLock { slot.waiters.count }
+        state.withLock { $0.slots[transferID]?.waiters.count ?? 0 }
     }
 
     /// Runs one backstop window boundary for `transferID` — the tick the slot's
@@ -468,8 +447,7 @@ final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// Test-only.
     func elapseBackstopWindowForTesting(_ transferID: UInt64) {
-        guard let slot = lock.withLock({ slots[transferID] }) else { return }
-        backstopFired(slot)
+        backstopFired(transferID, serial: nil)
     }
     #endif
 }

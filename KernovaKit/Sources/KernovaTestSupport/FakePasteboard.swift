@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 /// In-memory ``ClipboardPasteboard`` over ``FakeWritePasteboard``.
 ///
@@ -15,13 +16,16 @@ import KernovaKit
 /// Thread-safe: ``invokeProvider(forType:itemIndex:)`` blocks its calling thread
 /// until the lazy pull behind the promise resolves, so it runs off the test's
 /// main actor.
-public final class FakePasteboard: ClipboardPasteboard, @unchecked Sendable {
+public final class FakePasteboard: ClipboardPasteboard, Sendable {
+    private struct State: Sendable {
+        /// Resident items — a user's own copy, one entry per pasteboard item.
+        var residents: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
+        /// Bytes a fired provider resolved, which a promised item serves from.
+        var resolved: [NSPasteboard.PasteboardType: Data] = [:]
+    }
+
     private let writer = FakeWritePasteboard()
-    private let lock = NSLock()
-    /// Resident items — a user's own copy, one entry per pasteboard item.
-    private var residents: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
-    /// Bytes a fired provider resolved, which a promised item serves from.
-    private var resolved: [NSPasteboard.PasteboardType: Data] = [:]
+    private let state = Locked(State())
 
     /// Creates an empty pasteboard double.
     public init() {}
@@ -37,10 +41,10 @@ public final class FakePasteboard: ClipboardPasteboard, @unchecked Sendable {
     public var items: [any ClipboardPasteboardItemReading] {
         let promised = writer.promisedTypesByItem
         guard promised.isEmpty else {
-            let bytes = lock.withLock { resolved }
+            let bytes = state.withLock { $0.resolved }
             return promised.map { FakePasteboardItem(types: $0, bytes: bytes) }
         }
-        return lock.withLock { residents }.map(FakePasteboardItem.init)
+        return state.withLock { $0.residents }.map(FakePasteboardItem.init)
     }
 
     // MARK: - Promised writes
@@ -85,7 +89,7 @@ public final class FakePasteboard: ClipboardPasteboard, @unchecked Sendable {
         guard let bytes = writer.invokeProvider(forType: type, itemIndex: itemIndex) else {
             return nil
         }
-        lock.withLock { resolved[type] = bytes }
+        state.withLock { $0.resolved[type] = bytes }
         return bytes
     }
 
@@ -99,7 +103,9 @@ public final class FakePasteboard: ClipboardPasteboard, @unchecked Sendable {
     /// Registers one lazy promise per item, recording no bytes.
     @discardableResult
     public func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
+        _ items: [(
+            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
+        )]
     ) -> Bool {
         let written = writer.writeItems(items)
         if written { clearResidents() }
@@ -126,9 +132,9 @@ public final class FakePasteboard: ClipboardPasteboard, @unchecked Sendable {
     /// in the guest.
     @discardableResult
     public func setItems(_ items: [[(type: NSPasteboard.PasteboardType, data: Data)]]) -> Bool {
-        lock.withLock {
-            residents = items
-            resolved.removeAll()
+        state.withLock { state in
+            state.residents = items
+            state.resolved.removeAll()
         }
         // Drops any promise and bumps the change count, as a real write does.
         writer.clearContents()
@@ -143,9 +149,9 @@ public final class FakePasteboard: ClipboardPasteboard, @unchecked Sendable {
     }
 
     private func clearResidents() {
-        lock.withLock {
-            residents.removeAll()
-            resolved.removeAll()
+        state.withLock { state in
+            state.residents.removeAll()
+            state.resolved.removeAll()
         }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// One clipboard-protocol connection — either end of either clipboard channel —
 /// as its owner sees it.
@@ -160,9 +161,9 @@ public final class ClipboardEndpoint {
     ///
     /// `nonisolated` so the accept path can gate on it from the listener's
     /// queue; written only on the main actor, at the lifecycle transitions.
-    nonisolated public var isConnected: Bool { connectedFlag.value }
+    nonisolated public var isConnected: Bool { connectedFlag.withLock { $0 } }
 
-    nonisolated private let connectedFlag = LockedFlag()
+    nonisolated private let connectedFlag = Locked(false)
 
     nonisolated private let session: ClipboardControlSession
     private let outbound: ClipboardOutboundOffers
@@ -235,7 +236,7 @@ public final class ClipboardEndpoint {
     /// what it described is a transfer of a session that is over.
     public func start() {
         guard !isConnected else { return }
-        connectedFlag.value = true
+        connectedFlag.withLock { $0 = true }
         if kind == .clipboard { reporter.clearFinished() }
         session.start(
             handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
@@ -264,7 +265,7 @@ public final class ClipboardEndpoint {
         session.stop()
         inbound?.endSession()
         outbound.endSession()
-        connectedFlag.value = false
+        connectedFlag.withLock { $0 = false }
     }
 
     /// Settles a connection the channel ended under, and tells the owner.
@@ -273,7 +274,7 @@ public final class ClipboardEndpoint {
     /// deciding, and it needs no answer.
     private func channelDidEnd() {
         guard isConnected else { return }
-        connectedFlag.value = false
+        connectedFlag.withLock { $0 = false }
         delegate?.endpointDidEnd(self)
     }
 
@@ -643,18 +644,6 @@ public final class ClipboardEndpoint {
         (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
     #endif
-}
-
-/// Reversible thread-safe flag — for lifecycle state any thread reads and the
-/// main actor sets and clears.
-private final class LockedFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored = false
-
-    var value: Bool {
-        get { lock.withLock { stored } }
-        set { lock.withLock { stored = newValue } }
-    }
 }
 
 // MARK: - Promise serving

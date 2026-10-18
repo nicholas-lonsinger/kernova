@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 
 // Driving one transfer's data connection by hand, from whichever side a test is
 // standing in for. A real connection carries, in order: one header frame from
@@ -32,10 +33,20 @@ public func dialToPeer(_ peer: @escaping @Sendable (Int32) -> Void) throws -> In
 /// A transfer dials from its own queue, so a test awaits its connection here
 /// rather than racing the dial. Hand ``dialer`` to whatever is under test and
 /// take each connection with ``next()``.
-public final class DialledDataConnections: @unchecked Sendable {
-    private let lock = NSLock()
-    private var opened: [Int32] = []
-    private var taken = 0
+public final class DialledDataConnections: Sendable {
+    private struct State: Sendable {
+        var opened: [Int32] = []
+        var taken = 0
+
+        /// The oldest connection nothing has taken, marking it taken.
+        mutating func takeNext() -> Int32? {
+            guard opened.count > taken else { return nil }
+            defer { taken += 1 }
+            return opened[taken]
+        }
+    }
+
+    private let state = Locked(State())
     private let gate = AsyncGate()
 
     /// Creates an empty collector.
@@ -53,31 +64,30 @@ public final class DialledDataConnections: @unchecked Sendable {
 
     /// Records one dialled connection's peer end.
     public func add(_ fd: Int32) {
-        lock.withLock { opened.append(fd) }
+        state.withLock { $0.opened.append(fd) }
         gate.notify()
     }
 
     /// How many connections have been dialled so far.
-    public var count: Int { lock.withLock { opened.count } }
+    public var count: Int { state.withLock { $0.opened.count } }
 
     /// The next connection nothing has taken, awaiting one that has not been
     /// dialled yet.
     public func next(isolation: isolated (any Actor)? = #isolation) async throws -> Int32 {
+        var next: Int32?
         try await gate.wait(isolation: isolation) {
-            self.lock.withLock { self.opened.count > self.taken }
+            next = state.withLock { $0.takeNext() }
+            return next != nil
         }
-        return lock.withLock {
-            let fd = opened[taken]
-            taken += 1
-            return fd
-        }
+        guard let next else { preconditionFailure("The wait returned with no connection taken") }
+        return next
     }
 
     /// Closes every connection nothing took, so a torn-down test leaks none.
     public func closeAll() {
-        let leftover = lock.withLock { () -> [Int32] in
-            let rest = Array(opened[taken...])
-            taken = opened.count
+        let leftover = state.withLock { state -> [Int32] in
+            let rest = Array(state.opened[state.taken...])
+            state.taken = state.opened.count
             return rest
         }
         for fd in leftover { ClipboardDataConnection.end(fd: fd) }

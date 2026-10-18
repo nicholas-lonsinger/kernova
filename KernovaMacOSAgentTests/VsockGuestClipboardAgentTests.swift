@@ -15,7 +15,7 @@ struct VsockGuestClipboardAgentTests {
 
     // Every `…ForTesting` lifecycle poll in this suite is the no-signal kind —
     // `liveChannelForTesting` and `inboundPromiseGenerationForTesting` read
-    // main-queue-confined SUT internals that are neither `@Observable` nor
+    // main-actor SUT internals that are neither `@Observable` nor
     // owned by a test double, and the agent publishes no transition a test
     // could arm on. Pasteboard-write waits use `pasteboard.changed` instead,
     // and the one filesystem-appearance poll names itself at its call site.
@@ -42,7 +42,7 @@ struct VsockGuestClipboardAgentTests {
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         reporter: ClipboardTransferReporter = ClipboardTransferReporter(),
         onClipboardNotice: @escaping @Sendable () -> Void = {}
-    ) -> VsockGuestClipboardAgent {
+    ) async -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
             port: KernovaVsockPort.clipboard,
@@ -52,7 +52,7 @@ struct VsockGuestClipboardAgentTests {
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
-        let agent = VsockGuestClipboardAgent(
+        let agent = await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, clock: clock,
             freeSpaceProvider: freeSpaceProvider,
             stagingRoot: stagingRoot.root,
@@ -102,7 +102,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -150,7 +150,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -212,7 +212,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -267,7 +267,7 @@ struct VsockGuestClipboardAgentTests {
         let reporter = await MainActor.run { reports.reporter }
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
             progressRevealDelay: 0, progressIdleGap: 0, reporter: reporter)
         defer { agent.stop() }
@@ -317,7 +317,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -357,7 +357,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -388,7 +388,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -438,7 +438,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -496,7 +496,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -544,7 +544,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -588,7 +588,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -626,7 +626,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -661,7 +661,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -701,7 +701,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -747,7 +747,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
@@ -807,7 +807,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
@@ -846,7 +846,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -876,7 +876,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -924,7 +924,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -979,7 +979,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1003,7 +1003,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1032,7 +1032,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1064,7 +1064,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1091,7 +1091,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1137,7 +1137,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1171,7 +1171,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1221,7 +1221,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1255,7 +1255,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1315,7 +1315,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1382,7 +1382,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1422,7 +1422,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1475,7 +1475,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1519,7 +1519,7 @@ struct VsockGuestClipboardAgentTests {
 
         // Only 1 KiB free, so a 50 MiB file rep fails the pre-flight disk guard.
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, freeSpaceProvider: { _ in 1024 },
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
@@ -1576,7 +1576,7 @@ struct VsockGuestClipboardAgentTests {
         let notices = AtomicInt()
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
@@ -1624,7 +1624,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
@@ -1676,7 +1676,7 @@ struct VsockGuestClipboardAgentTests {
         // production burst window without waiting it out.
         let clock = TestEngineClock()
         let notices = AtomicInt()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, clock: clock,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
@@ -1728,9 +1728,12 @@ struct VsockGuestClipboardAgentTests {
         // notice raised ahead of the write would open a menu saying nothing.
         let seen = AtomicBox<ClipboardActivity>()
         let agentRef = AtomicBox<VsockGuestClipboardAgent>()
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd,
-            onClipboardNotice: { seen.set(agentRef.value?.clipboardActivity) })
+            // The agent raises the notice on the main actor.
+            onClipboardNotice: {
+                MainActor.assumeIsolated { seen.set(agentRef.value?.clipboardActivity) }
+            })
         agentRef.set(agent)
         defer {
             agent.stop()
@@ -1765,7 +1768,7 @@ struct VsockGuestClipboardAgentTests {
         let notices = AtomicInt()
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(
+        let agent = await makeAgent(
             pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
@@ -1815,7 +1818,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         let raised = 16 * 1024 * 1024 * 1024
@@ -1874,7 +1877,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = VsockGuestClipboardAgent(
+        let agent = await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
@@ -1941,7 +1944,7 @@ struct VsockGuestClipboardAgentTests {
         }
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = VsockGuestClipboardAgent(
+        let agent = await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
@@ -2023,7 +2026,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = VsockGuestClipboardAgent(
+        let agent = await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
@@ -2058,7 +2061,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2097,7 +2100,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2140,7 +2143,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = VsockGuestClipboardAgent(
+        let agent = await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
@@ -2182,7 +2185,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2220,7 +2223,7 @@ struct VsockGuestClipboardAgentTests {
         // Every data connection this agent dials is answered by a peer that
         // closes it at once, so the transfer's reply is written into a dead
         // connection.
-        let agent = makeAgentWithDeadDataPeer(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgentWithDeadDataPeer(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2254,7 +2257,7 @@ struct VsockGuestClipboardAgentTests {
     /// first write fails.
     private func makeAgentWithDeadDataPeer(
         pasteboard: FakePasteboard, agentFd: Int32
-    ) -> VsockGuestClipboardAgent {
+    ) async -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
             port: KernovaVsockPort.clipboard, label: "clipboard-dead-peer-test", clock: MonotonicEngineClock(),
@@ -2262,7 +2265,7 @@ struct VsockGuestClipboardAgentTests {
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
-        return VsockGuestClipboardAgent(
+        return await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(),
             dataDialer: { _ in
@@ -2278,7 +2281,7 @@ struct VsockGuestClipboardAgentTests {
     func defaultDisabledAtConstruction() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, _) = try makeRawSocketPair()
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         // Sanity: read enabled flag via the test seam from the main queue.
@@ -2294,7 +2297,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         agent.start()
@@ -2325,7 +2328,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -2352,7 +2355,7 @@ struct VsockGuestClipboardAgentTests {
 
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -2380,7 +2383,7 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)  // leaves it enabled
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
@@ -2580,8 +2583,8 @@ struct VsockGuestClipboardAgentTests {
 // MARK: - Thread-safe fd array
 
 /// Sendable wrapper for an array of file descriptors used in socket provider closures.
-final class FdBox: @unchecked Sendable {
-    private let fds: [Int32]  // Immutable post-init; lock not needed.
+final class FdBox: Sendable {
+    private let fds: [Int32]
 
     init(fds: [Int32]) {
         self.fds = fds

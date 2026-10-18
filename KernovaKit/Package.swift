@@ -119,7 +119,7 @@ let package = Package(
         ),
         .target(
             name: "KernovaTestSupport",
-            dependencies: ["KernovaKit", "KernovaLogging"],
+            dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
             swiftSettings: sharedSwiftSettings
         ),
         .testTarget(

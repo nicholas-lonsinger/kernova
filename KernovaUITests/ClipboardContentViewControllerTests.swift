@@ -28,7 +28,7 @@ private func makeCopyToMacHarness() -> (
     let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
     let registry = LazyClipboardProviderRegistry()
     let retained = AsyncGate()
-    registry.onChangeForTesting = { retained.notify() }
+    registry.setOnChangeForTesting { retained.notify() }
     return (pasteboard, registry, retained)
 }
 

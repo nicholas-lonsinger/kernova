@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 
 /// Materializes streamed file representations to real local temp files so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
@@ -19,7 +20,7 @@ import Foundation
 /// instances are reclaimed by `reclaimSiblingRoots()` once nothing can be serving
 /// from them; an exited process's whole root, by the next launch's
 /// ``ProcessStagingRoot/reclaimAbandonedRoots()``.
-public final class ClipboardFileStaging: @unchecked Sendable {
+public final class ClipboardFileStaging: Sendable {
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
     public typealias FreeSpaceProvider = @Sendable (URL) -> Int64?
@@ -29,19 +30,22 @@ public final class ClipboardFileStaging: @unchecked Sendable {
 
     /// An open append-only sink for one streamed file representation.
     ///
-    /// `@unchecked Sendable`: an internal lock makes concurrent
-    /// `write`/`commit`/`abort` safe.
-    public final class Sink: @unchecked Sendable {
+    /// Concurrent `write`/`commit`/`abort` are serialized: each does its I/O
+    /// under the lock the handle lives in.
+    public final class Sink: Sendable {
+        private struct State: Sendable {
+            let handle: FileHandle
+            var finished = false
+        }
+
         /// The local file the bytes are being written to.
         let url: URL
 
-        private let handle: FileHandle
-        private let lock = NSLock()
-        private var finished = false
+        private let state: Locked<State>
 
         init(url: URL, handle: FileHandle) {
             self.url = url
-            self.handle = handle
+            self.state = Locked(State(handle: handle))
         }
 
         /// Appends a chunk to the file.
@@ -49,10 +53,10 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         /// - Throws: any error from `FileHandle.write(contentsOf:)` (e.g. the
         ///   volume filling mid-stream).
         public func write(_ data: Data) throws {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !finished else { return }
-            try handle.write(contentsOf: data)
+            try state.withLock { state in
+                guard !state.finished else { return }
+                try state.handle.write(contentsOf: data)
+            }
         }
 
         /// Closes the file and keeps it; the bytes are complete.
@@ -65,40 +69,69 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         ///   in-flight digest check. The partial is deleted on a close failure.
         @discardableResult
         public func commit() throws -> URL {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !finished else { return url }
-            finished = true
-            do {
-                try handle.close()
-            } catch {
-                try? FileManager.default.removeItem(at: url)
-                throw error
+            try state.withLock { state in
+                guard !state.finished else { return url }
+                state.finished = true
+                do {
+                    try state.handle.close()
+                } catch {
+                    try? FileManager.default.removeItem(at: url)
+                    throw error
+                }
+                return url
             }
-            return url
         }
 
         /// Closes the file and deletes the partial.
         ///
         /// Idempotent.
         public func abort() {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !finished else { return }
-            finished = true
-            try? handle.close()
-            try? FileManager.default.removeItem(at: url)
+            state.withLock { state in
+                guard !state.finished else { return }
+                state.finished = true
+                try? state.handle.close()
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 
     private let processRoot: ProcessStagingRoot
     private let root: URL
     private let freeSpaceProvider: FreeSpaceProvider
-    private let lock = NSLock()
 
-    /// Generation directories in arrival order (oldest first), bounded to
-    /// `maxGenerations`.
-    private var generationDirs: [(generation: UInt64, dir: URL)] = []
+    /// The lock also serializes every filesystem change under ``root``, so the
+    /// I/O each method does stays inside its `withLock`.
+    private struct State: Sendable {
+        /// Generation directories in arrival order (oldest first), bounded to
+        /// `maxGenerations`.
+        var generationDirs: [GenerationDir] = []
+
+        /// Returns the directory for `generation` under `root`, creating it on
+        /// first use and evicting the oldest directories beyond
+        /// `maxGenerations`.
+        mutating func directory(
+            for generation: UInt64, root: URL, processRoot: ProcessStagingRoot
+        ) throws -> URL {
+            if let existing = generationDirs.first(where: { $0.generation == generation }) {
+                return existing.dir
+            }
+            let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try processRoot.createDirectory(at: dir)
+            generationDirs.append(GenerationDir(generation: generation, dir: dir))
+            while generationDirs.count > ClipboardFileStaging.maxGenerations {
+                let oldest = generationDirs.removeFirst()
+                try? FileManager.default.removeItem(at: oldest.dir)
+            }
+            return dir
+        }
+    }
+
+    private struct GenerationDir: Sendable {
+        let generation: UInt64
+        let dir: URL
+    }
+
+    private let state = Locked(State())
 
     /// This process's root for clipboard staging, the host's and the guest
     /// agent's alike.
@@ -174,18 +207,17 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     ///
     /// - Throws: a filesystem error if the directory or file can't be created.
     public func makeSink(generation: UInt64, filename: String) throws -> Sink {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let dir = try directory(for: generation)
-        // One multi-file copy can carry two payloads that share a name; reusing
-        // the first's path would collapse the two files into one.
-        let url = NameUniquing.uniqueDestination(in: dir, filename: filename)
-        // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache.
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: url)
-        _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
-        return Sink(url: url, handle: handle)
+        try state.withLock { state in
+            let dir = try state.directory(for: generation, root: root, processRoot: processRoot)
+            // One multi-file copy can carry two payloads that share a name;
+            // reusing the first's path would collapse the two files into one.
+            let url = NameUniquing.uniqueDestination(in: dir, filename: filename)
+            // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache.
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: url)
+            _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
+            return Sink(url: url, handle: handle)
+        }
     }
 
     /// Reserves an empty child directory named exactly `name` under the
@@ -198,14 +230,14 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     ///
     /// - Throws: a filesystem error if the directory can't be created.
     public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
-        lock.lock()
-        defer { lock.unlock() }
-        let dir = try directory(for: generation)
-        let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let url = parent.appendingPathComponent(
-            NameUniquing.sanitizedComponent(name), isDirectory: true)
-        try processRoot.createDirectory(at: url)
-        return url
+        try state.withLock { state in
+            let dir = try state.directory(for: generation, root: root, processRoot: processRoot)
+            let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let url = parent.appendingPathComponent(
+                NameUniquing.sanitizedComponent(name), isDirectory: true)
+            try processRoot.createDirectory(at: url)
+            return url
+        }
     }
 
     /// Reserves a fresh empty directory under the generation directory for a
@@ -214,12 +246,12 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     ///
     /// - Throws: a filesystem error if the directory can't be created.
     public func reserveScratchDirectory(generation: UInt64) throws -> URL {
-        lock.lock()
-        defer { lock.unlock() }
-        let url = try directory(for: generation)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try processRoot.createDirectory(at: url)
-        return url
+        try state.withLock { state in
+            let url = try state.directory(for: generation, root: root, processRoot: processRoot)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try processRoot.createDirectory(at: url)
+            return url
+        }
     }
 
     /// Removes this instance's entire staging root — every live generation at
@@ -228,10 +260,10 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// A previous instance's root is out of reach by construction;
     /// `reclaimSiblingRoots` reclaims those.
     public func sweep() {
-        lock.lock()
-        defer { lock.unlock() }
-        try? FileManager.default.removeItem(at: root)
-        generationDirs.removeAll()
+        state.withLock { state in
+            try? FileManager.default.removeItem(at: root)
+            state.generationDirs.removeAll()
+        }
     }
 
     /// Removes the directory for `generation` and drops it from the retention
@@ -241,12 +273,12 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// early, once the caller knows nothing can still be serving from it. A
     /// generation the window already evicted is a no-op.
     public func discardGeneration(_ generation: UInt64) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let index = generationDirs.firstIndex(where: { $0.generation == generation })
-        else { return }
-        let dir = generationDirs.remove(at: index).dir
-        try? FileManager.default.removeItem(at: dir)
+        state.withLock { state in
+            guard let index = state.generationDirs.firstIndex(where: { $0.generation == generation })
+            else { return }
+            let dir = state.generationDirs.remove(at: index).dir
+            try? FileManager.default.removeItem(at: dir)
+        }
     }
 
     /// Removes every sibling root under this instance's label — staging left
@@ -258,37 +290,19 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// receive root, once the host pasteboard no longer holds (or has just
     /// retracted) the write those files backed.
     public func reclaimSiblingRoots() {
-        lock.lock()
-        defer { lock.unlock() }
-        let labelDir = root.deletingLastPathComponent()
-        guard
-            let siblings = try? FileManager.default.contentsOfDirectory(
-                at: labelDir, includingPropertiesForKeys: nil)
-        else { return }
-        for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
-            try? FileManager.default.removeItem(at: sibling)
+        state.withLock { _ in
+            let labelDir = root.deletingLastPathComponent()
+            guard
+                let siblings = try? FileManager.default.contentsOfDirectory(
+                    at: labelDir, includingPropertiesForKeys: nil)
+            else { return }
+            for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
+                try? FileManager.default.removeItem(at: sibling)
+            }
         }
     }
 
     // MARK: - Private
-
-    /// Returns the directory for `generation`, creating it on first use and
-    /// evicting the oldest directories beyond `maxGenerations`.
-    ///
-    /// Caller holds the lock.
-    private func directory(for generation: UInt64) throws -> URL {
-        if let existing = generationDirs.first(where: { $0.generation == generation }) {
-            return existing.dir
-        }
-        let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try processRoot.createDirectory(at: dir)
-        generationDirs.append((generation: generation, dir: dir))
-        while generationDirs.count > Self.maxGenerations {
-            let oldest = generationDirs.removeFirst()
-            try? FileManager.default.removeItem(at: oldest.dir)
-        }
-        return dir
-    }
 
     /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`
     /// (Apple's documented key for user-initiated/important writes, vs. the

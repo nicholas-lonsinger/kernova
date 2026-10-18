@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// What the peer has offered this side, and every pull that materializes it.
 ///
@@ -97,7 +98,17 @@ public final class ClipboardInboundOffers {
     /// Held off the main actor: a blocking fire clears its id from whichever
     /// thread it holds, and the main hop that would cost is the one a paste
     /// must not pay.
-    nonisolated private let syncPulls = InFlightSyncPulls()
+    nonisolated private let syncPulls = Locked<Set<UInt64>>([])
+
+    /// Takes every parked pull's id belonging to `generation` out, returning
+    /// them for the caller to tear down.
+    private func takeSyncPulls(generation: UInt64) -> [UInt64] {
+        syncPulls.withLock { ids in
+            let matched = ids.filter { ClipboardTransferID.generation(of: $0) == generation }
+            ids.subtract(matched)
+            return Array(matched)
+        }
+    }
 
     private let clock: any EngineClock
     private let maxPasteBytes: @MainActor () -> Int
@@ -339,7 +350,7 @@ public final class ClipboardInboundOffers {
         guard let entry = entries.removeValue(forKey: generation) else { return }
         if currentGeneration == generation { currentGeneration = 0 }
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
-        _ = syncPulls.take(generation: generation)
+        _ = takeSyncPulls(generation: generation)
     }
 
     /// Takes over a data connection this side's listener accepted, matching it
@@ -455,7 +466,7 @@ public final class ClipboardInboundOffers {
         guard let entry = entries.removeValue(forKey: generation) else { return }
         if currentGeneration == generation { currentGeneration = 0 }
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
-        for id in syncPulls.take(generation: generation) {
+        for id in takeSyncPulls(generation: generation) {
             session.inbox?.cancelAwait(id)
             coordinator.abort(
                 id,
@@ -745,7 +756,7 @@ public final class ClipboardInboundOffers {
             return .refused(.cancelled)
         }
         let transferID = self.transferID(generation: generation, repIndex: repIndex)
-        syncPulls.insert(transferID)
+        syncPulls.withLock { _ = $0.insert(transferID) }
         return .ready(
             PullPlan(
                 generation: generation, repIndex: repIndex, transferID: transferID, uti: info.uti,
@@ -916,7 +927,7 @@ public final class ClipboardInboundOffers {
         _ outcome: LazyPullOutcome, plan: PullPlan, operation: ClipboardTransferOperation,
         caller: PullCaller
     ) -> ClipboardContent.Representation? {
-        syncPulls.remove(plan.transferID)
+        syncPulls.withLock { _ = $0.remove(plan.transferID) }
         guard case .delivered(let representation) = outcome else {
             if caller == .paste {
                 // Retired rather than ended: a readout this object owns has
@@ -1197,30 +1208,5 @@ extension LazyPullOutcome {
     fileprivate var isTimedOut: Bool {
         if case .timedOut = self { return true }
         return false
-    }
-}
-
-/// The transfer ids of the pulls holding a thread right now, readable and
-/// writable from any of them.
-private final class InFlightSyncPulls: @unchecked Sendable {
-    private let lock = NSLock()
-    private var ids: Set<UInt64> = []
-
-    func insert(_ id: UInt64) {
-        lock.withLock { _ = ids.insert(id) }
-    }
-
-    func remove(_ id: UInt64) {
-        lock.withLock { _ = ids.remove(id) }
-    }
-
-    /// Takes every id belonging to `generation` out, returning them for the
-    /// caller to tear down.
-    func take(generation: UInt64) -> [UInt64] {
-        lock.withLock {
-            let matched = ids.filter { ClipboardTransferID.generation(of: $0) == generation }
-            ids.subtract(matched)
-            return Array(matched)
-        }
     }
 }
