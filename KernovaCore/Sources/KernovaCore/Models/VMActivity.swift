@@ -1310,8 +1310,8 @@ package struct VMOperationContext: ~Copyable, Sendable {
     }
 
     /// `owner` is a reference the caller owns: given a copy of a borrowed one,
-    /// the Swift 6.4 optimizer (swiftlang-6.4.0.34.1) leaks that copy in
-    /// `SILCombine` and the `-O` build crashes.
+    /// the Swift 6.4 optimizer leaks that copy in `SILCombine` and the `-O`
+    /// build crashes (https://github.com/swiftlang/swift/issues/93409).
     @MainActor
     fileprivate init(activity: VMActivity, kind: VMOperationKind, owner: VMInstance) {
         self.activity = activity
