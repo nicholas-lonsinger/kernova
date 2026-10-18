@@ -262,15 +262,35 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-package-reference.sh
 	@bash Tools/check-core-imports.sh
 
-# Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own
-# `-derivedDataPath`, `-quiet`, `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`,
-# and `COMPILER_INDEX_STORE_ENABLE=YES` to xcodebuild; only
-# `-skipPackagePluginValidation` has to be appended, because the project
-# consumes SwiftPM packages. That build is Periphery's own, into its own arena,
-# so a scan takes minutes. Stdout carries Periphery's report and nothing else —
-# .github/workflows/dead-code.yml redirects it to a file and greps it.
-dead-code: ## Scan for unused code with Periphery (drives its own build; minutes)
-	@periphery=$$(Tools/install-periphery.sh) && $(LOCKED) "$$periphery" scan --disable-update-check -- -skipPackagePluginValidation
+# Unused-code scan, reading .periphery.yml, over one fixed arena per checkout.
+# Periphery's own build would go to ~/Library/Caches/com.github.peripheryapp
+# under a name hashed from its schemes in a Swift `Set`'s per-process order, a
+# new multi-gigabyte arena most runs; the GUI's arena, indexed while editing,
+# is no single build's index. The flags are Periphery 3.x's own plus
+# `-skipPackagePluginValidation`. Stdout carries Periphery's report alone —
+# .github/workflows/dead-code.yml greps it — so the builds write to stderr. The
+# built apps are unregistered from Launch Services on the way out, whatever
+# the outcome, so a scan's build never wins the version election.
+PERIPHERY_DERIVED_DATA := $(DERIVED_DATA_ROOT)/Periphery
+PERIPHERY_SCHEMES       = $(shell awk '/^schemes:/ { on = 1; next } on && /^  - / { print $$2; next } on && !/^ *(\#|$$)/ { on = 0 }' .periphery.yml)
+
+dead-code: ## Scan for unused code with Periphery (builds every scheme first; minutes)
+	$(LOCKED_TWIN)
+
+locked-dead-code:
+	@trap "Tools/ghosts.sh --unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
+	periphery=$$(Tools/install-periphery.sh) || exit 1; \
+	schemes='$(PERIPHERY_SCHEMES)'; \
+	[ -n "$$schemes" ] || { echo 'dead-code: no schemes listed in .periphery.yml' >&2; exit 1; }; \
+	for scheme in $$schemes; do \
+		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
+			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
+			-skipPackagePluginValidation build-for-testing \
+			CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf \
+			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES >&2 || exit 1; \
+	done; \
+	"$$periphery" scan --disable-update-check \
+		--index-store-path $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format), signing, optional tooling, and repo setup (git hooks,

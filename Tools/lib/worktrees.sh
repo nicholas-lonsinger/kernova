@@ -61,6 +61,30 @@ orphaned_worktree_dirs() {
     done
 }
 
+# stale_build_server_caches <cache root> — one line per xcode-build-server
+# cache folder under <cache root> that names this clone's primary checkout or
+# a .claude/worktrees/ checkout, and no registered worktree. xcode-build-server
+# names each folder for its checkout's absolute path with every `/` turned into
+# `-` (its server.py, build_initialize), and nothing removes the folder with the
+# checkout. The transform is lossy, so a folder is claimed only in this clone's
+# own layout: the primary's name alone, or it followed by `-.claude-worktrees-`
+# — a sibling project named `<primary>-foo` reads the same as a worktree
+# outside that layout, and is left alone. Reports nothing when the listing
+# could not be read, where every folder would otherwise look stale.
+stale_build_server_caches() {
+    [ -n "$main_root" ] || return 0
+    local prefix=${main_root//\//-} live='' wt dir
+    while IFS= read -r wt; do
+        [ -n "$wt" ] && live+="${wt//\//-}"$'\n'
+    done <<<"$worktree_paths"
+    for dir in "$1/$prefix" "$1/$prefix"-.claude-worktrees-*; do
+        if [ ! -d "$dir" ] || [ -L "$dir" ]; then
+            continue
+        fi
+        grep -qxF -- "${dir##*/}" <<<"$live" || printf '%s\n' "$dir"
+    done
+}
+
 # worktree_field <worktree> <key> — the rest of the <key> line in <worktree>'s
 # `git worktree list --porcelain` record (empty for a bare `locked`); returns 1
 # when the record has no such line.
