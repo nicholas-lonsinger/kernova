@@ -224,16 +224,15 @@ package final class VMInstance {
     }
 
     /// The guest agent's install/version/liveness state in this VM's session,
-    /// `nil` when the VM has no session — a stopped or suspended VM makes no
-    /// statement about its agent.
+    /// `nil` when the VM has no agent channel: it has no session, or it is a
+    /// Linux session without clipboard sharing.
     ///
     /// The single read site for the UI. macOS guests source it from the
     /// always-on `VsockControlService`, so it is meaningful whether or not
     /// clipboard sharing is enabled; `.expectedMissing` and `.connecting` are
     /// synthesized here because that service has no access to persisted host
     /// state. Linux guests source it from `SpiceClipboardService`, which only
-    /// ever reaches `.waiting` / `.current`; a Linux session without one
-    /// (clipboard sharing off) has no agent channel and reports `nil`.
+    /// ever reaches `.waiting` / `.current`.
     package var agentStatus: AgentStatus? {
         guard let context = sessionContext else { return nil }
         switch configuration.guestOS {

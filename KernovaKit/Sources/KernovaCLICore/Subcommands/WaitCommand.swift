@@ -23,7 +23,7 @@ enum WaitCondition: String, ExpressibleByArgument, Sendable, CaseIterable {
 
     /// Whether `agentStatus` satisfies an agent-shaped condition, `nil` when
     /// this condition is not about the agent. A `nil` `agentStatus` — the VM
-    /// has no session — never satisfies.
+    /// has no agent channel — never satisfies.
     ///
     /// `current` alone: an agent that is connected but out of date cannot be
     /// relied on to behave like the one this build ships, which is the whole
