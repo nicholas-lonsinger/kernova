@@ -610,16 +610,13 @@ private func enterLiveSession(_ instance: VMInstance) -> (instance: VMInstance, 
     return (instance, sessionID)
 }
 
-/// Asserts `sink` forwards nothing — a descriptor handed to it is closed, which
-/// the peer of a socket pair sees as EOF.
-@MainActor
-func expectSinkCleared(_ sink: VsockDataConnectionSink) throws {
+/// Asserts `sink` forwards nothing — a descriptor handed to it is closed before
+/// `accept(fd:)` returns.
+func expectSinkCleared(_ sink: VsockDataConnectionSink) async throws {
     let (a, b) = try makeRawSocketPair()
     defer { close(b) }  // `a` is owned — and must be closed — by the sink.
     sink.accept(fd: a)
-    #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-    var byte: UInt8 = 0
-    #expect(recv(b, &byte, 1, 0) == 0)
+    try await awaitPeerEOF(b, timeout: 0)
 }
 
 // MARK: - expectEOF

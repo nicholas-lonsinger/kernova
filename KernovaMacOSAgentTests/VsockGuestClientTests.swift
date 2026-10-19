@@ -747,7 +747,7 @@ struct BoundedBlockingConnectTests {
         ) { 0 }
 
         #expect(outcome == .connected)
-        #expect(fcntl(fds[0], F_GETFD) >= 0)
+        try expectPeerOpen(fds[1])
         #expect(gate.parkedCountForTesting("test") == 0)
     }
 
@@ -766,7 +766,7 @@ struct BoundedBlockingConnectTests {
         ) { ECONNREFUSED }
 
         #expect(outcome == .failed(errno: ECONNREFUSED))
-        #expect(fcntl(fds[0], F_GETFD) >= 0)
+        try expectPeerOpen(fds[1])
         #expect(gate.parkedCountForTesting("test") == 0)
     }
 
@@ -788,14 +788,12 @@ struct BoundedBlockingConnectTests {
 
         #expect(outcome == .abandoned)
         #expect(gate.parkedCountForTesting("test") == 1)
-        #expect(fcntl(fd, F_GETFD) >= 0)
+        try expectPeerOpen(fds[1])
 
         // The kernel finally returns; the worker discharges the parked
         // attempt, then closes the fd it now owns.
         parked.signal()
-        // Another thread's close(2) emits no signal — genuinely signal-less
-        // predicate.
-        try await waitUntil { fcntl(fd, F_GETFD) == -1 }
+        try await awaitPeerEOF(fds[1])
         #expect(gate.parkedCountForTesting("test") == 0)
     }
 
@@ -824,7 +822,7 @@ struct BoundedBlockingConnectTests {
 
         #expect(outcome == .busy)
         #expect(calls.value == 0)
-        #expect(fcntl(fds[0], F_GETFD) >= 0)
+        try expectPeerOpen(fds[1])
     }
 
     @Test("An attempt that completes lifts the backoff parked attempts imposed")

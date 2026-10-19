@@ -56,15 +56,8 @@ struct VsockListenerTests {
         // A refused connection queues no hand-off; one bridged turn proves it.
         await drainMainQueue()
         #expect(connected.withLock { $0 } == false)
-        // The refused duplicate must not leak. Observe the closure from the
-        // peer end: the refusal path close(2)s `a` synchronously before
-        // returning, so a non-blocking read on `b` sees EOF (0) — a
-        // leaked-open `a` would yield -1/EAGAIN instead. (Asserting on `a`
-        // itself via fcntl would race fd-number reuse by concurrently-running
-        // suites in this process.)
-        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(b, &byte, 1, 0) == 0)
+        // The refusal path closes the duplicate before returning.
+        try await awaitPeerEOF(b, timeout: 0)
     }
 
     @Test("A passing admission check accepts and hands the channel to main")
@@ -123,10 +116,7 @@ struct VsockListenerTests {
         #expect(handedOver.withLock { $0 } == a)
         // Nothing was written to the descriptor: a channel would have started
         // its own read loop and the endpoint's first header read would race it.
-        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(b, &byte, 1, 0) == -1)
-        #expect(errno == EAGAIN || errno == EWOULDBLOCK)
+        try expectPeerOpen(b)
     }
 
     /// The invariant the accept path exists to keep: a data connection is
@@ -163,7 +153,7 @@ struct VsockListenerTests {
             VsockAdmission.notReady(reason: "test: handshake pending"),
             .denied(reason: "test: peer not entitled"),
         ])
-    func dataListenerRefusalClosesFd(verdict: VsockAdmission) throws {
+    func dataListenerRefusalClosesFd(verdict: VsockAdmission) async throws {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
@@ -174,8 +164,6 @@ struct VsockListenerTests {
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
         #expect(handedOver.withLock { $0 } == nil)
-        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(b, &byte, 1, 0) == 0)
+        try await awaitPeerEOF(b, timeout: 0)
     }
 }

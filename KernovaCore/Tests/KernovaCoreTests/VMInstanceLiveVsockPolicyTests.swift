@@ -120,7 +120,7 @@ struct VMInstanceLiveVsockPolicyTests {
             installer.detached == [[KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData]])
         #expect(installer.attached.isEmpty)
         #expect(instance.clipboardService == nil)
-        try expectSinkCleared(instance.clipboardDataSink)
+        try await expectSinkCleared(instance.clipboardDataSink)
     }
 
     // MARK: - Drop ports
@@ -157,7 +157,7 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(installer.detached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
         #expect(installer.attached.isEmpty)
         #expect(instance.vsockDropService == nil)
-        try expectSinkCleared(instance.dropDataSink)
+        try await expectSinkCleared(instance.dropDataSink)
     }
 
     // MARK: - The channel dying under a service
@@ -248,7 +248,7 @@ struct VMInstanceLiveVsockPolicyTests {
         await drainMainQueue()
 
         #expect(instance.vsockDropService == nil)
-        try expectSinkCleared(instance.dropDataSink)
+        try await expectSinkCleared(instance.dropDataSink)
         await expectEOF(on: guest)
     }
 
@@ -271,7 +271,7 @@ struct VMInstanceLiveVsockPolicyTests {
         await drainMainQueue()
 
         #expect(instance.clipboardService == nil)
-        try expectSinkCleared(instance.clipboardDataSink)
+        try await expectSinkCleared(instance.clipboardDataSink)
         await expectEOF(on: guest)
     }
 }

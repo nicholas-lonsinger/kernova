@@ -139,8 +139,8 @@ struct VsockFeatureCoordinatorTests {
                 "\(descriptor.name): the slot survived the teardown")
         }
         #expect(instance.vsockAdmissionGate.admission(for: .none) != .admit)
-        try expectSinkCleared(instance.clipboardDataSink)
-        try expectSinkCleared(instance.dropDataSink)
+        try await expectSinkCleared(instance.clipboardDataSink)
+        try await expectSinkCleared(instance.dropDataSink)
         instance.cancelAgentPostStartWatchdog()
     }
 }
