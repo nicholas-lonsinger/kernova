@@ -47,8 +47,7 @@ saw each drag start, and no access prompt appeared.
 
 ## Method
 
-**Host build.** The spike is PR #1607 (branch `test/drag-out-spike`), built on
-`3a5dc610`.
+**Host build.** The spike is PR #1607, built on `3a5dc610`.
 
 - A `VZVirtualMachineView` subclass logs every mouse event the view receives.
 - A local event monitor stashes the mouseDown. When the pointer leaves the view
@@ -92,8 +91,8 @@ in run 2.
 - this host and guest pair;
 - the windowed display.
 
-**Raw logs** are in `Spikes/GuestDragOut/results/` on the spike branch, with
-the helpers and procedure in its README. Run 2's host log records had expired
+**Raw logs** are in `Spikes/GuestDragOut/results/` in PR #1607, with the
+helpers and procedure in its README. Run 2's host log records had expired
 before they were captured, so its host timing is the Tester's button log.
 
 ## Evidence
