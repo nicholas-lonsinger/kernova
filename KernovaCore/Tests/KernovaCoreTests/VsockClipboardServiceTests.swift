@@ -412,7 +412,8 @@ struct VsockClipboardServiceTests {
         // buffer can never reach the guest, so a caller must not retry it.
         var snapshot = recorder.frames.count
         #expect(service.grabIfChanged() == .settled)
-        try await recorder.expectNoNewFrames(sinceCount: snapshot)
+        try await recorder.expectNoNewFrames(sinceCount: snapshot, aheadOfMarkerOn: host)
+        snapshot = recorder.frames.count
 
         // First non-empty content → exactly one offer.
         service.clipboardContent = ClipboardContent(text: "alpha")
@@ -427,7 +428,8 @@ struct VsockClipboardServiceTests {
 
         // Same content → no second offer, and the guest already holds it.
         #expect(service.grabIfChanged() == .settled)
-        try await recorder.expectNoNewFrames(sinceCount: snapshot)
+        try await recorder.expectNoNewFrames(sinceCount: snapshot, aheadOfMarkerOn: host)
+        snapshot = recorder.frames.count
 
         // Fresh content → another offer.
         service.clipboardContent = ClipboardContent(text: "beta")
@@ -904,11 +906,7 @@ struct VsockClipboardServiceTests {
         #expect(reps.map(\.filename) == ["", "doc.bin"])
 
         // No ClipboardRequest is sent at offer time — pulling is lazy.
-        try await recorder.expectNoNewFrames(sinceCount: 0)
-        #expect(
-            recorder.first {
-                if case .clipboardRequest = $0.payload { return true }; return false
-            } == nil, "Offer must not trigger a ClipboardRequest")
+        try await recorder.expectNoNewFrames(sinceCount: 0, aheadOfMarkerOn: host)
     }
 
     @Test("Frames with an unsupported protocol version are dropped before dispatch")
@@ -2766,7 +2764,7 @@ struct VsockClipboardServiceTests {
         // and reports it settled, since re-offering it can only be refused again.
         let before = recorder.frames.count
         #expect(service.grabIfChanged() == .settled)
-        try await recorder.expectNoNewFrames(sinceCount: before)
+        try await recorder.expectNoNewFrames(sinceCount: before, aheadOfMarkerOn: host)
 
         // The user replaces the buffer with their own bytes → a grab now offers.
         service.clipboardContent = ClipboardContent(text: "my own text")

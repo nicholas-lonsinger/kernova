@@ -287,20 +287,30 @@ public final class FrameRecorder: Sendable {
         try await recorded.wait(timeout: timeout, isolation: isolation) { self.isFinished }
     }
 
-    /// Observes for `duration` and throws when any frame arrived past
-    /// `sinceCount`.
+    /// Writes a marker on `writer` and throws when any frame arrived past
+    /// `sinceCount` ahead of it.
     ///
-    /// A negative assertion has no signal to await, so it takes a fixed
-    /// observation window rather than a wait timeout.
+    /// `writer` is the far end of the recorded channel. The socket is FIFO, so
+    /// the marker follows every frame `writer` sent before this call — valid
+    /// only when each frame the assertion forbids would have been written by
+    /// then: in the main-actor turn of the step under test, or before an event
+    /// the test already awaited.
     public func expectNoNewFrames(
-        sinceCount before: Int, for duration: TimeInterval = 0.15
+        sinceCount before: Int, aheadOfMarkerOn writer: VsockChannel,
+        isolation: isolated (any Actor)? = #isolation
     ) async throws {
-        try await MonotonicEngineClock().sleep(for: duration)
+        let code = "test.marker.\(UUID().uuidString)"
+        try writer.sendErrorFrame(code: code, message: "", inReplyTo: nil)
+        let isMarker: @Sendable (Frame) -> Bool = { frame in
+            guard case .error(let error) = frame.payload else { return false }
+            return error.code == code
+        }
+        try await waitForFrames(isolation: isolation) { self.first(where: isMarker) != nil }
         let recorded = frames
-        guard recorded.count == before else {
-            let extras = Array(recorded[min(before, recorded.count)...])
+        guard let marker = recorded.firstIndex(where: isMarker), marker == before else {
+            let extras = recorded[min(before, recorded.count)...].prefix { !isMarker($0) }
             throw TestFailure(
-                "Expected no new frames over \(duration) s; got \(extras.count): "
+                "Expected no new frames ahead of the marker; got \(extras.count): "
                     + extras.map { String(describing: $0.payload) }.joined(separator: ", "))
         }
     }
