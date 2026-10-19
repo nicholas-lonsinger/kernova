@@ -53,25 +53,6 @@ struct VsockChannelTests {
         return (channel, rawPeerFd)
     }
 
-    /// Suspends until `fd` has bytes to read — proof its peer's write has begun.
-    private func waitUntilReadable(_ fd: Int32) async throws {
-        let stopwatch = BackstopStopwatch()
-        let readable = await offCooperativePool {
-            var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            while true {
-                let remaining = max(0, testWaitBackstop - stopwatch.elapsed)
-                let rc = poll(&descriptor, 1, Int32(remaining * 1000))
-                if rc < 0 && errno == EINTR { continue }
-                return rc > 0 && descriptor.revents & Int16(POLLIN) != 0
-            }
-        }
-        guard readable else {
-            throw TestFailure.backstop(
-                "fd \(fd) never became readable within \(testWaitBackstop) s",
-                stopwatch: stopwatch, timeout: testWaitBackstop)
-        }
-    }
-
     private func makeHello(serviceVersion: UInt32 = 1) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -331,7 +312,7 @@ struct VsockChannelTests {
         }
         defer { writeTask.cancel() }
 
-        try await waitUntilReadable(rawPeerFd)
+        try await awaitReadable(rawPeerFd)
 
         let helloBytes = try VsockChannel.serializeFramed(makeHello(serviceVersion: 42))
         try helloBytes.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
@@ -373,7 +354,7 @@ struct VsockChannelTests {
 
         // The 1 MiB write cannot fit the 4 KiB buffers the peer never drains, so
         // once its first bytes land it stays parked until teardown.
-        try await waitUntilReadable(rawPeerFd)
+        try await awaitReadable(rawPeerFd)
 
         channel.close()
 

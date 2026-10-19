@@ -32,46 +32,46 @@ public func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel
 // can take it before a check by number runs. Each check below reads the
 // socket's state from its peer end, which the test keeps open.
 
+/// Suspends until `fd` has something to read — a byte, or EOF once the socket
+/// connected to it has closed.
+///
+/// - Throws: `TestFailure` when the backstop fires first, or when `poll` fails.
+public func awaitReadable(_ fd: Int32) async throws {
+    enum Observation: Sendable {
+        case readable, timedOut, failed(errno: Int32)
+    }
+    let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
+    let observation = await offCooperativePool { () -> Observation in
+        var pollFd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while true {
+            let remaining = max(0, timeout - stopwatch.elapsed)
+            let ready = poll(&pollFd, 1, Int32((remaining * 1000).rounded(.up)))
+            if ready > 0 { return .readable }
+            if ready == 0 { return .timedOut }
+            if errno == EINTR { continue }
+            return .failed(errno: errno)
+        }
+    }
+    switch observation {
+    case .readable:
+        return
+    case .timedOut:
+        throw TestFailure.backstop(
+            "fd \(fd) had nothing to read, not even EOF, within \(timeout) s",
+            stopwatch: stopwatch, timeout: timeout)
+    case .failed(let code):
+        throw TestFailure("Polling fd \(fd) failed: errno \(code)")
+    }
+}
+
 /// Suspends until the socket connected to `peer` has closed — `peer` reads EOF.
 ///
 /// - Throws: `TestFailure` when the backstop fires first, or when `peer`
 ///   receives a byte instead of EOF.
 public func awaitPeerEOF(_ peer: Int32) async throws {
-    enum Observation: Sendable {
-        case eof, byte(UInt8), timedOut, failed(errno: Int32)
-    }
-    let timeout = testWaitBackstop
-    let stopwatch = BackstopStopwatch()
-    let observation = await offCooperativePool { () -> Observation in
-        var pollFd = pollfd(fd: peer, events: Int16(POLLIN), revents: 0)
-        while true {
-            let remaining = max(0, timeout - stopwatch.elapsed)
-            let ready = poll(&pollFd, 1, Int32((remaining * 1000).rounded(.up)))
-            if ready == 0 { return .timedOut }
-            if ready < 0 {
-                if errno == EINTR { continue }
-                return .failed(errno: errno)
-            }
-            var byte: UInt8 = 0
-            switch recv(peer, &byte, 1, MSG_DONTWAIT) {
-            case 0: return .eof
-            case 1: return .byte(byte)
-            default: return .failed(errno: errno)
-            }
-        }
-    }
-    switch observation {
-    case .eof:
-        return
-    case .byte(let byte):
-        throw TestFailure("Expected EOF on fd \(peer), received byte \(byte)")
-    case .timedOut:
-        throw TestFailure.backstop(
-            "Peer fd \(peer) read no EOF within \(timeout) s", stopwatch: stopwatch,
-            timeout: timeout)
-    case .failed(let code):
-        throw TestFailure("Awaiting EOF on fd \(peer) failed: errno \(code)")
-    }
+    try await awaitReadable(peer)
+    try expectPeerClosed(peer)
 }
 
 /// Throws unless the socket connected to `peer` has already closed: a
