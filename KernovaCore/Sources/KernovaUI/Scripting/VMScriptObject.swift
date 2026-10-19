@@ -143,7 +143,7 @@ package final class VMScriptObject: NSObject {
         return NSUniqueIDSpecifier(
             containerClassDescription: application,
             containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey,
+            key: VMScriptingRoot.virtualMachinesKey,
             uniqueID: id.uuidString)
     }
 }

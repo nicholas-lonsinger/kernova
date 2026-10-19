@@ -59,7 +59,7 @@ enum VMScriptSelector {
     private static func selector(naming specifier: NSScriptObjectSpecifier) -> VMSelector? {
         // Only the application's own element: a name under any other container
         // (`virtual machine "…" of window 1`) is the evaluation's to refuse.
-        guard specifier.container == nil, specifier.key == AppDelegate.virtualMachinesKey
+        guard specifier.container == nil, specifier.key == VMScriptingRoot.virtualMachinesKey
         else { return nil }
         switch specifier {
         case let named as NSNameSpecifier:

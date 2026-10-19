@@ -74,7 +74,7 @@ package final class VMNetworkScriptObject: NSObject {
         return NSUniqueIDSpecifier(
             containerClassDescription: application,
             containerSpecifier: nil,
-            key: AppDelegate.networksKey,
+            key: VMScriptingRoot.networksKey,
             uniqueID: network.id.uuidString)
     }
 }

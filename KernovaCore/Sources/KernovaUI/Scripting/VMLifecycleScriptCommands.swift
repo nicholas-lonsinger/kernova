@@ -61,9 +61,7 @@ enum VMScriptStopMethod: CaseIterable {
 ///
 /// Main-actor isolated because everything it touches is: Cocoa creates and
 /// executes every script command on the main thread, and the gateway a verb
-/// reaches is main-actor state. ``execute()`` is the one door Cocoa calls, so
-/// it stays as nonisolated as the method it overrides and does nothing but
-/// suspend the event and hand the rest to the main actor.
+/// reaches is main-actor state.
 @MainActor
 class VMScriptCommand: NSScriptCommand {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptCommand")
@@ -71,63 +69,40 @@ class VMScriptCommand: NSScriptCommand {
     /// What a script reads back before the app has a gateway to answer it.
     nonisolated static let notReady = "Kernova is not ready to answer scripts."
 
-    /// Takes the event over from Cocoa's own dispatch.
+    /// Takes the event over from Cocoa's own dispatch, for the gateway to
+    /// answer (``VMScriptingGateway/execute(_:)``).
     ///
     /// Cocoa's `execute()` evaluates the receivers first and answers a failure
     /// itself, before any implementation runs: a name that resolves to nothing,
     /// or to two VMs, is "can't get" and never reaches the core. Overriding it
     /// is what lets a name reach the core as a name, and what lets the
-    /// resolution wait for the library — nothing is evaluated here; that is
-    /// ``answer()``'s, once the read has landed. Cocoa requires the handler
-    /// that suspends a command to return before the command is resumed, which
-    /// the hop cannot violate: it lands on the next pass of the main run loop.
+    /// resolution wait for the library.
     ///
-    /// A selector hop rather than a task: it carries no closure, so nothing
-    /// crosses isolation, and the method it lands in is main-actor code entered
-    /// on the main thread, as every Cocoa callback is.
+    /// A selector hop rather than a closure, so nothing crosses isolation:
+    /// Cocoa executes every command on the main thread, where waiting for the
+    /// hop runs it before this returns — inside the dispatch, which is where
+    /// the gateway reads what the event addresses.
     nonisolated override func execute() -> Any? {
-        suspendExecution()
-        perform(#selector(begin), on: .main, with: nil, waitUntilDone: false)
+        performSelector(onMainThread: #selector(takeOver), with: nil, waitUntilDone: true)
         return nil
     }
 
-    /// Where the hop lands: the verb starts here, on the main actor.
-    @objc private func begin() {
-        Task { await answer() }
-    }
-
-    /// What the event addressed — one specifier or a list of them — as its
-    /// direct parameter, or as the `tell` block's subject, which Cocoa promotes
-    /// into the same slot.
-    private var addressed: Any? {
-        directParameter ?? receiversSpecifier
-    }
-
-    /// Runs the verb and hands the event back.
-    ///
-    /// Resuming is what hands the event back, so a refusal not recorded by then
-    /// is not reported at all.
-    private func answer() async {
-        await record()
-        resumeExecution(withResult: nil)
-    }
-
-    /// Runs the verb, recording whatever refused it.
-    private func record() async {
-        guard let gateway = (NSApp.delegate as? AppDelegate)?.scriptingGateway else {
+    /// Where the hop lands, on the main actor.
+    @objc private func takeOver() {
+        guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
             refuse(Int(errAEEventFailed), Self.notReady)
             return
         }
-        guard let addressed else {
-            refuse(
-                Int(errAEWrongNumberArgs),
-                "Name the virtual machine to \(commandDescription.commandName).")
-            return
-        }
+        gateway.execute(self)
+    }
+
+    /// Runs the verb on `selectors`, recording whatever refused it.
+    ///
+    /// The gateway resumes the event once this returns, which is what hands
+    /// it back, so a refusal not recorded by then is not reported at all.
+    func perform(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async {
         do {
-            try await run(gateway, on: try await gateway.address(addressed, for: self))
-        } catch let failure as VMScriptEvaluationFailure {
-            failure.record(on: self, addressing: addressed)
+            try await run(gateway, on: selectors)
         } catch let refusal as CommandError {
             refuse(refusal)
         } catch {

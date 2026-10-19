@@ -176,13 +176,13 @@ struct KernovaScriptingDefinitionTests {
 
         let key = try #require(try values("cocoa", "key", in: element).first)
 
-        #expect(key == AppDelegate.virtualMachinesKey)
-        #expect(AppDelegate.instancesRespond(to: NSSelectorFromString(key)))
+        #expect(key == VMScriptingRoot.virtualMachinesKey)
+        #expect(VMScriptingRoot.instancesRespond(to: NSSelectorFromString(key)))
         // Cocoa resolves `virtual machine "…"` through the accessor named for
         // that key, and answers with its own case-insensitive first match when
         // there is none — so the spelling is part of the contract.
         #expect(
-            AppDelegate.instancesRespond(
+            VMScriptingRoot.instancesRespond(
                 to: NSSelectorFromString("valueInVirtualMachinesWithName:")))
     }
 
@@ -266,15 +266,15 @@ struct KernovaScriptingDefinitionTests {
 
         let key = try #require(try values("cocoa", "key", in: element).first)
 
-        #expect(key == AppDelegate.networksKey)
-        #expect(AppDelegate.scriptingKeys.contains(key))
+        #expect(key == VMScriptingRoot.networksKey)
+        #expect(VMScriptingRoot.scriptingKeys.contains(key))
         // The spellings Cocoa's KVC looks for, which nothing else checks.
         for selector in [
             key, "insertInNetworks:", "insertInNetworks:atIndex:", "removeFromNetworksAtIndex:",
         ] {
             #expect(
-                AppDelegate.instancesRespond(to: NSSelectorFromString(selector)),
-                "AppDelegate answers to no \(selector)")
+                VMScriptingRoot.instancesRespond(to: NSSelectorFromString(selector)),
+                "The scripting root answers to no \(selector)")
         }
     }
 
