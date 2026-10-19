@@ -48,7 +48,7 @@ extension Trait where Self == ScopedWindowsTrait {
 /// The windows one test case holds, taken off screen together by ``close()``.
 @MainActor
 final class TestWindowScope {
-    private var windows: [NSWindow] = []
+    private(set) var windows: [NSWindow] = []
 
     nonisolated init() {}
 
@@ -151,9 +151,11 @@ extension WindowStage {
     /// The stage a test builds the app's windows on: AppKit saves nothing for
     /// them (``WindowAutosave/unsaved()``), and every window
     /// is made beyond every display, where its sheets go up too, in the running
-    /// test case's scope.
+    /// test case's scope. Its windows are that scope's alone, never those of a
+    /// test running alongside in the shared host.
     static func offDesktop() -> WindowStage {
-        WindowStage(
+        let scope = ScopedWindowsTrait.scope
+        return WindowStage(
             autosave: .unsaved(),
             makeWindow: { contentRect, styleMask in
                 let window = ParkedTestWindow(
@@ -165,7 +167,8 @@ extension WindowStage {
                 let window = ParkedTestWindow(contentViewController: contentViewController)
                 enroll(window)
                 return window
-            })
+            },
+            windows: { scope?.windows ?? [] })
     }
 }
 

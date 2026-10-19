@@ -708,7 +708,9 @@ struct ClipboardPassthroughCoordinatorTests {
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
         h.coordinator.republishIfCeilingRaised()
 
-        try await Task.sleep(for: .milliseconds(300))
+        // The raise decides synchronously; a republish it launched has landed
+        // once the publish in flight has.
+        await h.coordinator.inboundPublishTaskForTesting?.value
         #expect(!republished)
         #expect(h.pasteboard.string(forType: .string) == "what the user copied")
     }
@@ -731,7 +733,7 @@ struct ClipboardPassthroughCoordinatorTests {
         preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
         h.coordinator.republishIfCeilingRaised()
 
-        try await Task.sleep(for: .milliseconds(300))
+        await h.coordinator.inboundPublishTaskForTesting?.value
         #expect(!republished)
         #expect(h.pasteboard.string(forType: .string) == "previous host content")
     }
@@ -830,7 +832,10 @@ struct ClipboardPassthroughCoordinatorTests {
         let baseline = h.pasteboard.changeCount
         h.service.simulateInboundOffer(ClipboardContent(text: "should not appear"))
 
-        try await Task.sleep(for: .milliseconds(300))
+        // The offer's observation fires in a main-actor job the offer enqueued,
+        // and a publish it launched lands with the task it leaves behind.
+        await drainMainQueue()
+        await h.coordinator.inboundPublishTaskForTesting?.value
         #expect(!publishedAfterStop)
         #expect(h.pasteboard.changeCount == baseline)
     }

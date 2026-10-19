@@ -6,15 +6,10 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
-/// Covers `AppWindowRegistry.hasTrackedUserWindow` — the deterministic half
-/// of the window-presence answer the activation-policy reconcile and the reopen
-/// leg both read — the clipboard window's close-driven deregistration, and the
-/// `WindowResidencyHosting` call a presentation owes.
-///
-/// Only the tracked windows are exercised for presence: the `NSApp.windows` scan
-/// `hasUserWindow` layers on top also sees the windows of every test running
-/// alongside this one in the shared test host, so it has no deterministic
-/// answer here.
+/// Covers `AppWindowRegistry.hasUserWindow` — the window-presence answer the
+/// activation-policy reconcile and the reopen leg both read — the clipboard
+/// window's close-driven deregistration, and the `WindowResidencyHosting` call a
+/// presentation owes.
 @Suite("AppWindowRegistry presence", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct AppWindowRegistryPresenceTests {
@@ -43,11 +38,21 @@ struct AppWindowRegistryPresenceTests {
         }
     }
 
-    @Test("A registry that has shown nothing tracks no on-screen window")
+    @Test("A registry that has shown nothing has no on-screen window")
     func nothingShown() {
         let registry = makeRegistry()
 
         #expect(!registry.hasTrackedUserWindow)
+        #expect(!registry.hasUserWindow)
+    }
+
+    @Test("An untracked titled panel on the stage counts as a user window")
+    func untrackedPanelCounts() {
+        let registry = makeRegistry()
+        showTestWindow(styleMask: [.titled, .closable])
+
+        #expect(!registry.hasTrackedUserWindow)
+        #expect(registry.hasUserWindow)
     }
 
     @Test("The library window counts")

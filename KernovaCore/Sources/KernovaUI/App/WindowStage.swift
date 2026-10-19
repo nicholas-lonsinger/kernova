@@ -17,13 +17,18 @@ struct WindowStage: Sendable {
     /// Makes `NSWindow(contentViewController:)`'s window for `contentViewController`.
     let makeContentWindow: @MainActor @Sendable (_ contentViewController: NSViewController) -> NSWindow
 
+    /// Every window on this stage, including those AppKit makes without it,
+    /// such as the standard About panel.
+    let windows: @MainActor @Sendable () -> [NSWindow]
+
     /// The app's own windows.
     static let app = WindowStage(
         autosave: .app,
         makeWindow: { contentRect, styleMask in
             NSWindow(contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
         },
-        makeContentWindow: { NSWindow(contentViewController: $0) })
+        makeContentWindow: { NSWindow(contentViewController: $0) },
+        windows: { NSApp.windows })
 
     /// Makes a window hosting `contentViewController` whose content size is
     /// exactly `contentSize`.

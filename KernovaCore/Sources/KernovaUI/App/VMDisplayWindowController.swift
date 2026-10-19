@@ -41,6 +41,13 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
+    #if DEBUG
+    /// Whether the window last went up in front, taking key, rather than
+    /// behind; `nil` before it first goes up. An inactive test host makes no
+    /// window key, so `isKeyWindow` cannot tell the two apart.
+    private(set) var shownInFrontForTesting: Bool?
+    #endif
+
     init(
         instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
         stage: WindowStage, onResume: @escaping () -> Void
@@ -119,8 +126,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Puts the window up in Kernova's own window layer, taking neither key nor
-    /// the screen: no first-responder move, and no fullscreen however the
-    /// window was configured.
+    /// the screen: no fullscreen however the window was configured.
     ///
     /// What a display readied while the user is in another app gets — the guest
     /// draws into a real window and whatever is in front of it stays in front.
@@ -136,6 +142,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // before the machine view takes focus below, which is when system-key
         // capture starts to matter.
         backingView.apply(instance.displayViewSettings)
+        #if DEBUG
+        shownInFrontForTesting = front
+        #endif
         if front {
             super.showWindow(nil)
             // Land keyboard focus in the guest, so typing works without a click.
