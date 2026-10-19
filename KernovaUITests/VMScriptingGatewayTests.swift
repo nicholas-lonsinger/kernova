@@ -624,7 +624,7 @@ struct VMScriptingGatewayTests {
             key: AppDelegate.virtualMachinesKey)
         #expect(command.receiversSpecifier != nil)
 
-        let result = makeGateway(WiredCommandCore()).reissue(VMScriptingGateway.SuspendedCommand(command))
+        let result = makeGateway(WiredCommandCore()).reissue(command)
 
         // The test host's element evaluates to nothing, which the pre-evaluation
         // tells from a failure: the script reads Cocoa's own answer for it.
@@ -641,7 +641,7 @@ struct VMScriptingGatewayTests {
         command.directParameter = specifier
         #expect(command.receiversSpecifier != nil)
 
-        _ = makeGateway(WiredCommandCore()).reissue(VMScriptingGateway.SuspendedCommand(command))
+        _ = makeGateway(WiredCommandCore()).reissue(command)
 
         // The stale failure was cleared and the re-evaluation failed afresh —
         // which `execute()` reports as no receivers, the same as the empty
@@ -661,7 +661,7 @@ struct VMScriptingGatewayTests {
         command.directParameter = specifier.descriptor
         command.receiversSpecifier = specifier
 
-        let result = makeGateway(WiredCommandCore()).reissue(VMScriptingGateway.SuspendedCommand(command))
+        let result = makeGateway(WiredCommandCore()).reissue(command)
 
         #expect((result as? NSNumber)?.boolValue == false)
         #expect(command.scriptErrorNumber == 0)
@@ -816,19 +816,64 @@ struct VMScriptingGatewayTests {
         #expect(gateway.suspended.isEmpty)
     }
 
-    @Test("A disk-list read with no command executing or re-issued answers nothing, suspending nothing")
-    func aCommandlessDiskReadAnswersNothing() async throws {
+    /// Kernova's own `pause`, as the verb a script runs.
+    private func makePauseCommand() throws -> NSScriptCommand {
+        let description = try #require(
+            NSScriptSuiteRegistry.shared().commandDescription(
+                withAppleEventClass: FourCharCode(scriptingCode: "Krnv"),
+                andAppleEventCode: FourCharCode(scriptingCode: "Paus")))
+        return description.createCommandInstance()
+    }
+
+    @Test("A verb filtering on disks reaches the core with exactly the VMs whose measured lists pass")
+    func aVerbFilteringOnDisksAddressesWhatPasses() async throws {
         let wired = WiredCommandCore()
-        wired.register(name: "Alpha")
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID())) {
+            $0.storageDisks = [installer, main]
+        }
+        // Its one disk is the main disk its bundle holds.
+        let beta = wired.register(name: "Beta", phase: .running(sessionID: UUID()))
         let host = CommandHost()
         let gateway = await makeLandedGateway(wired, runtime: host.runtime)
-        let vm = try #require(gateway.virtualMachines().first)
-        // A verb's own addressing answers this way too.
-        gateway.answeringCommand = try makeGetCommand()
+        let command = try makePauseCommand()
+        // `pause (every virtual machine whose (count of storage disks) > 1)`:
+        // the first pass reads every list unmeasured, so nothing passes it.
+        let specifier = try makeReadingSpecifier {
+            gateway.virtualMachines().filter { $0.storageDisks.count > 1 }
+        }
 
-        #expect(vm.storageDisks.isEmpty)
+        let selectors = try await gateway.address(specifier, for: command)
+        try await gateway.pause(selectors)
+
+        #expect(selectors == [.id(alpha.id)])
+        #expect(command.scriptErrorNumber == 0)
+        #expect(command.scriptErrorString == nil)
+        #expect(alpha.status == .paused)
+        #expect(beta.status == .running)
+        #expect(wired.machineFiles.diskSizeReads == 2)
+        // The verb suspended its own event; addressing suspends nothing more.
         #expect(host.suspensions.isEmpty)
-        #expect(gateway.suspended.isEmpty)
+    }
+
+    @Test("A verb whose addressing reaches no disk list measures nothing, in one pass")
+    func aVerbReachingNoDiskListMeasuresNothing() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha")
+        let host = CommandHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+        let passes = Tally()
+        let specifier = try makeReadingSpecifier {
+            passes.count += 1
+            return gateway.virtualMachines()
+        }
+
+        let selectors = try await gateway.address(specifier, for: try makePauseCommand())
+
+        #expect(selectors == [.id(alpha.id)])
+        #expect(passes.count == 1)
+        #expect(wired.machineFiles.diskSizeReads == 0)
     }
 
     @Test("A get across several VMs' disks measures each VM it reaches, however early a pass stops")
