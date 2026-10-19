@@ -143,6 +143,10 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     @ObservationIgnored
     private var hasStopped = false
 
+    #if DEBUG
+    var lifecycleTasksForTesting: [Task<Void, Never>] { endpoint.lifecycleTasksForTesting }
+    #endif
+
     // `nonisolated` because a `Logger` needs no actor; it is Sendable.
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VsockClipboardService")

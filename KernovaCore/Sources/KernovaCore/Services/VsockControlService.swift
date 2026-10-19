@@ -154,13 +154,13 @@ package final class VsockControlService: VsockFeatureService {
     private var hasStopped = false
 
     #if DEBUG
-    /// The tasks `start()` spun up, so a test can await their completion instead
-    /// of polling for the watchdog to fall silent.
-    ///
-    /// Read it before the teardown that clears them.
     var lifecycleTasksForTesting: [Task<Void, Never>] {
         [consumeTask, outboundHeartbeatTask, livenessTask].compactMap { $0 }
     }
+
+    /// Fires after each inbound frame is handled — the seam a test needs to
+    /// observe that a frame changed nothing, which no other signal announces.
+    @ObservationIgnored var onFrameHandledForTesting: (@MainActor () -> Void)?
     #endif
 
     /// Outbound heartbeat sequence number, for diagnostics only — the peer does
@@ -451,6 +451,9 @@ package final class VsockControlService: VsockFeatureService {
     }
 
     private func handle(frame: Frame) {
+        #if DEBUG
+        defer { onFrameHandledForTesting?() }
+        #endif
         let inbound = ControlChannelInbound.classify(frame)
         // Any inbound traffic counts as liveness. Refresh before dispatch, so a
         // channel that resumed talking is out of `.unresponsive` by the time

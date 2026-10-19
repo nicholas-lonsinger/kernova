@@ -31,4 +31,12 @@ protocol VsockFeatureService: AnyObject {
     /// What the reaction is, and whether the owner drops its reference to the
     /// settled service or keeps it, is the owner's decision per service.
     var onChannelLost: (@MainActor () -> Void)? { get set }
+
+    #if DEBUG
+    /// The tasks `start()` spun up whose end can still settle the service, so a
+    /// test can await them instead of waiting out a window.
+    ///
+    /// Read it before the teardown that clears them.
+    var lifecycleTasksForTesting: [Task<Void, Never>] { get }
+    #endif
 }

@@ -646,6 +646,15 @@ public final class ClipboardEndpoint {
     nonisolated var dataAcceptsForTesting: (running: Int, waiting: Int) {
         (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
+
+    /// The task draining the channel, empty before ``start()`` and after
+    /// ``stop()``.
+    ///
+    /// Its end reaches the delegate through a main-queue hop queued before the
+    /// task returns, so a test drains the main queue after awaiting it.
+    public var lifecycleTasksForTesting: [Task<Void, Never>] {
+        session.lifecycleTasksForTesting
+    }
     #endif
 }
 

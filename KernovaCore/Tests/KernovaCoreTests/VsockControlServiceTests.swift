@@ -44,41 +44,46 @@ struct VsockControlServiceTests {
     /// (extra heartbeats only keep the connection alive).
     private static let testHeartbeat: TimeInterval = 0.04
 
-    /// Starts a background task sending guest heartbeats every `interval`,
-    /// until cancelled (callers pair it with a `defer { task.cancel() }`).
+    /// Production-scale windows for a test that crosses them on a
+    /// `GatedEngineClock` instead of sleeping through them.
     ///
-    /// A live guest sends heartbeats continuously, so liveness tests emit a
-    /// sustained stream rather than a fixed batch: status changes are driven by
-    /// a liveness tick observing a fresh signal, and the watchdog's clock is
-    /// refreshed *only* by inbound frames. If the stream stopped before the
-    /// test's final wait resolved, a tick starved past `unresponsiveAfter`
-    /// would latch `.unresponsive` with no further inbound frames to recover
-    /// it, and the test would hang to its backstop. (The heartbeat nonce is
-    /// ignored by the service — liveness keys only off the frame arriving — so
-    /// the default nonce is fine.)
-    private func sustainHeartbeats(
-        on guest: VsockChannel, every interval: Duration
-    ) -> Task<Void, Never> {
-        Task {
-            while !Task.isCancelled {
-                try? guest.send(Frame.controlHeartbeat(nonce: 1))
-                try? await Task.sleep(for: interval)
+    /// The liveness tick derives to 20 s — `unresponsiveAfter / 3`, under the
+    /// heartbeat interval — which is what tells it apart from the heartbeat
+    /// sleep parked on the same clock.
+    private static let gatedHeartbeat: TimeInterval = 25
+    private static let gatedUnresponsive: TimeInterval = 60
+    private static let gatedTerminate: TimeInterval = 120
+    private static let gatedTick: TimeInterval = 20
+
+    /// Advances `clock` by `interval` and runs the loop parked on that interval,
+    /// `count` times, returning once the last run has finished.
+    ///
+    /// A run has finished once its loop parks again, or once it settled the
+    /// service — which cancels the loop instead, and every sleep parked beside
+    /// it, which is what wakes the wait.
+    private func runLoop(
+        every interval: TimeInterval, times count: Int, on clock: GatedEngineClock,
+        of service: VsockControlService
+    ) async throws {
+        for _ in 0..<count {
+            try await clock.parkedChanged.wait {
+                clock.parked.contains { $0.seconds == interval }
+                    || service.lifecycleTasksForTesting.isEmpty
+            }
+            guard let sleeper = clock.parked.first(where: { $0.seconds == interval }) else { return }
+            let requested = clock.requestedSeconds.filter { $0 == interval }.count
+            clock.advance(seconds: interval)
+            clock.release(sleeper)
+            try await clock.parkedChanged.wait {
+                clock.requestedSeconds.filter { $0 == interval }.count > requested
+                    || service.lifecycleTasksForTesting.isEmpty
             }
         }
     }
 
-    /// Default liveness windows, set far beyond any test's wall-clock budget.
-    ///
-    /// The watchdog can't tear the channel down mid-test at these values. Tests
-    /// that *exercise* the watchdog (silence/recovery/terminate) pass explicit
-    /// short windows to opt back in.
-    ///
-    /// The watchdog measures elapsed time since the last inbound frame, which
-    /// keeps advancing while a contended CI MainActor stalls the test: a
-    /// sub-second window makes every test's runtime an implicit deadline, so a
-    /// test that pauses past it (waiting on a frame, a `waitUntil`, or scheduler
-    /// jitter) sees the channel closed out from under it as an EOF / `.closed`
-    /// flake. These values make the watchdog an explicit opt-in instead.
+    /// Default liveness windows, far beyond any test's wall-clock budget, so the
+    /// watchdog never acts on the real clock: a test that exercises it crosses
+    /// the gated windows on a `GatedEngineClock` instead.
     private static let watchdogDisabledUnresponsive: TimeInterval = 3_600
     private static let watchdogDisabledTerminate: TimeInterval = 7_200
 
@@ -116,27 +121,6 @@ struct VsockControlServiceTests {
         )
         service.onChannelLost = onChannelLost
         return service
-    }
-
-    /// Completes the handshake for a test that arms a sub-second
-    /// `terminateAfter`, latching the Hello instead of observing `isConnected`.
-    ///
-    /// Those tests cannot wait on `isConnected`: it is a transient the watchdog
-    /// reverts. The watchdog measures elapsed time since the last inbound
-    /// frame, so a stall longer than the window leaves the next liveness tick
-    /// already past its deadline — and if that tick runs before the waiter's
-    /// continuation, the service settles `isConnected` back to `false` before
-    /// the waiter ever sees it. Nothing changes it again, so the waiter blocks
-    /// to its backstop and fails a service that connected exactly as asked.
-    /// `onAgentInfoObserved` fires inside the same MainActor turn that sets
-    /// `isConnected`, and the recorder only ever counts up, so a stall of any
-    /// length delays this wait rather than losing it.
-    private func connectLatched(
-        guest: VsockChannel, hello: ObservedRecorder, agentVersion: String = "0.9.0"
-    ) async throws {
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: agentVersion))
-        try await hello.changed.wait { !hello.values.isEmpty }
     }
 
     // MARK: - Hello
@@ -370,23 +354,17 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Use generous timings so MainActor scheduling jitter on slow CI
-        // runners doesn't race the watchdog tick. The narrow 40 ms / 120 ms
-        // pairing this test originally used was flaky on GitHub Actions:
-        // when the test's `Task.sleep` resumed late (because MainActor was
-        // busy with the heartbeat + liveness tasks), the measured silence
-        // could exceed `unresponsiveAfter` between sleep wake and assertion,
-        // flipping status to .unresponsive briefly even though the test had
-        // just sent a heartbeat. The watchdog's terminate stage stays disabled
-        // (the makeService default): it is not under test, and a multi-second
-        // stall in the sender loop once let a finite 5 s `terminateAfter` close
-        // the channel out from under the test — the send then threw `.closed`.
+        let clock = GatedEngineClock()
+        let handled = FrameHandledRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.2,
-            unresponsiveAfter: 0.4
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate
         )
+        service.onFrameHandledForTesting = { handled.record() }
         service.start()
         defer { service.stop() }
 
@@ -394,19 +372,15 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitForChange { service.isConnected }
 
-        // Sustained heartbeats every 100 ms (well below the 400 ms unresponsive
-        // window), kept running through the assertion below so a jitter-induced
-        // transient `.unresponsive` flip can recover (see `sustainHeartbeats`).
-        let sustainedHeartbeats = sustainHeartbeats(on: guest, every: .milliseconds(100))
-        defer { sustainedHeartbeats.cancel() }
-
-        // Let a window > 2× unresponsiveAfter elapse, then assert end-state. If
-        // heartbeats had not been resetting the inbound-liveness clock, status
-        // would be (and stay) .unresponsive — the wait would hit its backstop.
-        // The event-driven wait absorbs a starved-scheduler transient flip: the
-        // continuing heartbeats recover it, and the observation wakes the wait.
-        try await Task.sleep(for: .milliseconds(800))
-        try await waitForChange { service.agentStatus == .current(version: "0.9.0") }
+        // Each heartbeat is judged two ticks — 40 s — after it lands. Only the
+        // heartbeats keep that inside the 60 s window: without them the second
+        // round judges 80 s of silence, and the fourth crosses terminate.
+        for round in 1...4 {
+            try guest.send(Frame.controlHeartbeat(nonce: UInt64(round)))
+            try await handled.changed.wait { handled.count == round + 1 }
+            try await runLoop(every: Self.gatedTick, times: 2, on: clock, of: service)
+            #expect(service.agentStatus == .current(version: "0.9.0"))
+        }
     }
 
     @Test("Silence past unresponsiveAfter flips agentStatus to .unresponsive")
@@ -416,17 +390,14 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Terminate stays disabled (the makeService default): it is not under
-        // test here, and with the old finite 2 s value a starved scheduler
-        // could delay the first liveness tick past `terminateAfter`, so that
-        // tick closed the channel *without ever latching `.unresponsive`* —
-        // the waited condition then could never become true (see checkLiveness:
-        // the terminate branch skips the unresponsive latch).
+        let clock = GatedEngineClock()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.06,
-            unresponsiveAfter: 0.1
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate
         )
         service.start()
         defer { service.stop() }
@@ -435,10 +406,10 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitForChange { service.isConnected }
 
-        // Don't send any further inbound. After ~100ms+ the watchdog flips.
-        try await waitForChange {
-            service.agentStatus == .unresponsive(version: "0.9.0")
-        }
+        // Three ticks judge 60 s, still inside the window; the fourth judges 80 s.
+        try await runLoop(every: Self.gatedTick, times: 3, on: clock, of: service)
+        #expect(service.agentStatus == .current(version: "0.9.0"))
+        try await runLoop(every: Self.gatedTick, times: 1, on: clock, of: service)
         #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
     }
 
@@ -449,15 +420,14 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Terminate stays disabled (the makeService default): it is not under
-        // test, and any finite value races the test body — on slow runners the
-        // original 2 s fired between detecting `.unresponsive` and recovery,
-        // leaving the service stuck.
+        let clock = GatedEngineClock()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.06,
-            unresponsiveAfter: 0.1
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate
         )
         service.start()
         defer { service.stop() }
@@ -466,24 +436,12 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitForChange { service.isConnected }
 
-        // Go silent → unresponsive.
-        try await waitForChange {
-            service.agentStatus == .unresponsive(version: "0.9.0")
-        }
+        // Four ticks of silence: 80 s, past unresponsive and short of terminate.
+        try await runLoop(every: Self.gatedTick, times: 4, on: clock, of: service)
+        #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
 
-        // Resume heartbeats as a sustained stream, not a single frame — a lone
-        // heartbeat opens just one ~unresponsiveAfter-wide recovery window a
-        // starved tick can miss (see `sustainHeartbeats`).
-        let resumeHeartbeats = sustainHeartbeats(on: guest, every: .milliseconds(60))
-        defer { resumeHeartbeats.cancel() }
-
-        // The recovery → .current transition was the original CI flake (the poll
-        // budget timed out under jitter). This suite's agentStatus/isConnected
-        // waits are all event-driven now.
-        try await waitForChange {
-            service.agentStatus == .current(version: "0.9.0")
-        }
-        #expect(service.agentStatus == .current(version: "0.9.0"))
+        try guest.send(Frame.controlHeartbeat(nonce: 1))
+        try await waitForChange { service.agentStatus == .current(version: "0.9.0") }
     }
 
     @Test("Silence past terminateAfter settles the service and stops the watchdog")
@@ -493,17 +451,14 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Widen cadences for CI runner jitter (the original 40/80/200 ms
-        // pairing was tight enough that on slow runners the watchdog could
-        // miss its window before the terminate condition fired).
-        let helloObserved = ObservedRecorder()
+        let clock = GatedEngineClock()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.1,
-            unresponsiveAfter: 0.2,
-            terminateAfter: 0.5,
-            onAgentInfoObserved: { helloObserved.append($0) }
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate
         )
 
         service.start()
@@ -512,12 +467,16 @@ struct VsockControlServiceTests {
         // Captured now: the teardown clears the handles.
         let lifecycleTasks = service.lifecycleTasksForTesting
 
-        try await connectLatched(guest: guest, hello: helloObserved)
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
 
-        // Send nothing further: the watchdog terminates the connection. The
-        // service has to settle rather than re-fire every tick against a peer
-        // that has gone quiet for good.
-        try await waitForChange { !service.isConnected }
+        // Send nothing further: the seventh tick judges 140 s, past terminate.
+        // The service has to settle rather than re-fire every tick against a
+        // peer that has gone quiet for good.
+        try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
+        // `#require`: the tasks awaited below end only once the service settles.
+        try #require(!service.isConnected)
 
         // Every periodic task runs to completion — no watchdog tick and no
         // heartbeat send survives the teardown.
@@ -638,31 +597,28 @@ struct VsockControlServiceTests {
 
         // A live-paused VM is frozen: the guest cannot answer a heartbeat, so
         // terminating for silence would blame the agent for the user's pause.
+        let clock = GatedEngineClock()
         let suspension = SuspensionFlag()
-        let helloObserved = ObservedRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.05,
-            unresponsiveAfter: 0.1,
-            terminateAfter: 0.2,
-            onAgentInfoObserved: { helloObserved.append($0) },
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate,
             isGuestSuspended: { suspension.isSuspended }
         )
         service.start()
         defer { service.stop() }
 
-        // Suspended before the Hello, not after it: the watchdog starts judging
-        // the guest the instant its first frame lands, so any gap between
-        // connect and the flip is a window where a stalled runner terminates
-        // the channel for the very pause under test. Armed up front there is no
-        // such window — every tick that can read the clock reads it suspended —
-        // which is what makes these sub-second windows stall-proof.
         suspension.isSuspended = true
-        try await connectLatched(guest: guest, hello: helloObserved)
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
 
-        // Four terminate windows with the guest sending nothing at all.
-        try await Task.sleep(for: .milliseconds(800))
+        // Eight ticks — 160 s, past the 120 s terminate window — with the guest
+        // sending nothing at all.
+        try await runLoop(every: Self.gatedTick, times: 8, on: clock, of: service)
         #expect(service.isConnected)
         #expect(service.agentStatus == .current(version: "0.9.0"))
     }
@@ -674,23 +630,16 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Production-scale windows crossed by advancing the clock, not by
-        // sleeping through a shrunken cadence (`TestEngineClock`). The liveness
-        // tick derives to 20 s — `unresponsiveAfter / 3`, under the heartbeat
-        // interval — which is what tells it apart from the heartbeat sleep
-        // parked on the same clock.
         let clock = GatedEngineClock()
-        let livenessTick: TimeInterval = 20
-        let terminateAfter: TimeInterval = 120
         let suspension = SuspensionFlag()
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             clock: clock,
-            heartbeatInterval: 25,
-            unresponsiveAfter: 60,
-            terminateAfter: terminateAfter,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate,
             isGuestSuspended: { suspension.isSuspended },
             onChannelLost: { lost.record() }
         )
@@ -707,20 +656,9 @@ struct VsockControlServiceTests {
         // ticks is 160 s of watchdog time either way. Only the liveness loop is
         // ever released, so the frozen guest is never written to and every
         // second the watchdog sees is one this test added.
-        let ticksPerHalf = 8
-        for tick in 1...(2 * ticksPerHalf) {
-            if tick > ticksPerHalf { suspension.isSuspended = false }
-            try await clock.sleepRequested.wait {
-                clock.parked.contains { $0.seconds == livenessTick }
-            }
-            let sleeper = try #require(clock.parked.first { $0.seconds == livenessTick })
-            clock.advance(seconds: livenessTick)
-            clock.release(sleeper)
-        }
-        // The last released tick has run once its loop is parked again.
-        try await clock.sleepRequested.wait {
-            clock.parked.contains { $0.seconds == livenessTick }
-        }
+        try await runLoop(every: Self.gatedTick, times: 8, on: clock, of: service)
+        suspension.isSuspended = false
+        try await runLoop(every: Self.gatedTick, times: 8, on: clock, of: service)
 
         // Both windows crossed with nothing ever recorded: the watchdog has no
         // deadline to expire, held or judged.
@@ -736,34 +674,35 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        let clock = GatedEngineClock()
         let suspension = SuspensionFlag()
-        let helloObserved = ObservedRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.05,
-            unresponsiveAfter: 0.1,
-            terminateAfter: 0.2,
-            onAgentInfoObserved: { helloObserved.append($0) },
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate,
             isGuestSuspended: { suspension.isSuspended }
         )
         service.start()
         defer { service.stop() }
 
-        // Suspended before the Hello — see
-        // `suspendedGuestSurvivesTerminateWindow` for why the flip cannot
-        // trail the connect.
         suspension.isSuspended = true
-        try await connectLatched(guest: guest, hello: helloObserved)
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
 
-        // Three terminate windows, guest sending nothing.
-        try await Task.sleep(for: .milliseconds(600))
+        // 160 s held, guest sending nothing.
+        try await runLoop(every: Self.gatedTick, times: 8, on: clock, of: service)
         #expect(service.isConnected)
 
         // Resuming hands the guest a window it can still miss: nothing has been
-        // heard from it, so the deadline starts running again and expires.
+        // heard from it, so the deadline runs again from the last held tick, and
+        // the seventh tick after it judges 140 s.
         suspension.isSuspended = false
-        try await waitForChange { !service.isConnected }
+        try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
+        #expect(!service.isConnected)
         #expect(service.agentStatus == .waiting)
     }
 
@@ -785,11 +724,15 @@ struct VsockControlServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
+        let clock = GatedEngineClock()
         let suspension = SuspensionFlag()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.05,
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate,
             isGuestSuspended: { suspension.isSuspended }
         )
         service.start()
@@ -799,17 +742,17 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
         // Prove the sender is genuinely running before freezing it, so a
         // silent-for-another-reason service can't pass this test.
-        try await recorder.waitForFrameCount(2)
+        try await runLoop(every: Self.gatedHeartbeat, times: 1, on: clock, of: service)
+        try await recorder.waitForFrames { recorder.heartbeats.count == 1 }
 
-        // A heartbeat written just before the flip can still be in flight. The
-        // suspension check and its send share one main-actor turn, and the
-        // socket is FIFO, so every pre-flip heartbeat precedes this marker.
         suspension.isSuspended = true
+        try await runLoop(every: Self.gatedHeartbeat, times: 3, on: clock, of: service)
+
+        // The socket is FIFO, so whatever those intervals wrote precedes this
+        // marker.
         try host.sendErrorFrame(code: "test.marker", message: "", inReplyTo: nil)
         try await recorder.waitForFrames { recorder.errors.contains { $0.code == "test.marker" } }
-
-        // Spans many heartbeat intervals.
-        try await recorder.expectNoNewFrames(sinceCount: recorder.count, for: 0.4)
+        #expect(recorder.heartbeats.count == 1)
     }
 
     // MARK: - onChannelLost
@@ -821,13 +764,15 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        let clock = GatedEngineClock()
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.1,
-            unresponsiveAfter: 0.2,
-            terminateAfter: 0.5,
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate,
             onChannelLost: { lost.record() }
         )
         lost.sample = { [weak service] in service?.agentVersion }
@@ -835,12 +780,12 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
-        // No wait on `isConnected` in between: with a terminate window this
-        // short the settle can beat the observation, and the callback — not the
-        // connected state — is what this test is about.
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
 
-        try await lost.changed.wait { lost.count == 1 }
+        // The seventh silent tick judges 140 s, past terminate.
+        try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
+        #expect(lost.count == 1)
         // The callback runs on fully-settled state, which is what lets
         // `VMInstance` re-arm its agent watchdog on a nil `agentVersion`
         // instead of no-oping against the stale one.
@@ -1307,6 +1252,21 @@ private final class ObservedRecorder {
 
     func append(_ value: ObservedAgentInfo) {
         values.append(value)
+        changed.notify()
+    }
+}
+
+/// Counts the frames the service under test has handled, through
+/// `onFrameHandledForTesting`.
+@MainActor
+private final class FrameHandledRecorder {
+    private(set) var count = 0
+
+    /// Fires on every `record`; await it instead of polling `count`.
+    let changed = AsyncGate()
+
+    func record() {
+        count += 1
         changed.notify()
     }
 }

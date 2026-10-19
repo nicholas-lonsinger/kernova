@@ -302,6 +302,7 @@ struct VsockGuestLogServiceTests {
 
         let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
         service.start()
+        let tasks = service.lifecycleTasksForTesting
         // In flight at the teardown, at whichever stage the channel's GCD reader
         // reaches first: still on the socket, or already yielded into `incoming`
         // and buffered there. The consume task is `@MainActor` like this body, so
@@ -313,8 +314,10 @@ struct VsockGuestLogServiceTests {
         // Terminal, like the control service: a reconnect is served by a fresh
         // instance, so `start()` does not resume the closed channel.
         service.start()
+        #expect(service.lifecycleTasksForTesting.isEmpty)
 
-        try await Task.sleep(for: .milliseconds(200))
+        // Only the consume task emits, so once it has ended nothing can.
+        for task in tasks { await task.value }
         #expect(emitter.snapshot().isEmpty)
     }
 }
