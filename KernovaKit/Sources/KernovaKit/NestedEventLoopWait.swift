@@ -38,10 +38,11 @@ import Foundation
 final class NestedEventLoopWait: Sendable {
     /// How a ``wait(timeout:isResolved:)`` ended.
     enum Ending: Sendable, Equatable {
-        /// The wait saw `isResolved()` hold before its deadline.
+        /// The wait saw `isResolved()` hold before either `.deadline` case.
         case resolved
-        /// The deadline passed before the wait saw `isResolved()` hold, whether
-        /// or not it holds by then.
+        /// The wait's own final `nextEvent`, the one bounded by the deadline,
+        /// returned with no event, or a pass began past the deadline — whether
+        /// or not `isResolved()` holds by then.
         case deadline
     }
 
@@ -134,25 +135,31 @@ final class NestedEventLoopWait: Sendable {
         // step must not stretch or cut the backstop.
         let deadline = DispatchTime.now() + timeout
         while true {
+            if isResolved() { return .resolved }
             let now = DispatchTime.now()
             guard now < deadline else { return .deadline }
-            if isResolved() { return .resolved }
             let remaining =
                 Double(deadline.uptimeNanoseconds - now.uptimeNanoseconds) / 1_000_000_000
+            let lastPass = remaining <= slice
             let passEnd = Date(timeIntervalSinceNow: min(remaining, slice))
+            var dequeued = false
             // One pool per pass, as `NSApplication.run` drains: what the
             // event dispatch autoreleases is freed per event, not held for
             // the whole pull by the callout's own pool.
             autoreleasepool {
                 guard
                     let event = NSApp.nextEvent(
-                        matching: .any, until: passEnd, inMode: .default, dequeue: true),
+                        matching: .any, until: passEnd, inMode: .default, dequeue: true)
+                else { return }
+                dequeued = true
+                guard
                     !(event.type == .applicationDefined
                         && event.subtype.rawValue == Self.wakeSubtype)
                 else { return }
                 NSApp.sendEvent(event)
                 NSApp.updateWindows()
             }
+            if !dequeued && lastPass { return .deadline }
         }
     }
 
