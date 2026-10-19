@@ -90,8 +90,8 @@ package enum VMLiveStateCapture {
         let instance = capture.operation.instance
         for item in instance.liveUSBAccessories {
             if item.accessory.identity == nil {
-                #log(
-                    logger, .warning,
+                logger.log(
+                    .warning,
                     "USB accessory \(item.accessory.displayName, privacy: .public) will not go back on '\(instance.name, privacy: .public)' after the capture: nothing durable identifies it"
                 )
             }
@@ -116,13 +116,13 @@ package enum VMLiveStateCapture {
             // A .notice because it is an irreversible action on the user's
             // own hardware: the device resets and the host takes it back,
             // and nothing else in the log says a save did that.
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Took USB accessory \(item.accessory.displayName, privacy: .public) off '\(instance.name, privacy: .public)' before writing its state"
             )
         } catch VMSessionError.usbDeviceNotFound {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"
             )
         }
@@ -165,8 +165,8 @@ package enum VMLiveStateCapture {
             try await session.resumeIfPaused()
             return .running
         } catch {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Could not resume '\(instance.name, privacy: .public)' after a failed capture: \(error.localizedDescription, privacy: .public)"
             )
             return .paused

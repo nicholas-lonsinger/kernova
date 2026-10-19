@@ -51,8 +51,8 @@ struct ClipboardPassthroughSetting {
             refresh()
         case .consentRequired(let prompt):
             guard let window else {
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "No window to confirm clipboard passthrough in; leaving it off")
                 refresh()
                 return

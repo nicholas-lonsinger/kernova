@@ -41,16 +41,16 @@ package enum ConfigurationPaths {
         } catch {
             switch error {
             case .notFound:
-                #log(logger, .error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
+                logger.log(.error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
                 throw notFound
             case .unexpectedType:
-                #log(logger, .error, "\(context, privacy: .public) path is a directory: '\(path, privacy: .private)'")
+                logger.log(.error, "\(context, privacy: .public) path is a directory: '\(path, privacy: .private)'")
                 throw isDirectory
             case .notWritable:
-                #log(logger, .error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
+                logger.log(.error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
                 guard let notWritableError = notWritable else {
-                    #log(
-                        logger, .fault,
+                    logger.log(
+                        .fault,
                         "resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
@@ -58,7 +58,7 @@ package enum ConfigurationPaths {
                 }
                 throw notWritableError
             case .notReadable:
-                #log(logger, .fault, "Unexpected .notReadable from resolveFile for '\(path, privacy: .private)'")
+                logger.log(.fault, "Unexpected .notReadable from resolveFile for '\(path, privacy: .private)'")
                 assertionFailure("resolveFile should never throw .notReadable")
                 throw notFound
             }
@@ -84,18 +84,18 @@ package enum ConfigurationPaths {
         } catch {
             switch error {
             case .notFound:
-                #log(logger, .error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
+                logger.log(.error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
                 throw notFound
             case .unexpectedType:
-                #log(
-                    logger, .error, "\(context, privacy: .public) path is not a directory: '\(path, privacy: .private)'"
+                logger.log(
+                    .error, "\(context, privacy: .public) path is not a directory: '\(path, privacy: .private)'"
                 )
                 throw notADirectory
             case .notReadable:
-                #log(logger, .error, "\(context, privacy: .public) is not readable: '\(path, privacy: .private)'")
+                logger.log(.error, "\(context, privacy: .public) is not readable: '\(path, privacy: .private)'")
                 guard let notReadableError = notReadable else {
-                    #log(
-                        logger, .fault,
+                    logger.log(
+                        .fault,
                         "resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notReadable' error must be provided when 'requireReadable' is true")
@@ -103,10 +103,10 @@ package enum ConfigurationPaths {
                 }
                 throw notReadableError
             case .notWritable:
-                #log(logger, .error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
+                logger.log(.error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
                 guard let notWritableError = notWritable else {
-                    #log(
-                        logger, .fault,
+                    logger.log(
+                        .fault,
                         "resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")

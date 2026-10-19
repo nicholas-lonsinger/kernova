@@ -22,8 +22,8 @@ package enum PathValidation {
         /// Logs an info message when the path was a symlink, using the given context label.
         package func logResolution(logger: KernovaLogger, context: String) {
             guard wasSymlink else { return }
-            #log(
-                logger, .info,
+            logger.log(
+                .info,
                 "\(context, privacy: .public) path '\(originalPath, privacy: .public)' resolved to '\(resolvedPath, privacy: .public)'"
             )
         }

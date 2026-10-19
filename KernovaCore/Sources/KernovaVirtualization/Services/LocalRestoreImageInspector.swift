@@ -23,8 +23,8 @@ package struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
         do {
             image = try await VZMacOSRestoreImage.image(from: resolved)
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not read restore image at '\(resolved.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw LocalRestoreImageError.unreadable
@@ -40,8 +40,8 @@ package struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
             isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil,
             sizeBytes: sizeBytes
         )
-        #log(
-            Self.logger, .info,
+        Self.logger.log(
+            .info,
             "Inspected local restore image: \(inspected.summary, privacy: .public), supported=\(inspected.isSupportedOnThisHost, privacy: .public)"
         )
         return inspected

@@ -47,8 +47,6 @@ final class SerialLogWriter: Sendable {
         file.withLock { $0.close() }
     }
 
-    // Each logging method copies `label` into a local first: `#log`'s escaping
-    // autoclosure cannot capture a mutating method's `self`.
     private struct LogFile {
         let logURL: URL
         let rotatedURL: URL
@@ -72,29 +70,27 @@ final class SerialLogWriter: Sendable {
         /// it whole would carry an arbitrarily large file as `serial.log.1`,
         /// breaking the twice-the-cap bound exactly when it matters most.
         mutating func clearIfOversized() {
-            let label = label
             guard fileSize >= maxFileSize else { return }
             do {
                 try handle?.truncate(atOffset: 0)
                 fileSize = 0
             } catch {
-                #log(
-                    SerialLogWriter.logger, .warning,
+                SerialLogWriter.logger.log(
+                    .warning,
                     "Could not clear oversized serial log for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }
         }
 
         mutating func write(_ data: Data) {
-            let label = label
             guard let handle else { return }
 
             do {
                 try handle.write(contentsOf: data)
                 fileSize += data.count
             } catch {
-                #log(
-                    SerialLogWriter.logger, .error,
+                SerialLogWriter.logger.log(
+                    .error,
                     "Failed to write to serial log for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 return
@@ -106,7 +102,6 @@ final class SerialLogWriter: Sendable {
         }
 
         mutating func open() {
-            let label = label
             let path = logURL.path(percentEncoded: false)
             if !FileManager.default.fileExists(atPath: path) {
                 FileManager.default.createFile(atPath: path, contents: nil)
@@ -116,16 +111,16 @@ final class SerialLogWriter: Sendable {
                 do {
                     fileSize = Int(try newHandle.seekToEnd())
                 } catch {
-                    #log(
-                        SerialLogWriter.logger, .warning,
+                    SerialLogWriter.logger.log(
+                        .warning,
                         "Could not seek to end of serial log for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                     fileSize = 0
                 }
                 handle = newHandle
             } catch {
-                #log(
-                    SerialLogWriter.logger, .warning,
+                SerialLogWriter.logger.log(
+                    .warning,
                     "Could not open serial log for writing for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 handle = nil
@@ -134,12 +129,11 @@ final class SerialLogWriter: Sendable {
         }
 
         mutating func close() {
-            let label = label
             do {
                 try handle?.close()
             } catch {
-                #log(
-                    SerialLogWriter.logger, .warning,
+                SerialLogWriter.logger.log(
+                    .warning,
                     "Failed to close serial log file for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -150,7 +144,6 @@ final class SerialLogWriter: Sendable {
         /// failure, keeps appending to the oversized file — losing output would be
         /// worse — and disables further rotation attempts for this writer.
         mutating func rotate() {
-            let label = label
             guard !rotationDisabled else { return }
             close()
 
@@ -162,8 +155,8 @@ final class SerialLogWriter: Sendable {
                 try fileManager.moveItem(at: logURL, to: rotatedURL)
             } catch {
                 rotationDisabled = true
-                #log(
-                    SerialLogWriter.logger, .error,
+                SerialLogWriter.logger.log(
+                    .error,
                     "Serial log rotation failed for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }

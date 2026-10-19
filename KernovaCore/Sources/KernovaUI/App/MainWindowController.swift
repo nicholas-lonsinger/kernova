@@ -133,7 +133,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         observeWindowState()
         adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
-        #log(Self.logger, .notice, "Main window controller initialized")
+        Self.logger.log(.notice, "Main window controller initialized")
     }
 
     required init?(coder: NSCoder) {
@@ -278,8 +278,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             newVMCollapseRemovalIndex = nil
             return
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Re-adopting collapse-removed New VM toolbar item at index \(index, privacy: .public)")
         newVMCollapseRemovalIndex = index
     }
@@ -310,7 +310,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private func updateToolbarItems() {
         guard let toolbar = window?.toolbar else {
-            #log(Self.logger, .warning, "updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
+            Self.logger.log(.warning, "updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
             return
         }
 
@@ -498,8 +498,8 @@ extension MainWindowController: NSToolbarItemValidation {
                 return true
             }
 
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
             return true
         }

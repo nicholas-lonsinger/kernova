@@ -90,8 +90,8 @@ extension VMCommandCore {
                     "Nothing changed: the virtual machine\u{2019}s remembered accessories could not be written. \(error.localizedDescription)"
             )
         }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(key, privacy: .public) back automatically"
         )
     }
@@ -125,8 +125,8 @@ extension VMCommandCore {
                     try self.usbAccessoryPairings?.userAttached(attached.accessory, permit)
                 }
             }
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
             )
         } catch {
@@ -163,8 +163,8 @@ extension VMCommandCore {
                     try self.usbAccessoryPairings?.userReleased(held.accessory, permit)
                 }
             }
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
             )
         } catch {

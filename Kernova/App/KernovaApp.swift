@@ -39,8 +39,8 @@ enum KernovaApp {
         case .unavailable(let reason):
             return .failure(reason)
         case .alreadyHeld:
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Another process of this copy of Kernova is already running; this launch exits")
             exit(0)
         }

@@ -92,8 +92,8 @@ extension VMLibrary {
             } catch {
                 // The load that follows lists the directory again and reports
                 // it to the user.
-                #log(
-                    logger, .warning,
+                logger.log(
+                    .warning,
                     "Could not list the VM bundles to reclaim revert staging: \(error.localizedDescription, privacy: .public)"
                 )
                 return
@@ -188,8 +188,8 @@ extension VMLibrary {
     nonisolated private static func logUnreadable(
         _ url: URL, _ file: UnreadableConfigFile, to logger: KernovaLogger
     ) {
-        #log(
-            logger, .error,
+        logger.log(
+            .error,
             "Failed to load VM from \(url.lastPathComponent, privacy: .public): \(file.fileName, privacy: .public) \(String(describing: file.problems), privacy: .public)"
         )
     }
@@ -223,7 +223,7 @@ extension VMLibrary {
             }.value
             return apply(scan)
         } catch {
-            #log(logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
+            logger.log(.error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error, about: .library)
             return []
         }
@@ -249,15 +249,15 @@ extension VMLibrary {
 
         if let savedOrder = preferences.vmOrder {
             customOrder = savedOrder
-            #log(logger, .debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
+            logger.log(.debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
         } else {
-            #log(logger, .debug, "No custom VM order found — using default createdAt sort")
+            logger.log(.debug, "No custom VM order found — using default createdAt sort")
         }
         sortEntries()
         customOrder = entries.map(\.id)
 
         restoreSelection()
-        #log(logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
+        logger.log(.notice, "Loaded \(self.instances.count, privacy: .public) VMs")
         return marked
     }
 
@@ -268,8 +268,8 @@ extension VMLibrary {
         do {
             vmsDir = try storageService.vmsDirectory
         } catch {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Could not resolve VMs directory for file system watcher: \(error.localizedDescription, privacy: .public)"
             )
             return
@@ -292,7 +292,7 @@ extension VMLibrary {
     /// which the listing never admits, so nothing an arrival is writing can be
     /// adopted early.
     func reconcileWithDisk() {
-        #log(logger, .debug, "reconcileWithDisk: starting")
+        logger.log(.debug, "reconcileWithDisk: starting")
         do {
             let diskBundles = try storageService.listVMBundles().sorted(by: Self.bundleNameOrder)
             let reader = bundleReader
@@ -343,8 +343,8 @@ extension VMLibrary {
                 do {
                     switch adopt(try reader.bundle(at: bundleURL)) {
                     case .adopted(let instance):
-                        #log(
-                            logger, .info,
+                        logger.log(
+                            .info,
                             "Discovered VM '\(instance.name, privacy: .public)' on disk — added to library")
                         confirmedIDs.insert(instance.id)
                         didChange = true
@@ -376,8 +376,8 @@ extension VMLibrary {
                 // its row until the operation ends, and the next pass finds it.
                 guard (try? instance.activity.remove()) != nil else { continue }
                 evict(instance)
-                #log(
-                    logger, .info,
+                logger.log(
+                    .info,
                     "VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
@@ -401,12 +401,12 @@ extension VMLibrary {
             // next pass for any reason.
             refreshFromOtherCopies(only: confirmedIDs)
 
-            #log(
-                logger, .debug,
+            logger.log(
+                .debug,
                 "reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
         } catch {
-            #log(
-                logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
+            logger.log(
+                .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
             presentError(error, about: .library)
         }
     }
@@ -501,8 +501,8 @@ extension VMLibrary {
             await discardStagedTree(at: staged)
             throw arrival.isCancelling ? CancellationError() : error
         }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' published at \(destination.lastPathComponent, privacy: .public)"
         )
         let scanned: Result<ScannedBundle, any Error>
@@ -536,8 +536,8 @@ extension VMLibrary {
         do {
             try await Task.detached { try storage.deleteVMBundle(at: destination) }.value
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Could not move the cancelled \(arrival.kind.displayNoun.lowercased(), privacy: .public) of '\(arrival.name, privacy: .public)' to the Trash: \(error.localizedDescription, privacy: .public)"
             )
             if case .success(let bundle) = scanned {
@@ -546,8 +546,8 @@ extension VMLibrary {
             throw ArrivalError.withdrawalFailed(
                 name: arrival.name, reason: error.localizedDescription)
         }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' cancelled during its publication — moved to the Trash"
         )
         throw CancellationError()
@@ -578,8 +578,8 @@ extension VMLibrary {
         do {
             try await Task.detached { try storage.discardStagedBundle(at: url) }.value
         } catch {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Could not discard the staged bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -634,15 +634,15 @@ extension VMLibrary {
     func abandonArrivalsForTermination() {
         for arrival in arrivals where arrival.stage == .writing || arrival.stage == .cancelling {
             _ = arrival.requestCancel()
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Terminating: abandoning \(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)'"
             )
             do {
                 try storageService.discardStagedBundle(at: arrival.staged.url)
             } catch {
-                #log(
-                    logger, .warning,
+                logger.log(
+                    .warning,
                     "Failed to discard the staged bundle for '\(arrival.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                 )
             }

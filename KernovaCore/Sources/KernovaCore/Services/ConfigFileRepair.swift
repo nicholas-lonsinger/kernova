@@ -53,8 +53,8 @@ enum ConfigFileRepair: Sendable, Equatable {
             do {
                 try FileManager.default.removeItem(at: directory)
             } catch {
-                #log(
-                    logger, .warning,
+                logger.log(
+                    .warning,
                     "Could not remove \(directory.lastPathComponent, privacy: .public) after moving a config file's original to the Trash: \(error.localizedDescription, privacy: .public)"
                 )
             }

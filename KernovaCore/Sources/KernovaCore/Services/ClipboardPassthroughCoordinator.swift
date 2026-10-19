@@ -153,8 +153,8 @@ final class ClipboardPassthroughCoordinator {
         lastInboundOfferSeq = instance?.clipboardService?.inboundOfferSeq ?? 0
         startPolling()
         observeInbound()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Clipboard passthrough started for '\(self.instance?.name ?? "?", privacy: .public)'")
     }
 
@@ -171,8 +171,8 @@ final class ClipboardPassthroughCoordinator {
         inboundObservation = nil
         inboundPublishTask?.cancel()
         inboundPublishTask = nil
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Clipboard passthrough stopped for '\(self.instance?.name ?? "?", privacy: .public)'")
     }
 
@@ -282,7 +282,7 @@ final class ClipboardPassthroughCoordinator {
                 self.report(rejection: message, unreadable: unreadable)
             case .pendingFiles:
                 self.lastPasteboardChangeCount = changeCount
-                #log(Self.logger, .fault, "Resolving copied files yielded another pending-files intake")
+                Self.logger.log(.fault, "Resolving copied files yielded another pending-files intake")
                 assertionFailure("Resolving copied files yielded another pending-files intake")
             }
         }
@@ -324,8 +324,8 @@ final class ClipboardPassthroughCoordinator {
     /// has no gesture to answer, so the report is the only surface they get.
     private func reportUnforwarded(_ note: String) {
         let name = instance?.name ?? "?"
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "Clipboard passthrough could not forward every copied item for '\(name, privacy: .public)': \(note, privacy: .public)"
         )
         reporter.finish(
@@ -404,8 +404,8 @@ final class ClipboardPassthroughCoordinator {
             instance.effectiveClipboardMaxPasteBytes > refused.ceiling,
             pasteboard.changeCount == refused.pasteboardChangeCount
         else { return }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Paste ceiling raised — republishing the offer it refused for '\(instance.name, privacy: .public)'"
         )
         publishInbound(from: service, seq: refused.seq)

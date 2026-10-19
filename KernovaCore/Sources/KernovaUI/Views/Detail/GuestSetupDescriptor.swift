@@ -32,8 +32,8 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     /// The copy for `step`.
     func copy(for step: SetupStepID) -> StepCopy {
         guard let copy = stepCopy[step] else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "No setup copy for step '\(step.rawValue, privacy: .public)' under '\(self.title, privacy: .public)'"
             )
             assertionFailure("No setup copy for step '\(step.rawValue)' under '\(title)'")

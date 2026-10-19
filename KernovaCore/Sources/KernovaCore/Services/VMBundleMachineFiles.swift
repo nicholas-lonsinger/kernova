@@ -199,13 +199,13 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         guard manager.fileExists(atPath: staging.path(percentEncoded: false)) else { return }
         do {
             try manager.removeItem(at: staging)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Reclaimed a revert staging directory left in '\(bundleURL.lastPathComponent, privacy: .public)'"
             )
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to remove the revert staging directory in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -230,8 +230,8 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         {
             // Nothing was written before the failure.
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to clean up the partial snapshot directory '\(snapshotID.uuidString, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -279,8 +279,8 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
                 do {
                     try fileSystem.removeItem(at: url)
                 } catch {
-                    #log(
-                        Self.logger, .warning,
+                    Self.logger.log(
+                        .warning,
                         "Failed to clean up partial disk image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                 }

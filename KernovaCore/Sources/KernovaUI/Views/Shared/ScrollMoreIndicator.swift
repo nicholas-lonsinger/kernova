@@ -179,7 +179,7 @@ final class ScrollMoreIndicator {
 
         if moreBelow != hasMoreBelow {
             hasMoreBelow = moreBelow
-            #log(Self.logger, .debug, "More below: \(moreBelow, privacy: .public)")
+            Self.logger.log(.debug, "More below: \(moreBelow, privacy: .public)")
             setOverlaysVisible(moreBelow, animated: true)
         }
 
@@ -192,7 +192,7 @@ final class ScrollMoreIndicator {
             #if DEBUG
             flashCountForTesting += 1
             #endif
-            #log(Self.logger, .debug, "Flashing scroller")
+            Self.logger.log(.debug, "Flashing scroller")
             Task { @MainActor [weak self] in
                 guard let scrollView = self?.scrollView else { return }
                 self?.unveilScroller()

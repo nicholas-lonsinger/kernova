@@ -43,8 +43,8 @@ public final class LazyClipboardProviderRegistry: Sendable {
             state.live.formUnion(providers)
             return (state.live.count, state.changeHook)
         }
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Retained \(providers.count, privacy: .public) clipboard provider(s) (live: \(count, privacy: .public))"
         )
         onChange?()
@@ -57,8 +57,8 @@ public final class LazyClipboardProviderRegistry: Sendable {
             state.live.remove(provider)
             return (state.live.count, state.changeHook)
         }
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Released a finished clipboard provider (live: \(count, privacy: .public))")
         onChange?()
     }

@@ -156,7 +156,7 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
                 hostLinkObserverCallout,
                 &context)
         else {
-            #log(Self.logger, .fault, "SCDynamicStoreCreate returned nil — link changes go unobserved")
+            Self.logger.log(.fault, "SCDynamicStoreCreate returned nil — link changes go unobserved")
             assertionFailure("SCDynamicStoreCreate returned nil")
             return
         }

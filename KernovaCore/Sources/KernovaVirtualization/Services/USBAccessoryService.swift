@@ -45,15 +45,15 @@ final class USBAccessoryService: USBAccessoryProviding {
             Task { @MainActor in
                 guard let self else { return }
                 if let error = error as NSError? {
-                    #log(
-                        Self.logger, .error,
+                    Self.logger.log(
+                        .error,
                         "USB accessory listener registration failed: \(error.domain, privacy: .public) \(error.code) \(error.localizedFailureReason ?? "", privacy: .public)"
                     )
                     self.listener = nil
                     return
                 }
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "USB accessory listener registered with \(existing.count) accessory(ies) already assigned"
                 )
                 for accessory in existing {
@@ -68,8 +68,8 @@ final class USBAccessoryService: USBAccessoryProviding {
         let registryID = accessory.registryID
         guard held[registryID] == nil else { return }
         guard let descriptor = USBDeviceDescriptor.parse(accessory.deviceDescriptorData) else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Ignoring USB accessory \(registryID): its device descriptor did not parse")
             return
         }
@@ -88,8 +88,8 @@ final class USBAccessoryService: USBAccessoryProviding {
         logIdentityGaps(registryID, node: node, identity: info.identity)
         held[registryID] = accessory
         accessories.append(info)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "USB accessory assigned to Kernova: \(info.displayName, privacy: .public) (\(registryID), \(Self.identityText(info), privacy: .public))"
         )
         onAccessoryAssigned?(info)
@@ -103,7 +103,7 @@ final class USBAccessoryService: USBAccessoryProviding {
     private func withdraw(_ registryID: UInt64) {
         guard held.removeValue(forKey: registryID) != nil else { return }
         accessories.removeAll { $0.registryID == registryID }
-        #log(Self.logger, .notice, "USB accessory withdrawn from Kernova: \(registryID)")
+        Self.logger.log(.notice, "USB accessory withdrawn from Kernova: \(registryID)")
     }
 
     /// Says why an assignment carries no durable key.
@@ -119,29 +119,29 @@ final class USBAccessoryService: USBAccessoryProviding {
         _ registryID: UInt64, node: USBAccessoryNodeProperties?, identity: USBAccessoryIdentity?
     ) {
         guard let node else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "No IORegistry node answered for USB accessory \(registryID): it can be attached, but not recognised if it is detached and comes back"
             )
             return
         }
         guard identity == nil else {
             if node.declaresSerialNumber, node.serialNumber == nil {
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "USB accessory \(registryID) declares a serial number its IORegistry node does not carry: identifying it by its port instead"
                 )
             }
             return
         }
         if node.receptacleKey == nil {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "USB accessory \(registryID) reported neither a serial number nor a receptacle: it can be attached, but not recognised if it is detached and comes back"
             )
         } else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "USB accessory \(registryID) answers to a serial and a port another accessory already holds: it can be attached, but not recognised if it is detached and comes back"
             )
         }
@@ -172,8 +172,8 @@ final class USBAccessoryService: USBAccessoryProviding {
             return try VZUSBPassthroughDevice(configuration: configuration)
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Attached USB accessory \(info.displayName, privacy: .public) to '\(instance.name, privacy: .public)' as \(deviceID.uuidString, privacy: .public)"
         )
         return AttachedUSBAccessory(deviceID: deviceID, accessory: info)
@@ -191,8 +191,8 @@ final class USBAccessoryService: USBAccessoryProviding {
             throw USBAccessoryError.noUSBController
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Detached USB accessory \(deviceID.uuidString, privacy: .public) from '\(instance.name, privacy: .public)'"
         )
     }

@@ -1,5 +1,7 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
+import KernovaSynchronization
 import KernovaTestSupport
 import SwiftProtobuf
 import Synchronization
@@ -174,31 +176,94 @@ struct VsockGuestLogServiceTests {
         #expect(segments.map(\.private) == [false, true])
     }
 
-    @Test("A record with no private segment is republished with nothing to reveal")
-    func compositionOfAllPublicRecord() {
-        let frame = makeLogFrame(level: .notice, category: "Cat", message: "started")
-        guard case .logRecord(let record) = frame.payload else {
-            Issue.record("frame carries no log record")
-            return
-        }
-        let composed = OSLogGuestLogEmitter.Composition(record: record)
-        #expect(composed.placeholder == "[app.kernova.macosagent/Cat] started")
-        #expect(composed.cleartext.isEmpty)
+    /// What an `OSLogGuestLogEmitter` hands its logger's sink for each record.
+    private struct Emitted: Equatable {
+        let level: KernovaLogLevel
+        let subsystem: String
+        let category: String
+        let segments: [LogSegment]
     }
 
-    @Test("A private segment is redacted in the placeholder and whole in the cleartext")
-    func compositionRedactsPrivateSegments() {
-        let frame = makeLogFrame(
-            level: .notice,
-            category: "Cat",
-            segments: [makeSegment("copied "), makeSegment("secret.txt", isPrivate: true)])
-        guard case .logRecord(let record) = frame.payload else {
-            Issue.record("frame carries no log record")
-            return
+    /// An emitter whose logger captures through its own sink, labelled `vm`.
+    private func makeCapturingEmitter() -> (OSLogGuestLogEmitter, Locked<[Emitted]>) {
+        let emitted = Locked<[Emitted]>([])
+        let logger = KernovaLogger(subsystem: "app.kernova.guest", category: "vm") {
+            level, subsystem, category, segments in
+            emitted.withLock {
+                $0.append(Emitted(level: level, subsystem: subsystem, category: category, segments: segments))
+            }
         }
-        let composed = OSLogGuestLogEmitter.Composition(record: record)
-        #expect(composed.placeholder == "[app.kernova.macosagent/Cat] copied <private>")
-        #expect(composed.cleartext == "[app.kernova.macosagent/Cat] copied secret.txt")
+        return (OSLogGuestLogEmitter(logger: logger), emitted)
+    }
+
+    private func logRecord(of frame: Frame) throws -> Kernova_V1_LogRecord {
+        guard case .logRecord(let record) = frame.payload else {
+            throw RecordMissing()
+        }
+        return record
+    }
+
+    private struct RecordMissing: Error {}
+
+    @Test("The emitter republishes a record behind a public [subsystem/category] label")
+    func emitterLabelsTheRecord() throws {
+        let (emitter, emitted) = makeCapturingEmitter()
+
+        let record = try logRecord(of: makeLogFrame(level: .notice, category: "Cat", message: "started"))
+        emitter.emit(record)
+
+        #expect(
+            emitted.withLock { $0 } == [
+                Emitted(
+                    level: .notice, subsystem: "app.kernova.guest", category: "vm",
+                    segments: [
+                        LogSegment(text: "[app.kernova.macosagent/Cat] ", isPrivate: false),
+                        LogSegment(text: "started", isPrivate: false),
+                    ])
+            ])
+    }
+
+    @Test("The emitter carries each guest segment's privacy through")
+    func emitterKeepsSegmentPrivacy() throws {
+        let (emitter, emitted) = makeCapturingEmitter()
+
+        let record = try logRecord(
+            of: makeLogFrame(
+                level: .notice,
+                category: "Cat",
+                segments: [
+                    makeSegment("copied "), makeSegment("secret.txt", isPrivate: true), makeSegment(" done"),
+                ]))
+        emitter.emit(record)
+
+        #expect(
+            emitted.withLock { $0.first?.segments } == [
+                LogSegment(text: "[app.kernova.macosagent/Cat] ", isPrivate: false),
+                LogSegment(text: "copied ", isPrivate: false),
+                LogSegment(text: "secret.txt", isPrivate: true),
+                LogSegment(text: " done", isPrivate: false),
+            ])
+    }
+
+    @Test(
+        "The emitter maps each guest level to the host level",
+        arguments: [
+            (Kernova_V1_LogRecord.Level.debug, KernovaLogLevel.debug),
+            (.info, .info),
+            (.notice, .notice),
+            (.warning, .warning),
+            (.error, .error),
+            (.fault, .fault),
+            (.unspecified, .notice),
+            (.UNRECOGNIZED(99), .notice),
+        ])
+    func emitterMapsLevels(guest: Kernova_V1_LogRecord.Level, host: KernovaLogLevel) throws {
+        let (emitter, emitted) = makeCapturingEmitter()
+
+        let record = try logRecord(of: makeLogFrame(level: guest))
+        emitter.emit(record)
+
+        #expect(emitted.withLock { $0.map(\.level) } == [host])
     }
 
     @Test("A wrong-port payload notifies the owner that the channel is gone")

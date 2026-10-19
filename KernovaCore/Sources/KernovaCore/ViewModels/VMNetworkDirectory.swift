@@ -71,8 +71,8 @@ package final class VMNetworkDirectory {
         guard read != state else { return }
         state = read
         if let unreadable = read.unreadable {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: unreadable.problems), privacy: .public)"
             )
         }

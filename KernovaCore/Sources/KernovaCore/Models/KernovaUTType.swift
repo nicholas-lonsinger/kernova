@@ -16,7 +16,7 @@ extension UTType {
     private static func resolvedFilenameExtension(_ ext: String, fallback: UTType = .data) -> UTType {
         guard let type = UTType(filenameExtension: ext) else {
             let logger = KernovaLogger(subsystem: "app.kernova", category: "UTType")
-            #log(logger, .fault, "UTType lookup failed for extension '\(ext, privacy: .public)'")
+            logger.log(.fault, "UTType lookup failed for extension '\(ext, privacy: .public)'")
             assertionFailure("UTType lookup failed for extension: \(ext)")
             return fallback
         }
@@ -38,7 +38,7 @@ extension UTType {
         var types: [UTType] = [.diskImage]
         for (ext, fallback) in resolvedExtensions {
             guard let type = UTType(filenameExtension: ext) else {
-                #log(logger, .fault, "UTType lookup failed for known extension '\(ext, privacy: .public)'")
+                logger.log(.fault, "UTType lookup failed for known extension '\(ext, privacy: .public)'")
                 assertionFailure("UTType lookup failed for extension: \(ext)")
                 types.append(fallback)
                 continue

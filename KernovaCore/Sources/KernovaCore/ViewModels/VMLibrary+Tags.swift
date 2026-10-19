@@ -64,8 +64,8 @@ extension VMLibrary {
             do {
                 try changeTags(of: instance) { $0.remove(id) }
             } catch {
-                #log(
-                    logger, .notice,
+                logger.log(
+                    .notice,
                     "Kept the deleted tag's assignment on '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }

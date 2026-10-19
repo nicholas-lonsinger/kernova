@@ -499,7 +499,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     @objc private func ephemeralBaselineChanged() {
         guard let id = ephemeralBaselinePopUp.selectedItem?.representedObject as? UUID else {
-            #log(Self.logger, .fault, "Ephemeral baseline popup selection carries no snapshot")
+            Self.logger.log(.fault, "Ephemeral baseline popup selection carries no snapshot")
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }

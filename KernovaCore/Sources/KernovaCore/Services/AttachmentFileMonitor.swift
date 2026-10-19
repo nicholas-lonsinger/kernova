@@ -243,8 +243,8 @@ package final class AttachmentFileMonitor {
             // Parent unreachable (e.g. unmounted volume, or a sandbox denial on an
             // out-of-container parent). Tracked existence stays as probed; the
             // next `revalidate()` retries.
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Could not open parent for monitoring (errno=\(openErrno, privacy: .public)): \(parent, privacy: .public)"
             )
             return
@@ -266,8 +266,8 @@ package final class AttachmentFileMonitor {
     /// and traps in debug builds.
     private func installWatcher(fd: Int32, parent: String) {
         if let existing = parentSources[parent] {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "installWatcher called with an existing source for parent \(parent, privacy: .public)"
             )
             assertionFailure("installWatcher: parent already watched: \(parent)")
@@ -292,7 +292,7 @@ package final class AttachmentFileMonitor {
         source.resume()
         parentSources[parent] = source
 
-        #log(Self.logger, .debug, "Started attachment watcher on \(parent, privacy: .public)")
+        Self.logger.log(.debug, "Started attachment watcher on \(parent, privacy: .public)")
     }
 
     /// Parent directory of `path` as a string.
@@ -345,8 +345,8 @@ package final class AttachmentFileMonitor {
         guard let currentPaths = pathsByParent[parent] else { return }
         for (path, exists) in existence where currentPaths.contains(path) {
             if existsByPath[path] != exists {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Attachment existence changed: \(path, privacy: .public) -> \(exists, privacy: .public)"
                 )
                 existsByPath[path] = exists

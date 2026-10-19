@@ -522,8 +522,8 @@ public final class ClipboardEndpoint {
     }
 
     nonisolated private func refuseDataConnection(fd: Int32, saying what: String) {
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "Closing a \(self.channelWord, privacy: .public) data connection for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — it opened with \(what, privacy: .public) this side cannot answer"
         )
         ClipboardDataConnection.end(fd: fd)
@@ -575,8 +575,8 @@ public final class ClipboardEndpoint {
             guard let inbound else {
                 // A send-only connection has no inbound gesture to refuse, so
                 // the peer's account of one is only ever news for the log.
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Peer error on the \(self.channelWord, privacy: .public) channel for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)): \(error.code, privacy: .public) — \(error.message, privacy: .public)"
                 )
                 return
@@ -589,8 +589,8 @@ public final class ClipboardEndpoint {
             // A transfer's header frames belong to its own data connection.
             closeOnWrongPort()
         case .none:
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Frame with no payload for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
             )
         }
@@ -603,8 +603,8 @@ public final class ClipboardEndpoint {
     /// owner deciding, and the consume tail's own settle is already past the
     /// point where it could say so.
     private func closeOnWrongPort() {
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "Unexpected payload on the \(self.channelWord, privacy: .public) channel for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — wrong port; closing the channel"
         )
         let wasConnected = isConnected

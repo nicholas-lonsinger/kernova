@@ -163,13 +163,13 @@ public final class ClipboardProgressStatusItemPresenter {
             Self.allowsAutomaticOpen(
                 isVisible: visible, isOnScreen: onScreen, menuIsOpen: menuIsOpen)
         else {
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Staged-line reveal skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(self.menuIsOpen, privacy: .public)"
             )
             return
         }
-        #log(Self.logger, .info, "Opening the dropdown to reveal a staged line")
+        Self.logger.log(.info, "Opening the dropdown to reveal a staged line")
         openDropdown(while: stillStaged)
     }
 
@@ -246,8 +246,8 @@ public final class ClipboardProgressStatusItemPresenter {
         onScreen: Bool
     ) {
         guard let readout else {
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Readout cleared — dropdown \(action == .close ? "closed" : "left alone", privacy: .public)"
             )
             return
@@ -257,8 +257,8 @@ public final class ClipboardProgressStatusItemPresenter {
             case .none: .debug
             case .open, .close: .info
             }
-        #log(
-            Self.logger, level,
+        Self.logger.log(
+            level,
             """
             Auto-open \(String(describing: action), privacy: .public) — gesture=\(String(describing: readout.gesture), privacy: .public), \
             elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \

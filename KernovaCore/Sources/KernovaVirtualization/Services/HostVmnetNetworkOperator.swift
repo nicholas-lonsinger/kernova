@@ -58,8 +58,8 @@ package struct HostVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentM
         vmnet_network_get_ipv4_subnet(network, &address, &mask)
         let subnet = IPv4Subnet(
             containing: UInt32(bigEndian: address.s_addr), mask: UInt32(bigEndian: mask.s_addr))
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Created a \(kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public) mask \(IPv4Value.string(subnet.mask), privacy: .public)"
         )
         return (VmnetNetworkHandle(network: network), subnet)

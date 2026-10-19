@@ -224,7 +224,7 @@ final class VsockGuestClipboardAgent {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
-        #log(Self.logger, .notice, "Vsock clipboard agent started")
+        Self.logger.log(.notice, "Vsock clipboard agent started")
     }
 
     /// Applies a host policy update: whether clipboard sharing is on, and the
@@ -249,7 +249,7 @@ final class VsockGuestClipboardAgent {
         if enabled {
             startPolling()
             clipboardActivityStorage = .enabled
-            #log(Self.logger, .notice, "Clipboard sharing enabled by host policy")
+            Self.logger.log(.notice, "Clipboard sharing enabled by host policy")
         } else {
             client.pause()
             pollingTimer?.invalidate()
@@ -260,7 +260,7 @@ final class VsockGuestClipboardAgent {
             // a pasteboard outlives the session that staged it (mirrors the
             // host's stop()).
             clipboardActivityStorage = .disabled
-            #log(Self.logger, .notice, "Clipboard sharing disabled by host policy")
+            Self.logger.log(.notice, "Clipboard sharing disabled by host policy")
         }
     }
 
@@ -274,7 +274,7 @@ final class VsockGuestClipboardAgent {
             self?.pollingTimer = nil
             self?.teardownConnectionState()
         }
-        #log(Self.logger, .notice, "Vsock clipboard agent stopped")
+        Self.logger.log(.notice, "Vsock clipboard agent stopped")
     }
 
     /// Clears per-connection streaming + pending state.
@@ -329,8 +329,8 @@ final class VsockGuestClipboardAgent {
         endpoint.delegate = self
         lastPasteboardChangeCount = Self.unobservedChangeCount
         endpoint.start()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Vsock clipboard connected to host (conn=\(endpoint.connectionTag, privacy: .public))"
         )
 
@@ -400,8 +400,8 @@ final class VsockGuestClipboardAgent {
         let snapshot = ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: true)
         switch snapshot {
         case .suppressed(let reason):
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Clipboard snapshot suppressed by \(String(describing: reason), privacy: .public) marker"
             )
             lastPasteboardChangeCount = currentCount
@@ -415,7 +415,7 @@ final class VsockGuestClipboardAgent {
                 changeCount: currentCount)
         case .textOnlyRefusal:
             // Unreachable: this poll always reads with `allowsBinary: true`.
-            #log(Self.logger, .fault, "Clipboard snapshot refused as text-only on a binary transport")
+            Self.logger.log(.fault, "Clipboard snapshot refused as text-only on a binary transport")
             assertionFailure("Clipboard snapshot refused as text-only on a binary transport")
             noteSnapshotOfferedNothing(
                 pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
@@ -429,8 +429,8 @@ final class VsockGuestClipboardAgent {
             // Mac's own content; offering it back is an echo, not a copy.
             let offerable = urls.filter { !staging.isInStagingRoot($0) }
             guard !offerable.isEmpty else {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Copy held only files materialized from the host — not offered back (conn=\(self.connectionTag, privacy: .public))"
                 )
                 // A suppression, so nobody's copy came up short: the
@@ -470,8 +470,8 @@ final class VsockGuestClipboardAgent {
         // A copy was made in this guest and none of it could cross. Its own menu
         // is the only account of that, and without one the line still reads as
         // the copy before it, which did.
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Copy left nothing that can be offered to the host (conn=\(self.connectionTag, privacy: .public))"
         )
         clipboardActivityStorage = .copyCarriedNothing
@@ -502,8 +502,8 @@ final class VsockGuestClipboardAgent {
             return
         }
         guard skipped > 0 else { return }
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "The offer to the host left \(skipped, privacy: .public) unreadable item(s) out (conn=\(self.connectionTag, privacy: .public))"
         )
         // Re-announcing a standing snapshot to a new host is nobody's gesture,
@@ -579,8 +579,8 @@ final class VsockGuestClipboardAgent {
                 for: $0, generation: offer.generation, serve: endpoint)
         }
         guard let specs, !specs.isEmpty else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Dropped the host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(offer.reps.count, privacy: .public) representation(s) can be promised — nothing written"
             )
             endpoint.discardInboundOffer()
@@ -594,8 +594,8 @@ final class VsockGuestClipboardAgent {
             lastPasteboardChangeCount = changeCount
         }
         guard written else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to register host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
             )
             // The write failed, so the providers were never retained — there is
@@ -603,8 +603,8 @@ final class VsockGuestClipboardAgent {
             endpoint.discardInboundOffer()
             return
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Registered host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(specs.count, privacy: .public) item(s))"
         )
         clipboardActivityStorage = .offeredFromHost

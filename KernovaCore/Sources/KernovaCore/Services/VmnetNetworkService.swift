@@ -233,13 +233,13 @@ package final class VmnetNetworkService: Sendable {
         case .common:
             break
         case .vm(let owner):
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Created VM \(owner.uuidString, privacy: .public)'s own \(id.kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public)"
             )
         case .named(let network):
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Created named \(id.kind.rawValue, privacy: .public) network \(network.uuidString, privacy: .public) on \(IPv4Value.string(subnet.network), privacy: .public)"
             )
         }
@@ -262,8 +262,8 @@ package final class VmnetNetworkService: Sendable {
     private func release(_ released: Released, lastHeldBy member: UUID) {
         for (id, handle) in released {
             operations.releaseNetwork(handle)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Released the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network its last member, VM \(member.uuidString, privacy: .public), held"
             )
         }
@@ -376,8 +376,8 @@ package final class VmnetSessionNetworks: Sendable {
             _ = try service.network(for: id(network), member: owner)
             return true
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Could not materialize the \(network.logDescription, privacy: .public) network: \(error.localizedDescription, privacy: .public)"
             )
             return false

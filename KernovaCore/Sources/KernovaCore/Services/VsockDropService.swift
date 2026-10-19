@@ -117,8 +117,8 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         guard !isConnected, !hasStopped else { return }
         isConnected = true
         endpoint.start()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Vsock drop service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }
@@ -152,8 +152,8 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         endpoint.stop()
         guard isConnected else { return }
         isConnected = false
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Vsock drop service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
         // Last, so the owner observes fully-settled state from inside the
@@ -269,8 +269,8 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         }
         if let stagingDirectory { stagedDirectories[generation] = stagingDirectory }
         guard skipped > 0 else { return }
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "Skipped \(skipped, privacy: .public) unreadable dropped item(s) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }

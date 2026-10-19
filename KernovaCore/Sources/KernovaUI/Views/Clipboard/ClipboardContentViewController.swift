@@ -285,8 +285,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
         guard instance.clipboardService != nil else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
             return
         }
@@ -683,8 +683,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // clearBuffer (not `clipboardContent = .empty`) also resets the send
         // dedup, so re-copying the just-cleared content still reaches the guest.
         service.clearBuffer()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Cleared clipboard buffer for VM '\(self.instance.name, privacy: .public)'")
     }
 
@@ -783,18 +783,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if let note {
                 statusMessage.showTransientMessage(note, style: .warning)
             }
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
             return true
         case .rejected(let message, _):
             statusMessage.showTransientMessage(message, style: .warning)
-            #log(Self.logger, .info, "Pasteboard intake rejected: \(message, privacy: .public)")
+            Self.logger.log(.info, "Pasteboard intake rejected: \(message, privacy: .public)")
             return false
         case .pendingFiles:
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "apply(intake:) received .pendingFiles — resolve it via read(filesAt:) first")
             assertionFailure("apply(intake:) received .pendingFiles")
             return false
@@ -814,8 +814,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService else { return false }
         let pasteboard = draggingInfo.draggingPasteboard
 
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Clipboard drop types: \(pasteboard.pasteboardItems?.first?.types.map(\.rawValue).joined(separator: ", ") ?? "none", privacy: .public)"
         )
 
@@ -863,7 +863,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         guard let destination = service.reserveDropDestination() else {
             statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
-            #log(Self.logger, .error, "Failed to reserve a directory for the dropped file promise")
+            Self.logger.log(.error, "Failed to reserve a directory for the dropped file promise")
             return
         }
 
@@ -883,8 +883,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 guard let self else { return }
                 if let error {
                     self.statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
-                    #log(
-                        Self.logger, .error,
+                    Self.logger.log(
+                        .error,
                         "File promise receipt failed: \(error.localizedDescription, privacy: .public)"
                     )
                     return

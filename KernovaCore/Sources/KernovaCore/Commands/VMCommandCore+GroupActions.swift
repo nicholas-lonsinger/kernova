@@ -157,8 +157,8 @@ extension VMCommandCore {
         let action = run.action
         // A run over no VM moves nothing, so its records are routine progress.
         let level: KernovaLogLevel = set.members.isEmpty ? .info : .notice
-        #log(
-            logger, level,
+        logger.log(
+            level,
             "\(action.rawValue, privacy: .public) on \(set.description, privacy: .public): \(set.members.count, privacy: .public) VM(s)"
         )
         var results: [VMGroupActionResult] = []
@@ -170,8 +170,8 @@ extension VMCommandCore {
             }
             results.append(await result(of: run, on: member, in: set))
         }
-        #log(
-            logger, level,
+        logger.log(
+            level,
             "\(action.rawValue, privacy: .public) on \(set.description, privacy: .public) finished\(Task.isCancelled ? " after a cancel" : "", privacy: .public) — \(results.undone.count, privacy: .public) of \(results.count, privacy: .public) VM(s) undone"
         )
         return results

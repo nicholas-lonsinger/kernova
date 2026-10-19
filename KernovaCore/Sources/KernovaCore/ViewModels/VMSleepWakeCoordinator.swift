@@ -73,10 +73,10 @@ final class VMSleepWakeCoordinator {
         let pauses = instances.compactMap(followPauseForSleep)
         sleepPauses.append(contentsOf: pauses)
         if pauses.isEmpty {
-            #log(Self.logger, .notice, "System going to sleep — no VM has a live session to pause")
+            Self.logger.log(.notice, "System going to sleep — no VM has a live session to pause")
         } else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "System going to sleep — pausing \(pauses.count, privacy: .public) VM(s) with a live session"
             )
         }
@@ -85,7 +85,7 @@ final class VMSleepWakeCoordinator {
             for pause in pauses {
                 do {
                     try await pause.followUp.outcome.value()
-                    #log(Self.logger, .notice, "Paused '\(pause.name, privacy: .public)' for sleep")
+                    Self.logger.log(.notice, "Paused '\(pause.name, privacy: .public)' for sleep")
                 } catch {
                     guard
                         Self.isReported(
@@ -97,7 +97,7 @@ final class VMSleepWakeCoordinator {
             if !failedNames.isEmpty {
                 self?.onFailure?(SleepWakeError.pauseFailed(vmNames: failedNames))
             }
-            #log(Self.logger, .notice, "Every sleep pause has ended — allowing sleep")
+            Self.logger.log(.notice, "Every sleep pause has ended — allowing sleep")
             allowSleep()
         }
     }
@@ -120,8 +120,8 @@ final class VMSleepWakeCoordinator {
         for pause in pauses {
             guard let instance = pause.instance else { continue }
             if instance.activity.withdraw(pause.followUp) {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Withdrew the sleep pause still queued on '\(pause.name, privacy: .public)': the system slept first"
                 )
                 notPausedNames.append(pause.name)
@@ -135,8 +135,8 @@ final class VMSleepWakeCoordinator {
             onFailure?(SleepWakeError.notPausedBeforeSleep(vmNames: notPausedNames))
         }
         if !resumes.isEmpty {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "System woke up — resuming \(resumes.count, privacy: .public) VM(s) paused for sleep")
         }
         return Task { @MainActor [weak self] in
@@ -144,7 +144,7 @@ final class VMSleepWakeCoordinator {
             for resume in resumes {
                 do {
                     try await resume.followUp.outcome.value()
-                    #log(Self.logger, .notice, "Resumed '\(resume.name, privacy: .public)' after wake")
+                    Self.logger.log(.notice, "Resumed '\(resume.name, privacy: .public)' after wake")
                 } catch {
                     guard
                         Self.isReported(
@@ -192,13 +192,13 @@ final class VMSleepWakeCoordinator {
         _ error: any Error, of followUp: VMFollowUp, step: String
     ) -> Bool {
         guard VMFollowUp.isReportable(error, scope: followUp.scope) else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Did not \(step, privacy: .public): \(String(describing: error), privacy: .public)")
             return false
         }
-        #log(
-            logger, .error,
+        logger.log(
+            .error,
             "Failed to \(step, privacy: .public): \(error.localizedDescription, privacy: .public)")
         return true
     }

@@ -95,14 +95,14 @@ final class AppWindowRegistry {
         residency?.prepareToPresentWindow()
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
-                #log(Self.logger, .debug, "showLibrary: focusing existing window")
+                Self.logger.log(.debug, "showLibrary: focusing existing window")
                 existingWindow.makeKeyAndOrderFront(nil)
             } else {
-                #log(Self.logger, .debug, "showLibrary: showing existing window in background")
+                Self.logger.log(.debug, "showLibrary: showing existing window in background")
                 existingWindow.orderBack(nil)
             }
         } else {
-            #log(Self.logger, .notice, "showLibrary: recreating main window controller")
+            Self.logger.log(.notice, "showLibrary: recreating main window controller")
             let windowController = MainWindowController(
                 viewModel: viewModel, stage: stage)
             if bringToFront {

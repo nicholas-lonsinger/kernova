@@ -37,8 +37,8 @@ final class VMDirectoryWatcher {
 
         let fd = open(directory.path(percentEncoded: false), O_EVTONLY)
         guard fd >= 0 else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not open VMs directory for monitoring: \(directory.path(percentEncoded: false), privacy: .public)"
             )
             return
@@ -61,14 +61,14 @@ final class VMDirectoryWatcher {
         source.resume()
         directorySource = source
 
-        #log(
-            Self.logger, .info,
+        Self.logger.log(
+            .info,
             "Started directory watcher on \(directory.path(percentEncoded: false), privacy: .public)")
     }
 
     /// Debounces rapid FS events into a single reconciliation pass after 0.5 seconds of quiet.
     private func scheduleReconciliation() {
-        #log(Self.logger, .debug, "Directory change detected, scheduling reconciliation")
+        Self.logger.log(.debug, "Directory change detected, scheduling reconciliation")
         debounceTask?.cancel()
         debounceTask = Task {
             try? await Task.sleep(for: .milliseconds(500))

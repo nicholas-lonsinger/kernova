@@ -103,7 +103,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             let image = NSImage(
                 systemSymbolName: name, accessibilityDescription: "Kernova Guest Agent")
         else {
-            #log(Self.logger, .fault, "Missing SF Symbol '\(name, privacy: .public)' for status item")
+            Self.logger.log(.fault, "Missing SF Symbol '\(name, privacy: .public)' for status item")
             assertionFailure("Missing SF Symbol '\(name)'")
             statusItem.button?.image = nil
             statusItem.button?.title = "K"

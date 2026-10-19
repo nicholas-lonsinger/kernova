@@ -27,7 +27,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     /// Installs this listener on the supplied socket device.
     func attach(to socketDevice: VZVirtioSocketDevice) {
         socketDevice.setSocketListener(socketListener, forPort: port)
-        #log(Self.logger, .info, "Listening on vsock port \(self.port, privacy: .public)")
+        Self.logger.log(.info, "Listening on vsock port \(self.port, privacy: .public)")
     }
 
     /// Removes this listener from the supplied socket device.
@@ -36,7 +36,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     /// so this removes whatever occupies this host's port.
     func detach(from socketDevice: VZVirtioSocketDevice) {
         socketDevice.removeSocketListener(forPort: port)
-        #log(Self.logger, .info, "Stopped listening on vsock port \(self.port, privacy: .public)")
+        Self.logger.log(.info, "Stopped listening on vsock port \(self.port, privacy: .public)")
     }
 
     // MARK: - VZVirtioSocketListenerDelegate

@@ -20,8 +20,8 @@ package struct DiskImageService: Sendable {
     ///     one of the sizes in ``VMGuestOS/allDiskSizes``.
     /// - Throws: A ``DiskImageError`` whose case identifies the phase that failed.
     package func createDiskImage(at url: URL, sizeInGB: Int) async throws {
-        #log(
-            Self.logger, .info,
+        Self.logger.log(
+            .info,
             "Creating ASIF disk image: \(sizeInGB, privacy: .public) GB at \(url.lastPathComponent, privacy: .public)")
 
         guard let templateURL = products.diskTemplateURL(sizeInGB: sizeInGB) else {
@@ -51,7 +51,7 @@ package struct DiskImageService: Sendable {
             }
         }.value
 
-        #log(Self.logger, .notice, "Successfully created ASIF disk image at \(url.lastPathComponent, privacy: .public)")
+        Self.logger.log(.notice, "Successfully created ASIF disk image at \(url.lastPathComponent, privacy: .public)")
     }
 }
 

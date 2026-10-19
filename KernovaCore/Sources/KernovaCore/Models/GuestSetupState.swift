@@ -81,15 +81,11 @@ package struct GuestSetupState: Sendable, Equatable {
     /// Moves to the next step, seeding what it reports.
     mutating func advance(progress: SetupStepProgress) {
         guard currentStepIndex + 1 < steps.count else {
-            // Read into locals: an `os.Logger` interpolation is an escaping
-            // autoclosure, which cannot capture a mutating `self`.
-            let index = currentStepIndex
-            let count = steps.count
-            #log(
-                Self.logger, .fault,
-                "Advanced past the last setup step (index \(index, privacy: .public) of \(count, privacy: .public))"
+            Self.logger.log(
+                .fault,
+                "Advanced past the last setup step (index \(currentStepIndex, privacy: .public) of \(steps.count, privacy: .public))"
             )
-            assertionFailure("Advanced past the last setup step: \(index) of \(count)")
+            assertionFailure("Advanced past the last setup step: \(currentStepIndex) of \(steps.count)")
             self.progress = progress
             return
         }

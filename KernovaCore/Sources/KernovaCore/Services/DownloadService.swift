@@ -73,8 +73,8 @@ final class DownloadService: Sendable {
                     progressHandler: progressHandler)
             }
             guard claim.isOwner else {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "A download to '\(destinationURL.lastPathComponent, privacy: .public)' is already running — waiting for it to finish"
                 )
                 // That download's failure is its own caller's to report; this one
@@ -102,7 +102,7 @@ final class DownloadService: Sendable {
         expectedSizeBytes: UInt64?,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
-        #log(Self.logger, .info, "Downloading from \(Self.loggableURL(remoteURL), privacy: .public)")
+        Self.logger.log(.info, "Downloading from \(Self.loggableURL(remoteURL), privacy: .public)")
 
         if discardsExistingDownload {
             try discardExistingFile(at: destinationURL)
@@ -119,8 +119,8 @@ final class DownloadService: Sendable {
         if !bundle.isResumable,
             FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
         {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "File already present at '\(destinationURL.lastPathComponent, privacy: .public)' — skipping download"
             )
             if bundle.exists {
@@ -177,22 +177,22 @@ final class DownloadService: Sendable {
             // total.
             guard resumeMetadata != nil else {
                 // Server sent 206 without us asking; treat as a server error.
-                #log(Self.logger, .error, "Server returned 206 Partial Content without a Range request")
+                Self.logger.log(.error, "Server returned 206 Partial Content without a Range request")
                 throw DownloadError.downloadFailed(URLError(.badServerResponse))
             }
             guard
                 let rangeHeader = response.value(forHTTPHeaderField: "Content-Range"),
                 let parsedRange = Self.parseContentRange(rangeHeader)
             else {
-                #log(Self.logger, .error, "206 response missing or unparseable Content-Range header")
+                Self.logger.log(.error, "206 response missing or unparseable Content-Range header")
                 throw DownloadError.downloadFailed(URLError(.badServerResponse))
             }
             // Splicing at the requested offset when the server started somewhere
             // else leaves the intervening bytes stale and the file silently
             // corrupt. Trash the bundle so the next attempt restarts from zero.
             if parsedRange.start != resumeOffset {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Content-Range start \(parsedRange.start, privacy: .public) ≠ requested offset \(resumeOffset, privacy: .public); discarding bundle"
                 )
                 try? FileManager.default.removeItem(at: bundleURL)
@@ -216,7 +216,7 @@ final class DownloadService: Sendable {
                 response.value(forHTTPHeaderField: "Content-Range")
             )
             if let total, bundle.partialByteCount == total {
-                #log(Self.logger, .notice, "416 with full file already on disk — finalizing")
+                Self.logger.log(.notice, "416 with full file already on disk — finalizing")
                 try bundle.finalize(to: destinationURL)
                 discardResumeData(at: destinationURL)
                 let progress = DownloadProgress(
@@ -224,22 +224,22 @@ final class DownloadService: Sendable {
                 await MainActor.run { progressHandler(progress) }
                 return
             }
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "416 with no usable total or size mismatch — discarding bundle so the next attempt restarts from zero"
             )
             try? FileManager.default.removeItem(at: bundleURL)
             throw DownloadError.downloadFailed(URLError(.badServerResponse))
 
         default:
-            #log(Self.logger, .error, "Download GET returned HTTP \(response.statusCode, privacy: .public)")
+            Self.logger.log(.error, "Download GET returned HTTP \(response.statusCode, privacy: .public)")
             throw DownloadError.downloadFailed(URLError(.badServerResponse))
         }
 
         // `streamBytes` already emitted the unthrottled final-progress callback.
         try bundle.finalize(to: destinationURL)
         discardResumeData(at: destinationURL)
-        #log(Self.logger, .info, "Downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
+        Self.logger.log(.info, "Downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
     }
 
     // MARK: - Adopting a File Already on Disk
@@ -265,8 +265,8 @@ final class DownloadService: Sendable {
             try performAdoption(of: sourceURL, as: destinationURL)
         }
         guard claim.isOwner else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "A download to '\(destinationURL.lastPathComponent, privacy: .public)' is already running — downloading rather than adopting"
             )
             return false
@@ -286,8 +286,8 @@ final class DownloadService: Sendable {
     private func performAdoption(of sourceURL: URL, as destinationURL: URL) throws {
         guard !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
         else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "'\(destinationURL.lastPathComponent, privacy: .public)' is already on disk — downloading rather than adopting"
             )
             throw AdoptionRefusal.destinationOccupied
@@ -295,14 +295,14 @@ final class DownloadService: Sendable {
         do {
             try FileManager.default.linkItem(at: sourceURL, to: destinationURL)
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to link '\(sourceURL.lastPathComponent, privacy: .public)' to '\(destinationURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Adopted '\(sourceURL.lastPathComponent, privacy: .public)' as '\(destinationURL.lastPathComponent, privacy: .public)' — no bytes moved"
         )
         // Whatever a prior attempt left part-way through is superseded by a
@@ -335,8 +335,8 @@ final class DownloadService: Sendable {
         do {
             metadata = try bundle.loadMetadata()
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Bundle at '\(bundleURL.lastPathComponent, privacy: .public)' is corrupt — restarting download: \(error.localizedDescription, privacy: .public)"
             )
             try? FileManager.default.removeItem(at: bundleURL)
@@ -344,16 +344,16 @@ final class DownloadService: Sendable {
         }
 
         if metadata.originalURL != remoteURL {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Bundle URL '\(Self.loggableURL(metadata.originalURL), privacy: .public)' ≠ requested '\(Self.loggableURL(remoteURL), privacy: .public)' — discarding stale bundle"
             )
             try? FileManager.default.removeItem(at: bundleURL)
             return nil
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Resuming prior download from bundle at '\(bundleURL.lastPathComponent, privacy: .public)' (\(bundle.partialByteCount, privacy: .public) bytes on disk)"
         )
         return metadata
@@ -371,14 +371,14 @@ final class DownloadService: Sendable {
             do {
                 try fileSystem.trashItem(at: destinationURL)
             } catch {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Failed to trash the existing file at '\(path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw DownloadError.freshDownloadCleanupFailed(path: path, underlying: error)
             }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Trashed the existing file at '\(destinationURL.lastPathComponent, privacy: .public)' for a fresh download"
             )
         }
@@ -401,8 +401,8 @@ final class DownloadService: Sendable {
             } else {
                 try fileSystem.trashItem(at: bundleURL)
             }
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Discarded in-progress download bundle at '\(bundleURL.lastPathComponent, privacy: .public)'"
             )
         } catch CocoaError.fileNoSuchFile {
@@ -414,8 +414,8 @@ final class DownloadService: Sendable {
             // raw `NSError(NSCocoaErrorDomain, NSFileNoSuchFileError)` that the
             // typed `CocoaError.fileNoSuchFile` pattern above does not catch.
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to discard in-progress download bundle at '\(bundleURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -571,8 +571,8 @@ final class DownloadService: Sendable {
         if let ceiling = expectedSizeBytes, expectedTotal > 0,
             UInt64(clamping: expectedTotal) > ceiling
         {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Source states \(expectedTotal, privacy: .public) bytes against an expected \(ceiling, privacy: .public) — stopping before its body moves"
             )
             Self.emptyAndDiscard(bundle, dataHandle: handle)
@@ -607,8 +607,8 @@ final class DownloadService: Sendable {
                 if let ceiling = expectedSizeBytes,
                     UInt64(clamping: totalWritten) + UInt64(data.count) > ceiling
                 {
-                    #log(
-                        Self.logger, .error,
+                    Self.logger.log(
+                        .error,
                         "Transfer ran past its expected \(ceiling, privacy: .public) bytes — stopping"
                     )
                     Self.emptyAndDiscard(bundle, dataHandle: handle)
@@ -635,18 +635,18 @@ final class DownloadService: Sendable {
                 throw URLError(.networkConnectionLost)
             }
         } catch is CancellationError {
-            #log(Self.logger, .info, "Download cancelled")
+            Self.logger.log(.info, "Download cancelled")
             throw CancellationError()
         } catch let urlError as URLError where urlError.code == .cancelled {
-            #log(Self.logger, .info, "Download cancelled (URLError.cancelled)")
+            Self.logger.log(.info, "Download cancelled (URLError.cancelled)")
             throw CancellationError()
         } catch let downloadError as DownloadError {
             // Raised by this method, already carrying the message the user
             // sees; `.downloadFailed` would bury it one level down.
             throw downloadError
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Download failed mid-stream: \(error.localizedDescription, privacy: .public)"
             )
             throw DownloadError.downloadFailed(error)
@@ -686,21 +686,21 @@ final class DownloadService: Sendable {
         do {
             try dataHandle.truncate(atOffset: 0)
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to empty the partial data in '\(bundle.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         try? dataHandle.close()
         do {
             try FileManager.default.removeItem(at: bundle.url)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Discarded the bundle at '\(bundle.url.lastPathComponent, privacy: .public)' — the next attempt restarts from zero"
             )
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to remove the bundle at '\(bundle.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

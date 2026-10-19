@@ -105,8 +105,8 @@ package final class VMIntentGateway {
         } catch CommandError.notFound where named == .beforeSuspension {
             return nil
         } catch {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
             )
             assertionFailure("Listed VM \(id.uuidString) has no info read: \(error)")
@@ -498,8 +498,8 @@ package final class VMIntentGateway {
             return try await body()
         } catch let failure as CommandError {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message, privacy: .public)"
             )
             throw failure
@@ -609,8 +609,8 @@ package final class VMIntentGateway {
             try await body()
             return true
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Spotlight failed \(operation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             return false

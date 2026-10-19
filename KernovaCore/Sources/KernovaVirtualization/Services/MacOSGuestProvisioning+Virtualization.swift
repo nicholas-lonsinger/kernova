@@ -41,8 +41,8 @@ extension MacOSGuestProvisioning {
             // refusal shown to the user leaves out, and the only record
             // of why a guest came up unprovisioned.
             let nsError = error as NSError
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Starting without the guest account '\(provisioning.username, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
             )
             return nil
@@ -51,8 +51,8 @@ extension MacOSGuestProvisioning {
         // in, so it is the irreversible step `.notice` exists for — and the
         // only positive evidence that an account was ever handed over, when a
         // guest turns out not to have one.
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Starting with the guest account '\(provisioning.username, privacy: .public)'")
         return options
     }

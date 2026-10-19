@@ -126,19 +126,19 @@ package final class HostClipboardPublisher {
         // folder that failed to extract). Surface that rather than clearing the
         // Mac clipboard to write nothing.
         guard !specs.isEmpty else {
-            #log(Self.logger, .error, "Host clipboard publish produced no pasteboard items (staging failed)")
+            Self.logger.log(.error, "Host clipboard publish produced no pasteboard items (staging failed)")
             return .stagingFailed
         }
 
         guard publisher.write(specs, promised: !promises.isEmpty),
             let changeCount = publisher.lastWriteChangeCount
         else {
-            #log(Self.logger, .error, "The pasteboard write failed for a host clipboard publish")
+            Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }
         let representationCount = resolvedReps.count + promises.count
-        #log(
-            Self.logger, .info,
+        Self.logger.log(
+            .info,
             "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
         return .written(
@@ -156,7 +156,7 @@ package final class HostClipboardPublisher {
     /// supersedes an offer whose promises can no longer be served.
     func retractPromisedWrite() -> Bool {
         guard publisher.retractPromisedWrite() else { return false }
-        #log(Self.logger, .notice, "Retracted stale promised clipboard write from the host pasteboard")
+        Self.logger.log(.notice, "Retracted stale promised clipboard write from the host pasteboard")
         return true
     }
 

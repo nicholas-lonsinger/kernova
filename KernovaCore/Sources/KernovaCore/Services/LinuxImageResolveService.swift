@@ -87,15 +87,15 @@ final class LinuxImageResolveService: LinuxImageResolving {
             // A cancelled request fails as a transport error, and the caller
             // that cancelled has no error of its own to report.
             try Task.checkCancellation()
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "No size for '\(DownloadService.loggableURL(isoURL), privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             throw LinuxImageResolveError.sizeUnavailable(filename: safeFilename)
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Resolved \(entry.id, privacy: .public) to '\(safeFilename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes)"
         )
         return ResolvedCatalogImage(
@@ -112,16 +112,16 @@ final class LinuxImageResolveService: LinuxImageResolving {
             // A cancelled request fails as a transport error, and the caller
             // that cancelled has no error of its own to report.
             try Task.checkCancellation()
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "No size for '\(DownloadService.loggableURL(image.url), privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             throw (error as? RemoteFileSizeError).map(LinuxImageURLError.init)
                 ?? .transportFailed(description: error.localizedDescription)
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.sha256 == nil ? "unverified" : "verified", privacy: .public))"
         )
         return ResolvedLinuxImage(isoURL: image.url, filename: filename, sizeBytes: sizeBytes)
@@ -149,8 +149,8 @@ final class LinuxImageResolveService: LinuxImageResolving {
             if let refused = origin.refusedRedirect {
                 throw Self.redirectRefusal(of: manifest, to: refused)
             }
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Checksum manifest at '\(DownloadService.loggableURL(url), privacy: .public)' is unreachable: \(error.localizedDescription, privacy: .public)"
             )
             throw LinuxImageResolveError.manifestUnreachable(manifest: manifest, statusCode: nil)
@@ -181,16 +181,16 @@ final class LinuxImageResolveService: LinuxImageResolving {
         } catch {
             stream.task.cancel()
             try Task.checkCancellation()
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Checksum manifest at '\(DownloadService.loggableURL(url), privacy: .public)' stopped mid-body: \(error.localizedDescription, privacy: .public)"
             )
             throw LinuxImageResolveError.manifestUnreachable(manifest: manifest, statusCode: nil)
         }
         stream.task.cancel()
         guard body.count <= Self.maximumManifestBytes else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Checksum manifest \(manifest, privacy: .public) ran past \(Self.maximumManifestBytes, privacy: .public) bytes — not reading further"
             )
             throw LinuxImageResolveError.manifestTooLarge(manifest: manifest)
@@ -203,8 +203,8 @@ final class LinuxImageResolveService: LinuxImageResolving {
         -> LinuxImageResolveError
     {
         let host = url.host() ?? url.absoluteString
-        #log(
-            logger, .error,
+        logger.log(
+            .error,
             "Checksum manifest \(manifest, privacy: .public) redirected to '\(host, privacy: .public)' — not following it off the host the catalog names"
         )
         return .manifestRedirected(manifest: manifest, host: host)

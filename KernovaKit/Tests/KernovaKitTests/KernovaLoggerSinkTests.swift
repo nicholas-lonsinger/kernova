@@ -2,9 +2,11 @@ import Foundation
 import KernovaLogging
 import KernovaSynchronization
 import KernovaTestSupport
+import OSLog
 import Testing
 
-/// Where `#log` forwards: a logger's own sink, or else the process sink.
+/// Where `KernovaLogger.log(_:_:)` forwards: a logger's own sink, or else the
+/// process sink.
 ///
 /// The process sink is bootstrapped once per process, so each test that
 /// bootstraps it runs as an exit test in a process of its own, and its sinks
@@ -18,7 +20,7 @@ struct KernovaLoggerSinkTests {
         let segments: [LogSegment]
     }
 
-    @Test("#log forwards to the logger's own sink, labelled with the logger's subsystem and category")
+    @Test("log forwards to the logger's own sink, labelled with the logger's subsystem and category")
     func forwardsToTheLoggersOwnSink() {
         let records = Locked<[Record]>([])
         let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Sink") {
@@ -29,7 +31,7 @@ struct KernovaLoggerSinkTests {
         }
         let count = 3
 
-        #log(logger, .notice, "saw \(count, privacy: .public) items")
+        logger.log(.notice, "saw \(count, privacy: .public) items")
 
         #expect(
             records.withLock { $0 } == [
@@ -41,6 +43,59 @@ struct KernovaLoggerSinkTests {
                         LogSegment(text: " items", isPrivate: false),
                     ])
             ])
+    }
+
+    @Test("A debug message reaches the sink whether or not the unified log records debug")
+    func debugReachesTheSink() {
+        let records = Locked<[Record]>([])
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Debug") {
+            level, subsystem, category, segments in
+            records.withLock {
+                $0.append(Record(level: level, subsystem: subsystem, category: category, segments: segments))
+            }
+        }
+        let path = "/tmp/x"
+
+        logger.log(.debug, "opened \(path)")
+
+        #expect(
+            records.withLock { $0 } == [
+                Record(
+                    level: .debug, subsystem: "app.kernova.tests", category: "Debug",
+                    segments: [
+                        LogSegment(text: "opened ", isPrivate: false),
+                        LogSegment(text: "/tmp/x", isPrivate: true),
+                    ])
+            ])
+    }
+
+    @Test("A message is built only when the unified log records its level, absent a sink")
+    func messageWithoutASinkIsBuiltOnlyWhenRecorded() {
+        let evaluations = Locked(0)
+        func counted() -> Int {
+            evaluations.withLock { $0 += 1 }
+            return 0
+        }
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Unsunk")
+
+        logger.log(.debug, "value \(counted(), privacy: .public)")
+
+        let recorded = OSLog(subsystem: "app.kernova.tests", category: "Unsunk").isEnabled(type: .debug)
+        #expect(evaluations.withLock { $0 } == (recorded ? 1 : 0))
+    }
+
+    @Test("A message forwarded to a sink is built exactly once")
+    func messageWithASinkIsBuiltOnce() {
+        let evaluations = Locked(0)
+        func counted() -> Int {
+            evaluations.withLock { $0 += 1 }
+            return 0
+        }
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Once") { _, _, _, _ in }
+
+        logger.log(.debug, "value \(counted(), privacy: .public)")
+
+        #expect(evaluations.withLock { $0 } == 1)
     }
 
     @Test("A second bootstrap of the process sink stops the process")
@@ -62,7 +117,7 @@ struct KernovaLoggerSinkTests {
                 exit(matches ? 42 : 43)
             }
             let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Process")
-            #log(logger, .notice, "to the process")
+            logger.log(.notice, "to the process")
         }
     }
 
@@ -73,7 +128,7 @@ struct KernovaLoggerSinkTests {
             let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Own") { _, _, _, _ in
                 exit(7)
             }
-            #log(logger, .notice, "to its own sink")
+            logger.log(.notice, "to its own sink")
         }
     }
 }

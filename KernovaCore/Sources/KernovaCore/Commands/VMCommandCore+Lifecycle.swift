@@ -183,8 +183,8 @@ extension VMCommandCore {
     /// Records that a request joined the bring-up already in flight for
     /// `instance`, which answers it with what it answers its own caller.
     private func logJoin(_ instance: VMInstance) {
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Joining the bring-up already in flight for '\(instance.name, privacy: .public)'")
     }
 
@@ -240,8 +240,8 @@ extension VMCommandCore {
     private func owedGuestAccount(
         _ account: GuestAccountIntent, on instance: VMInstance
     ) -> CommandError {
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Refused to start '\(instance.name, privacy: .public)': nobody has answered for the account '\(account.username, privacy: .public)' it was set up with"
         )
         return .guestAccountPasswordRequired(
@@ -304,15 +304,15 @@ extension VMCommandCore {
         }
         let credentials = GuestProvisioningCredentials(intent: account, password: password)
         if let refusal = library.virtualizationHost.guestAccountRefusal(credentials) {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "macOS turned down the password for the account '\(account.username, privacy: .public)' on '\(configuration.name, privacy: .public)'"
             )
             throw CommandError.invalidArgument(refusal.message)
         }
         library.holdGuestAccountPassword(GuestAccountPassword(password), for: id)
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Holding the password for the account '\(account.username, privacy: .public)' '\(configuration.name, privacy: .public)' was set up with"
         )
     }
@@ -330,8 +330,8 @@ extension VMCommandCore {
                 "\u{201C}\(instance.name)\u{201D} creates no macOS account, so there is nothing to skip."
             )
         }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Skipping the account '\(account.username, privacy: .public)' '\(instance.name, privacy: .public)' was set up with — macOS asks for one in Setup Assistant instead"
         )
         let write = try edit(.liveKeys, on: instance, verb: .start) { permit in
@@ -377,8 +377,8 @@ extension VMCommandCore {
         let instance = permit.instance
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
         guard let surface = displayBootSurface?(instance) else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
             )
             return
@@ -393,13 +393,13 @@ extension VMCommandCore {
         case .saved:
             break
         case .notSaved:
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"
             )
         case .refused(let refusal):
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "The window-fitted resolution for '\(instance.name, privacy: .public)' was refused — booting at the previously saved resolution: \(refusal.localizedDescription, privacy: .public)"
             )
         }
@@ -425,8 +425,8 @@ extension VMCommandCore {
         if error is VMAdmissionRefusal || error is CommandError {
             return failure(error, verb: verb, on: instance)
         }
-        #log(
-            logger, .error,
+        logger.log(
+            .error,
             "Failed to \(verb.rawValue, privacy: .public) '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
         )
         return ranAndFailed(error, verb: verb, on: instance)
@@ -574,8 +574,8 @@ extension VMCommandCore {
     ) -> [VMFollowUp] {
         switch result {
         case .failure(is CancellationError):
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
             )
             return []
@@ -620,8 +620,8 @@ extension VMCommandCore {
             !MacOSGuestProvisioning.canProvision(instance.effectiveConfiguration)
         else { return }
         let image = instance.configuration.installedImage?.displayName ?? "the installed image"
-        #log(
-            logger, .warning,
+        logger.log(
+            .warning,
             "Dropping the guest account for '\(instance.name, privacy: .public)': \(image, privacy: .public) does not run the guest provisioning protocol"
         )
         try instance.activity.edit(.observations) { try library.retractGuestAccount($0).get() }
@@ -639,7 +639,7 @@ extension VMCommandCore {
         guard consent.covers(.cancelGuestSetup) else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
         }
-        #log(logger, .info, "Cancelling setup for '\(instance.name, privacy: .public)'")
+        logger.log(.info, "Cancelling setup for '\(instance.name, privacy: .public)'")
         do {
             // The setup operation's own ending owns the status transition and
             // the `setupState` cleanup.
@@ -808,8 +808,8 @@ extension VMCommandCore {
                 throw failure(error, verb: .stop, on: instance)
             }
         case .revertsToBaseline(let baseline):
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
             )
             try await awaitRevert(instance, startRevert(instance, to: baseline))
@@ -937,8 +937,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.pause(instance)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to pause '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .pause, on: instance)
@@ -1013,8 +1013,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.save(instance, origin: origin)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to save '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .suspend, on: instance)
@@ -1135,8 +1135,8 @@ extension VMCommandCore {
         let settled = await waitForObservedChange(
             until: isOff, before: ObservedChangeDeadline(seconds: seconds, clock: clock))
         guard settled else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "'\(instance.name, privacy: .public)' had not powered off \(seconds, privacy: .public)s after the shutdown request"
             )
             throw CommandError.timedOut(vm: summary(instance), verb: verb, seconds: seconds)
@@ -1211,9 +1211,9 @@ extension VMCommandCore {
     /// going down — a client left reading a socket that simply closed cannot
     /// tell success from a crash.
     func quit() {
-        #log(logger, .notice, "Quit requested from a command front door")
+        logger.log(.notice, "Quit requested from a command front door")
         guard let requestQuit else {
-            #log(logger, .fault, "No adapter is wired to take the app down")
+            logger.log(.fault, "No adapter is wired to take the app down")
             assertionFailure("No adapter is wired to take the app down")
             return
         }

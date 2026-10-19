@@ -280,8 +280,8 @@ final class AdvancedSettingsViewController: NSViewController {
     /// were gathered.
     @objc private func installShellCompletions(_ sender: NSMenuItem) {
         guard let shell = sender.representedObject as? ShellCompletionInstaller.Shell else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Shell completions item '\(sender.title, privacy: .public)' names no shell")
             assertionFailure("Shell completions item \(sender.title) names no shell")
             return

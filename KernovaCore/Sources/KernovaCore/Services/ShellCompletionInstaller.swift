@@ -155,14 +155,14 @@ package enum ShellCompletionInstaller {
         do {
             try Data(shell.loaderScript.utf8).write(to: destination)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Could not install \(shell.rawValue, privacy: .public) completions at \(path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw InstallFailure.unwritable(error.localizedDescription)
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Installed \(shell.rawValue, privacy: .public) completions at \(path, privacy: .public)"
         )
     }

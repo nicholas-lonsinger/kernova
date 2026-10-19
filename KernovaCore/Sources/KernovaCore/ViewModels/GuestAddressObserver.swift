@@ -109,8 +109,8 @@ final class GuestAddressObserver {
             readIsFailing = false
         } catch {
             if !readIsFailing {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Could not read the host's ARP table — guest addresses read as not seen until a read succeeds: \(error.localizedDescription, privacy: .public)"
                 )
             }

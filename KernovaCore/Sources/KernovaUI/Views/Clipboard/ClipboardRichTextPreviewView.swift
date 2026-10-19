@@ -82,8 +82,8 @@ final class ClipboardRichTextPreviewView: NSView {
                 options: [.documentType: documentType],
                 documentAttributes: nil)
         else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not decode rich-text preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
             )
             return false

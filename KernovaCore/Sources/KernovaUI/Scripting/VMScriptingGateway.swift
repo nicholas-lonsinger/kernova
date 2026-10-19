@@ -99,8 +99,8 @@ final class VMScriptingGateway {
         do {
             return VMScriptObject(try commands.info(.id(id)), gateway: self)
         } catch {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
             )
             assertionFailure("Listed VM \(id.uuidString) has no info read: \(error)")
@@ -135,8 +135,8 @@ final class VMScriptingGateway {
         // One evaluation can read the element more than once.
         if coldReads.contains(where: { $0 === command }) { return true }
         coldReads.append(command)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "A \(command.commandDescription.commandName, privacy: .public) arrived before the library read landed; suspended until it does"
         )
         command.suspendExecution()
@@ -149,8 +149,8 @@ final class VMScriptingGateway {
         await readiness.ready()
         let result = reissue(command)
         coldReads.removeAll { $0 === command }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "The library read landed; answering the \(command.commandDescription.commandName, privacy: .public) that waited on it"
         )
         command.resumeExecution(withResult: result)
@@ -384,8 +384,8 @@ final class VMScriptingGateway {
         guard let listed = run(.deleteNetwork, on: nil, { try commands.networks() }) else { return }
         // Cocoa evaluated the index against this same list on this turn.
         guard listed.indices.contains(index) else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Asked to remove network \(index, privacy: .public) of \(listed.count, privacy: .public)")
             assertionFailure("Asked to remove network \(index) of \(listed.count)")
             command.refuse(Int(errAEIllegalIndex), "There is no network \(index + 1).")
@@ -412,8 +412,8 @@ final class VMScriptingGateway {
             return try body()
         } catch let refusal as CommandError {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message, privacy: .public)"
             )
             answering?.refuse(refusal)
@@ -445,8 +445,8 @@ final class VMScriptingGateway {
                 do {
                     try await body(selector)
                 } catch let failure as CommandError {
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message, privacy: .public)"
                     )
                     throw failure

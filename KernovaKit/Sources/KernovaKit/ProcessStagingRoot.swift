@@ -121,8 +121,8 @@ public final class ProcessStagingRoot: Sendable {
             } catch Errno.noSuchFileOrDirectory {
                 // Another reclaimer removed it first.
             } catch {
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Could not reclaim staging entry '\(entry.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }

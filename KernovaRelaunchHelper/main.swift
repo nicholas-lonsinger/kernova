@@ -42,13 +42,13 @@ enum Relauncher {
 
     /// Reports how the tool is called and exits.
     nonisolated static func refuseUsage() -> Never {
-        #log(logger, .error, "Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
+        logger.log(.error, "Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
         exit(1)
     }
 
     /// Reports a bundle that is not where the caller said and exits.
     nonisolated static func refuseMissingBundle(at path: String) -> Never {
-        #log(logger, .error, "App bundle not found: \(path, privacy: .private)")
+        logger.log(.error, "App bundle not found: \(path, privacy: .private)")
         exit(1)
     }
 
@@ -56,8 +56,8 @@ enum Relauncher {
     static func watch(pid: pid_t, appURL bundleURL: URL) {
         appURL = bundleURL
         watched = pid
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Watching PID \(pid, privacy: .public) for exit, will relaunch \(bundleURL.path, privacy: .private)"
         )
 
@@ -69,7 +69,7 @@ enum Relauncher {
         source = watcher
         watcher.setEventHandler {
             MainActor.assumeIsolated {
-                #log(logger, .notice, "PID \(pid, privacy: .public) exited, relaunching Kernova")
+                logger.log(.notice, "PID \(pid, privacy: .public) exited, relaunching Kernova")
                 begin()
             }
         }
@@ -80,7 +80,7 @@ enum Relauncher {
 
         // NOW check if the PID exited before the watcher was attached.
         if !processIsRunning(pid) {
-            #log(logger, .notice, "PID \(pid, privacy: .public) already exited, relaunching immediately")
+            logger.log(.notice, "PID \(pid, privacy: .public) already exited, relaunching immediately")
             begin()
             return
         }
@@ -100,8 +100,8 @@ enum Relauncher {
     /// Gives up on an open that never called back, leaving whatever it started
     /// to carry on without a watchdog.
     private static func giveUpOnOpen() {
-        #log(
-            logger, .error,
+        logger.log(
+            .error,
             "Launch Services did not answer the open of Kernova within \(Int(openWatchSeconds), privacy: .public) s; giving up"
         )
         exit(1)
@@ -109,8 +109,8 @@ enum Relauncher {
 
     /// Gives up on an app that never exited, leaving it running.
     private static func giveUpOnExit() {
-        #log(
-            logger, .warning,
+        logger.log(
+            .warning,
             "PID \(watched, privacy: .public) had not exited after \(Int(exitWatchSeconds), privacy: .public) s; not relaunching"
         )
         source?.cancel()
@@ -125,8 +125,8 @@ enum Relauncher {
     private static func relaunch() {
         let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
         if !AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all, by: deadline) {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Launch Services still had Kernova registered after \(Int(AppRegistryWait.defaultDeadline), privacy: .public) s; opening anyway"
             )
         }
@@ -158,10 +158,10 @@ enum Relauncher {
         openWatchTimeout?.cancel()
         openWatchTimeout = nil
         guard let failure else {
-            #log(logger, .notice, "Relaunched Kernova successfully")
+            logger.log(.notice, "Relaunched Kernova successfully")
             exit(0)
         }
-        #log(logger, .error, "Failed to relaunch Kernova: \(failure, privacy: .public)")
+        logger.log(.error, "Failed to relaunch Kernova: \(failure, privacy: .public)")
         exit(1)
     }
 }
