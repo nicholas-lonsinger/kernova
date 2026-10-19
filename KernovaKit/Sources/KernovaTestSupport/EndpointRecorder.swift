@@ -93,19 +93,20 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
         try await changed.wait { self.endedCount > 0 }
     }
 
-    /// Observes for `duration` and throws when any refusal arrived past
+    /// Drains the main queue and throws when any refusal arrived past
     /// `sinceCount`.
     ///
-    /// A negative assertion has no signal to await, so it takes a fixed
-    /// observation window rather than a wait timeout.
-    public func expectNoNewRefusals(
-        sinceCount before: Int, for duration: TimeInterval = 0.15
-    ) async throws {
-        try await MonotonicEngineClock().sleep(for: duration)
+    /// The endpoint raises a refusal on the main actor or queues it there from
+    /// the thread that settles the gesture, so the drain closes the window for
+    /// every refusal raised before this call — valid only after the test has
+    /// awaited the step that would raise the forbidden one: the fire or pull
+    /// returning, or the synchronous call under test.
+    public func expectNoNewRefusals(sinceCount before: Int) async throws {
+        await drainMainQueue()
         guard refusals.count == before else {
             let extras = Array(refusals[min(before, refusals.count)...])
             throw TestFailure(
-                "Expected no new refusals over \(duration) s; got \(extras.count): "
+                "Expected no new refusals; got \(extras.count): "
                     + extras.map { "\($0.gesture)/\($0.failure)" }.joined(separator: ", "))
         }
     }

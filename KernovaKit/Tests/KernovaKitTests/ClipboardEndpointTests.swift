@@ -16,7 +16,10 @@ struct ClipboardEndpointTests {
 
     @Test("an offer crosses as metadata alone and pulls nothing")
     func offerCarriesMetadataOnly() async throws {
-        let harness = try RawPeerHarness(role: .guest)
+        // Host role: its pull is a `ClipboardRequest` on the control channel,
+        // written in the turn that begins it, so the marker below orders after
+        // one — a guest's pull is a dial from a transfer thread instead.
+        let harness = try RawPeerHarness(role: .host)
         defer { harness.tearDown() }
 
         try harness.send(
@@ -36,7 +39,8 @@ struct ClipboardEndpointTests {
         #expect(offer.keptIndices == [0, 1])
         // Nothing was asked for: an offer is metadata, and the bytes cross only
         // when something consumes them.
-        try await harness.recorder.expectNoNewFrames(sinceCount: 0)
+        try await harness.recorder.expectNoNewFrames(
+            sinceCount: 0, aheadOfMarkerOn: harness.side.channel)
     }
 
     @Test("generations advance per offer and seed from the configured first one")

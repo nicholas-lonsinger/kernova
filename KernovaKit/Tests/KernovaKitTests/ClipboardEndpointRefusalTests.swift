@@ -385,12 +385,15 @@ struct ClipboardEndpointRefusalTests {
 
         // The second provider fire of the same paste says nothing new.
         #expect(await harness.side.serveFileURLOffMain(generation: 1, repIndex: 1) == nil)
-        try await harness.recorder.expectNoNewFrames(sinceCount: afterFirst)
+        try await harness.recorder.expectNoNewFrames(
+            sinceCount: afterFirst, aheadOfMarkerOn: harness.side.channel)
 
         // A paste made past the window is a fresh gesture.
         harness.side.clock.advance(seconds: ClipboardEndpoint.refusalBurstWindow + 1)
         #expect(await harness.side.serveFileURLOffMain(generation: 1, repIndex: 0) == nil)
-        try await harness.recorder.waitForFrames { harness.recorder.errors.count == 2 }
+        try await harness.recorder.waitForFrames {
+            harness.recorder.errors.count { $0.code == ClipboardErrorCode.pasteTooLarge.rawValue } == 2
+        }
     }
 
     @Test("a peer's clipboard error becomes a refusal of the paste it made")
