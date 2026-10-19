@@ -61,9 +61,25 @@ struct USBAccessoryCoordinatorTests {
         return pairing
     }
 
+    /// Whether every VM in the library is at rest with nothing queued on it.
+    ///
+    /// The coordinator's every attach is a follow-up, admitted or queued in
+    /// the same turn as the assignment or edge that asks for it, so once this
+    /// holds after that turn no attach is pending and none can start.
+    private func nothingPending(in h: Harness) -> Bool {
+        h.library.instances.allSatisfy {
+            $0.phase.isSettled && $0.activity.queuedFollowUpCountForTesting == 0
+        }
+    }
+
     /// Collects the prompts a coordinator raises, leaving each unanswered.
     private final class PromptRecorder {
         var requests: [USBAccessoryPairingRequest] = []
+    }
+
+    /// Counts the take-backs an attachable edge runs.
+    private final class TakeBackCounter {
+        var count = 0
     }
 
     @Test("Starts the listener")
@@ -181,7 +197,7 @@ struct USBAccessoryCoordinatorTests {
     }
 
     @Test("An accessory paired with a virtual machine that is not running stays with the host")
-    func aPairedAccessoryWaitsForItsGuest() async throws {
+    func aPairedAccessoryWaitsForItsGuest() throws {
         let service = MockUSBAccessoryService()
         let h = try makeHarness(service)
         let stopped = makeStoppedInstance(in: h)
@@ -196,7 +212,7 @@ struct USBAccessoryCoordinatorTests {
         // Held for the host, and not offered to anything else: the
         // user already said where this one goes.
         #expect(recorder.requests.isEmpty)
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
@@ -376,7 +392,7 @@ struct USBAccessoryCoordinatorTests {
     // MARK: - The Guards
 
     @Test("An accessory two virtual machines claim is held rather than guessed at")
-    func twoClaimantsHoldTheAccessory() async throws {
+    func twoClaimantsHoldTheAccessory() throws {
         let service = MockUSBAccessoryService()
         let h = try makeHarness(service)
         let first = makeInstance(in: h, sessionID: UUID(), named: "First")
@@ -393,12 +409,12 @@ struct USBAccessoryCoordinatorTests {
         service.assign(accessory)
 
         #expect(recorder.requests.isEmpty)
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
     @Test("A port-keyed rule holds while a second accessory of that model is around")
-    func theWeakFormGuardHolds() async throws {
+    func theWeakFormGuardHolds() throws {
         let service = MockUSBAccessoryService()
         let h = try makeHarness(service)
         let instance = makeInstance(in: h, sessionID: UUID())
@@ -416,7 +432,7 @@ struct USBAccessoryCoordinatorTests {
 
         service.assign(paired)
 
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
@@ -608,7 +624,7 @@ struct USBAccessoryCoordinatorTests {
     }
 
     @Test("A detach the user asked for forgets the rule and the device stays with the Mac")
-    func aUserDetachForgetsAndSuppressesTheEcho() async throws {
+    func aUserDetachForgetsAndSuppressesTheEcho() throws {
         let service = MockUSBAccessoryService()
         let h = try makeHarness(service)
         let instance = makeInstance(in: h, sessionID: UUID())
@@ -630,7 +646,7 @@ struct USBAccessoryCoordinatorTests {
         service.accessories.removeAll()
         service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
         #expect(recorder.requests.isEmpty)
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
@@ -723,8 +739,10 @@ struct USBAccessoryCoordinatorTests {
         let h = try makeHarness(service)
         let instance = makeStoppedInstance(in: h)
         defer { withExtendedLifetime(h) {} }
+        let takeBacks = TakeBackCounter()
         instance.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
-            coordinator?.sessionBecameAttachable(instance) ?? []
+            takeBacks.count += 1
+            return coordinator?.sessionBecameAttachable(instance) ?? []
         }
         let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
         try pair(accessory, with: instance)
@@ -732,13 +750,14 @@ struct USBAccessoryCoordinatorTests {
         let sessionID = UUID()
         instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
+        try await waitForChange { !instance.liveUSBAccessories.isEmpty && instance.phase.isSettled }
 
         // Both phases are attachable, so neither transition is an edge.
         instance.activity.placeForTesting(.livePaused(sessionID: sessionID))
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(takeBacks.count == 1)
+        #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs == [1])
     }
 
@@ -829,7 +848,7 @@ struct USBAccessoryCoordinatorTests {
         service.resumeAttach()
         _ = await held.value
 
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs == [1])
         #expect(!instance.hasLiveVirtualMachine)
     }

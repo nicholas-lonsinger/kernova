@@ -1080,7 +1080,8 @@ struct VMInstanceTests {
     //   - No agent is connected on the control channel already,
     //   - No `setupState` is in progress, and
     //   - No Hello arrives during the grace window.
-    // Tests inject a millisecond-scale grace so the suite stays fast.
+    // The watchdog task is the only writer of what it flips, so a no-op test
+    // proves no task was armed, and a cancel test awaits the task's return.
 
     /// Builds a macOS VMInstance with a known `lastSeenAgentVersion` and an
     /// open session context — the watchdog is session state, so it arms into
@@ -1132,27 +1133,21 @@ struct VMInstanceTests {
         return frame
     }
 
-    // Sized past GitHub Actions MainActor jitter, which far exceeds local
-    // hardware.
     private static let testWatchdogGrace: Duration = .milliseconds(200)
 
     @Test("Cancelling the watchdog before grace prevents firing")
     func watchdogCancelledStaysQuiet() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: .seconds(5))
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        let watchdog = try #require(instance.agentPostStartTaskForTesting)
 
-        // Cancel well before the grace elapses — the timer task must not
-        // flip the flag after cancellation. Use a comfortably long
-        // settle window (5× the grace would be 1 s, but 5× of *what we
-        // expect* doesn't help here; we just need to outlast scheduler
-        // jitter on a cancelled task that should never fire).
         instance.cancelAgentPostStartWatchdog()
-        try await Task.sleep(for: .milliseconds(500))
+        await watchdog.value
         #expect(instance.agentExpectedButMissing == false)
     }
 
     @Test("Watchdog is a no-op when lastSeenAgentVersion is nil")
-    func watchdogNoopWithoutPersistedVersion() async throws {
+    func watchdogNoopWithoutPersistedVersion() {
         // Fresh macOS VM, no prior agent — the .waiting nudge stays the
         // appropriate signal, the louder "didn't reconnect" badge would be
         // misleading.
@@ -1160,15 +1155,12 @@ struct VMInstanceTests {
             name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
 
-        // Wait noticeably past the grace so a broken guard would have a
-        // real chance to mis-fire. 3× grace is plenty.
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        try await Task.sleep(for: Self.testWatchdogGrace * 3)
-        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
     @Test("Watchdog is a no-op for Linux guests")
-    func watchdogNoopForLinux() async throws {
+    func watchdogNoopForLinux() {
         // Linux uses spice-vdagent, which the host doesn't fingerprint —
         // the watchdog has no business firing here.
         let instance = VMInstanceFixture.make(
@@ -1177,12 +1169,11 @@ struct VMInstanceTests {
         instance.beginSessionContextForTesting()
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        try await Task.sleep(for: Self.testWatchdogGrace * 3)
-        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
     @Test("Watchdog is a no-op for the whole of a recovery-booted session")
-    func watchdogNoopAfterRecoveryBoot() async throws {
+    func watchdogNoopAfterRecoveryBoot() {
         // Recovery never runs the agent, so its silence proves nothing — the
         // "didn't reconnect" badge would be false and clearing the stored guest
         // OS version would erase a value that is not in doubt. Session state,
@@ -1193,10 +1184,7 @@ struct VMInstanceTests {
             bootedIntoRecovery: true)
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        try await Task.sleep(for: Self.testWatchdogGrace * 3)
-        #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-        #expect(instance.hostState.agentInstallNudgeDismissed == false)
+        #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
     @Test("Each boot attempt's context carries its own recovery-boot flag")
@@ -1218,14 +1206,13 @@ struct VMInstanceTests {
     }
 
     @Test("Watchdog is a no-op while macOS install is in progress")
-    func watchdogNoopDuringMacOSInstall() async throws {
+    func watchdogNoopDuringMacOSInstall() {
         // No agent exists during install; no point arming the watchdog.
         let setupState = GuestSetupState.macOSInstall(hasDownloadStep: true)
         let instance = makeMacOSInstanceWithAgentInstalled(setupState: setupState)
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        try await Task.sleep(for: Self.testWatchdogGrace * 3)
-        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
     @Test(
@@ -1236,7 +1223,7 @@ struct VMInstanceTests {
             .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
             .settled(.stopped),
         ])
-    func watchdogNoopUnlessRunning(phase fixture: PhaseFixture) async throws {
+    func watchdogNoopUnlessRunning(phase fixture: PhaseFixture) {
         // A live-paused guest is frozen: it cannot say Hello, so a grace clock
         // running against it would blame the agent for the user's pause. The
         // control channel settles for silence at the same time, which is what
@@ -1246,8 +1233,6 @@ struct VMInstanceTests {
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         #expect(instance.agentPostStartTaskForTesting == nil)
-        try await Task.sleep(for: Self.testWatchdogGrace * 3)
-        #expect(instance.agentExpectedButMissing == false)
     }
 
     @Test("Watchdog is a no-op while the agent is connected")
@@ -1280,15 +1265,12 @@ struct VMInstanceTests {
     @Test("startAgentPostStartWatchdog is idempotent when already armed")
     func watchdogIdempotent() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        // Original timer with a long grace so we can be sure the second
-        // call's would-be tiny grace has elapsed long before the original
-        // would naturally fire. If the second call had taken effect, the
-        // flag would be true after we sleep below.
+        defer { instance.cancelAgentPostStartWatchdog() }
         instance.startAgentPostStartWatchdog(grace: .seconds(30))
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        let armed = try #require(instance.agentPostStartTaskForTesting)
 
-        try await Task.sleep(for: Self.testWatchdogGrace * 3)
-        #expect(instance.agentExpectedButMissing == false)
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        #expect(instance.agentPostStartTaskForTesting == armed)
     }
 
     @Test("Watchdog firing also clears a previously-dismissed install nudge and persists the change")
