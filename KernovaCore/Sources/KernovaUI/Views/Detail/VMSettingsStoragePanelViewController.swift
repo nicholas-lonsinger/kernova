@@ -54,16 +54,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             panelStack.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
         }
-        // The monitored paths are this instance's, so a rebuild re-seeds them.
-        context.seedFileMonitor()
-        armFileMonitorLoop()
-    }
-
-    /// ``prepareForDisappearance()`` cancels the observation loop, so
-    /// re-appearing starts a fresh one — otherwise a change while hidden freezes
-    /// the missing-file badges for good.
-    func hostDidAppear() {
-        armFileMonitorLoop()
     }
 
     func refresh() {
@@ -74,15 +64,12 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             .createRemovableMedia, on: instance)
         refreshStorageList()
         refreshRemovableList()
-        bootOrderSheet?.show(sizes: attachmentSizes)
-        context.seedFileMonitor()
+        bootOrderSheet?.show(sizes: attachmentSizes, missing: missingStorageDiskIDs)
     }
 
     func prepareForDisappearance() {
         if reorderSheetPresenter.isShown { reorderSheetPresenter.close() }
         if attachmentInfoPresenter.isShown { attachmentInfoPresenter.close() }
-        fileMonitorLoop?.cancel()
-        fileMonitorLoop = nil
         // Drop any in-flight inline edit so the flag can't pin a list in a
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         storageList?.activeEdit = nil
@@ -101,8 +88,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private var canEditRemovableMedia: Bool {
         viewModel.capabilities.isAvailable(.editRemovableMedia, on: instance)
     }
-
-    private var fileMonitorLoop: ObservationLoop?
 
     private let reorderSheetPresenter = SheetPresenter()
     /// The Boot Order sheet while it is up, which states the sizes the rows do.
@@ -168,21 +153,18 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         instance.configuration.removableMedia ?? []
     }
 
+    /// The storage disks whose files the pane's monitor reports missing.
+    private var missingStorageDiskIDs: Set<UUID> {
+        Set(currentStorageDisks.filter { isMissing($0) }.map(\.id))
+    }
+
+    private func isMissing(_ disk: StorageDisk) -> Bool {
+        !disk.isInternal && !context.fileMonitor.exists(disk.path)
+    }
+
     /// Every attachment's sizes as the pane last measured them.
     private var attachmentSizes: [UUID: VMBundleLayout.DiskSizes] {
         context.overview.resolved.attachmentSizes
-    }
-
-    /// Re-renders both lists whenever a watched path appears or disappears, so
-    /// the missing-file affordance on attachment rows stays live.
-    private func armFileMonitorLoop() {
-        fileMonitorLoop?.cancel()
-        fileMonitorLoop = observeRecurring(
-            track: { [monitor = context.fileMonitor] in _ = monitor.existsByPath },
-            apply: { [weak self] in
-                self?.refreshStorageList()
-                self?.refreshRemovableList()
-            })
     }
 
     // MARK: Storage Disks
@@ -257,7 +239,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         editBootOrderButton.isHidden = disks.count <= 1
         let sizes = attachmentSizes
         let models = disks.map { disk -> VMSettingsRenderedRow in
-            let isMissing = !disk.isInternal && !context.fileMonitor.exists(disk.path)
+            let isMissing = self.isMissing(disk)
             return VMSettingsRenderedRow(
                 id: disk.id,
                 iconSystemName: diskIconSystemName(for: disk),
@@ -455,7 +437,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     @objc private func editBootOrderTapped() {
         guard let window = view.window else { return }
         let sheet = StorageDiskReorderSheetContentViewController(
-            disks: currentStorageDisks, sizes: attachmentSizes, fileMonitor: context.fileMonitor)
+            disks: currentStorageDisks, sizes: attachmentSizes, missing: missingStorageDiskIDs)
         sheet.onReorder = { [weak self] disks in
             guard let self else { return }
             viewModel.reorderStorageDisks(disks.map(\.id), on: instance)

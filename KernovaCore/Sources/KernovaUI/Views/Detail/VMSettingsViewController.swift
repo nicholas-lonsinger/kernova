@@ -207,7 +207,7 @@ final class VMSettingsViewController: NSViewController {
         super.viewDidAppear()
         panelContext.setDismissed(false)
         livePanels.forEach { $0.hostDidAppear() }
-        // The pane coming back is a coarse re-ask: `seedFileMonitor()` only diffs,
+        // The pane coming back is a coarse re-ask: seeding the monitor only diffs,
         // so an attachment deleted while this was off screen keeps its old answer
         // until something re-probes it.
         panelContext.fileMonitor.revalidate()
@@ -237,6 +237,9 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.instance.heldByAnotherCopy
                 _ = self.instance.snapshotManifest
                 _ = self.instance.unreadableFiles
+                // Every attachment row's missing badge, and the sizes the
+                // overview measures again when a file comes or goes.
+                _ = self.panelContext.fileMonitor.existsByPath
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
                 // Registers every instance's configuration, so the

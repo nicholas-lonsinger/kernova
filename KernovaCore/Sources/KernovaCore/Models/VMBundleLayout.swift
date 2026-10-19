@@ -255,6 +255,11 @@ package struct DiskImageReference: Sendable, Equatable {
     package var path: String
     package var isInternal: Bool
     var bookmark: Data?
+
+    /// What a row names the image by: an in-bundle placeholder, or the path.
+    package var displayPath: String {
+        isInternal ? "In-bundle disk image" : path
+    }
 }
 
 extension StorageDisk {

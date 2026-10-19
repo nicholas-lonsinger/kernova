@@ -1,7 +1,6 @@
 import Foundation
 
-/// How a disk image's measured figures read on every surface stating them: an
-/// attachment row's subtitle, Get Info, and the overview's Storage card.
+/// How a disk image's measured figures read wherever they are stated.
 extension VMBundleLayout.DiskSizes {
     /// What a figure that can't be read states.
     static let unreadableText = "Unknown"
@@ -17,8 +16,9 @@ extension VMBundleLayout.DiskSizes {
     }
 
     /// The subtitle of an attachment row backed by `image`, a storage disk or a
-    /// removable medium, from its `measured` figures — the in-bundle
-    /// placeholder or the path where none reads, or none was measured yet.
+    /// removable medium, from its `measured` figures — the image's
+    /// ``DiskImageReference/displayPath`` where none reads, or none was
+    /// measured yet.
     package static func subtitle(of image: DiskImageReference, measured: Self?) -> String {
         switch (text(measured?.onDiskBytes), text(measured?.capacityBytes)) {
         case let (.some(used), .some(allocated)):
@@ -28,7 +28,7 @@ extension VMBundleLayout.DiskSizes {
         case let (.none, .some(allocated)):
             "\(allocated) allocated"
         case (.none, .none):
-            image.isInternal ? "In-bundle disk image" : image.path
+            image.displayPath
         }
     }
 }

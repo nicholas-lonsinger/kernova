@@ -67,17 +67,12 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             panelStack.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
         }
-        // The monitored paths are this instance's, so a rebuild re-seeds them.
-        context.seedFileMonitor()
-        armFileMonitorLoop()
         armPairingLoop()
     }
 
     /// ``prepareForDisappearance()`` cancels the observation loop, so
-    /// re-appearing starts a fresh one — otherwise a change while hidden freezes
-    /// the missing-folder badges for good.
+    /// re-appearing starts a fresh one.
     func hostDidAppear() {
-        armFileMonitorLoop()
         armPairingLoop()
     }
 
@@ -88,23 +83,11 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         refreshClipboard()
         refreshSharedList()
         refreshUSBPairings()
-        context.seedFileMonitor()
     }
 
     func prepareForDisappearance() {
-        fileMonitorLoop?.cancel()
-        fileMonitorLoop = nil
         pairingLoop?.cancel()
         pairingLoop = nil
-    }
-
-    /// Re-renders the shared list whenever a watched path appears or
-    /// disappears, so a folder that goes missing badges without a revisit.
-    private func armFileMonitorLoop() {
-        fileMonitorLoop?.cancel()
-        fileMonitorLoop = observeRecurring(
-            track: { [monitor = context.fileMonitor] in _ = monitor.existsByPath },
-            apply: { [weak self] in self?.refreshSharedList() })
     }
 
     /// What `edit` of this VM's shared-directory list is offered as.
@@ -126,7 +109,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// The shared-directory rows and the diff behind them, rebuilt with the
     /// section's list stack.
     private var sharedList: VMSettingsKeyedListController<VMSettingsRenderedRow, AttachmentRowView>?
-    private var fileMonitorLoop: ObservationLoop?
 
     // Guest Agent
     private var logForwardingSwitch = NSSwitch()

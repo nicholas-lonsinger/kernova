@@ -116,11 +116,6 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         )
     }
 
-    /// Display string used in the UI subtitle.
-    package var displayPath: String {
-        isInternal ? "In-bundle disk image" : path
-    }
-
     /// Block device identifier exposed to virtio-block guests.
     ///
     /// Truncated to 20 ASCII characters per VZ's limit; unused for USB mass

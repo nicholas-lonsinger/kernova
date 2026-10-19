@@ -45,6 +45,11 @@ package final class VMOverviewResolver {
     /// Fires when an async read lands, naming the category whose value moved.
     package var onCategoryResolved: ((VMSettingsCategory) -> Void)?
 
+    /// Existence of every monitored attachment file the VM points at, which
+    /// each ``refresh()`` points at the current configuration. A presence flip
+    /// measures the attachment sizes again.
+    package let fileMonitor: AttachmentFileMonitor
+
     private let bridgedInterfaces: any BridgedInterfaceProviding
     private let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
 
@@ -60,8 +65,9 @@ package final class VMOverviewResolver {
     /// new enumeration only when the choice moves, or the Mode picker opens.
     private var interfaceEnumeration: InterfaceEnumeration?
 
-    /// The attachments and lifecycle phase the attachment sizes were last
-    /// measured under; a stopped VM's sizes move only when one of them does.
+    /// The attachments, their files' presence and the lifecycle phase the
+    /// attachment sizes were last measured under; a stopped VM's sizes move
+    /// only when one of them does.
     private var attachmentMeasureKey: AttachmentMeasureKey?
     private var attachmentSizeTask: Task<Void, Never>?
     /// Counts measurements issued; only the newest one's result is applied.
@@ -84,17 +90,21 @@ package final class VMOverviewResolver {
 
     private struct AttachmentMeasureKey: Equatable {
         let images: [UUID: DiskImageReference]
+        /// Whether ``fileMonitor`` reports each out-of-bundle image's file present.
+        let presence: [UUID: Bool]
         let phaseCommits: Int
     }
 
     package init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
+        fileMonitor: AttachmentFileMonitor,
         bridgedInterfaces: any BridgedInterfaceProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus
     ) {
         self.instance = instance
         self.viewModel = viewModel
+        self.fileMonitor = fileMonitor
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.micPermission = micPermissionStatus()
@@ -175,6 +185,7 @@ package final class VMOverviewResolver {
             values.micWarning == .denied ? Self.micPermissionDeniedWarning : nil
         values.canTakeSnapshot = viewModel.capabilities.isAvailable(.takeSnapshot, on: instance)
         refreshNetwork()
+        seedFileMonitor()
         refreshAttachmentSizes()
         refreshSnapshotSizes()
     }
@@ -259,11 +270,19 @@ package final class VMOverviewResolver {
             interfaces: { interfaces?.interfaces ?? [] }, networks: viewModel.networks.state)
     }
 
+    /// Points ``fileMonitor`` at the current configuration's monitored
+    /// attachment paths. Idempotent: the monitor probes only what changed.
+    private func seedFileMonitor() {
+        let refs = instance.configuration.externalFileReferences
+            .filter(\.kind.isExistenceMonitored).bookmarksByPath
+        Task { [fileMonitor] in await fileMonitor.setPaths(refs) }
+    }
+
     /// Measures every storage disk's and removable medium's sizes off the main
     /// actor: on every pass while the guest is running and writing to its
-    /// disks, and otherwise whenever the attachments or the lifecycle phase
-    /// moved (``attachmentMeasureKey``) — a stopped VM's sizes cannot move on
-    /// their own.
+    /// disks, and otherwise whenever the attachments, their files' presence, or
+    /// the lifecycle phase moved (``attachmentMeasureKey``) — a stopped VM's
+    /// sizes cannot move on their own.
     private func refreshAttachmentSizes() {
         var images = Dictionary(
             instance.effectiveStorageDisks.map { ($0.id, $0.imageReference) }, uniquingKeysWith: { first, _ in first })
@@ -273,7 +292,9 @@ package final class VMOverviewResolver {
         // Only a detached attachment's entry is dropped at once; the rest stay
         // on screen until the new measurement replaces them.
         values.attachmentSizes = values.attachmentSizes.filter { images[$0.key] != nil }
-        let key = AttachmentMeasureKey(images: images, phaseCommits: instance.activity.phaseCommits)
+        let presence = images.filter { !$0.value.isInternal }.mapValues { fileMonitor.exists($0.path) }
+        let key = AttachmentMeasureKey(
+            images: images, presence: presence, phaseCommits: instance.activity.phaseCommits)
         guard instance.status == .running || key != attachmentMeasureKey else { return }
         attachmentMeasureKey = key
         attachmentSizeTask?.cancel()

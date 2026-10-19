@@ -141,7 +141,7 @@ struct VMOverviewSummaryTests {
         #expect(value(main.label, .storage, instance, resolved: sized) == DataFormatters.formatBytes(64_000_000_000))
     }
 
-    @Test("An installer ahead of the main disk lists first, each with its capacity, USB marked, none as boot")
+    @Test("An installer ahead of the main disk lists first, with capacities, USB marked, none named the boot disk")
     func storageListsEveryDiskInAttachmentOrder() {
         let installer = StorageDisk(path: "/tmp/ubuntu-26.04.1-desktop-arm64.iso")
         let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true)

@@ -46,10 +46,12 @@ struct StorageDiskReorderSheetContentViewControllerTests {
                 == "\(DataFormatters.formatBytes(3_000_000_000)) (used) / \(allocated) (allocated)")
         #expect(try subtitle(row: 1, in: vc) == unmeasured.path)
 
-        vc.show(sizes: [
-            measured.id: VMBundleLayout.DiskSizes(onDiskBytes: 5_000_000_000, capacityBytes: 64_000_000_000),
-            unmeasured.id: VMBundleLayout.DiskSizes(capacityBytes: 8_000_000_000),
-        ])
+        vc.show(
+            sizes: [
+                measured.id: VMBundleLayout.DiskSizes(onDiskBytes: 5_000_000_000, capacityBytes: 64_000_000_000),
+                unmeasured.id: VMBundleLayout.DiskSizes(capacityBytes: 8_000_000_000),
+            ],
+            missing: [])
 
         #expect(
             try subtitle(row: 0, in: vc)
@@ -209,7 +211,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         StorageDiskReorderSheetContentViewController(
             disks: disks,
             sizes: sizes,
-            fileMonitor: AttachmentFileMonitor(hostNotifications: .isolated())
+            missing: []
         )
     }
 

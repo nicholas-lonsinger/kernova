@@ -32,8 +32,16 @@ struct VMOverviewResolverTests {
         return VMOverviewResolver(
             instance: instance,
             viewModel: model,
+            fileMonitor: AttachmentFileMonitor(probe: Self.everyFilePresent, hostNotifications: .isolated()),
             bridgedInterfaces: interfaces,
             micPermissionStatus: { micPermission })
+    }
+
+    /// Answers every attachment file present, so no fixture's made-up path
+    /// moves the measure key under a test.
+    private static let everyFilePresent: AttachmentFileMonitor.Probe = { added, _, _ in
+        AttachmentFileMonitor.ProbeResult(
+            existence: Dictionary(uniqueKeysWithValues: added.map { ($0, true) }), parentFDs: [:])
     }
 
     // MARK: - Mode titles

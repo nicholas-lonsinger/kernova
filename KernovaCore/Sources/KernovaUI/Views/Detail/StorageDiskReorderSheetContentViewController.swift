@@ -17,17 +17,11 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
     /// Each disk's sizes as the presenting pane measured them.
     private var sizes: [UUID: VMBundleLayout.DiskSizes]
-    private let fileMonitor: AttachmentFileMonitor
+    /// The disks whose files the presenting pane last found missing.
+    private var missing: Set<UUID>
 
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-
-    /// `true` once `viewWillDisappear` has fired.
-    ///
-    /// Checked by the re-arming `withObservationTracking` closure below to break
-    /// the recursion the moment the sheet starts dismissing — without it, the
-    /// closure keeps re-registering for the lifetime of `self`.
-    private var hasDisappeared = false
 
     // MARK: - Layout constants
 
@@ -46,11 +40,11 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     init(
         disks: [StorageDisk],
         sizes: [UUID: VMBundleLayout.DiskSizes],
-        fileMonitor: AttachmentFileMonitor
+        missing: Set<UUID>
     ) {
         self.disks = disks
         self.sizes = sizes
-        self.fileMonitor = fileMonitor
+        self.missing = missing
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -101,16 +95,6 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         ])
 
         view = container
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        observeFileMonitor()
-    }
-
-    override func viewWillDisappear() {
-        super.viewWillDisappear()
-        hasDisappeared = true
     }
 
     // MARK: - Header
@@ -218,11 +202,12 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         return container
     }
 
-    /// Repaints the rows' subtitles from `sizes`, a newer measurement than the
-    /// one the sheet was opened with.
-    func show(sizes: [UUID: VMBundleLayout.DiskSizes]) {
-        guard sizes != self.sizes else { return }
+    /// Repaints the rows' subtitles from `sizes` and `missing`, the presenting
+    /// pane's newer answers than the ones the sheet was opened with.
+    func show(sizes: [UUID: VMBundleLayout.DiskSizes], missing: Set<UUID>) {
+        guard sizes != self.sizes || missing != self.missing else { return }
         self.sizes = sizes
+        self.missing = missing
         guard isViewLoaded else { return }
         tableView.reloadData()
     }
@@ -231,25 +216,6 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
     @objc private func doneTapped(_: NSButton) {
         onDone?()
-    }
-
-    // MARK: - File-monitor observation
-
-    /// Re-arming `withObservationTracking` subscription on `fileMonitor.existsByPath`.
-    ///
-    /// When a file's existence flag flips, the table reloads so the missing-file
-    /// affordance updates without the user having to close and re-open the sheet.
-    private func observeFileMonitor() {
-        if hasDisappeared { return }
-        withObservationTracking { [fileMonitor] in
-            _ = fileMonitor.existsByPath
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                guard let self, !self.hasDisappeared else { return }
-                self.tableView.reloadData()
-                self.observeFileMonitor()
-            }
-        }
     }
 
     // MARK: - Helpers
@@ -340,8 +306,7 @@ extension StorageDiskReorderSheetContentViewController: NSTableViewDelegate {
         cell.identifier = identifier
 
         let disk = disks[row]
-        let isMissing = !disk.isInternal && !fileMonitor.exists(disk.path)
-        cell.configure(disk: disk, sizes: sizes[disk.id], isMissing: isMissing)
+        cell.configure(disk: disk, sizes: sizes[disk.id], isMissing: missing.contains(disk.id))
         return cell
     }
 }
