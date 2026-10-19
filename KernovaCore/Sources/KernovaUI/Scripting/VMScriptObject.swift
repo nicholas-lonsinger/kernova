@@ -43,8 +43,8 @@ package final class VMScriptObject: NSObject {
     /// is a programming error rather than a state a script can provoke.
     @objc var state: NSNumber? {
         guard let state = VMScriptState(wireName: info.status) else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "VM status '\(self.info.status, privacy: .public)' has no scripting term")
             assertionFailure("VM status '\(info.status)' has no scripting term")
             return nil
@@ -136,7 +136,7 @@ package final class VMScriptObject: NSObject {
     /// `virtual machine id "…"` of the application, for the VM `id` identifies.
     nonisolated static func specifier(for id: UUID) -> NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
-            #log(Self.logger, .fault, "NSApplication has no scripting class description")
+            Self.logger.log(.fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")
             return nil
         }
@@ -252,8 +252,8 @@ extension FourCharCode {
     init(scriptingCode text: String) {
         let bytes = Array(text.utf8)
         guard bytes.count == 4 else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Apple event code '\(text, privacy: .public)' is not four ASCII characters")
             assertionFailure("Apple event code '\(text)' is not four ASCII characters")
             self = 0

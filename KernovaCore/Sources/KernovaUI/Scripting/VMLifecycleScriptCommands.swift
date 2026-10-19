@@ -114,8 +114,8 @@ class VMScriptCommand: NSScriptCommand {
     ///
     /// Every command overrides this; reaching the base is a programming error.
     func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        #log(
-            Self.logger, .fault,
+        Self.logger.log(
+            .fault,
             "The \(self.commandDescription.commandName, privacy: .public) command runs no verb")
         assertionFailure("The \(commandDescription.commandName) command runs no verb")
         throw CommandError.unsupported(capability: "the \(commandDescription.commandName) command")

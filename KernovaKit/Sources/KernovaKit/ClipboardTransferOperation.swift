@@ -464,8 +464,8 @@ public final class ClipboardTransferOperation: Sendable {
     /// Stops what this operation measures, if it can be stopped at all.
     public func requestCancel() {
         guard let onCancelRequested else { return }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Cancel requested for a \(String(describing: self.header.gesture), privacy: .public) transfer")
         onCancelRequested()
     }
@@ -541,18 +541,18 @@ public final class ClipboardTransferOperation: Sendable {
     private func log(_ event: LogEvent) {
         switch event {
         case .revealed(let elapsed, let transferred, let total):
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes"
             )
         case .ended(let terminal, let elapsed, let transferred, let total, let revealed):
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes, revealed=\(revealed, privacy: .public)"
             )
         case .emission(let snapshot):
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "\(String(describing: self.header.gesture), privacy: .public) readout — \(snapshot.bytesTransferred, privacy: .public)/\(snapshot.totalBytes, privacy: .public) bytes, \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
             )
         }

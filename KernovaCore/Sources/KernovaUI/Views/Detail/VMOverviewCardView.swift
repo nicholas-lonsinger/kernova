@@ -228,7 +228,7 @@ final class VMOverviewCardView: NSView {
     @objc private func toggleFlipped(_ sender: NSSwitch) {
         guard let raw = sender.identifier?.rawValue, let toggle = VMOverviewToggle(rawValue: raw)
         else {
-            #log(Self.logger, .fault, "Overview switch carries no toggle identity")
+            Self.logger.log(.fault, "Overview switch carries no toggle identity")
             assertionFailure("Overview switch carries no toggle identity")
             return
         }
@@ -238,7 +238,7 @@ final class VMOverviewCardView: NSView {
     @objc private func actionTapped(_ sender: NSButton) {
         guard let raw = sender.identifier?.rawValue, let action = VMOverviewAction(rawValue: raw)
         else {
-            #log(Self.logger, .fault, "Overview action button carries no action identity")
+            Self.logger.log(.fault, "Overview action button carries no action identity")
             assertionFailure("Overview action button carries no action identity")
             return
         }

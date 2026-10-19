@@ -306,7 +306,7 @@ final class DetailContainerViewController: NSViewController {
         let staleIDs = backingViews.keys.filter { !activeInlineIDs.contains($0) }
         for id in staleIDs {
             removeBackingView(for: id)
-            #log(Self.logger, .debug, "Removed stale backing view for VM \(id)")
+            Self.logger.log(.debug, "Removed stale backing view for VM \(id)")
         }
 
         guard let instance = viewModel.selectedInstance,
@@ -326,7 +326,7 @@ final class DetailContainerViewController: NSViewController {
             }
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
-                #log(Self.logger, .debug, "VM display hidden — detail content visible")
+                Self.logger.log(.debug, "VM display hidden — detail content visible")
             }
             activeBackingViewID = nil
             return
@@ -341,7 +341,7 @@ final class DetailContainerViewController: NSViewController {
         let backing = backingView(for: instance)
         if backing.isHidden {
             backing.isHidden = false
-            #log(Self.logger, .debug, "VM display shown for '\(instance.name, privacy: .public)'")
+            Self.logger.log(.debug, "VM display shown for '\(instance.name, privacy: .public)'")
         }
         activeBackingViewID = instance.id
 
@@ -411,6 +411,6 @@ extension DetailContainerViewController: LibraryWindowPresenting {
             createVM(from: creationVM, presentingFailureOn: wizard)
         }
         wizardPresenter.show(content: wizard, in: window)
-        #log(Self.logger, .notice, "Presented creation wizard")
+        Self.logger.log(.notice, "Presented creation wizard")
     }
 }

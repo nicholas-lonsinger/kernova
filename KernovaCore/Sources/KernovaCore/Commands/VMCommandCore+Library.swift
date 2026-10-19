@@ -43,8 +43,8 @@ extension VMCommandCore {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
         try require(.rename, on: instance)
-        #log(
-            logger, .debug,
+        logger.log(
+            .debug,
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
         let write = try edit(VMCapability.rename, on: instance, verb: .rename) { permit in
             library.updateConfiguration(permit) { $0.name = trimmed }
@@ -132,8 +132,8 @@ extension VMCommandCore {
             bundleURL = try storageService.bundleURL(for: configuration)
             staged = try VMStagedBundle.mint(in: storageService)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to derive bundle URL for new VM '\(configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: .create, error: error)
@@ -153,7 +153,7 @@ extension VMCommandCore {
         let name = configuration.name
         let autoStart: @MainActor (VMInstance) -> [VMFollowUp] = { [weak self] instance in
             guard let self else { return [] }
-            #log(logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
+            logger.log(.notice, "Auto-starting new VM '\(name, privacy: .public)'")
             return [self.startFollowUp(instance, identity: .unavailable)]
         }
         let arrival = library.beginArrival(
@@ -175,8 +175,8 @@ extension VMCommandCore {
             whenAdopted: startAfterCreate ? autoStart : nil)
         library.selectArrival(arrival.id)
         followUnwaited(arrival) { [logger] instance in
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Created VM '\(name, privacy: .public)' (status: \(instance.status.displayName, privacy: .public))"
             )
         }
@@ -260,8 +260,8 @@ extension VMCommandCore {
             // clone through ``CloneCopy``, untouched here.
             if clonedConfig.guestOS == .macOS, instance.effectiveMachineIdentifierData == nil {
                 clonedConfig.machineIdentifierData = library.virtualizationHost.makeMacMachineIdentifier()
-                #log(
-                    logger, .notice,
+                logger.log(
+                    .notice,
                     "Clone of '\(instance.name, privacy: .public)' had no machine identifier to keep — generated a new one"
                 )
             }
@@ -269,8 +269,8 @@ extension VMCommandCore {
                 clonedConfig.genericMachineIdentifierData == nil
             {
                 clonedConfig.genericMachineIdentifierData = library.virtualizationHost.makeGenericMachineIdentifier()
-                #log(
-                    logger, .notice,
+                logger.log(
+                    .notice,
                     "Clone of '\(instance.name, privacy: .public)' had no generic machine identifier to keep — generated a new one"
                 )
             }
@@ -282,8 +282,8 @@ extension VMCommandCore {
             bundleURL = try storageService.bundleURL(for: clonedConfig)
             staged = try VMStagedBundle.mint(in: storageService)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to derive bundle URL for clone of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: .clone, error: error)
@@ -569,8 +569,8 @@ extension VMCommandCore {
                 try library.add(registered.map(\.id), toFolder: folder)
                 section = .folder(folder)
             } catch {
-                #log(
-                    logger, .error,
+                logger.log(
+                    .error,
                     "Couldn't put \(registered.count, privacy: .public) import(s) in a folder: \(error.localizedDescription, privacy: .public)"
                 )
                 membershipFailure = error
@@ -604,8 +604,8 @@ extension VMCommandCore {
             // directory) — answered with it rather than re-imported.
             switch library.entries.first(where: { $0.id == config.id })?.addressable {
             case .vm(let existing):
-                #log(
-                    logger, .info,
+                logger.log(
+                    .info,
                     "VM '\(config.name, privacy: .public)' already in library — answering the existing instance"
                 )
                 return .existing(existing)
@@ -632,8 +632,8 @@ extension VMCommandCore {
                         }
                     }))
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: .importVM, error: error)
@@ -662,13 +662,13 @@ extension VMCommandCore {
         }
         switch arrival.requestCancel() {
         case .cancelled:
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Cancelling \(arrival.kind.displayNoun, privacy: .public) for '\(arrival.name, privacy: .public)'"
             )
         case .withdrawn:
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Cancel confirmed while '\(arrival.name, privacy: .public)' was publishing — its bundle moves to the Trash"
             )
         case .alreadyCancelling:
@@ -735,20 +735,20 @@ extension VMCommandCore {
                         try storageService.deleteVMBundle(at: context.bundle.url)
                     }
                 } catch {
-                    #log(
-                        logger, .error,
+                    logger.log(
+                        .error,
                         "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                     throw CommandError.failed(
                         verb: .delete, error: error)
                 }
                 if permanently {
-                    #log(
-                        logger, .notice,
+                    logger.log(
+                        .notice,
                         "Permanently deleted VM '\(instance.name, privacy: .public)'")
                 } else {
-                    #log(
-                        logger, .notice,
+                    logger.log(
+                        .notice,
                         "Moved VM '\(instance.name, privacy: .public)' to Trash")
                 }
                 // Externals go *after* the bundle, so a failure here leaves no

@@ -231,19 +231,19 @@ package final class AppTerminationController {
 
         if let attributablePID {
             if let bundleID {
-                #log(
-                    Self.logger, .debug,
+                Self.logger.log(
+                    .debug,
                     "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID, privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
                 )
             } else {
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Quit Apple Event: sender PID \(attributablePID, privacy: .public) is alive but could not be resolved to an application with a bundle identifier — classified as \(String(describing: classification), privacy: .public)"
                 )
             }
         } else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Quit Apple Event sender could not be attributed (PID \(senderPID.map(String.init) ?? "none", privacy: .public)) — failing safe to \(String(describing: classification), privacy: .public)"
             )
         }
@@ -324,7 +324,7 @@ package final class AppTerminationController {
             hasInstancesToSave: viewModel.instances.contains(where: \.hasLiveSession)
         ) {
         case .closeGUI:
-            #log(Self.logger, .notice, "GUI-origin quit — closing the GUI; app stays resident")
+            Self.logger.log(.notice, "GUI-origin quit — closing the GUI; app stays resident")
             // Defer so the close runs after this termination request is fully
             // cancelled.
             Task { @MainActor in
@@ -342,7 +342,7 @@ package final class AppTerminationController {
                 relaunchAfterTermination = true
             }
             owesDeferredTerminationReply = true
-            #log(Self.logger, .notice, "Quit requested while the termination save pass is running — deferring to it")
+            Self.logger.log(.notice, "Quit requested while the termination save pass is running — deferring to it")
             return .later
 
         case .terminateNow:
@@ -392,10 +392,10 @@ package final class AppTerminationController {
     package func requestFullQuit() {
         userRequestedAgentQuit = true
         guard !isRunningTerminationSavePass else {
-            #log(Self.logger, .notice, "Full quit requested again — joining the save pass already running")
+            Self.logger.log(.notice, "Full quit requested again — joining the save pass already running")
             return
         }
-        #log(Self.logger, .notice, "User-requested full quit — saving live guests, then terminating")
+        Self.logger.log(.notice, "User-requested full quit — saving live guests, then terminating")
         isRunningTerminationSavePass = true
         runSavePassThenEndTermination()
     }
@@ -470,14 +470,14 @@ package final class AppTerminationController {
                 continue
             }
             guard viewModel.quitMustWaitOut else { break }
-            #log(Self.logger, .notice, "Termination waiting on work a quit must not exit through")
+            Self.logger.log(.notice, "Termination waiting on work a quit must not exit through")
             let saved = handled
             await waitForObservedChange { [viewModel] in
                 !viewModel.quitMustWaitOut || self.nextSessionToSave(excluding: saved) != nil
             }
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed"
         )
     }
@@ -508,8 +508,8 @@ package final class AppTerminationController {
             try await viewModel.saveForTermination(instance)
             return true
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
             guard instance.activity.decide(.sessionAction(.forceStop), posture: .commit) == .admit
@@ -517,8 +517,8 @@ package final class AppTerminationController {
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -535,7 +535,7 @@ package final class AppTerminationController {
     private func launchRelaunchHelper() {
         let products = viewModel.library.bundleProducts
         guard let helperURL = products.relaunchHelperURL else {
-            #log(Self.logger, .fault, "Relaunch helper not found in app bundle")
+            Self.logger.log(.fault, "Relaunch helper not found in app bundle")
             assertionFailure("Relaunch helper not found in app bundle")
             return
         }
@@ -548,10 +548,10 @@ package final class AppTerminationController {
             process.executableURL = helperURL
             process.arguments = [String(pid), bundlePath]
             try process.run()
-            #log(Self.logger, .notice, "Launched relaunch helper (watching PID \(pid, privacy: .public))")
+            Self.logger.log(.notice, "Launched relaunch helper (watching PID \(pid, privacy: .public))")
         } catch {
-            #log(
-                Self.logger, .error, "Failed to launch relaunch helper: \(error.localizedDescription, privacy: .public)"
+            Self.logger.log(
+                .error, "Failed to launch relaunch helper: \(error.localizedDescription, privacy: .public)"
             )
         }
     }

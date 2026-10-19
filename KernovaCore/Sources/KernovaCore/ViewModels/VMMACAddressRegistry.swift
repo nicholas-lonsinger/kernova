@@ -26,7 +26,7 @@ package final class VMMACAddressRegistry {
 
     private var instances: [VMInstance] {
         guard let roster else {
-            #log(Self.logger, .fault, "VMMACAddressRegistry has no roster — answering as an empty library")
+            Self.logger.log(.fault, "VMMACAddressRegistry has no roster — answering as an empty library")
             assertionFailure("VMMACAddressRegistry.roster was never assigned")
             return []
         }
@@ -166,8 +166,8 @@ package final class VMMACAddressRegistry {
         for shared in sharedMACAddresses() {
             let names = shared.holders.map { "'\($0.vm.name)' (\(Self.describe($0.holding)))" }
                 .joined(separator: ", ")
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "MAC address \(shared.address, privacy: .public) is held by \(names, privacy: .public)")
         }
     }

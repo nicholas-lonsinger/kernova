@@ -60,8 +60,8 @@ final class RestoreImageProbeService: RestoreImageProbing {
         }
 
         let parsed = ProbedRestoreImage.parseFilename(url.lastPathComponent)
-        #log(
-            Self.logger, .info,
+        Self.logger.log(
+            .info,
             "Probed restore image at \(url.host() ?? "?", privacy: .public): \(sizeBytes, privacy: .public) bytes, VM-capable"
         )
         return ProbedRestoreImage(

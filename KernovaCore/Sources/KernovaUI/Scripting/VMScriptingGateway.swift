@@ -111,8 +111,8 @@ final class VMScriptingGateway {
         do {
             return VMScriptObject(try commands.info(.id(id)), gateway: self)
         } catch {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
             )
             assertionFailure("Listed VM \(id.uuidString) has no info read: \(error)")
@@ -160,8 +160,8 @@ final class VMScriptingGateway {
         } else if let command = answering {
             evaluation = suspend(command, because: "reached a storage disk list")
         } else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Storage disks of \(vm.uuidString, privacy: .public) read outside any script command's evaluation")
             assertionFailure("Storage disks of \(vm.uuidString) read outside any script command's evaluation")
             return []
@@ -309,8 +309,8 @@ final class VMScriptingGateway {
     /// on the main thread, with nothing else dispatched in between.
     private func dispatch(_ evaluation: CommandEvaluation) -> Reply {
         guard let event = evaluation.event else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "A suspended \(evaluation.command.commandDescription.commandName, privacy: .public) has no Apple event to answer from"
             )
             assertionFailure("A suspended \(evaluation.command.commandDescription.commandName) has no Apple event")
@@ -322,8 +322,8 @@ final class VMScriptingGateway {
                     options: [.waitForReply], timeout: TimeInterval(kAEDefaultTimeout)))
         } catch {
             let failure = error as NSError
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Dispatching a \(evaluation.command.commandDescription.commandName, privacy: .public) again failed: \(failure.localizedDescription, privacy: .public)"
             )
             return Reply(failure: failure.code, failure.localizedDescription)
@@ -364,8 +364,8 @@ final class VMScriptingGateway {
         do {
             return try await commands.storageDisks(of: .id(vm))
         } catch {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "No storage disks read for \(vm.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             return []
@@ -400,8 +400,8 @@ final class VMScriptingGateway {
         if let held = suspended.first(where: { $0.command === command }) { return held }
         let evaluation = CommandEvaluation(command)
         suspended.append(evaluation)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "A \(command.commandDescription.commandName, privacy: .public) \(reason, privacy: .public); suspended until it can be answered"
         )
         command.refuse(Int(errAEEventFailed), Self.answeringLater)
@@ -422,8 +422,8 @@ final class VMScriptingGateway {
         suspended.removeAll { $0 === evaluation }
         let command = evaluation.command
         reply.record(on: command)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Answering the suspended \(command.commandDescription.commandName, privacy: .public)"
         )
         guard let verb = command as? VMScriptCommand else {
@@ -643,8 +643,8 @@ final class VMScriptingGateway {
         guard let listed = run(.deleteNetwork, on: nil, { try commands.networks() }) else { return }
         // Cocoa evaluated the index against this same list on this turn.
         guard listed.indices.contains(index) else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Asked to remove network \(index, privacy: .public) of \(listed.count, privacy: .public)")
             assertionFailure("Asked to remove network \(index) of \(listed.count)")
             command.refuse(Int(errAEIllegalIndex), "There is no network \(index + 1).")
@@ -671,8 +671,8 @@ final class VMScriptingGateway {
             return try body()
         } catch let refusal as CommandError {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message, privacy: .public)"
             )
             answering?.refuse(refusal)
@@ -704,8 +704,8 @@ final class VMScriptingGateway {
                 do {
                     try await body(selector)
                 } catch let failure as CommandError {
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message, privacy: .public)"
                     )
                     throw failure

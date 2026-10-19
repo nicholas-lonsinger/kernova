@@ -139,8 +139,8 @@ extension VMCommandCore {
                 of: instance, verb: .setConfiguration)
         }
         if !moved.isEmpty {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Changed \(moved.map(\.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
             )
         }

@@ -344,7 +344,7 @@ package actor VMSession: VMSessionOperating {
             let device = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice })
                 as? VZVirtioSocketDevice
         else {
-            #log(Self.logger, .fault, "Socket-device call on a session with no VZVirtioSocketDevice")
+            Self.logger.log(.fault, "Socket-device call on a session with no VZVirtioSocketDevice")
             assertionFailure("Callers must guard on hasVirtioSocketDevice")
             return nil
         }
@@ -385,8 +385,8 @@ package actor VMSession: VMSessionOperating {
             do {
                 attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
             } catch {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw error
@@ -422,7 +422,7 @@ package actor VMSession: VMSessionOperating {
 
     private func usbController() throws -> VZUSBController {
         guard let controller = vm.usbControllers.first else {
-            #log(Self.logger, .fault, "USB call on a session with no USB controller")
+            Self.logger.log(.fault, "USB call on a session with no USB controller")
             assertionFailure("Callers must guard on hasUSBController")
             throw VMSessionError.usbControllerUnavailable
         }
@@ -457,15 +457,15 @@ package actor VMSession: VMSessionOperating {
         queue.async {
             self.assumeIsolated { session in
                 guard let device = session.vm.networkDevices.first else {
-                    #log(Self.logger, .fault, "Network attachment install on a session with no network device")
+                    Self.logger.log(.fault, "Network attachment install on a session with no network device")
                     assertionFailure("Callers must guard on hasNetworkDevice")
                     return
                 }
                 let attachment = make()
                 device.attachment = attachment
                 if attachment == nil {
-                    #log(
-                        Self.logger, .warning,
+                    Self.logger.log(
+                        .warning,
                         "Network attachment could not be built at install time — leaving the device detached"
                     )
                     onBuildFailure()
@@ -503,7 +503,7 @@ package actor VMSession: VMSessionOperating {
                     let device = session.vm.directorySharingDevices
                         .compactMap({ $0 as? VZVirtioFileSystemDevice }).first(where: { $0.tag == tag })
                 else {
-                    #log(Self.logger, .fault, "Directory share install on a session with no automount device")
+                    Self.logger.log(.fault, "Directory share install on a session with no automount device")
                     assertionFailure("A live share swap reaches only a VM booted with a share")
                     return
                 }

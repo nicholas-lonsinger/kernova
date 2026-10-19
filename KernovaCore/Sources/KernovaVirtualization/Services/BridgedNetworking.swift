@@ -22,7 +22,7 @@ package struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
 
     package func primaryInterfaceIdentifier() -> String? {
         guard let store = SCDynamicStoreCreate(nil, "Kernova" as CFString, nil, nil) else {
-            #log(Self.logger, .fault, "SCDynamicStoreCreate returned nil — reporting no primary interface")
+            Self.logger.log(.fault, "SCDynamicStoreCreate returned nil — reporting no primary interface")
             assertionFailure("SCDynamicStoreCreate returned nil")
             return nil
         }

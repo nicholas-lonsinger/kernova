@@ -317,7 +317,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     @objc private func vmReminderToggled(_ sender: NSSwitch) {
         guard let instance = vmSwitches.first(where: { $0.control === sender })?.instance else {
-            #log(Self.logger, .fault, "Toggled VM reminder switch not found in the rebuilt set")
+            Self.logger.log(.fault, "Toggled VM reminder switch not found in the rebuilt set")
             assertionFailure("Toggled VM reminder switch not found in the rebuilt set")
             return
         }
@@ -327,7 +327,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     }
 
     @objc private func resetAllReminders() {
-        #log(Self.logger, .notice, "User reset all host reminders")
+        Self.logger.log(.notice, "User reset all host reminders")
         preferences.resetHostReminders()
         viewModel.resetAllAgentInstallNudges()
         refreshSwitches()

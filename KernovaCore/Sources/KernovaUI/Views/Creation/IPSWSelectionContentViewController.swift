@@ -297,7 +297,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             case .unusable(let error):
                 addLocalFilePathBadge(path: image.path)
                 guard let message = error.errorDescription else {
-                    #log(Self.logger, .fault, "LocalRestoreImageError has no errorDescription")
+                    Self.logger.log(.fault, "LocalRestoreImageError has no errorDescription")
                     assertionFailure("LocalRestoreImageError must always have an errorDescription")
                     break
                 }
@@ -510,7 +510,7 @@ final class IPSWSelectionContentViewController: NSViewController {
     @objc private func useExistingAnywayTapped() {
         guard case .mismatch(_, let found) = existingFileNotice, let path = existingFileNoticePath
         else {
-            #log(Self.logger, .fault, "Use It Anyway tapped with no mismatch notice")
+            Self.logger.log(.fault, "Use It Anyway tapped with no mismatch notice")
             assertionFailure("A mismatch banner is showing, so its notice must be set")
             return
         }

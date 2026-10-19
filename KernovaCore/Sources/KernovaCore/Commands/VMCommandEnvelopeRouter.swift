@@ -48,8 +48,8 @@ package struct VMCommandEnvelopeRouter {
         } catch {
             // Every payload is a `Codable` value this module owns, so nothing
             // here has an encodable shape that can fail at runtime.
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "A response could not be encoded: \(error.localizedDescription, privacy: .public)")
             assertionFailure("A response could not be encoded: \(error)")
             let fallback = VMCommandResponse(
@@ -99,8 +99,8 @@ package struct VMCommandEnvelopeRouter {
         } catch let error as CommandError {
             return VMCommandResponse(result: .failure(error.dto))
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "\(String(describing: request.verb), privacy: .public) failed outside the command vocabulary: \(error.localizedDescription, privacy: .public)"
             )
             return VMCommandResponse(

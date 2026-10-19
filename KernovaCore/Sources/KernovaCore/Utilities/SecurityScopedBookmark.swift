@@ -41,8 +41,8 @@ package enum SecurityScopedBookmark {
                 relativeTo: nil
             )
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to create security-scoped bookmark for \(url.path(percentEncoded: false), privacy: .private): \(error.localizedDescription, privacy: .public)"
             )
             return nil
@@ -119,8 +119,8 @@ package enum SecurityScopedBookmark {
             )
             return Resolution(url: url, isStale: isStale)
         } catch {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Failed to resolve security-scoped bookmark: \(error.localizedDescription, privacy: .public)"
             )
             return nil

@@ -21,7 +21,7 @@ package final class VirtualizationService {
     private let isProtectedDataAvailable: @MainActor () -> Bool
 
     package init(
-        vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
+        vmnetNetworks: VmnetNetworkService, vmnetAttachments: VmnetAttachmentMaker,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
         guestAgent: BundledGuestAgent, isProtectedDataAvailable: @escaping @MainActor () -> Bool
     ) {
@@ -48,8 +48,8 @@ package final class VirtualizationService {
     ) async throws -> VMOperationEnding<GuestStartRoute> {
         let route = GuestStartRoute(context.kind)
         let hasSaveFile = context.bringUp.operation.bundle.hasSaveFile
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "start: route=\(String(describing: route), privacy: .public), hasSaveFile=\(hasSaveFile, privacy: .public)"
         )
         do {
@@ -65,8 +65,8 @@ package final class VirtualizationService {
             // A restore failure already logged itself with the full error chain.
             if !VirtualizationFailure.isRestoreFailure(error) {
                 let nsError = error as NSError
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationFailure.underlyingChainDescription(nsError), privacy: .public)]"
                 )
             }
@@ -74,11 +74,11 @@ package final class VirtualizationService {
         }
         switch route {
         case .recoveryBoot:
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Started VM '\(instance.name, privacy: .public)' in recovery mode")
         case .coldBoot, .restoredSavedState:
-            #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)'")
+            Self.logger.log(.notice, "Started VM '\(instance.name, privacy: .public)'")
         }
         // A session that went away between VZ reporting the machine up and
         // here rests the VM where its end says; the route still answers,
@@ -115,8 +115,8 @@ package final class VirtualizationService {
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw startError }
                 attempt += 1
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
                 context.operation.endSession()
@@ -170,10 +170,10 @@ package final class VirtualizationService {
         guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
         do {
             try await session.requestStop()
-            #log(Self.logger, .notice, "Requested stop for VM '\(instance.name, privacy: .public)'")
+            Self.logger.log(.notice, "Requested stop for VM '\(instance.name, privacy: .public)'")
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to stop VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
@@ -185,10 +185,10 @@ package final class VirtualizationService {
         guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
         do {
             try await session.stop()
-            #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
+            Self.logger.log(.notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to force-stop VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
@@ -207,8 +207,8 @@ package final class VirtualizationService {
             // The VM stays where it was, still holding the session, with Stop,
             // Force Stop and a retried Pause all offered; the failure reaches
             // the user as the thrown error.
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to pause VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
@@ -217,7 +217,7 @@ package final class VirtualizationService {
         // — a frozen guest cannot say Hello, so letting it run would blame
         // the agent for the pause.
         instance.cancelAgentPostStartWatchdog()
-        #log(Self.logger, .notice, "Paused VM '\(instance.name, privacy: .public)'")
+        Self.logger.log(.notice, "Paused VM '\(instance.name, privacy: .public)'")
         return .rest(.live(.paused), ())
     }
 
@@ -229,14 +229,14 @@ package final class VirtualizationService {
         do {
             try await session.resume()
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
         context.bundle.removeSaveFile()
-        #log(Self.logger, .notice, "Resumed VM '\(instance.name, privacy: .public)'")
+        Self.logger.log(.notice, "Resumed VM '\(instance.name, privacy: .public)'")
         return .rest(.live(.running), ())
     }
 
@@ -265,8 +265,8 @@ package final class VirtualizationService {
             try await session.pauseIfRunning()
             try await session.saveMachineState(to: context.bundle.saveFileURL)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             // `saveMachineState` writes the slot in place, so a throw leaves it
@@ -285,8 +285,8 @@ package final class VirtualizationService {
             // The guest went away mid-write, so the slot on disk is however far
             // VZ got.
             context.bundle.removeSaveFile()
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "VM '\(instance.name, privacy: .public)' lost its session mid-suspend — its partial saved state was dropped"
             )
             return .rest(.afterSessionEnd, ())
@@ -295,7 +295,7 @@ package final class VirtualizationService {
         // carry stable UUIDs and storage disks stable virtio block identifiers
         // in `config`, and VZ matches both on restore.
         context.endSession()
-        #log(logger, .notice, "Saved state for VM '\(instance.name, privacy: .public)'")
+        logger.log(.notice, "Saved state for VM '\(instance.name, privacy: .public)'")
         return .rest(.atRest(.stopped), ())
     }
 
@@ -318,8 +318,8 @@ package final class VirtualizationService {
         snapshot request: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let mode = context.mode
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "takeSnapshot: mode=\(String(describing: mode), privacy: .public), status=\(instance.status.displayName, privacy: .public)"
         )
         let snapshot = request.record(capturedIn: mode)
@@ -368,8 +368,8 @@ package final class VirtualizationService {
         switch captured {
         case .failed(let failedRest, let error):
             await capture.operation.bundle.removeSnapshotDirectory(snapshotID)
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return .failed(failedRest, error)
@@ -381,13 +381,13 @@ package final class VirtualizationService {
             // The guest went away while its disks were copied. The saved state
             // and the disks were both written before that happened, so the
             // snapshot is complete and the caller records it.
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)', which lost its session mid-capture"
             )
         } else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
         }
@@ -412,13 +412,13 @@ package final class VirtualizationService {
             savingStateTo: { saveFileURL }, copy: copy)
         switch ending {
         case .failed(_, let error):
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to clone running VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         case .rest:
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Copied running VM '\(instance.name, privacy: .public)' into a clone"
             )
         }
@@ -439,14 +439,14 @@ package final class VirtualizationService {
                 intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
         } catch {
             await context.bundle.removeSnapshotDirectory(snapshotID)
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Took a cold snapshot '\(snapshot.name, privacy: .public)' of stopped VM '\(instance.name, privacy: .public)'"
         )
         return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
@@ -471,14 +471,14 @@ package final class VirtualizationService {
             try await context.bundle.captureSuspendSlot(intoSnapshot: snapshotID)
         } catch {
             await context.bundle.removeSnapshotDirectory(snapshotID)
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
         return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
@@ -503,8 +503,8 @@ package final class VirtualizationService {
         commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "revertToSnapshot: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public)"
         )
         let snapshotID = snapshot.id
@@ -525,8 +525,8 @@ package final class VirtualizationService {
             do {
                 try await session.stop()
             } catch {
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Terminating '\(instance.name, privacy: .public)' before a revert failed: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -549,14 +549,14 @@ package final class VirtualizationService {
             }
             try await context.bringUp.operation.bundle.installRestore(plan)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return .failed(.atRest(.stopped), error)
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Reverted VM '\(instance.name, privacy: .public)' to snapshot '\(snapshot.name, privacy: .public)'"
         )
 
@@ -613,8 +613,8 @@ package final class VirtualizationService {
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw attemptError }
                 attempt += 1
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Restore of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
                 context.operation.endSession()
@@ -655,7 +655,7 @@ package final class VirtualizationService {
         session: any VMSnapshotSessionOperating,
         isProtectedDataAvailable: @MainActor () -> Bool
     ) async throws {
-        #log(logger, .debug, "restoreFromSaveFile: attempting restore from save file")
+        logger.log(.debug, "restoreFromSaveFile: attempting restore from save file")
         do {
             try await session.restoreMachineState(from: context.bundle.saveFileURL)
             try await session.resume()
@@ -663,8 +663,8 @@ package final class VirtualizationService {
         } catch {
             let nsError = error as NSError
             let hostLocked = !isProtectedDataAvailable()
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationFailure.underlyingChainDescription(nsError), privacy: .public); host locked: \(hostLocked, privacy: .public)]"
             )
             throw VirtualizationError.restoreFailed(underlying: error, hostLocked: hostLocked)

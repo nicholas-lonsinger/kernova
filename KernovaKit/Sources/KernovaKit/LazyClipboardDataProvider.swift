@@ -59,8 +59,8 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
     ) {
         state.withLock { $0.fireDepth += 1 }
         let data = provide(type)
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Provided \(data?.count ?? 0, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
         )
         if let data { item.setData(data, forType: type) }

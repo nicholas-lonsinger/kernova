@@ -407,7 +407,7 @@ extension VMSettingsViewController {
     /// nothing for the current VM.
     private func installPanel(_ category: VMSettingsCategory) {
         guard let controller = panelControllers[category] else {
-            #log(Self.logger, .fault, "No panel for category '\(category.rawValue, privacy: .public)'")
+            Self.logger.log(.fault, "No panel for category '\(category.rawValue, privacy: .public)'")
             assertionFailure("No panel for category: \(category.rawValue)")
             return
         }

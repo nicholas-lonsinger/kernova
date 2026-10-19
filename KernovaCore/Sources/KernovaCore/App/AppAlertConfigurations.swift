@@ -20,8 +20,8 @@ package struct AppAlertConfigurations {
     static func reportUnhandledAlternative(
         _ alternative: ConfirmationAlternative, on verb: String
     ) {
-        #log(
-            logger, .fault,
+        logger.log(
+            .fault,
             "No \(verb, privacy: .public) route for alternative '\(alternative.title, privacy: .public)'"
         )
         assertionFailure("No \(verb) route for alternative '\(alternative.title)'")

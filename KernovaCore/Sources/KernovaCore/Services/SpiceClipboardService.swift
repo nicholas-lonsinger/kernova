@@ -68,7 +68,7 @@ final class SpiceClipboardService: ClipboardServicing {
     func start() {
         startReading()
         sendCapabilities()
-        #log(Self.logger, .info, "SPICE clipboard service started")
+        Self.logger.log(.info, "SPICE clipboard service started")
     }
 
     /// Stops reading, marks the connection inactive, and releases resources.
@@ -77,7 +77,7 @@ final class SpiceClipboardService: ClipboardServicing {
         outputPipe.fileHandleForReading.readabilityHandler = nil
         pendingOutboundText = nil
         guestSupportsByDemand = false
-        #log(Self.logger, .info, "SPICE clipboard service stopped")
+        Self.logger.log(.info, "SPICE clipboard service stopped")
     }
 
     // MARK: - Public API
@@ -98,8 +98,8 @@ final class SpiceClipboardService: ClipboardServicing {
         guard isConnected else { return .undelivered }
         guard let text = clipboardContent.text, !text.isEmpty else {
             if !clipboardContent.isEmpty {
-                #log(
-                    Self.logger, .debug,
+                Self.logger.log(
+                    .debug,
                     "Clipboard content has no text representation — SPICE transport is text-only (issue #112 follow-up)"
                 )
             }
@@ -123,8 +123,8 @@ final class SpiceClipboardService: ClipboardServicing {
             }
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Sent clipboard grab (\(text.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))"
         )
         return .settled
@@ -145,12 +145,12 @@ final class SpiceClipboardService: ClipboardServicing {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.disconnect()
-                    #log(Self.logger, .notice, "SPICE pipe closed (EOF)")
+                    Self.logger.log(.notice, "SPICE pipe closed (EOF)")
                 }
                 return
             }
 
-            #log(logger, .debug, "Received \(data.count, privacy: .public) bytes from guest SPICE agent")
+            logger.log(.debug, "Received \(data.count, privacy: .public) bytes from guest SPICE agent")
 
             Task { @MainActor [weak self] in
                 self?.handleIncomingData(data)
@@ -162,7 +162,7 @@ final class SpiceClipboardService: ClipboardServicing {
         let messages = parser.feed(data)
 
         if parser.didReset {
-            #log(Self.logger, .error, "SPICE parser buffer reset — stream may be corrupted")
+            Self.logger.log(.error, "SPICE parser buffer reset — stream may be corrupted")
         }
 
         for message in messages {
@@ -180,13 +180,13 @@ final class SpiceClipboardService: ClipboardServicing {
                 handleClipboardData(type: type, data: data)
 
             case .clipboardRelease:
-                #log(Self.logger, .debug, "Guest released clipboard")
+                Self.logger.log(.debug, "Guest released clipboard")
 
             case .other(let type):
-                #log(Self.logger, .debug, "Ignoring unhandled SPICE message type: \(type.rawValue, privacy: .public)")
+                Self.logger.log(.debug, "Ignoring unhandled SPICE message type: \(type.rawValue, privacy: .public)")
 
             case .malformedChunk:
-                #log(Self.logger, .warning, "Skipping malformed SPICE chunk")
+                Self.logger.log(.warning, "Skipping malformed SPICE chunk")
             }
         }
     }
@@ -201,8 +201,8 @@ final class SpiceClipboardService: ClipboardServicing {
         let byDemand = SpiceMessageBuilder.hasCapability(caps, .clipboardByDemand)
 
         guard hasClipboard || byDemand else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Guest agent does not support clipboard (caps: \(caps.map { String($0, radix: 16) }, privacy: .public))"
             )
             return
@@ -216,18 +216,18 @@ final class SpiceClipboardService: ClipboardServicing {
             guard writeToGuest(reply) else { return }
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Guest agent connected (caps: \(caps.map { String($0, radix: 16) }, privacy: .public), byDemand: \(byDemand, privacy: .public))"
         )
     }
 
     /// Guest announced it has new clipboard data — request it.
     private func handleClipboardGrab(types: [SpiceClipboardType]) {
-        #log(Self.logger, .debug, "Guest clipboard grab: types=\(types.map(\.rawValue), privacy: .public)")
+        Self.logger.log(.debug, "Guest clipboard grab: types=\(types.map(\.rawValue), privacy: .public)")
 
         guard types.contains(.utf8Text) else {
-            #log(Self.logger, .debug, "Guest clipboard has no UTF-8 text type, ignoring")
+            Self.logger.log(.debug, "Guest clipboard has no UTF-8 text type, ignoring")
             return
         }
 
@@ -237,15 +237,15 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// Guest is requesting clipboard data from us (response to our GRAB).
     private func handleClipboardRequest(type: SpiceClipboardType) {
-        #log(Self.logger, .debug, "Guest requested clipboard data (type: \(type.rawValue, privacy: .public))")
+        Self.logger.log(.debug, "Guest requested clipboard data (type: \(type.rawValue, privacy: .public))")
 
         guard type == .utf8Text else {
-            #log(Self.logger, .debug, "Guest requested non-text type, ignoring")
+            Self.logger.log(.debug, "Guest requested non-text type, ignoring")
             return
         }
 
         guard let text = pendingOutboundText else {
-            #log(Self.logger, .debug, "No pending outbound text for clipboard request")
+            Self.logger.log(.debug, "No pending outbound text for clipboard request")
             return
         }
 
@@ -256,15 +256,15 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Guest delivered clipboard data — update our observable state.
     private func handleClipboardData(type: SpiceClipboardType, data: Data) {
         guard type == .utf8Text else {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Received non-text clipboard data (type: \(type.rawValue, privacy: .public)), ignoring")
             return
         }
 
         guard let text = String(data: data, encoding: .utf8) else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to decode guest clipboard data as UTF-8 (\(data.count, privacy: .public) bytes)")
             return
         }
@@ -272,7 +272,7 @@ final class SpiceClipboardService: ClipboardServicing {
         clipboardContent = ClipboardContent(text: text)
         lastGrabbedText = nil  // New text is from the guest, not us
         inboundOfferSeq &+= 1
-        #log(Self.logger, .debug, "Received guest clipboard text (\(text.count, privacy: .public) characters)")
+        Self.logger.log(.debug, "Received guest clipboard text (\(text.count, privacy: .public) characters)")
     }
 
     // MARK: - Writing
@@ -281,8 +281,8 @@ final class SpiceClipboardService: ClipboardServicing {
     @discardableResult
     private func sendClipboardText(_ text: String) -> Bool {
         guard let textData = text.data(using: .utf8) else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to encode clipboard text as UTF-8 (\(text.count, privacy: .public) characters)")
             return false
         }
@@ -295,7 +295,7 @@ final class SpiceClipboardService: ClipboardServicing {
             try inputPipe.fileHandleForWriting.write(contentsOf: data)
             return true
         } catch {
-            #log(Self.logger, .error, "Failed to write to SPICE pipe: \(error.localizedDescription, privacy: .public)")
+            Self.logger.log(.error, "Failed to write to SPICE pipe: \(error.localizedDescription, privacy: .public)")
             disconnect()
             return false
         }
@@ -311,6 +311,6 @@ final class SpiceClipboardService: ClipboardServicing {
     private func sendCapabilities() {
         let message = SpiceMessageBuilder.buildAnnounceCapabilities(request: true)
         _ = writeToGuest(message)
-        #log(Self.logger, .debug, "Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
+        Self.logger.log(.debug, "Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
     }
 }

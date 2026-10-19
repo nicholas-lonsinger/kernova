@@ -66,8 +66,8 @@ final class VMRemovableMediaReconciler {
             }
         }
         .reportingFailure { [weak instance] error in
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "The removable-media reconcile owed to '\(instance?.name ?? "", privacy: .public)' was refused: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -190,22 +190,22 @@ final class VMRemovableMediaReconciler {
             do {
                 try await lifecycle.detachRemovableMedia(device, from: instance, for: sessionID)
             } catch RemovableMediaDeviceError.noVirtualMachine {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
                 )
                 return nil
             } catch RemovableMediaDeviceError.deviceNotFound {
                 // The coordinator's `forgetAttachedMedia` is skipped when the
                 // framework call throws, so clear stale tracking explicitly here.
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
                 instance.forgetAttachedMedia(deviceID: device.id, for: sessionID)
             } catch {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 failures.append(.init(name: device.displayName, operation: .eject, error: error))
@@ -230,19 +230,19 @@ final class VMRemovableMediaReconciler {
                 if let scope {
                     instance.retainMediaScope(scope, deviceID: item.id, for: sessionID)
                 }
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
                 )
             } catch RemovableMediaDeviceError.noVirtualMachine {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "VM '\(instance.name, privacy: .public)' torn down during media attach; abandoning reconcile"
                 )
                 return nil
             } catch {
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 failures.append(.init(name: item.label, operation: .attach, error: error))
@@ -260,8 +260,8 @@ final class VMRemovableMediaReconciler {
     private func failReconcile(_ refused: RefusedPass, _ permit: borrowing VMEditPermit) {
         let instance = permit.instance
         guard instance.liveSessionID == refused.sessionID else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Dropping removable-media reconcile failure for '\(instance.name, privacy: .public)': session \(refused.sessionID, privacy: .public) is no longer live"
             )
             return

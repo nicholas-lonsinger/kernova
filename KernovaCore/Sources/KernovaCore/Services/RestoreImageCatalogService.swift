@@ -27,8 +27,8 @@ package struct RestoreImageCatalogService {
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Bundled restore image catalog '\(Self.resourceName, privacy: .public).\(Self.resourceExtension, privacy: .public)' is missing or unreadable"
             )
             assertionFailure(
@@ -41,8 +41,8 @@ package struct RestoreImageCatalogService {
 
         let result = Self.parse(data)
         for rejection in result.rejections {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Dropping restore image catalog entry: \(rejection.description, privacy: .public)")
             assertionFailure("Dropping restore image catalog entry: \(rejection.description)")
         }

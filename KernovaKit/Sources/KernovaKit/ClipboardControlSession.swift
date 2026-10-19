@@ -119,8 +119,8 @@ public final class ClipboardControlSession {
         self.dataSocketTimeout = dataSocketTimeout
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
         if Self.receives(role: role, kind: kind), staging == nil {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Clipboard control session for '\(label, privacy: .public)' receives but was given no staging"
             )
             assertionFailure("Receiving session for '\(label)' was given no staging")
@@ -129,8 +129,8 @@ public final class ClipboardControlSession {
         // connections in that role would leave every transfer waiting for one
         // that can never arrive.
         if role == .guest, case .accepts = dataLink {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Guest clipboard control session for '\(label, privacy: .public)' was given no data dialler"
             )
             assertionFailure("Guest session for '\(label)' was given no data dialler")
@@ -208,8 +208,8 @@ public final class ClipboardControlSession {
                 // The only measured throughput number for what this side sends,
                 // so it logs at `.notice` (persisted) rather than `.debug`.
                 onTransferTimed: { metrics in
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "\(sent, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) sent: \(metrics.logSummary, privacy: .public)"
                     )
                 })
@@ -219,8 +219,8 @@ public final class ClipboardControlSession {
             inbox = ClipboardTransferInbox(
                 staging: staging, socketTimeout: dataSocketTimeout,
                 onTransferTimed: { metrics in
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "\(received, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"
                     )
                 })
@@ -298,13 +298,13 @@ public final class ClipboardControlSession {
             }
             // A guest disconnect has to survive in the log after the fact, so this
             // persists rather than logging at `.debug`/`.info`.
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Vsock \(subject, privacy: .public) channel closed for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public))"
             )
         } catch {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Vsock \(subject, privacy: .public) channel ended with error for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }

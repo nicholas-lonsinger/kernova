@@ -123,8 +123,8 @@ final class USBAccessoryCoordinator {
         let owedSessionID = owedTo?.activity.spendOwedReturn(of: identity)
 
         if releasedByUser.remove(identity) != nil {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: it came back from a detach the user asked for"
             )
             return
@@ -146,8 +146,8 @@ final class USBAccessoryCoordinator {
         // device belongs to is not decidable, and guessing routes hardware into
         // the wrong guest.
         guard claimants.count == 1 else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Holding USB accessory \(info.displayName, privacy: .public): \(claimants.count) virtual machines claim the same accessory (\(identity.key, privacy: .public))"
             )
             return
@@ -156,15 +156,15 @@ final class USBAccessoryCoordinator {
         // second unit of the same model around, the one in the port may be
         // either of them.
         if identity.form == .receptacle, sharesItsModel(info) {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public): it is identified by its port, and more than one accessory of that model is connected"
             )
             return
         }
         guard let sessionID = paired.attachableSessionID else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: '\(paired.name, privacy: .public)' is not running"
             )
             return
@@ -187,8 +187,8 @@ final class USBAccessoryCoordinator {
         guard let identity = info.identity else { return }
         for (instance, stale) in library.accessoryHolders.attachedEntries where stale.accessory.identity == identity {
             instance.activity.accessoryLeftGuest(deviceID: stale.deviceID)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Dropped '\(instance.name, privacy: .public)' record of USB accessory \(stale.accessory.displayName, privacy: .public): the host has it again, and VZ did not report the disconnect"
             )
         }
@@ -258,15 +258,15 @@ final class USBAccessoryCoordinator {
                     case .paired: "it is paired with that virtual machine"
                     case .owedReturn: "a snapshot took it off that virtual machine"
                     }
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Passed USB accessory \(attached.accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': \(because, privacy: .public)"
                 )
             }
         }
         .reportingFailure { [weak instance] error in
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not pass USB accessory \(accessory.displayName, privacy: .public) through to '\(instance?.name ?? "", privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -281,8 +281,8 @@ final class USBAccessoryCoordinator {
         guard let pairing = USBAccessoryPairing.make(for: accessory) else { return }
         try library.pairUSBAccessory(pairing, permit)
         let instance = permit.instance
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "'\(instance.name, privacy: .public)' will take USB accessory \(accessory.displayName, privacy: .public) back automatically"
         )
     }
@@ -306,8 +306,8 @@ final class USBAccessoryCoordinator {
         guard let identity = accessory.identity else { return }
         try library.updateUSBPairings(permit) { $0.remove(key: identity.key) }
         let instance = permit.instance
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(accessory.displayName, privacy: .public) back automatically"
         )
     }
@@ -317,8 +317,8 @@ final class USBAccessoryCoordinator {
     /// Offers `info` to the running guests, or holds it when there are none.
     private func offerToRunningGuests(_ info: USBAccessoryInfo) {
         guard !runningGuests().isEmpty else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: no virtual machine is running"
             )
             return
@@ -340,8 +340,8 @@ final class USBAccessoryCoordinator {
             guard let info = service.accessories.first(where: { $0.registryID == registryID }),
                 !library.accessoryHolders.heldRegistryIDs.contains(registryID)
             else {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Dropped the question about USB accessory \(registryID): it is no longer Kernova's to place"
                 )
                 continue
@@ -351,15 +351,15 @@ final class USBAccessoryCoordinator {
             // started.
             let candidates = runningGuests()
             guard !candidates.isEmpty else {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Holding USB accessory \(info.displayName, privacy: .public) for the host: no virtual machine is running"
                 )
                 continue
             }
             guard let onPairingNeeded else {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Holding USB accessory \(info.displayName, privacy: .public) for the host: there is nowhere to ask which virtual machine should take it"
                 )
                 continue
@@ -398,7 +398,7 @@ final class USBAccessoryCoordinator {
         guard outstandingPromptID == id else { return }
         outstandingPromptID = nil
         if instance == nil {
-            #log(Self.logger, .notice, "A USB accessory the user was asked about stays with the host")
+            Self.logger.log(.notice, "A USB accessory the user was asked about stays with the host")
         }
         raiseNextPrompt()
     }

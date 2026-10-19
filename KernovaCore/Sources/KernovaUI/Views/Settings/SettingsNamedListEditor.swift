@@ -300,7 +300,7 @@ final class SettingsNamedListEditor: NSObject {
             try change()
         } catch {
             let message = (error as? CommandError)?.message ?? error.localizedDescription
-            #log(logger, .notice, "\(title, privacy: .public): \(message, privacy: .public)")
+            logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
             guard let window = tableView.window else { return }
             presentSheetAlert(.acknowledgement(title: title, message: message), in: window)
         }
@@ -310,8 +310,8 @@ final class SettingsNamedListEditor: NSObject {
     /// missing one while degrading to no image in Release.
     private func symbol(_ name: NSImage.Name) -> NSImage? {
         guard let image = NSImage(named: name) else {
-            #log(
-                logger, .fault, "Missing image '\(name, privacy: .public)' for the \(self.noun, privacy: .public) list")
+            logger.log(
+                .fault, "Missing image '\(name, privacy: .public)' for the \(self.noun, privacy: .public) list")
             assertionFailure("Missing image: \(name)")
             return nil
         }

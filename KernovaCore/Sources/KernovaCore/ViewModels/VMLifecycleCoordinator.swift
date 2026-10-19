@@ -136,8 +136,8 @@ final class VMLifecycleCoordinator {
             guard !context.bundle.hasSaveFile else {
                 return .failed(.asStarted, VirtualizationError.savedStateNotDiscarded)
             }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return .rest(.atRest(.stopped), ())
         }
@@ -382,8 +382,8 @@ final class VMLifecycleCoordinator {
         _ operation: borrowing VMBringUpContext,
         context: MacOSInstallContext
     ) async throws {
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(context.source.rawValue, privacy: .public)"
         )
 
@@ -428,8 +428,8 @@ final class VMLifecycleCoordinator {
                     if DownloadService.destinationKey(for: downloadDestination)
                         != DownloadService.destinationKey(for: persistedDestination)
                     {
-                        #log(
-                            Self.logger, .notice,
+                        Self.logger.log(
+                            .notice,
                             "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
                         )
                     }
@@ -440,8 +440,8 @@ final class VMLifecycleCoordinator {
                     if DownloadService.destinationKey(for: downloadDestination)
                         != DownloadService.destinationKey(for: persistedDestination)
                     {
-                        #log(
-                            Self.logger, .notice,
+                        Self.logger.log(
+                            .notice,
                             "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
                         )
                         // "Download & Replace" was confirmed against the
@@ -479,8 +479,8 @@ final class VMLifecycleCoordinator {
                     // on disk, so a stray edit could otherwise have us
                     // trashing an arbitrary file.
                     guard downloadDestination.pathExtension.lowercased() == "ipsw" else {
-                        #log(
-                            Self.logger, .error,
+                        Self.logger.log(
+                            .error,
                             "installMacOS: refusing to honor requestedFreshDownload for non-IPSW destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
                         )
                         throw DownloadError.invalidDownloadDestination(
@@ -488,8 +488,8 @@ final class VMLifecycleCoordinator {
                         )
                     }
 
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — the existing IPSW + bundle are trashed before the download starts"
                     )
                     // Recorded before anything is trashed, or a retry would
@@ -561,18 +561,18 @@ final class VMLifecycleCoordinator {
             }.get()
             instance.setupState = nil
         } catch is CancellationError {
-            #log(Self.logger, .info, "macOS installation cancelled for '\(instance.name, privacy: .public)'")
+            Self.logger.log(.info, "macOS installation cancelled for '\(instance.name, privacy: .public)'")
             // Re-thrown as the cancel it is, which rests the VM at
             // .initialBoot rather than chaining a boot.
             throw CancellationError()
         } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
-            #log(Self.logger, .info, "IPSW download cancelled for '\(instance.name, privacy: .public)'")
+            Self.logger.log(.info, "IPSW download cancelled for '\(instance.name, privacy: .public)'")
             // Normalize to CancellationError for consistent caller-side handling.
             throw CancellationError()
         } catch {
             let nsError = error as NSError
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationFailure.underlyingChainDescription(nsError), privacy: .public)]"
             )
             throw error
@@ -652,8 +652,8 @@ final class VMLifecycleCoordinator {
             values?.fileSize.map(UInt64.init(clamping:)) == image.sizeBytes
         else { return nil }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "downloadLinuxImage: hashing '\(candidateName, privacy: .public)', already in Downloads, against the digest published for it"
         )
         let actual: String
@@ -662,15 +662,15 @@ final class VMLifecycleCoordinator {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "downloadLinuxImage: could not hash '\(candidateName, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return nil
         }
         guard let digest = expected.match(actual, filename: image.filename) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "downloadLinuxImage: '\(candidateName, privacy: .public)' hashes to \(actual, privacy: .public), not the published \(expected.sha256, privacy: .public) — downloading"
             )
             return nil
@@ -693,8 +693,8 @@ final class VMLifecycleCoordinator {
         let actual = try await FileDigest.sha256(of: file, progressHandler: progress)
         guard let expected else { return .unchecked(filename: filename, sha256: actual) }
         guard let digest = expected.match(actual, filename: filename) else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "downloadLinuxImage: '\(filename, privacy: .public)' hashes to \(actual, privacy: .public), not the expected \(expected.sha256, privacy: .public)"
             )
             discardUnverifiedImage(at: file)
@@ -716,8 +716,8 @@ final class VMLifecycleCoordinator {
         _ operation: borrowing VMBringUpContext,
         context: LinuxInstallContext
     ) async throws {
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', image=\(context.imageDisplayName, privacy: .public)"
         )
 
@@ -750,8 +750,8 @@ final class VMLifecycleCoordinator {
                 DownloadService.destinationKey(for: persisted)
                     != DownloadService.destinationKey(for: downloadDestination)
             {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "downloadLinuxImage: the resolution moved to '\(image.filename, privacy: .public)', downloading to '\(downloadDestination.lastPathComponent, privacy: .public)'"
                 )
                 // The partial at the abandoned path belongs to an image
@@ -821,8 +821,8 @@ final class VMLifecycleCoordinator {
                 operation.operation.permit)
             instance.setupState = nil
         } catch is CancellationError {
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Linux image download cancelled for '\(instance.name, privacy: .public)'")
             // Re-thrown as the cancel it is, which rests the VM at
             // .initialBoot rather than chaining a boot.
@@ -830,15 +830,15 @@ final class VMLifecycleCoordinator {
         } catch let error as NSError
             where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
         {
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Linux image download cancelled for '\(instance.name, privacy: .public)'")
             // Normalize to CancellationError for consistent caller-side handling.
             throw CancellationError()
         } catch {
             let nsError = error as NSError
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Linux image download failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
             )
             throw error
@@ -857,8 +857,8 @@ final class VMLifecycleCoordinator {
         at destination: URL, leftBy instance: VMInstance, permanently: Bool
     ) {
         guard !instance.anotherSetupDownloads(into: destination) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Kept the in-progress download '\(destination.lastPathComponent, privacy: .public)' that '\(instance.name, privacy: .public)' left — another VM's setup downloads into it"
             )
             return
@@ -874,13 +874,13 @@ final class VMLifecycleCoordinator {
     private func discardUnverifiedImage(at destination: URL) {
         do {
             try fileSystem.trashItem(at: destination)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Trashed '\(destination.lastPathComponent, privacy: .public)' — it did not match its expected checksum"
             )
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to trash the unverified image at '\(destination.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -919,8 +919,8 @@ final class VMLifecycleCoordinator {
             config.linuxInstallContext = nil
             config.installedImage = installedImage
         }.get()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Attached installer image '\(destination.lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)'"
         )
     }
@@ -1041,8 +1041,8 @@ final class VMLifecycleCoordinator {
         // leaving the device captured by a VM nothing holds. Hand it back.
         guard context.reservation.hold(attached) else {
             try? await usbAccessoryService.detach(deviceID: attached.deviceID, from: instance)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Released USB accessory \(attached.accessory.displayName, privacy: .public): '\(instance.name, privacy: .public)' lost its session under the attach"
             )
             throw USBAccessoryError.noVirtualMachine
@@ -1073,8 +1073,8 @@ final class VMLifecycleCoordinator {
             do {
                 try await usbAccessoryService.detach(deviceID: deviceID, from: instance)
             } catch USBAccessoryError.deviceNotFound {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "USB accessory \(deviceID.uuidString, privacy: .public) was already off '\(instance.name, privacy: .public)'"
                 )
             }

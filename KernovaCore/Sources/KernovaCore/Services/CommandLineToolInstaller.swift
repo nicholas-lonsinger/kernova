@@ -66,13 +66,13 @@ package struct CommandLineToolInstaller: Sendable {
         do {
             try manager.createSymbolicLink(at: destination, withDestinationURL: bundledToolURL)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Could not install the command line tool at \(path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw InstallFailure.unwritable(error.localizedDescription)
         }
-        #log(Self.logger, .notice, "Installed the command line tool at \(path, privacy: .public)")
+        Self.logger.log(.notice, "Installed the command line tool at \(path, privacy: .public)")
     }
 
     /// What is already at a destination.

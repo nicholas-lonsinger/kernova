@@ -356,8 +356,8 @@ package final class VMCommandCore {
         _ reason: VMAdmission.Refusal, on instance: VMInstance, verb: VMVerb?
     ) -> CommandError {
         let error = commandError(for: reason, on: instance, verb: verb)
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Refused \(verb?.rawValue ?? "an affordance", privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
         )
         return error
@@ -489,8 +489,8 @@ package final class VMCommandCore {
     /// never wired one owes.
     func requireSourceAuthority(_ verb: VMVerb) throws -> any SandboxSourceAuthorizing {
         guard let sourceAuthority else {
-            #log(
-                logger, .fault,
+            logger.log(
+                .fault,
                 "No sandbox source authority is wired; \(String(describing: verb), privacy: .public) cannot reach a named path"
             )
             assertionFailure("No sandbox source authority is wired for \(verb)")
@@ -546,8 +546,8 @@ package final class VMCommandCore {
         _ write: (borrowing VMEditPermit) throws -> T
     ) throws -> T {
         guard let classes = capability.editClasses else {
-            #log(
-                logger, .fault,
+            logger.log(
+                .fault,
                 "\(String(describing: capability), privacy: .public) names no edit class")
             assertionFailure("\(capability) names no edit class")
             throw invalidState(instance)
@@ -868,8 +868,8 @@ package final class VMCommandCore {
     /// told about: the app is on its way out.
     func report(_ failure: CommandError, on instance: VMInstance?) {
         guard failure != .terminating else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Not reporting a refusal on '\(instance?.name ?? "", privacy: .public)': the app is terminating"
             )
             return

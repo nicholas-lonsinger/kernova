@@ -1,5 +1,4 @@
 // swift-tools-version: 6.2
-import CompilerPluginSupport
 import PackageDescription
 
 // Project targets take these from Config/Base.xcconfig; a package target never
@@ -56,9 +55,6 @@ let package = Package(
         // Linked by KernovaCLICore alone — neither the app nor the guest agent
         // gains a dependency.
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
-        // Backs the `#log` macro's implementation. The plugin it builds runs on
-        // the build host and nothing it links reaches a shipped binary.
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0"),
     ],
     targets: [
         .target(
@@ -71,30 +67,19 @@ let package = Package(
             swiftSettings: sharedSwiftSettings,
             plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
         ),
-        // The one logging spelling: `KernovaLogger` plus the `#log` macro that
-        // is the only way to emit through it. Its own target so the relaunch
-        // helper can link it without linking everything else, and so it stays
-        // clear of SwiftProtobuf — `KernovaLogLevel` is what a forwarded record
-        // carries, and `VsockHostConnection` maps it to the proto enum.
+        // The one logging spelling: `KernovaLogger` and the `LogMessage` its
+        // `log(_:_:)` takes. Its own target so the relaunch helper can link it
+        // without linking everything else, and so it stays clear of
+        // SwiftProtobuf — `KernovaLogLevel` is what a forwarded record carries,
+        // and `VsockHostConnection` maps it to the proto enum.
         .target(
             name: "KernovaLogging",
-            dependencies: ["KernovaLoggingMacros", "KernovaSynchronization"],
+            dependencies: ["KernovaSynchronization"],
             swiftSettings: sharedSwiftSettings
         ),
         // A leaf, so `KernovaLogging` can hold its process sink in a `Locked`.
         .target(
             name: "KernovaSynchronization",
-            swiftSettings: sharedSwiftSettings
-        ),
-        .macro(
-            name: "KernovaLoggingMacros",
-            dependencies: [
-                .product(name: "SwiftSyntax", package: "swift-syntax"),
-                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
-                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
-                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
-                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
-            ],
             swiftSettings: sharedSwiftSettings
         ),
         // Reading Launch Services' registry and waiting for it to let an app
@@ -127,8 +112,7 @@ let package = Package(
             name: "KernovaKitTests",
             dependencies: [
                 "KernovaKit", "KernovaAppRegistry", "KernovaCLICore", "KernovaTestSupport",
-                "KernovaLogging", "KernovaLoggingMacros", "KernovaSynchronization",
-                .product(name: "SwiftSyntaxMacrosGenericTestSupport", package: "swift-syntax"),
+                "KernovaLogging", "KernovaSynchronization",
             ],
             swiftSettings: sharedSwiftSettings
         ),

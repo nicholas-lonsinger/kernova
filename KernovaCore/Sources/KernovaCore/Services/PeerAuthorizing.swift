@@ -78,8 +78,8 @@ package struct SameTeamPeerAuthorizer: PeerAuthorizing {
         // hardcoded team would admit the wrong peers in any build signed with
         // another one.
         guard let team = Self.ownTeamIdentifier() else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "This build's signature names no team — no peer can be authorized, so the command socket stays closed"
             )
             return nil
@@ -93,8 +93,8 @@ package struct SameTeamPeerAuthorizer: PeerAuthorizing {
         var peer: SecCode?
         let lookup = SecCodeCopyGuestWithAttributes(nil, attributes, [], &peer)
         guard lookup == errSecSuccess, let peer else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "A connecting peer could not be resolved to a code identity: OSStatus \(lookup, privacy: .public)"
             )
             return .refused(.unidentified)
@@ -104,8 +104,8 @@ package struct SameTeamPeerAuthorizer: PeerAuthorizing {
         let built = SecRequirementCreateWithString(
             Self.anchorRequirement as CFString, [], &requirement)
         guard built == errSecSuccess, let requirement else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Could not build the anchor requirement: OSStatus \(built, privacy: .public)")
             assertionFailure("Could not build the anchor requirement: OSStatus \(built)")
             // No check ran, so the signature and the team are both unread: the
@@ -114,15 +114,15 @@ package struct SameTeamPeerAuthorizer: PeerAuthorizing {
         }
         let validity = SecCodeCheckValidity(peer, [], requirement)
         guard validity == errSecSuccess else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Refused a connecting peer that does not chain to an Apple root: OSStatus \(validity, privacy: .public)"
             )
             return .refused(.notValidlySigned)
         }
 
         guard Self.isSameTeam(peer: Self.teamIdentifier(of: peer), own: ownTeam) else {
-            #log(Self.logger, .notice, "Refused a connecting peer signed by a different team")
+            Self.logger.log(.notice, "Refused a connecting peer signed by a different team")
             return .refused(.differentTeam)
         }
         return .authorized

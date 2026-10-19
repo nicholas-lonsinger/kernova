@@ -484,8 +484,8 @@ final class VsockFeatureCoordinator {
             }
 
             guard let live = self, live.isLive(session) else { return }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
             )
         }

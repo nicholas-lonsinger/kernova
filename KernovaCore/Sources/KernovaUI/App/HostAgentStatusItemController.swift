@@ -185,7 +185,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Stops the operation the readout on screen was rendered for.
     private func cancelTransfer(_ id: ClipboardTransferOperationID) {
         guard !AppClipboardReadout.cancel(id, in: viewModel.instances) else { return }
-        #log(Self.logger, .notice, "Cancel found no live transfer for the readout it was shown on")
+        Self.logger.log(.notice, "Cancel found no live transfer for the readout it was shown on")
     }
 
     /// Applies the readout across every VM.
@@ -243,8 +243,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 transientPopover.show(
                     content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
             else { continue }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Showing a clipboard notice for '\(instance.name, privacy: .public)'")
         }
     }
@@ -259,14 +259,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         let content = MenuBarQuitReminderViewController(onStopReminding: { [weak self] in
             guard let self else { return }
             self.preferences.menuBarQuitReminderDismissed = true
-            #log(Self.logger, .info, "Soft-quit menu-bar reminder silenced by the user")
+            Self.logger.log(.info, "Soft-quit menu-bar reminder silenced by the user")
             self.transientPopover.dismiss()
         })
         guard
             transientPopover.show(
                 content, for: Self.softQuitReminderDuration, describedAs: "Soft-quit reminder")
         else { return }
-        #log(Self.logger, .debug, "Showing soft-quit menu-bar reminder")
+        Self.logger.log(.debug, "Showing soft-quit menu-bar reminder")
     }
 
     // MARK: - Icon / tooltip
@@ -288,8 +288,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         guard
             let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Missing SF Symbol '\(symbol, privacy: .public)' for status item")
             assertionFailure("Missing SF Symbol '\(symbol)'")
             statusItem.button?.title = "K"

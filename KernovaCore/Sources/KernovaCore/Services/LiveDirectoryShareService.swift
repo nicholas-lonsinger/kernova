@@ -21,8 +21,8 @@ final class LiveDirectoryShareService {
             let session = context.session
         else {
             opened.values.forEach { $0.release() }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Dropping a share swap for '\(instance.name, privacy: .public)': session \(sessionID, privacy: .public) is no longer live"
             )
             return
@@ -36,8 +36,8 @@ final class LiveDirectoryShareService {
                 for id in swap.released { fileAccess.releaseAttachmentScope(id: id) }
             }
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Swapped the shares of '\(instance.name, privacy: .public)' to \(swap.share.entries.count, privacy: .public) folder(s)"
         )
     }

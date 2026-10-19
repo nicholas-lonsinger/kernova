@@ -61,7 +61,7 @@ package struct BundledGuestAgent: Sendable {
                 withExtension: versionResourceExtension
             )
         else {
-            #log(logger, .fault, "KernovaMacOSAgentVersion.txt missing from app bundle")
+            logger.log(.fault, "KernovaMacOSAgentVersion.txt missing from app bundle")
             assertionFailure(
                 "KernovaMacOSAgentVersion.txt missing — check 'Package Guest Agent DMG' build phase outputs")
             return nil
@@ -70,14 +70,14 @@ package struct BundledGuestAgent: Sendable {
             let raw = try String(contentsOf: url, encoding: .utf8)
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
-                #log(logger, .fault, "KernovaMacOSAgentVersion.txt is empty")
+                logger.log(.fault, "KernovaMacOSAgentVersion.txt is empty")
                 assertionFailure("KernovaMacOSAgentVersion.txt is empty")
                 return nil
             }
             return trimmed
         } catch {
-            #log(
-                logger, .fault,
+            logger.log(
+                .fault,
                 "Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription, privacy: .public)")
             assertionFailure("Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription)")
             return nil

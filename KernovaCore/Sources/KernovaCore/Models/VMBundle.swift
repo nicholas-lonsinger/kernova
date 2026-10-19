@@ -103,15 +103,15 @@ package final class VMBundle {
                 do {
                     holder = try bundle.lockRun()
                 } catch {
-                    #log(
-                        VMBundle.logger, .warning,
+                    VMBundle.logger.log(
+                        .warning,
                         "Could not lock '\(bundleURL.lastPathComponent, privacy: .public)' to reclaim its revert staging: \(error.localizedDescription, privacy: .public)"
                     )
                     continue
                 }
                 guard let holder else {
-                    #log(
-                        VMBundle.logger, .notice,
+                    VMBundle.logger.log(
+                        .notice,
                         "Left the revert staging of '\(bundleURL.lastPathComponent, privacy: .public)' in place: another copy of Kernova holds it"
                     )
                     continue
@@ -159,8 +159,8 @@ package final class VMBundle {
             throw error
         }
         for unreadable in read.unreadableFiles {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Re-read '\(read.configuration.name, privacy: .public)' leaving \(unreadable.fileName, privacy: .public) in place: \(unreadable.summary, privacy: .public)"
             )
         }
@@ -545,8 +545,8 @@ extension VMBundle {
         do {
             try fileWorker.removeSaveFile(bundleURL: url)
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to remove the save file of '\(self.configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

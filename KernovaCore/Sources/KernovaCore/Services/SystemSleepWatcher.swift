@@ -68,11 +68,11 @@ package final class SystemSleepWatcher {
         handlers = (onSleep, onWake)
         if let registration = RootPowerDomainRegistration(relayingTo: self) {
             source = .rootPowerDomain(registration)
-            #log(Self.logger, .notice, "Registered for system power; sleep waits for the sleep handler")
+            Self.logger.log(.notice, "Registered for system power; sleep waits for the sleep handler")
         } else {
             source = .notifications(observeNotifications())
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "The system refused the power registration; sleep and wake arrive as notifications, and sleep does not wait for the sleep handler"
             )
         }
@@ -90,12 +90,12 @@ package final class SystemSleepWatcher {
         case SystemPowerMessage.systemWillSleep:
             let sleep = HeldSleep(notificationID: notificationID)
             heldSleep = sleep
-            #log(Self.logger, .notice, "System will sleep — holding sleep for the sleep handler")
+            Self.logger.log(.notice, "System will sleep — holding sleep for the sleep handler")
             deliverSleep { [weak self] in self?.allow(sleep) }
         case SystemPowerMessage.systemHasPoweredOn:
             if heldSleep != nil {
                 heldSleep = nil
-                #log(Self.logger, .notice, "System woke before the sleep handler allowed sleep")
+                Self.logger.log(.notice, "System woke before the sleep handler allowed sleep")
             }
             deliverWake()
         default:
@@ -108,14 +108,14 @@ package final class SystemSleepWatcher {
         guard heldSleep === sleep, case .rootPowerDomain(let registration) = source else { return }
         heldSleep = nil
         IOAllowPowerChange(registration.connection, sleep.notificationID)
-        #log(Self.logger, .notice, "Allowed system sleep")
+        Self.logger.log(.notice, "Allowed system sleep")
     }
 
     // MARK: - Notifications
 
     private func observeNotifications() -> [HostNotification.Observation] {
         let sleep = systemWillSleep.observe { [weak self] in
-            #log(Self.logger, .notice, "System will sleep — nothing holds it")
+            Self.logger.log(.notice, "System will sleep — nothing holds it")
             self?.deliverSleep {}
         }
         let wake = systemDidWake.observe { [weak self] in self?.deliverWake() }
@@ -130,7 +130,7 @@ package final class SystemSleepWatcher {
     }
 
     private func deliverWake() {
-        #log(Self.logger, .notice, "System did wake — invoking wake handler")
+        Self.logger.log(.notice, "System did wake — invoking wake handler")
         handlers?.wake()
     }
 }

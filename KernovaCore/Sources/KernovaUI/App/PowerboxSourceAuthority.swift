@@ -34,8 +34,8 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         guard !FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
             return url
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
         // A request arriving from a terminal has no window of its own, and a
         // panel ordered in behind the app that asked has asked nobody anything.

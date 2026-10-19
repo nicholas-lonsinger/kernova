@@ -64,14 +64,14 @@ package struct LoginItemService {
         do {
             if enabled { try registration.register() } else { try registration.unregister() }
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "\(enabled ? "register" : "unregister", privacy: .public)() threw: \(error.localizedDescription, privacy: .public)"
             )
         }
         let status = registration.status
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Login item \(enabled ? "enable" : "disable", privacy: .public) → status=\(String(describing: status), privacy: .public)"
         )
         return status

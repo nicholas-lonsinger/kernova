@@ -160,8 +160,8 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
                         == keyAELaunchedAsLogInItem
             } ?? false
         let isHiddenLaunch = presence.isHidden
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(self.presence.isActive, privacy: .public)"
         )
 
@@ -297,8 +297,8 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
             // command also works on a fresh install with an empty library.
             NSWorkspace.shared.open(try viewModel.storageService.vmsDirectory)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "openVMsFolder: failed to resolve VMs directory: \(error.localizedDescription, privacy: .public)")
         }
     }

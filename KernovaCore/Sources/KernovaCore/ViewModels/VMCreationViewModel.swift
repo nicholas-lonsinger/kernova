@@ -545,7 +545,7 @@ package final class VMCreationViewModel {
                 for: .downloadsDirectory, in: .userDomainMask
             ).first
         else {
-            #log(logger, .fault, "No Downloads directory in userDomainMask")
+            logger.log(.fault, "No Downloads directory in userDomainMask")
             assertionFailure("FileManager returned no Downloads directory")
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Downloads")
@@ -629,8 +629,8 @@ package final class VMCreationViewModel {
                 inspection = inspected.isSupportedOnThisHost ? .usable(inspected) : .unusable(.unsupported)
             } catch {
                 if Task.isCancelled { return }
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Could not inspect local restore image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 inspection = .unusable((error as? LocalRestoreImageError) ?? .unreadable)
@@ -696,8 +696,8 @@ package final class VMCreationViewModel {
             do {
                 image = try await ipswService.fetchLatestRestoreImage()
             } catch {
-                #log(
-                    Self.logger, .warning,
+                Self.logger.log(
+                    .warning,
                     "Could not look up the latest restore image: \(error.localizedDescription, privacy: .public)"
                 )
                 return

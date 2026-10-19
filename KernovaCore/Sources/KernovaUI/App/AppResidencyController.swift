@@ -145,7 +145,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// Answers one `kernova:` link delivered to `application(_:open:)`.
     func openAutomationLink(_ url: URL) {
         guard let urlGateway else {
-            #log(Self.logger, .warning, "A Kernova link arrived before the automation doors opened")
+            Self.logger.log(.warning, "A Kernova link arrived before the automation doors opened")
             return
         }
         Task { await urlGateway.handle(url) }
@@ -179,7 +179,7 @@ final class AppResidencyController: WindowResidencyHosting {
             configuration: Self.buildConfiguration,
             vmNetworkingEntitled: viewModel.entitlements.hasVMNetworking,
             launch: provenance)
-        #log(Self.logger, .notice, "Kernova resident app ready — \(line, privacy: .public)")
+        Self.logger.log(.notice, "Kernova resident app ready — \(line, privacy: .public)")
         syncStatusItem()
         observeResidencyPreference()
 
@@ -350,8 +350,8 @@ final class AppResidencyController: WindowResidencyHosting {
             self.leaveHiddenState()
             let presentation = AppResidencyPolicy.reopenPresentation(
                 hasVisibleUserWindow: self.hasVisibleUserWindow)
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Reopen: wasHidden=\(wasHidden, privacy: .public) presentation=\(String(describing: presentation), privacy: .public)"
             )
             switch presentation {
@@ -378,8 +378,8 @@ final class AppResidencyController: WindowResidencyHosting {
     private func summonUserInterface(showing target: SummonTarget) {
         let event = NSApp.currentEvent
         let eventAge = event.map { ProcessInfo.processInfo.systemUptime - $0.timestamp }
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Summon: isActive=\(self.presence.isActive, privacy: .public) hasCurrentEvent=\(event != nil, privacy: .public) eventAge=\(eventAge.map { String(format: "%.3f", $0) } ?? "n/a", privacy: .public)"
         )
         presentSummonedInterface(showing: target, arrival: .summoned)
@@ -476,7 +476,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// window closed during the hide.
     private func leaveHiddenState() {
         guard presence.isHidden else { return }
-        #log(Self.logger, .notice, "Surfacing while hidden — unhiding")
+        Self.logger.log(.notice, "Surfacing while hidden — unhiding")
         presence.unhideWithoutActivation()
     }
 
@@ -587,7 +587,7 @@ final class AppResidencyController: WindowResidencyHosting {
         case .waitForUnhide:
             break
         case .quit:
-            #log(Self.logger, .notice, "Last window closed with the app set to quit — terminating")
+            Self.logger.log(.notice, "Last window closed with the app set to quit — terminating")
             host?.requestFullQuit()
         }
     }
@@ -616,10 +616,10 @@ final class AppResidencyController: WindowResidencyHosting {
         case .showDockIcon:
             setActivationPolicy(.regular)
         case .goHeadless:
-            #log(Self.logger, .notice, "Unhidden with no window left — dropping to the status item")
+            Self.logger.log(.notice, "Unhidden with no window left — dropping to the status item")
             setActivationPolicy(.accessory)
         case .presentLibrary:
-            #log(Self.logger, .notice, "Unhidden with no window left — showing the library")
+            Self.logger.log(.notice, "Unhidden with no window left — showing the library")
             presentSummonedInterface()
         }
     }
@@ -637,8 +637,8 @@ final class AppResidencyController: WindowResidencyHosting {
         let current = presence.activationPolicy
         guard current != policy else { return }
         presence.setActivationPolicy(policy)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Activation policy \(current.rawValue, privacy: .public) → \(policy.rawValue, privacy: .public) (hasVisibleWindow=\(self.hasVisibleUserWindow, privacy: .public))"
         )
     }

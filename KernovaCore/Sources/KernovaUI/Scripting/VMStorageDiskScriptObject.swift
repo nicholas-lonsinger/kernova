@@ -36,8 +36,8 @@ package final class VMStorageDiskScriptObject: NSObject {
     /// a programming error rather than a disk a script can provoke.
     @objc var kind: NSNumber? {
         guard let kind = VMScriptStorageDiskKind(wireName: disk.kind) else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Storage disk kind '\(self.disk.kind, privacy: .public)' has no scripting term")
             assertionFailure("Storage disk kind '\(disk.kind)' has no scripting term")
             return nil
@@ -68,7 +68,7 @@ package final class VMStorageDiskScriptObject: NSObject {
     /// `virtual machine id "…"`, which no rename or reorder invalidates.
     package nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let virtualMachine = NSScriptClassDescription(for: VMScriptObject.self) else {
-            #log(Self.logger, .fault, "VMScriptObject has no scripting class description")
+            Self.logger.log(.fault, "VMScriptObject has no scripting class description")
             assertionFailure("VMScriptObject has no scripting class description")
             return nil
         }

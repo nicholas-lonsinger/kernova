@@ -43,8 +43,8 @@ package struct DropPromiseStaging {
         } catch CocoaError.fileNoSuchFile {
             // Already released.
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not release a settled drop's staged files: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -59,8 +59,8 @@ package struct DropPromiseStaging {
         do {
             try root.createDirectory(at: directory)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Could not stage a dropped file promise: \(error.localizedDescription, privacy: .public)"
             )
             return nil

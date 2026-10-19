@@ -31,7 +31,7 @@ package struct AppBundleProducts: Sendable {
         self.hostVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "host"
         self.buildNumber = bundle.infoDictionary?["CFBundleVersion"] as? String
         if buildNumber == nil {
-            #log(Self.logger, .fault, "CFBundleVersion not found in Info.plist")
+            Self.logger.log(.fault, "CFBundleVersion not found in Info.plist")
             assertionFailure("CFBundleVersion not found in Info.plist")
         }
         self.guestAgent = BundledGuestAgent(bundle: bundle)

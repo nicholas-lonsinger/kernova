@@ -454,8 +454,8 @@ package final class VMInstance {
     ) -> VMSessionContext? {
         guard let sessionContext, liveSessionID == sessionID else {
             let device = deviceID.map { " device \($0)" } ?? ""
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Dropping \(what, privacy: .public) for '\(self.name, privacy: .public)'\(device, privacy: .public): session \(sessionID, privacy: .public) is no longer live"
             )
             return nil
@@ -798,7 +798,7 @@ package final class VMInstance {
             relay?.forwardOutput(data)
         }
 
-        #log(Self.logger, .info, "Serial reading started for '\(self.name, privacy: .public)'")
+        Self.logger.log(.info, "Serial reading started for '\(self.name, privacy: .public)'")
     }
 
     /// Creates the per-session serial relay and, when enabled, starts it.
@@ -844,8 +844,8 @@ package final class VMInstance {
         case .linux:
             startSpiceClipboardService()
         case .macOS:
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
         }
     }
@@ -877,13 +877,13 @@ package final class VMInstance {
             let inputPipe = context.clipboardInputPipe,
             let outputPipe = context.clipboardOutputPipe
         else {
-            #log(Self.logger, .error, "SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
+            Self.logger.log(.error, "SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
             return
         }
         let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
         service.start()
         context.clipboardService = service
-        #log(Self.logger, .info, "SPICE clipboard service started for '\(self.name, privacy: .public)'")
+        Self.logger.log(.info, "SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
     // MARK: - Vsock Service Lifecycle
@@ -907,7 +907,7 @@ package final class VMInstance {
         // the teardown already walked — and there is no start to announce.
         guard self.session === session else { return }
 
-        #log(Self.logger, .info, "Vsock services started for '\(self.name, privacy: .public)'")
+        Self.logger.log(.info, "Vsock services started for '\(self.name, privacy: .public)'")
     }
 
     // MARK: - Agent Policy
@@ -1015,8 +1015,8 @@ package final class VMInstance {
 
         context.agentPostStartGeneration &+= 1
         let generation = context.agentPostStartGeneration
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Agent arrival watchdog armed for '\(self.name, privacy: .public)' (grace=\(grace, privacy: .public))"
         )
         // The context is captured weakly: a strong hold would keep this
@@ -1039,8 +1039,8 @@ package final class VMInstance {
                 armed.agentPostStartGeneration == generation
             else { return }
             if armed.vsock.control?.agentVersion == nil {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Guest agent expected (last seen \(self.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
                 // Set first: it is also what ``reportedGuestOSVersion`` reads
@@ -1142,8 +1142,8 @@ package final class VMInstance {
         do {
             try activity.edit(.observations, write)
         } catch {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Did not record \(String(describing: what), privacy: .public) for '\(self.name, privacy: .public)': \(String(describing: error), privacy: .public)"
             )
         }
@@ -1206,8 +1206,8 @@ package final class VMInstance {
         } else {
             sessionContext?.serialSocketRelay?.stop()
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
         )
     }

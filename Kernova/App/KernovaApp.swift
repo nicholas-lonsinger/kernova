@@ -39,8 +39,8 @@ enum KernovaApp {
         case .unavailable(let reason):
             return .failure(reason)
         case .alreadyHeld:
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Another process of this copy of Kernova is already running; this launch exits")
             exit(0)
         }
@@ -63,11 +63,11 @@ enum KernovaApp {
                 fileSystem: FileManager.default, platform: VirtualizationPlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
-                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: .host,
                 bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent,
                 isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
-                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: .host,
                 bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent),
             ipswService: IPSWService(),
             localImageInspector: LocalRestoreImageInspector(),

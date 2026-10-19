@@ -172,7 +172,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         guard let viewMenu, let sectionEnd = viewMenuSidebarSectionEnd else { return }
         let end = viewMenu.index(of: sectionEnd)
         guard end >= 0 else {
-            #log(Self.logger, .fault, "View menu sidebar-section separator is not in the View menu")
+            Self.logger.log(.fault, "View menu sidebar-section separator is not in the View menu")
             assertionFailure("View menu sidebar-section separator is not in the View menu")
             return
         }
@@ -258,7 +258,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
         let sectionStartIndex = appMenu.index(of: sectionStart)
         guard sectionStartIndex >= 0 else {
-            #log(Self.logger, .fault, "App menu quit-section separator is not in the app menu")
+            Self.logger.log(.fault, "App menu quit-section separator is not in the app menu")
             assertionFailure("App menu quit-section separator is not in the app menu")
             return
         }

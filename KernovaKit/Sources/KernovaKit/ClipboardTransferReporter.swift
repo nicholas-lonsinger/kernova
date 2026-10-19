@@ -263,8 +263,8 @@ public final class ClipboardTransferReporter {
         absorbsRepeats = true
         failureAwaitsDisplacement = finish.failure != nil
         if let failure = finish.failure, finish.gesture.isMadeHere {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "\(String(describing: finish.gesture), privacy: .public) from '\(finish.peerName, privacy: .public)' failed: \(String(describing: failure), privacy: .public)"
             )
         }

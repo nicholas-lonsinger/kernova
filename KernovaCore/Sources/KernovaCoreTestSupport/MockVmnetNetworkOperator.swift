@@ -10,22 +10,34 @@ import Testing
 /// NetworkSharing daemon that fails in a build without
 /// `com.apple.vm.networking`.
 ///
-/// Every handle wraps a fabricated pointer, distinct per call so a test can
-/// tell a cached handle from a freshly materialized one.
+/// Every handle owns a stand-in object in place of a network, which the
+/// handle's own release frees and reports here. The stand-ins of networks
+/// alive at once are distinct, so a test can tell a cached handle from a
+/// freshly materialized one; a released stand-in's address can recur.
 final class MockVmnetNetworkOperator: VmnetNetworkOperating {
     private struct State {
         var subnet = IPv4Subnet.scripted("192.168.213.0")
         var createNetworkError: (any Error)?
         var createdKinds: [VmnetNetworkKind] = []
-        var released: [VmnetNetworkHandle] = []
-        var fabricated: [VmnetNetworkHandle] = []
+        var released: [UInt] = []
+    }
+
+    /// Reports its own address to `operations` when the last reference goes.
+    /// Its `deinit` takes the mock's lock, so no handle is dropped under it.
+    private final class StandInNetwork {
+        let operations: MockVmnetNetworkOperator
+
+        init(operations: MockVmnetNetworkOperator) {
+            self.operations = operations
+        }
+
+        deinit {
+            let address = UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque())
+            operations.state.withLock { $0.released.append(address) }
+        }
     }
 
     private let state = Mutex(State())
-
-    deinit {
-        state.withLock { $0.fabricated }.forEach { UnsafeMutableRawPointer($0.network).deallocate() }
-    }
 
     /// Sets the subnet every later create reports.
     func setSubnet(_ subnet: IPv4Subnet) {
@@ -40,25 +52,22 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
     /// Every kind a create was asked for, in call order.
     var createdKinds: [VmnetNetworkKind] { state.withLock { $0.createdKinds } }
 
-    /// Every network given back, in call order.
-    var releasedNetworks: [OpaquePointer] { state.withLock { $0.released }.map(\.network) }
+    /// Every network released, in the order its last holder let go.
+    var releasedNetworks: [OpaquePointer] {
+        state.withLock { $0.released }.compactMap { OpaquePointer(bitPattern: $0) }
+    }
 
     func createNetwork(_ kind: VmnetNetworkKind) throws -> (
         handle: VmnetNetworkHandle, subnet: IPv4Subnet
     ) {
-        try state.withLock { state in
+        let subnet = try state.withLock { state in
             state.createdKinds.append(kind)
             if let error = state.createNetworkError { throw error }
-            let handle = VmnetNetworkHandle(
-                network: OpaquePointer(UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)))
-            state.fabricated.append(handle)
-            return (handle, state.subnet)
+            return state.subnet
         }
-    }
-
-    /// Records the release; the fabricated pointer is freed with the mock.
-    func releaseNetwork(_ handle: VmnetNetworkHandle) {
-        state.withLock { $0.released.append(handle) }
+        let standIn = StandInNetwork(operations: self)
+        let handle = VmnetNetworkHandle(adopting: OpaquePointer(Unmanaged.passRetained(standIn).toOpaque()))
+        return (handle, subnet)
     }
 }
 

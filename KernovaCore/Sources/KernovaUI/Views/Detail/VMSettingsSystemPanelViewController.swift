@@ -541,8 +541,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     ) where Mode.RawValue == String {
         guard let index = popUp.itemArray.firstIndex(where: { ($0.representedObject as? Mode) == mode })
         else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "No popup item for \(what, privacy: .public) mode '\(mode.rawValue, privacy: .public)'")
             assertionFailure("No popup item for \(what) mode: \(mode.rawValue)")
             return
@@ -681,7 +681,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         guard
             let mode = inputDevicesPopUp.selectedItem?.representedObject as? VMInputDeviceMode
         else {
-            #log(Self.logger, .fault, "Input devices popup selection carries no mode")
+            Self.logger.log(.fault, "Input devices popup selection carries no mode")
             assertionFailure("Input devices popup selection carries no mode")
             return
         }
@@ -692,7 +692,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         guard
             let mode = systemKeysPopUp.selectedItem?.representedObject as? VMSystemKeyForwarding
         else {
-            #log(Self.logger, .fault, "System keys popup selection carries no mode")
+            Self.logger.log(.fault, "System keys popup selection carries no mode")
             assertionFailure("System keys popup selection carries no mode")
             return
         }

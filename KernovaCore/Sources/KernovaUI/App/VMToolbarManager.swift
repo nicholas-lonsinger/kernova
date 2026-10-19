@@ -265,7 +265,7 @@ final class VMToolbarManager: NSObject {
     func updateToolbarItems(in toolbar: NSToolbar) {
         let instance = instanceProvider()
         if instance == nil {
-            #log(Self.logger, .debug, "updateToolbarItems: no instance available")
+            Self.logger.log(.debug, "updateToolbarItems: no instance available")
         }
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateItem(
@@ -335,7 +335,7 @@ final class VMToolbarManager: NSObject {
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
         else { return }
         guard let group = item as? NSToolbarItemGroup, group.subitems.count == 3 else {
-            #log(Self.logger, .warning, "updateLifecycleGroup: lifecycle group malformed — wrong type or subitem count")
+            Self.logger.log(.warning, "updateLifecycleGroup: lifecycle group malformed — wrong type or subitem count")
             return
         }
 
@@ -508,8 +508,8 @@ final class VMToolbarManager: NSObject {
 
     @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
         guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "lifecycleAction: unexpected selectedIndex \(group.selectedIndex, privacy: .public)")
             return
         }

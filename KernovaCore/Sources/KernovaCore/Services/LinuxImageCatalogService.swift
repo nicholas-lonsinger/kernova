@@ -29,8 +29,8 @@ package struct LinuxImageCatalogService {
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Bundled Linux image catalog '\(Self.resourceName, privacy: .public).\(Self.resourceExtension, privacy: .public)' is missing or unreadable"
             )
             assertionFailure(
@@ -43,8 +43,8 @@ package struct LinuxImageCatalogService {
 
         let result = Self.parse(data)
         for rejection in result.rejections {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Dropping Linux image catalog entry: \(rejection.description, privacy: .public)")
             assertionFailure("Dropping Linux image catalog entry: \(rejection.description)")
         }

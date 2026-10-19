@@ -68,8 +68,8 @@ final class ClipboardImagePreviewView: NSView {
     /// falls back to the summary view.
     func configure(data: Data, uti: String) -> Bool {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not read image preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
             )
             imageView.image = nil
@@ -85,8 +85,8 @@ final class ClipboardImagePreviewView: NSView {
     /// is missing or not a decodable image — the caller falls back to a file chip.
     func configure(url: URL, uti: String) -> Bool {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not read image preview from file (uti=\(uti, privacy: .public))")
             imageView.image = nil
             return false
@@ -103,8 +103,8 @@ final class ClipboardImagePreviewView: NSView {
         ]
         guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Could not decode image preview (uti=\(uti, privacy: .public))")
             imageView.image = nil
             return false

@@ -221,8 +221,8 @@ final class VMDisplayBackingView: NSView {
             // first if it registered types of its own. It does not today, and
             // this is the line that says so if that ever changes.
             if !machineView.registeredDraggedTypes.isEmpty {
-                #log(
-                    Self.logger, .fault,
+                Self.logger.log(
+                    .fault,
                     "VZVirtualMachineView registers dragged types — display drops will not reach Kernova"
                 )
                 assertionFailure("VZVirtualMachineView registers dragged types")
@@ -377,14 +377,14 @@ final class VMDisplayBackingView: NSView {
             guard onDropFiles(files, directory) else {
                 // The VM stopped taking drops while the source was still
                 // writing; the service that would report it is already gone.
-                #log(Self.logger, .warning, "A promise drag's files landed after the VM stopped taking them")
+                Self.logger.log(.warning, "A promise drag's files landed after the VM stopped taking them")
                 DropPromiseStaging.release(directory)
                 return
             }
             collection.stagingWasTakenOver()
         case .failed(let error):
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
             if collection.canReleaseStaging { DropPromiseStaging.release(directory) }

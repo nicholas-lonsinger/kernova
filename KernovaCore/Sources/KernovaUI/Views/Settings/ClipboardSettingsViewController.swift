@@ -113,8 +113,8 @@ final class ClipboardSettingsViewController: NSViewController {
         // `AppPreferences` resolves onto the ladder on read, so a miss here means
         // the two lists have diverged, not that the user stored something odd.
         guard let index = ClipboardPasteLimit.choices.firstIndex(of: stored) else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Stored paste ceiling \(stored, privacy: .public) is not an offered choice")
             assertionFailure("Stored paste ceiling \(stored) is not an offered choice")
             renderInfo(for: stored)

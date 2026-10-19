@@ -12,7 +12,7 @@ package final class MacOSInstallService {
     private let configBuilder: ConfigurationBuilder
 
     package init(
-        vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
+        vmnetNetworks: VmnetNetworkService, vmnetAttachments: VmnetAttachmentMaker,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
         guestAgent: BundledGuestAgent
     ) {
@@ -38,7 +38,7 @@ package final class MacOSInstallService {
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
-        #log(Self.logger, .info, "Starting macOS installation for '\(instance.name, privacy: .public)'")
+        Self.logger.log(.info, "Starting macOS installation for '\(instance.name, privacy: .public)'")
 
         // Both VZ hand-offs below take the resolved URL — see `resolveRestoreImage`.
         let imageURL = try Self.resolveRestoreImage(at: restoreImageURL)
@@ -81,7 +81,7 @@ package final class MacOSInstallService {
 
         try Task.checkCancellation()
 
-        #log(Self.logger, .info, "Running macOS installer...")
+        Self.logger.log(.info, "Running macOS installer...")
         try await session.installMacOS(from: imageURL) { fraction in
             Task { @MainActor in
                 progressHandler(fraction)
@@ -93,16 +93,16 @@ package final class MacOSInstallService {
         // has stopped. `VZVirtualMachine.stop`'s completion is documented as
         // called once the VM has stopped or on error, so the session ends on
         // that rather than on a delegate event.
-        #log(Self.logger, .notice, "Stopping the installer's VM for '\(instance.name, privacy: .public)'")
+        Self.logger.log(.notice, "Stopping the installer's VM for '\(instance.name, privacy: .public)'")
         do {
             let outcome =
                 try await session.stopIfStoppable() ? "stopped" : "was not stoppable; treated as stopped"
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Installer's VM for '\(instance.name, privacy: .public)' \(outcome, privacy: .public)")
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Stopping the installer's VM for '\(instance.name, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)"
             )
             throw error
@@ -115,7 +115,7 @@ package final class MacOSInstallService {
 
         instance.setupState?.progress = .fraction(1.0)
 
-        #log(Self.logger, .info, "macOS installation completed for '\(instance.name, privacy: .public)'")
+        Self.logger.log(.info, "macOS installation completed for '\(instance.name, privacy: .public)'")
 
         return .macOSRestoreImage(
             version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
@@ -151,16 +151,16 @@ package final class MacOSInstallService {
                 .path(percentEncoded: false)
             switch error {
             case .notFound:
-                #log(logger, .error, "Restore image not found at '\(reportedPath, privacy: .private)'")
+                logger.log(.error, "Restore image not found at '\(reportedPath, privacy: .private)'")
                 throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
             case .unexpectedType:
-                #log(logger, .error, "Restore image path is a directory: '\(reportedPath, privacy: .private)'")
+                logger.log(.error, "Restore image path is a directory: '\(reportedPath, privacy: .private)'")
                 throw MacOSInstallError.restoreImageNotAFile(path: reportedPath)
             case .notReadable, .notWritable:
                 // `resolveFile` never throws `.notReadable`, and throws
                 // `.notWritable` only under `requireWritable`, which this call
                 // doesn't set — VZ opening the file is the readability test.
-                #log(logger, .fault, "Unexpected \(String(describing: error), privacy: .public) for restore image")
+                logger.log(.fault, "Unexpected \(String(describing: error), privacy: .public) for restore image")
                 assertionFailure("Unexpected PathValidation failure for restore image: \(error)")
                 throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
             }

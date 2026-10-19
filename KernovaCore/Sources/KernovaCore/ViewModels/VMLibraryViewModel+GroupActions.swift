@@ -10,8 +10,8 @@ extension VMLibraryViewModel {
         do {
             return try commands.concernedCounts(in: group)
         } catch {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "No group action counts for '\(group.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return nil

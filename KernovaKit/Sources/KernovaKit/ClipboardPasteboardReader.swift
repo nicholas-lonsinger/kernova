@@ -149,7 +149,7 @@ public enum ClipboardPasteboardReader {
             let summary = outcome.skipped
                 .map { "\($0.uti): \(String(describing: $0.reason))" }
                 .joined(separator: ", ")
-            #log(logger, .info, "Pasteboard snapshot skipped: \(summary, privacy: .public)")
+            logger.log(.info, "Pasteboard snapshot skipped: \(summary, privacy: .public)")
         }
 
         guard !outcome.content.isEmpty else {
