@@ -31,7 +31,7 @@ extension VMSession: NetworkAttachmentInstalling {}
 final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     private let session: any NetworkAttachmentInstalling
     private let vmnetNetworks: VmnetSessionNetworks
-    private let vmnetAttachments: any VmnetAttachmentMaking
+    private let vmnetAttachments: VmnetAttachmentMaker
 
     /// The plan the device is on: what `apply`/`detach` last installed,
     /// cleared when the framework reports the attachment disconnected.
@@ -45,7 +45,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
         session: any NetworkAttachmentInstalling,
         initialPlan: NetworkAttachmentPlan?,
         vmnetNetworks: VmnetSessionNetworks,
-        vmnetAttachments: any VmnetAttachmentMaking
+        vmnetAttachments: VmnetAttachmentMaker
     ) {
         self.session = session
         self.appliedPlan = initialPlan
@@ -89,11 +89,11 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
             // Non-blocking: an unmaterialized network refuses the apply, and
             // the coordinator materializes it off-main and reconciles when
             // it's ready.
-            guard vmnetNetworks.joinedNetworkIfMaterialized(for: selection) != nil else { return false }
-            make = { [vmnetNetworks, vmnetAttachments] in
-                vmnetNetworks.joinedNetworkIfMaterialized(for: selection)
-                    .map(vmnetAttachments.attachment(joining:))
-            }
+            guard let network = vmnetNetworks.joinedNetworkIfMaterialized(for: selection) else { return false }
+            // Built from the handle joined here: `joinedNetworkIfMaterialized`
+            // joins, so fetching again on the queue would re-join a network
+            // the VM may have left since, taking it off the one it moved to.
+            make = { [vmnetAttachments] in vmnetAttachments.attachment(joining: network) }
         }
         appliedPlan = plan
         appliedGeneration += 1

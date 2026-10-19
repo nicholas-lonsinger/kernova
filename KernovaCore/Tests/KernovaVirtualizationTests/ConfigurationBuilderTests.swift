@@ -1102,6 +1102,29 @@ struct ConfigurationBuilderTests {
         #expect(networks.operations.createdKinds == [.nat, .hostOnly])
     }
 
+    @Test("A built configuration keeps its vmnet network for as long as it lives")
+    func aBuiltConfigurationKeepsItsVmnetNetwork() throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        let networks = ScriptedVmnetNetworks()
+        let attachments = MockVmnetAttachments()
+        let builder = ConfigurationBuilder.testing(networks, attachments: attachments, entitlements: .entitled)
+        var config = VMConfiguration.testLinux()
+        config.networkMembership = .isolated
+
+        // The rest of the result, its session view among it, dies with the
+        // closure, so the service lets go of the network.
+        var configuration: VZVirtualMachineConfiguration? = try autoreleasepool {
+            try builder.assemble(from: config, bundleURL: bundleURL, validate: false).configuration
+        }
+        #expect(configuration != nil)
+        let own = try #require(attachments.madeNetworks.first)
+        #expect(networks.service.ipv4Subnet(for: VmnetNetworkID(kind: .nat, scope: .vm(config.id))) == nil)
+        #expect(networks.operations.releasedNetworks.isEmpty)
+
+        autoreleasepool { configuration = nil }
+        #expect(networks.operations.releasedNetworks == [own])
+    }
+
     @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
     @MainActor
     func everyPathFollowsJoinedNetwork() async throws {

@@ -6,18 +6,30 @@ import Virtualization
 import vmnet
 
 /// Builds the Virtualization attachment that joins a materialized vmnet
-/// network, abstracted so tests build one without a real vmnet network — the
-/// real attachment retains the network as a vmnet object.
-package protocol VmnetAttachmentMaking: Sendable {
-    /// A VZ attachment joining `handle`'s network.
-    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment
-}
+/// network.
+package struct VmnetAttachmentMaker: Sendable {
+    private let makeAttachment: @Sendable (OpaquePointer) -> VZNetworkDeviceAttachment
 
-/// Releases a vmnet object Swift imports as a bare `OpaquePointer`. The vmnet
-/// header documents these as `CFRelease()`-able; Swift refuses a direct
-/// `CFRelease` on an unmanaged import, so route through `Unmanaged`.
-func releaseVmnetRef(_ ref: OpaquePointer) {
-    Unmanaged<AnyObject>.fromOpaque(UnsafeRawPointer(ref)).release()
+    /// A maker building each attachment over a network object with
+    /// `makeAttachment` — tests pass one that needs no real vmnet network.
+    package init(_ makeAttachment: @escaping @Sendable (OpaquePointer) -> VZNetworkDeviceAttachment) {
+        self.makeAttachment = makeAttachment
+    }
+
+    /// The maker over the real `VZVmnetNetworkDeviceAttachment`.
+    package static let host = VmnetAttachmentMaker { VZVmnetNetworkDeviceAttachment(network: $0) }
+
+    /// A VZ attachment joining `handle`'s network, which holds `handle` until
+    /// it deallocates — `VZVmnetNetworkDeviceAttachment.h` declares `network`
+    /// with no ownership (`@property (readonly) vmnet_network_ref network;`).
+    package func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
+        let attachment = makeAttachment(handle.network)
+        // The handle's own address is unique while the association holds it,
+        // and a stored global key would need an unchecked concurrency escape.
+        objc_setAssociatedObject(
+            attachment, Unmanaged.passUnretained(handle).toOpaque(), handle, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return attachment
+    }
 }
 
 /// A vmnet call that failed.
@@ -34,9 +46,8 @@ struct VmnetOperationError: Error, LocalizedError {
     }
 }
 
-/// The real `VmnetNetworkOperating` and `VmnetAttachmentMaking`, over the
-/// macOS 26 vmnet network APIs.
-package struct HostVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentMaking {
+/// The real `VmnetNetworkOperating`, over the macOS 26 vmnet network APIs.
+package struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HostVmnetNetworkOperator")
 
     package init() {}
@@ -52,25 +63,18 @@ package struct HostVmnetNetworkOperator: VmnetNetworkOperating, VmnetAttachmentM
         guard let network = vmnet_network_create(configuration, &status) else {
             throw VmnetOperationError(operation: "vmnet_network_create", status: status)
         }
+        let handle = VmnetNetworkHandle(adopting: network)
 
         var address = in_addr()
         var mask = in_addr()
-        vmnet_network_get_ipv4_subnet(network, &address, &mask)
+        vmnet_network_get_ipv4_subnet(handle.network, &address, &mask)
         let subnet = IPv4Subnet(
             containing: UInt32(bigEndian: address.s_addr), mask: UInt32(bigEndian: mask.s_addr))
         Self.logger.log(
             .notice,
             "Created a \(kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public) mask \(IPv4Value.string(subnet.mask), privacy: .public)"
         )
-        return (VmnetNetworkHandle(network: network), subnet)
-    }
-
-    package func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
-        VZVmnetNetworkDeviceAttachment(network: handle.network)
-    }
-
-    package func releaseNetwork(_ handle: VmnetNetworkHandle) {
-        releaseVmnetRef(handle.network)
+        return (handle, subnet)
     }
 
     private func mode(for kind: VmnetNetworkKind) -> operating_modes_t {

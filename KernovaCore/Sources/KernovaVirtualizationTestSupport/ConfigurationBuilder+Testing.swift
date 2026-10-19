@@ -17,7 +17,7 @@ extension ConfigurationBuilder {
     ) -> ConfigurationBuilder {
         ConfigurationBuilder(
             bridgedInterfaces: HostBridgedInterfaceProvider(), vmnetNetworks: networks.service,
-            vmnetAttachments: attachments, entitlements: entitlements,
+            vmnetAttachments: attachments.maker, entitlements: entitlements,
             guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: guestAgentInstaller))
     }
 }
