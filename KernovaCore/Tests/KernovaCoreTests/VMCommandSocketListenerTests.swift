@@ -44,6 +44,7 @@ struct VMCommandSocketListenerTests {
     final class LibraryReadiness {
         private let gate = AsyncGate()
         private var landed: Bool
+        private var waiters = 0
 
         init(landed: Bool) { self.landed = landed }
 
@@ -55,7 +56,15 @@ struct VMCommandSocketListenerTests {
 
         /// What the listener awaits before answering a verb.
         func wait() async {
+            waiters += 1
+            gate.notify()
             try? await gate.wait { self.landed }
+        }
+
+        /// Returns once a verb is waiting on the read, throwing at the
+        /// backstop if none arrives.
+        func verbWaiting() async throws {
+            try await gate.wait { self.waiters > 0 }
         }
     }
 
@@ -151,13 +160,10 @@ struct VMCommandSocketListenerTests {
         defer { client.close() }
 
         try client.send(VMCommandRequest(verb: .list()))
-
-        client.observe(forAtMost: 2)
-        #expect(try await client.nextResponse() == nil)
+        try await harness.readiness.verbWaiting()
 
         // The read lands, and only now does the verb see the library it names:
         // a listing taken before the land would have answered empty.
-        client.observeWithBackstop()
         harness.wired.register(name: "Alpha")
         let library = harness.wired.core.list(.all)
         harness.readiness.land()
@@ -452,19 +458,6 @@ private final class TestCommandClient {
                 offset += written
             }
         }
-    }
-
-    /// Narrows the read deadline to `seconds`, for a negative assertion that
-    /// has to bound how long it watches.
-    func observe(forAtMost seconds: Int) {
-        var deadline = timeval(tv_sec: seconds, tv_usec: 0)
-        _ = setsockopt(
-            fd, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
-    }
-
-    /// Restores the full backstop deadline.
-    func observeWithBackstop() {
-        observe(forAtMost: Int(testWaitBackstop))
     }
 
     /// The next framed response, or `nil` at end of stream.

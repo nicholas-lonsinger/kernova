@@ -155,13 +155,9 @@ struct VMInstanceAgentReconnectTests {
 
     @Test("Pausing a VM disturbs neither the control channel nor the agent badge")
     func pausingLeavesTheAgentBadgeAlone() async throws {
-        // Scoped to what a production-cadence service can show in a short
-        // window: pausing tears nothing down synchronously and arms no grace
-        // clock, so the badge a user sees does not flinch when they pause.
-        //
-        // It does NOT cover the deadline being held while frozen — the first
-        // liveness tick is 5 s away at production cadences. That property needs
-        // injected windows and lives in
+        // Pausing tears nothing down and arms no grace clock, so the badge a
+        // user sees does not flinch when they pause. The liveness deadline held
+        // while frozen is the control service's own, pinned by
         // `VsockControlServiceTests.suspendedGuestSurvivesTerminateWindow`.
         let version = try bundledAgentVersion()
         let instance = makeInstance(agentVersion: version)
@@ -177,8 +173,6 @@ struct VMInstanceAgentReconnectTests {
 
         instance.activity.placeForTesting(.livePaused(sessionID: try #require(instance.liveSessionID)))
         #expect(instance.isLivePaused)
-
-        try await Task.sleep(for: .milliseconds(500))
         #expect(instance.vsockControlService?.isConnected == true)
         #expect(instance.agentPostStartTaskForTesting == nil)
         #expect(instance.agentExpectedButMissing == false)
