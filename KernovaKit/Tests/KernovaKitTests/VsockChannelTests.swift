@@ -233,6 +233,8 @@ struct VsockChannelTests {
             return
         }
         #expect(hello.serviceVersion == 2)
+        let afterSecond = try await nextFrameOrEnd(from: b)
+        #expect(afterSecond == nil)
     }
 
     @Test("A decode failure surfaces to the consumer as a thrown error")
