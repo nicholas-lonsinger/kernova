@@ -113,7 +113,7 @@ struct CLIVerbWireTests {
         listener.serve(answers)
 
         let printed = try command.output(for: try command.selector(), from: client)
-        return (listener.requests().map(\.verb), printed)
+        return (try listener.requests().map(\.verb), printed)
     }
 
     @Test("info --id on something that is not an identifier refuses as a usage error before it connects")

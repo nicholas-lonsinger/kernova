@@ -194,7 +194,7 @@ struct CLIWaitTests {
         // Ends the double's held-open read the way the tool exiting would, so
         // reading what it received is not queued behind that read.
         client.close()
-        return (ended, listener.requests().map(\.verb))
+        return (ended, try listener.requests().map(\.verb))
     }
 
     /// The library the subscription answers with before any event.

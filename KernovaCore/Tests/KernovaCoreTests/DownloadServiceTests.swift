@@ -1326,11 +1326,13 @@ struct DownloadServiceTests {
         // the whole body synchronously and the transfer would finalize and drop
         // its claim first. That run would answer `false` from the
         // destination-occupied check and pass with the claim honored or not.
-        let started = RequestGate()
-        let release = RequestGate()
+        let handlerCalls = RequestCounter()
+        let started = AsyncGate()
+        let release = DispatchSemaphore(value: 0)
         StubURLProtocol.setHandler { request in
-            started.signal()
-            release.waitOnThisThread()
+            handlerCalls.increment()
+            started.notify()
+            release.wait()
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
         defer { StubURLProtocol.setHandler(nil) }
@@ -1340,11 +1342,14 @@ struct DownloadServiceTests {
             try await service.download(
                 from: Self.remoteURL, to: destination, progressHandler: { _ in })
         }
-        await started.wait()
-        // Nothing is at the destination yet, so only the claim can refuse this.
-        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-        let adopted = await service.adoptExistingFile(at: source, as: destination)
-        release.signal()
+        let adopted: Bool
+        do {
+            defer { release.signal() }
+            try await started.wait { handlerCalls.value > 0 }
+            // Nothing is at the destination yet, so only the claim can refuse this.
+            #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+            adopted = await service.adoptExistingFile(at: source, as: destination)
+        }
         try await download.value
 
         #expect(!adopted)
@@ -1379,61 +1384,6 @@ final class RequestCounter: Sendable {
     }
 
     var value: Int { count.withLock { $0 } }
-}
-
-/// A one-shot signal passed between the test and URLSession's own queue, where
-/// the stub handler runs.
-///
-/// Event-driven in both directions: the awaiting side resumes on the signal,
-/// and a signal that already fired resumes it immediately.
-final class RequestGate: Sendable {
-    /// How long ``waitOnThisThread()`` holds before giving up.
-    ///
-    /// The handler blocks a URLSession thread, so a case that fails before it
-    /// signals would otherwise hang the run rather than report.
-    private static let synchronousWaitLimit: TimeInterval = 30
-
-    private struct State {
-        var fired = false
-        var waiters: [CheckedContinuation<Void, Never>] = []
-        var blockedThreads: [DispatchSemaphore] = []
-    }
-
-    private let state = Mutex(State())
-
-    func signal() {
-        let (waiters, blockedThreads) = state.withLock { state in
-            state.fired = true
-            defer {
-                state.waiters.removeAll()
-                state.blockedThreads.removeAll()
-            }
-            return (state.waiters, state.blockedThreads)
-        }
-        for continuation in waiters { continuation.resume() }
-        for thread in blockedThreads { thread.signal() }
-    }
-
-    func wait() async {
-        await withCheckedContinuation { continuation in
-            let alreadyFired = state.withLock { state in
-                if !state.fired { state.waiters.append(continuation) }
-                return state.fired
-            }
-            if alreadyFired { continuation.resume() }
-        }
-    }
-
-    /// Blocks the calling thread until the signal — for the stub handler, which
-    /// URLSession calls synchronously off the main thread.
-    func waitOnThisThread() {
-        let blocked = DispatchSemaphore(value: 0)
-        let alreadyFired = state.withLock { state in
-            if !state.fired { state.blockedThreads.append(blocked) }
-            return state.fired
-        }
-        if !alreadyFired { _ = blocked.wait(timeout: .now() + Self.synchronousWaitLimit) }
-    }
 }
 
 /// Records progress samples on the MainActor so we can read them back after
