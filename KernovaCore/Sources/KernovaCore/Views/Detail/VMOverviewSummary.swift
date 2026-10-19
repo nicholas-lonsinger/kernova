@@ -152,10 +152,6 @@ package enum VMOverviewSummary {
             }
             return rows
         case .storage:
-            // Attachment order is the order the guest enumerates its devices,
-            // not a boot order: an installed EFI guest boots from the BootOrder
-            // variable in its own variable store (UEFI Specification, "Boot
-            // Manager").
             let disks = instance.effectiveStorageDisks.map { disk in
                 Row(label: disk.label, value: diskValue(disk, sizes: resolved.attachmentSizes[disk.id]))
             }
