@@ -196,7 +196,7 @@ locked-clean:
 test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan); a passing run is recorded for `make attest`
 	$(LOCKED) Tools/attest.sh record -- xcodebuild $(XCODEBUILD_FLAGS) test
 
-attest: check-hooks ## Post the `tests` status on the pushed HEAD, reusing a passing `make test` of the same content or running one
+attest: check-hooks ## Post the `Test Attestation` status on the pushed HEAD, reusing a passing `make test` of the same content or running one
 	@Tools/attest.sh
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild

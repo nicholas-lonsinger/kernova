@@ -130,7 +130,7 @@ rm -f "$records"
 # ---- attest ---------------------------------------------------------------------
 
 sha=$(git -C "$clone" rev-parse HEAD)
-status_call() { printf 'api -X POST repos/{owner}/{repo}/statuses/%s -f state=%s -f context=tests -f description=make attest: Xcode 27A100, macOS 26Z42' "$sha" "$1"; }
+status_call() { printf 'api -X POST repos/{owner}/{repo}/statuses/%s -f state=%s -f context=Test Attestation -f description=make attest: Xcode 27A100, macOS 26Z42' "$sha" "$1"; }
 
 reset
 touch "$tmp/pushed"
@@ -187,7 +187,7 @@ check "a rejected state calls GitHub" "$(calls gh)" ''
 
 in_clone "$attest" post success 'Build & Test' https://example.invalid/run >/dev/null
 check "post with a target URL" "$(calls gh)" \
-    "api -X POST repos/{owner}/{repo}/statuses/$sha -f state=success -f context=tests -f description=Build & Test -f target_url=https://example.invalid/run"
+    "api -X POST repos/{owner}/{repo}/statuses/$sha -f state=success -f context=Test Attestation -f description=Build & Test -f target_url=https://example.invalid/run"
 
 if [ "$FAIL" -eq 0 ]; then
     printf '  %s✓%s attest: %d fixture checks\n' "$c_green" "$c_reset" "$PASS"

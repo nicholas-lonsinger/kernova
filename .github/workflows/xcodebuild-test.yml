@@ -170,7 +170,7 @@ jobs:
           path: artifacts/
           retention-days: 7
 
-      - name: Post the tests status
+      - name: Post the Test Attestation status
         if: success() || failure()
         env:
           GH_TOKEN: ${{ github.token }}
