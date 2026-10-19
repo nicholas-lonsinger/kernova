@@ -632,6 +632,9 @@ public final class ClipboardEndpoint {
         set { inbound?.afterInboundPullForTesting = newValue }
     }
 
+    /// Test seam: how many inbound pulls this connection has started.
+    public var inboundPullsStartedForTesting: Int { inbound?.pullsStartedForTesting ?? 0 }
+
     /// Delivers a control frame as the consume loop's hop would, but
     /// synchronously on the caller's own main-actor turn.
     public func handleControlFrameForTesting(_ frame: Frame) {

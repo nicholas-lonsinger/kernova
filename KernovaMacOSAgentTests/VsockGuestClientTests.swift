@@ -312,18 +312,13 @@ struct ClassifySocketErrnoTests {
         arguments: EngineClockKind.allCases)
     func pauseBeforeStartSuppressesConnect(kind: EngineClockKind) async throws {
         let fastRetry: TimeInterval = 0.02
-        let (localFd, remoteFd) = try makeRawSocketPair()
-        let remote = VsockChannel(fileDescriptor: remoteFd)
-        remote.start()
-        defer { remote.close() }
-
         let calls = AtomicInt()
         let clock = SleepCountingEngineClock(wrapping: kind.makeClock())
         let client = VsockGuestClient(
             port: 12345, label: "test", clock: clock, retryInterval: fastRetry
         ) { _, _ in
             _ = calls.increment()
-            return .success(localFd)
+            return .failure(.transient("test: no fd"))
         }
         defer { client.stop() }
 
@@ -405,8 +400,7 @@ struct ClassifySocketErrnoTests {
         let client = VsockGuestClient(
             port: 12345, label: "test", clock: clock, retryInterval: fastRetry
         ) { _, _ in
-            _ = calls.increment()
-            return .success(localFd)
+            calls.increment() == 1 ? .success(localFd) : .failure(.transient("test: no fd"))
         }
         defer { client.stop() }
 

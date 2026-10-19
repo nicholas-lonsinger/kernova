@@ -38,21 +38,15 @@ struct VsockGuestClipboardAgentTests {
         pasteboard: FakePasteboard, agentFd: Int32,
         dialled: DialledDataConnections = DialledDataConnections(),
         clock: any EngineClock = MonotonicEngineClock(),
+        clientClock: any EngineClock = MonotonicEngineClock(),
+        provided: AtomicInt = AtomicInt(),
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         reporter: ClipboardTransferReporter = ClipboardTransferReporter(),
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) async -> VsockGuestClipboardAgent {
-        let provided = AtomicInt()
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.clipboard,
-            label: "clipboard-test",
-            clock: MonotonicEngineClock(),
-            retryInterval: 0.05
-        ) { _, _ in
-            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
-        }
+        let client = makeClient(agentFd: agentFd, clock: clientClock, provided: provided)
         let agent = await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, clock: clock,
             freeSpaceProvider: freeSpaceProvider,
@@ -62,6 +56,19 @@ struct VsockGuestClipboardAgentTests {
             dataDialer: dialled.dialer,
             onClipboardNotice: onClipboardNotice)
         return agent
+    }
+
+    /// A reconnect loop on `clock` that serves `agentFd` once, counting each
+    /// socket it asks for in `provided`, and sees a transient failure after.
+    private func makeClient(
+        agentFd: Int32, clock: any EngineClock, provided: AtomicInt
+    ) -> VsockGuestClient {
+        VsockGuestClient(
+            port: KernovaVsockPort.clipboard, label: "clipboard-test", clock: clock,
+            retryInterval: 0.05
+        ) { _, _ in
+            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
+        }
     }
 
     /// Starts the agent, enables it (production agents are default-disabled
@@ -1080,7 +1087,7 @@ struct VsockGuestClipboardAgentTests {
         // self-trigger.
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "from host"))
         try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
 
         // A poll right after the promise is registered must not re-offer it.
         await MainActor.run { agent.checkClipboardChange() }
@@ -1162,7 +1169,7 @@ struct VsockGuestClipboardAgentTests {
         // for the text UTI and pulls NOTHING — no data connection is opened.
         try hostChannel.send(makeTextOfferFrame(generation: 42, text: "clipboard payload"))
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.string] }
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
 
         // The promise write is scoped `.currentHostOnly` so the guest's
         // continuity-pasteboard advertiser can't fetch the promised flavors at
@@ -1259,7 +1266,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
     }
 
     @Test("after the connection ends a cached rep still pastes and an unstaged file set is refused")
@@ -1521,7 +1528,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(!promised.contains(NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
         #expect(!promised.contains(NSPasteboard.PasteboardType("public.file-url")))
         // Pulling is lazy — the offer opens no data connection.
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
     }
 
     // MARK: - Disk full
@@ -1806,7 +1813,7 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
 
         try await notices.changed.wait { notices.value == 1 }
         #expect(
@@ -2148,21 +2155,9 @@ struct VsockGuestClipboardAgentTests {
         // After waitUntil sees liveChannel non-nil, sending an inbound offer
         // and observing the registered promise proves the read loop is running
         // and the publish committed before it.
-        let provideCount = AtomicInt()
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.clipboard,
-            label: "clipboard-sync-publish-test",
-            clock: MonotonicEngineClock(),
-            retryInterval: 0.05
-        ) { _, _ in
-            provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
-        }
-
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
-        let agent = await VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
-            reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
+        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         agent.start()
         // Production agents are default-disabled until host policy enables them.
@@ -2189,7 +2184,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == 1)
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
     }
 
     @Test("a failed pasteboard promise write clears the inbound promise generation")
@@ -2217,7 +2212,7 @@ struct VsockGuestClipboardAgentTests {
         // The write attempt bumps the changeCount via clearContents; wait for
         // that observable side effect, then confirm no promise was retained.
         try await pasteboard.changed.wait { pasteboard.changeCount > 0 }
-        try await dialled.expectNoNewDials()
+        try await expectNoPullStarted(by: agent, dialled: dialled)
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == nil)
         #expect(pasteboard.promisedTypes.isEmpty)
@@ -2275,13 +2270,8 @@ struct VsockGuestClipboardAgentTests {
     private func makeAgentWithDeadDataPeer(
         pasteboard: FakePasteboard, agentFd: Int32
     ) async -> VsockGuestClipboardAgent {
-        let provided = AtomicInt()
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.clipboard, label: "clipboard-dead-peer-test", clock: MonotonicEngineClock(),
-            retryInterval: 0.05
-        ) { _, _ in
-            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
-        }
+        let client = makeClient(
+            agentFd: agentFd, clock: MonotonicEngineClock(), provided: AtomicInt())
         return await VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(),
@@ -2316,15 +2306,9 @@ struct VsockGuestClipboardAgentTests {
 
         let provided = AtomicInt()
         let clientClock = SleepCountingEngineClock(wrapping: MonotonicEngineClock())
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.clipboard, label: "clipboard-policy-test",
-            clock: clientClock, retryInterval: 0.05
-        ) { _, _ in
-            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
-        }
-        let agent = await VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
-            reporter: ClipboardTransferReporter())
+        let agent = await makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, clientClock: clientClock,
+            provided: provided)
         defer { agent.stop() }
 
         agent.start()
@@ -2528,6 +2512,21 @@ struct VsockGuestClipboardAgentTests {
     }
 
     // MARK: - Negative-wait helpers
+
+    /// Throws unless the agent has started no inbound pull and dialled no data
+    /// connection.
+    ///
+    /// Every pull is resolved on the main actor before it can dial, so a read
+    /// there covers every pull the main actor started before this call.
+    private func expectNoPullStarted(
+        by agent: VsockGuestClipboardAgent, dialled: DialledDataConnections
+    ) async throws {
+        let started = await MainActor.run { agent.inboundPullsStartedForTesting }
+        guard started == 0, dialled.count == 0 else {
+            throw TestFailure(
+                "Unexpected pull: \(started) started, \(dialled.count) connection(s) dialled")
+        }
+    }
 
     /// Throws unless the next frame the agent sends is the offer for a copy made
     /// now — so it sent nothing after the last frame read.
