@@ -63,11 +63,11 @@ enum KernovaApp {
                 fileSystem: FileManager.default, platform: VirtualizationPlatformFiles()),
             virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
-                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: .host,
                 bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent,
                 isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
-                vmnetNetworks: vmnetNetworks, vmnetAttachments: vmnetOperator,
+                vmnetNetworks: vmnetNetworks, vmnetAttachments: .host,
                 bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent),
             ipswService: IPSWService(),
             localImageInspector: LocalRestoreImageInspector(),

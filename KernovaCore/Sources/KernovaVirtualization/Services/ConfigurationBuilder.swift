@@ -28,7 +28,7 @@ struct ConfigurationBuilder: Sendable {
         let entitlements: EntitlementService
         /// What the vmnet attachment was built by — the one recovery must
         /// attach by.
-        let vmnetAttachments: any VmnetAttachmentMaking
+        let vmnetAttachments: VmnetAttachmentMaker
         /// The host state the bridged interface was chosen from — the one
         /// recovery must choose from.
         let bridgedInterfaces: any BridgedInterfaceProviding
@@ -43,7 +43,7 @@ struct ConfigurationBuilder: Sendable {
     let vmnetNetworks: VmnetNetworkService
 
     /// What builds the attachment joining one of `vmnetNetworks`.
-    let vmnetAttachments: any VmnetAttachmentMaking
+    let vmnetAttachments: VmnetAttachmentMaker
 
     let entitlements: EntitlementService
 

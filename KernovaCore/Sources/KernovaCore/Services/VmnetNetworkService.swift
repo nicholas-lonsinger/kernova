@@ -95,12 +95,16 @@ package enum IPv4Value {
     }
 }
 
-// A class, not a struct: Swift 6.4 at -Onone reads `dictionary[key]?.field`
-// from a class's stored dictionary as `.some(garbage)` for a missing key when
-// the value pairs a bare `OpaquePointer` with the field, and wrapping the
-// pointer in a class reference compiles correctly
-// (docs/research/2026-09-30-swift-6-4-onone-optional-chain-through-a-pointer-payload.md).
-/// A materialized app-managed vmnet network.
+/// Releases a vmnet object Swift imports as a bare `OpaquePointer`. The vmnet
+/// header documents these as `CFRelease()`-able; Swift refuses a direct
+/// `CFRelease` on an unmanaged import, so route through `Unmanaged`.
+package func releaseVmnetRef(_ ref: OpaquePointer) {
+    Unmanaged<AnyObject>.fromOpaque(UnsafeRawPointer(ref)).release()
+}
+
+/// A materialized app-managed vmnet network. It owns the reference
+/// `vmnet_network_create` returned, released once nothing holds the handle —
+/// not the service, not a build in flight, not an attachment built over it.
 package final class VmnetNetworkHandle: @unchecked Sendable {
     /// The `vmnet_network_ref` — vmnet's opaque network object — to feed to
     /// `VZVmnetNetworkDeviceAttachment(network:)`. It imports as a
@@ -111,8 +115,14 @@ package final class VmnetNetworkHandle: @unchecked Sendable {
     /// retains it (`vmnet_interface_start_with_network`).
     package let network: OpaquePointer
 
-    package init(network: OpaquePointer) {
+    /// Takes over the +1 reference `vmnet_network_create` returned for
+    /// `network`.
+    package init(adopting network: OpaquePointer) {
         self.network = network
+    }
+
+    deinit {
+        releaseVmnetRef(network)
     }
 }
 
@@ -121,13 +131,10 @@ package final class VmnetNetworkHandle: @unchecked Sendable {
 /// NetworkSharing daemon that fails unentitled.
 package protocol VmnetNetworkOperating: Sendable {
     /// Creates a network of `kind` on the subnet the system picks, returning
-    /// the handle and that subnet.
+    /// the handle that owns the network, and that subnet.
     func createNetwork(_ kind: VmnetNetworkKind) throws -> (
         handle: VmnetNetworkHandle, subnet: IPv4Subnet
     )
-    /// Gives up the reference `createNetwork` returned. An attachment built
-    /// over the network holds its own.
-    func releaseNetwork(_ handle: VmnetNetworkHandle)
 }
 
 /// Owns the app's managed vmnet networks: the common Host Only and NAT
@@ -140,11 +147,12 @@ package protocol VmnetNetworkOperating: Sendable {
 /// (docs/research/2026-09-18-vmnet-dhcp-reservations-lapse-on-network-stop.md).
 /// Every other network is created only through a ``VmnetSessionNetworks``
 /// view, which makes the view's VM one of its members until that VM joins
-/// another network or its last view goes; the network is released with its
-/// last member — so it is held while any member's session is on it (an
-/// in-guest reboot stops and restarts it,
+/// another network or its last view goes. The service lets go of the network
+/// with its last member — so it is held while any member's session is on it
+/// (an in-guest reboot stops and restarts it,
 /// docs/research/2026-09-22-vmnet-network-run-and-forwarding-rules.md) and
-/// outlives all of them.
+/// outlives all of them — and the app's reference to it is released with the
+/// last holder of its ``VmnetNetworkHandle``.
 ///
 /// Every network gets the subnet the system picks. A process holds a bounded
 /// number of networks; a create past that fails like any other.
@@ -187,7 +195,7 @@ package final class VmnetNetworkService: Sendable {
         }
 
         /// Takes `member` off `id`, answering `id` once it has no member left —
-        /// removed from the map, for the caller to release outside the lock.
+        /// removed from the map, for the caller to let go of outside the lock.
         mutating func leave(_ id: VmnetNetworkID, member: UUID) -> Released {
             guard var holders = members[id], holders.remove(member) != nil else { return [] }
             guard holders.isEmpty else {
@@ -228,7 +236,7 @@ package final class VmnetNetworkService: Sendable {
             state.networks[id] = MaterializedNetwork(handle: handle, subnet: subnet)
             return state.join(id, member: member)
         }
-        release(left, lastHeldBy: member)
+        logLetGo(of: left, lastHeldBy: member)
         switch id.scope {
         case .common:
             break
@@ -252,19 +260,17 @@ package final class VmnetNetworkService: Sendable {
             guard let handle = state.networks[id]?.handle else { return (nil, []) }
             return (handle, state.join(id, member: member))
         }
-        release(left, lastHeldBy: member)
+        logLetGo(of: left, lastHeldBy: member)
         return handle
     }
 
-    /// Gives back each of `released`, which `member` was the last to hold.
-    /// Its attachments keep their own references, so a guest still attached
-    /// keeps the network until its device moves.
-    private func release(_ released: Released, lastHeldBy member: UUID) {
-        for (id, handle) in released {
-            operations.releaseNetwork(handle)
+    /// Logs each of `released`, which the service let go of with its last
+    /// member, `member`.
+    private func logLetGo(of released: Released, lastHeldBy member: UUID) {
+        for (id, _) in released {
             Self.logger.log(
                 .notice,
-                "Released the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network its last member, VM \(member.uuidString, privacy: .public), held"
+                "Let go of the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network with its last member, VM \(member.uuidString, privacy: .public)"
             )
         }
     }
@@ -290,7 +296,7 @@ package final class VmnetNetworkService: Sendable {
             guard let current = state.joined.removeValue(forKey: owner) else { return [] }
             return state.leave(current, member: owner)
         }
-        release(released, lastHeldBy: owner)
+        logLetGo(of: released, lastHeldBy: owner)
     }
 }
 

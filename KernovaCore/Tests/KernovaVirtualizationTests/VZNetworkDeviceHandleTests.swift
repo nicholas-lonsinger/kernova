@@ -14,19 +14,26 @@ struct VZNetworkDeviceHandleTests {
     private struct Harness {
         let handle: VZNetworkDeviceHandle
         let install: MockNetworkAttachmentInstall
+        let vmnet: ScriptedVmnetNetworks
+        let owner: UUID
+        let sessionNetworks: VmnetSessionNetworks
+        let attachments: MockVmnetAttachments
     }
 
     private func makeHarness(initialPlan: NetworkAttachmentPlan? = nil) -> Harness {
         let install = MockNetworkAttachmentInstall()
         let vmnet = ScriptedVmnetNetworks()
-        let sessionNetworks = vmnet.service.sessionNetworks(ownedBy: UUID())
+        let owner = UUID()
+        let sessionNetworks = vmnet.service.sessionNetworks(ownedBy: owner)
+        let attachments = MockVmnetAttachments()
         // Up before any apply, so one onto it attaches straight away.
         vmnet.materialize(.common(.hostOnly), through: sessionNetworks)
         return Harness(
             handle: VZNetworkDeviceHandle(
                 session: install, initialPlan: initialPlan, vmnetNetworks: sessionNetworks,
-                vmnetAttachments: MockVmnetAttachments()),
-            install: install)
+                vmnetAttachments: attachments.maker),
+            install: install, vmnet: vmnet, owner: owner, sessionNetworks: sessionNetworks,
+            attachments: attachments)
     }
 
     /// Runs behind the correction's main-actor hop, which the serial main
@@ -58,6 +65,41 @@ struct VZNetworkDeviceHandleTests {
         await drainCorrection()
 
         #expect(harness.handle.currentPlan == .vmnet(.common(.hostOnly)))
+    }
+
+    @Test("A queued vmnet build holds its network until it has built, and its attachment holds it after")
+    func aQueuedBuildHoldsItsNetwork() throws {
+        let harness = makeHarness()
+        let operations = harness.vmnet.operations
+        harness.vmnet.materialize(.own(.nat), through: harness.sessionNetworks)
+        let ownNAT = try #require(harness.sessionNetworks.joinedNetworkIfMaterialized(for: .own(.nat))?.network)
+        #expect(harness.handle.apply(.vmnet(.own(.nat))))
+
+        // The own NAT network loses its only member.
+        harness.vmnet.materialize(.own(.hostOnly), through: harness.sessionNetworks)
+        #expect(operations.releasedNetworks.isEmpty)
+
+        var attachment = autoreleasepool { harness.install.runBuild(ofApplyAt: 0) }
+        #expect(attachment != nil)
+        #expect(harness.attachments.madeNetworks == [ownNAT])
+        #expect(operations.releasedNetworks.isEmpty)
+
+        attachment = nil
+        #expect(operations.releasedNetworks == [ownNAT])
+    }
+
+    @Test("A queued vmnet build leaves the VM on the network it joined since")
+    func aQueuedBuildLeavesTheVMWhereItMoved() throws {
+        let harness = makeHarness()
+        #expect(harness.handle.apply(.vmnet(.common(.hostOnly))))
+
+        harness.vmnet.materialize(.own(.nat), through: harness.sessionNetworks)
+        let attachment = autoreleasepool { harness.install.runBuild(ofApplyAt: 0) }
+        #expect(attachment != nil)
+
+        #expect(
+            harness.vmnet.service.ipv4Subnet(for: VmnetNetworkID(kind: .nat, scope: .vm(harness.owner))) != nil)
+        #expect(harness.vmnet.operations.releasedNetworks.isEmpty)
     }
 
     @Test("Detach clears the mirror and forwards to the session")

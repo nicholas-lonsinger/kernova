@@ -21,7 +21,7 @@ package final class VirtualizationService {
     private let isProtectedDataAvailable: @MainActor () -> Bool
 
     package init(
-        vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
+        vmnetNetworks: VmnetNetworkService, vmnetAttachments: VmnetAttachmentMaker,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
         guestAgent: BundledGuestAgent, isProtectedDataAvailable: @escaping @MainActor () -> Bool
     ) {

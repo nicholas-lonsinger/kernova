@@ -12,7 +12,7 @@ package final class MacOSInstallService {
     private let configBuilder: ConfigurationBuilder
 
     package init(
-        vmnetNetworks: VmnetNetworkService, vmnetAttachments: any VmnetAttachmentMaking,
+        vmnetNetworks: VmnetNetworkService, vmnetAttachments: VmnetAttachmentMaker,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
         guestAgent: BundledGuestAgent
     ) {

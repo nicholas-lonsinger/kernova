@@ -13,7 +13,7 @@ import Virtualization
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
-        vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetAttachments(),
+        vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetAttachments().maker,
         bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled, guestAgent: .testing,
         isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")

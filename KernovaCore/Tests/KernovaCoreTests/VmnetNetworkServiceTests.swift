@@ -90,6 +90,22 @@ struct VmnetNetworkServiceTests {
         #expect(service.ipv4Subnet(for: .common(.nat)) != nil)
     }
 
+    @Test("A handle a caller still holds keeps its network after the service lets go")
+    func aHeldHandleKeepsItsNetwork() throws {
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations)
+        let view = service.sessionNetworks(ownedBy: vmA)
+        var held: VmnetNetworkHandle? = try view.joinedNetwork(for: .own(.nat))
+        let network = try #require(held?.network)
+
+        _ = try view.joinedNetwork(for: .own(.hostOnly))
+        #expect(service.ipv4Subnet(for: VmnetNetworkID(kind: .nat, scope: .vm(vmA))) == nil)
+        #expect(operations.releasedNetworks.isEmpty)
+
+        held = nil
+        #expect(operations.releasedNetworks == [network])
+    }
+
     @Test("A creation failure reaches the caller, and the next request tries again")
     func aFailedCreateIsRetriedByTheNextRequest() throws {
         let operations = MockVmnetNetworkOperator()
