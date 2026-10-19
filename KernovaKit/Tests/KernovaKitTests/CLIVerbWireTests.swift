@@ -16,7 +16,7 @@ struct CLIVerbWireTests {
     private var info: VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "nat", networkMembership: "common",
+            memoryBytes: 8 << 30, networkMode: "nat", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: .observed("192.168.64.4"),
             agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false,
@@ -68,17 +68,66 @@ struct CLIVerbWireTests {
         #expect(try exchanged.answer.payload() == .groups([group]))
     }
 
-    @Test("info crosses as the selector its argument names, and --id forces an identifier")
-    func infoSendsItsSelector() throws {
-        let answered = VMCommandResponse(result: .info(info))
+    @Test("info asks for the VM its argument names, then its disks by the identifier that answered")
+    func infoAsksForTheVMThenItsDisks() throws {
+        let disks = [
+            StorageDiskSummary(
+                id: alpha.id, label: "Main Disk", kind: "virtio", readOnly: false,
+                path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "",
+                capacityBytes: 100_000_000_000, usedBytes: 10_100_000_000)
+        ]
+        let answers = [[VMCommandResponse(result: .info(info))], [VMCommandResponse(result: .storageDisks(disks))]]
 
-        let named = try CLIWire.exchange(["info", "Alpha"], answering: answered)
-        #expect(named.sent == [.info(.idOrName("Alpha"))])
-        #expect(try named.answer.payload() == .info(info))
+        let named = try infoExchange(["info", "Alpha"], answering: answers)
+        #expect(named.sent == [.info(.idOrName("Alpha")), .storageDisks(.id(alpha.id))])
+        #expect(named.printed.contains("Main Disk: 100 GB, 10.1 GB used"))
 
-        let byID = try CLIWire.exchange(
-            ["info", alpha.id.uuidString, "--id"], answering: answered)
-        #expect(byID.sent == [.info(.id(alpha.id))])
+        let byID = try infoExchange(["info", alpha.id.uuidString, "--id"], answering: answers)
+        #expect(byID.sent == [.info(.id(alpha.id)), .storageDisks(.id(alpha.id))])
+
+        let json = try infoExchange(["info", "Alpha", "--format", "json", "--quiet"], answering: answers)
+        #expect(json.sent == [.info(.idOrName("Alpha")), .storageDisks(.id(alpha.id))])
+        #expect(json.printed.contains("\"storageDisks\""))
+    }
+
+    @Test("--quiet on info prints the name alone, and reads no disks for it")
+    func quietInfoIsTheNameAlone() throws {
+        let quiet = try infoExchange(
+            ["info", "Alpha", "--quiet"], answering: [[VMCommandResponse(result: .info(info))]])
+
+        #expect(quiet.sent == [.info(.idOrName("Alpha"))])
+        #expect(quiet.printed == "Alpha")
+    }
+
+    /// What `info` with `arguments` asks a double answering `answers` for, and
+    /// what it would print.
+    private func infoExchange(
+        _ arguments: [String], answering answers: [[VMCommandResponse]]
+    ) throws -> (sent: [VMCommandRequest.Verb], printed: String) {
+        let command = try #require(try KernovaCommand.parseAsRoot(arguments) as? KernovaCommand.Info)
+        let listener = try TestCommandSocket()
+        defer { listener.close() }
+        let client = try VMCommandClient(socketPath: listener.path)
+        defer { client.close() }
+        client.waitForFrames(upTo: testWaitBackstop)
+        listener.serve(answers)
+
+        let printed = try command.output(for: try command.selector(), from: client)
+        return (listener.requests().map(\.verb), printed)
+    }
+
+    @Test("info --id on something that is not an identifier refuses as a usage error before it connects")
+    func infoRefusesANonIdentifierBeforeConnecting() throws {
+        let command = try #require(
+            try KernovaCommand.parseAsRoot(["info", "not-a-uuid", "--id"]) as? KernovaCommand.Info)
+
+        do {
+            _ = try command.selector()
+            Issue.record("expected a usage refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .usage)
+            #expect(failure.message.contains("not-a-uuid"))
+        }
     }
 
     @Test("ip asks for the guest's address once, the answer deciding whether it asks again")

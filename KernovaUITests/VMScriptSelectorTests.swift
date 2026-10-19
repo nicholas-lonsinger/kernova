@@ -56,7 +56,7 @@ struct VMScriptSelectorTests {
     func aNameSpecifierIsReadAsAName() throws {
         let specifier = NSNameSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, name: "Alpha")
+            key: VMScriptingRoot.virtualMachinesKey, name: "Alpha")
 
         // The core is what refuses a name several VMs answer to, with the
         // candidates listed; evaluating here would lose that.
@@ -68,7 +68,7 @@ struct VMScriptSelectorTests {
         let id = UUID()
         let specifier = NSUniqueIDSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, uniqueID: id.uuidString)
+            key: VMScriptingRoot.virtualMachinesKey, uniqueID: id.uuidString)
 
         #expect(try VMScriptSelector.selectors(addressing: specifier) == [.id(id)])
     }
@@ -77,7 +77,7 @@ struct VMScriptSelectorTests {
     func anUnparsableIdentifierIsEvaluated() throws {
         let specifier = NSUniqueIDSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, uniqueID: "not-a-uuid")
+            key: VMScriptingRoot.virtualMachinesKey, uniqueID: "not-a-uuid")
 
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
@@ -94,7 +94,7 @@ struct VMScriptSelectorTests {
             key: "orderedWindows", index: 999_999)
         let specifier = NSNameSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: window,
-            key: AppDelegate.virtualMachinesKey, name: "Alpha")
+            key: VMScriptingRoot.virtualMachinesKey, name: "Alpha")
 
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
@@ -105,7 +105,7 @@ struct VMScriptSelectorTests {
     func everyElementOfAnEmptyLibraryIsEmpty() throws {
         let specifier = NSPropertySpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey)
+            key: VMScriptingRoot.virtualMachinesKey)
 
         #expect(try VMScriptSelector.selectors(addressing: specifier).isEmpty)
     }
@@ -114,7 +114,7 @@ struct VMScriptSelectorTests {
     func anIndexPastTheLibraryIsRefused() throws {
         let specifier = NSIndexSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, index: 0)
+            key: VMScriptingRoot.virtualMachinesKey, index: 0)
 
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
@@ -125,7 +125,7 @@ struct VMScriptSelectorTests {
     func failuresMapToCocoasNumbers() throws {
         let specifier = NSIndexSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, index: 0)
+            key: VMScriptingRoot.virtualMachinesKey, index: 0)
 
         specifier.evaluationErrorNumber = NSInvalidIndexSpecifierError
         #expect(VMScriptEvaluationFailure(specifier).number == Int(errAEIllegalIndex))
@@ -144,10 +144,10 @@ struct VMScriptSelectorTests {
         let list: [Any] = [
             NSNameSpecifier(
                 containerClassDescription: try makeContainer(), containerSpecifier: nil,
-                key: AppDelegate.virtualMachinesKey, name: "Alpha"),
+                key: VMScriptingRoot.virtualMachinesKey, name: "Alpha"),
             NSUniqueIDSpecifier(
                 containerClassDescription: try makeContainer(), containerSpecifier: nil,
-                key: AppDelegate.virtualMachinesKey, uniqueID: id.uuidString),
+                key: VMScriptingRoot.virtualMachinesKey, uniqueID: id.uuidString),
         ]
 
         #expect(try VMScriptSelector.selectors(addressing: list) == [.name("Alpha"), .id(id)])
@@ -159,7 +159,7 @@ struct VMScriptSelectorTests {
         let list: [Any] = [
             NSNameSpecifier(
                 containerClassDescription: try makeContainer(), containerSpecifier: nil,
-                key: AppDelegate.virtualMachinesKey, name: "Alpha"),
+                key: VMScriptingRoot.virtualMachinesKey, name: "Alpha"),
             3,
         ]
 
@@ -176,7 +176,7 @@ struct VMScriptSelectorTests {
         let command = try makeCommand()
         let specifier = NSIndexSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, index: 9)
+            key: VMScriptingRoot.virtualMachinesKey, index: 9)
         // A failure is recorded only after an evaluation, which the empty
         // library has no ninth VM for.
         #expect(specifier.objectsByEvaluatingSpecifier == nil)
@@ -192,10 +192,10 @@ struct VMScriptSelectorTests {
     func aFailureInAListNamesTheItemAtFault() throws {
         let named = NSNameSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, name: "Alpha")
+            key: VMScriptingRoot.virtualMachinesKey, name: "Alpha")
         let indexed = NSIndexSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, index: 9)
+            key: VMScriptingRoot.virtualMachinesKey, index: 9)
         // The name reaches the core unevaluated, so the position is the only
         // item the empty library fails, as it is for a script.
         let failure = try #require(

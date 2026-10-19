@@ -3157,7 +3157,8 @@ struct VMCommandCoreTests {
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
-            configuration: configuration, startAfterCreate: true,
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: true,
             guestAccountPassword: "analytical-engine")
         let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
         #expect(harness.passwords.password(for: summary.id) != nil)
@@ -3182,7 +3183,8 @@ struct VMCommandCoreTests {
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
-            configuration: configuration, startAfterCreate: false,
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: false,
             guestAccountPassword: "analytical-engine")
         let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
         #expect(harness.passwords.password(for: summary.id) != nil)
@@ -3361,7 +3363,8 @@ struct VMCommandCoreTests {
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
-            configuration: configuration, startAfterCreate: true,
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: true,
             guestAccountPassword: "analytical-engine")
         let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
         let created = try #require(await arrival.settle())
@@ -3386,7 +3389,8 @@ struct VMCommandCoreTests {
         configuration.pendingGuestAccount = makeAccountIntent()
 
         let summary = try harness.core.create(
-            configuration: configuration, startAfterCreate: false,
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: false,
             guestAccountPassword: "analytical-engine")
         let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
         let created = try #require(await arrival.settle())
@@ -3416,7 +3420,8 @@ struct VMCommandCoreTests {
 
         let refusal = try #require(throws: CommandError.self) {
             try harness.core.create(
-                configuration: configuration, startAfterCreate: true, guestAccountPassword: "a")
+                configuration: configuration, diskSizeInGB: 64,
+                startAfterCreate: true, guestAccountPassword: "a")
         }
 
         guard case .invalidArgument = refusal else {
@@ -3437,7 +3442,8 @@ struct VMCommandCoreTests {
 
         let refusal = try #require(throws: CommandError.self) {
             try harness.core.create(
-                configuration: configuration, startAfterCreate: false,
+                configuration: configuration, diskSizeInGB: 64,
+                startAfterCreate: false,
                 guestAccountPassword: "analytical-engine")
         }
 
@@ -3460,6 +3466,7 @@ struct VMCommandCoreTests {
             configuration: VMConfiguration(
                 name: "Disk Fail VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
                 memorySizeInGB: VMGuestOS.linux.hostMemorySize),
+            diskSizeInGB: 64,
             startAfterCreate: false, guestAccountPassword: nil)
         try await harness.failureReported.wait { !harness.failures.isEmpty }
 

@@ -231,7 +231,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
                 makeBundledRow(
                     symbolName: diskIconSystemName(for: disk),
                     label: disk.label,
-                    detail: disk.displayPath))
+                    detail: disk.imageReference.displayPath))
         }
         if hasSavedState {
             listStack.addArrangedSubview(

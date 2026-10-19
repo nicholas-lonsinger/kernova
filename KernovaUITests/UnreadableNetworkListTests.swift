@@ -147,17 +147,19 @@ struct UnreadableNetworkListTests {
     }
 
     @Test("AppleScript records the refusal on the command it answers")
-    func appleScriptRefuses() throws {
+    func appleScriptRefuses() async throws {
         let harness = try makeHarness()
+        let standIn = ScriptCommandStandIn()
+        let readiness = LibraryReadiness(awaitReady: {})
+        await readiness.ready()
         let gateway = VMScriptingGateway(
-            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
-            prepareToSurface: {})
+            commands: harness.core, readiness: readiness, prepareToSurface: {}, runtime: standIn.runtime)
         let command = try #require(
             NSScriptSuiteRegistry.shared().commandDescription(
                 withAppleEventClass: FourCharCode(scriptingCode: "core"),
                 andAppleEventCode: FourCharCode(scriptingCode: "getd")
             )?.createCommandInstance())
-        gateway.answeringCommand = command
+        standIn.command = command
 
         #expect(gateway.networks().isEmpty)
         #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)

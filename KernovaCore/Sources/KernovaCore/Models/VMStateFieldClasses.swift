@@ -80,7 +80,6 @@ extension VMConfiguration {
         .field("name", \.name, .rename),
         .field("guestOS", \.guestOS, []),
         .field("bootMode", \.bootMode, []),
-        .field("diskSizeInGB", \.diskSizeInGB, []),
         .field("hardwareModelData", \.hardwareModelData, []),
         .field("machineIdentifierData", \.machineIdentifierData, []),
         .field("genericMachineIdentifierData", \.genericMachineIdentifierData, []),

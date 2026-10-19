@@ -31,6 +31,34 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         #expect(table.numberOfRows == disks.count)
     }
 
+    @Test("Each row states the pane's sizes, its path until they land, and repaints when they move")
+    func rowsStateThePanesSizes() throws {
+        let measured = disk("Measured")
+        let unmeasured = disk("Unmeasured")
+        let vc = make(
+            disks: [measured, unmeasured],
+            sizes: [measured.id: VMBundleLayout.DiskSizes(onDiskBytes: 3_000_000_000, capacityBytes: 64_000_000_000)])
+        vc.loadViewIfNeeded()
+        let allocated = DataFormatters.formatBytes(64_000_000_000)
+
+        #expect(
+            try subtitle(row: 0, in: vc)
+                == "\(DataFormatters.formatBytes(3_000_000_000)) (used) / \(allocated) (allocated)")
+        #expect(try subtitle(row: 1, in: vc) == unmeasured.path)
+
+        vc.show(
+            sizes: [
+                measured.id: VMBundleLayout.DiskSizes(onDiskBytes: 5_000_000_000, capacityBytes: 64_000_000_000),
+                unmeasured.id: VMBundleLayout.DiskSizes(capacityBytes: 8_000_000_000),
+            ],
+            missing: [])
+
+        #expect(
+            try subtitle(row: 0, in: vc)
+                == "\(DataFormatters.formatBytes(5_000_000_000)) (used) / \(allocated) (allocated)")
+        #expect(try subtitle(row: 1, in: vc) == "\(DataFormatters.formatBytes(8_000_000_000)) allocated")
+    }
+
     @Test("performReorder downward shifts disk forward and fires onReorder")
     func reorderDownwardFiresCallback() {
         let disks = [disk("A"), disk("B"), disk("C")]
@@ -177,13 +205,24 @@ struct StorageDiskReorderSheetContentViewControllerTests {
     // MARK: - Helpers
 
     @MainActor
-    private func make(disks: [StorageDisk]) -> StorageDiskReorderSheetContentViewController {
-        let instance = VMInstanceFixture.make(name: "Reorder Test VM")
-        return StorageDiskReorderSheetContentViewController(
+    private func make(
+        disks: [StorageDisk], sizes: [UUID: VMBundleLayout.DiskSizes] = [:]
+    ) -> StorageDiskReorderSheetContentViewController {
+        StorageDiskReorderSheetContentViewController(
             disks: disks,
-            instance: instance,
-            fileMonitor: AttachmentFileMonitor(hostNotifications: .isolated())
+            sizes: sizes,
+            missing: []
         )
+    }
+
+    /// The subtitle row `row` paints.
+    @MainActor
+    private func subtitle(row: Int, in vc: StorageDiskReorderSheetContentViewController) throws -> String {
+        let table = try #require(firstSubview(NSTableView.self, in: vc.view))
+        let cell = try #require(table.view(atColumn: 0, row: row, makeIfNecessary: true))
+        let disk = vc.disks[row]
+        let labels = collectLabels(in: cell).map(\.stringValue)
+        return try #require(labels.first { $0 != disk.label })
     }
 
     private func disk(_ label: String) -> StorageDisk {

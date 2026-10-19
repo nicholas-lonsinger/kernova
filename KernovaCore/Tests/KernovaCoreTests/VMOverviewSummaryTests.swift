@@ -124,45 +124,72 @@ struct VMOverviewSummaryTests {
 
     // MARK: - Storage
 
-    @Test("Storage names the boot disk with its size and folds the rest into one line")
-    func storageStatesBootDiskAndTheRest() {
+    @Test("Storage lists each disk by its label, empty until measured, then the media count")
+    func storageListsTheSoleDiskUnmeasured() {
         let instance = makeInstance()
         // No explicit list: the synthesized main disk is what the pane shows.
-        let boot = instance.effectiveStorageDisks[0].label
-        #expect(rows(.storage, instance).map(\.label) == ["Boot disk", "Other"])
-        // The capacity read hasn't landed, so the row states the label alone.
-        #expect(value("Boot disk", .storage, instance) == boot)
-        #expect(value("Other", .storage, instance) == "No other disks · No media")
-
-        let sized = VMOverviewResolved(bootDiskBytes: 64_000_000_000)
+        let main = instance.effectiveStorageDisks[0]
         #expect(
-            value("Boot disk", .storage, instance, resolved: sized)
-                == "\(boot) · \(DataFormatters.formatBytes(64_000_000_000))")
+            rows(.storage, instance)
+                == [
+                    VMOverviewSummary.Row(label: main.label, value: ""),
+                    VMOverviewSummary.Row(label: "Removable media", value: "None"),
+                ])
+
+        let sized = VMOverviewResolved(
+            attachmentSizes: [main.id: VMBundleLayout.DiskSizes(onDiskBytes: 1, capacityBytes: 64_000_000_000)])
+        #expect(value(main.label, .storage, instance, resolved: sized) == DataFormatters.formatBytes(64_000_000_000))
     }
 
-    @Test("The Other line counts the disks past the boot disk and the media beside them")
-    func storageCountsOtherDisksAndMedia() {
-        let one = makeInstance {
-            $0.storageDisks = [
-                StorageDisk(path: "Disk.asif", isInternal: true),
-                StorageDisk(path: "/tmp/extra.asif"),
-            ]
+    @Test("An installer ahead of the main disk lists first, with capacities, USB marked, none named the boot disk")
+    func storageListsEveryDiskInAttachmentOrder() {
+        let installer = StorageDisk(path: "/tmp/ubuntu-26.04.1-desktop-arm64.iso")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true)
+        let instance = makeInstance(guestOS: .linux) {
+            $0.storageDisks = [installer, main]
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/stick.img")]
         }
-        #expect(value("Other", .storage, one) == "1 more disk · 1 medium")
+        let resolved = VMOverviewResolved(attachmentSizes: [
+            installer.id: VMBundleLayout.DiskSizes(onDiskBytes: 4_150_000_000, capacityBytes: 4_150_000_000),
+            main.id: VMBundleLayout.DiskSizes(onDiskBytes: 9_000_000_000, capacityBytes: 100_000_000_000),
+        ])
 
+        #expect(
+            rows(.storage, instance, resolved: resolved)
+                == [
+                    VMOverviewSummary.Row(
+                        label: "ubuntu-26.04.1-desktop-arm64",
+                        value: "\(DataFormatters.formatBytes(4_150_000_000)) · USB"),
+                    VMOverviewSummary.Row(label: "Main Disk", value: DataFormatters.formatBytes(100_000_000_000)),
+                    VMOverviewSummary.Row(label: "Removable media", value: "1 medium"),
+                ])
+        #expect(!rows(.storage, instance, resolved: resolved).contains { $0.label.lowercased().contains("boot") })
+    }
+
+    @Test("A USB disk not yet measured says USB alone; one measured unreadable says Unknown")
+    func storageStatesUnmeasuredAndUnreadableDisks() {
+        let installer = StorageDisk(path: "/tmp/installer.iso")
+        let external = StorageDisk(path: "/tmp/gone.asif")
+        let instance = makeInstance { $0.storageDisks = [installer, external] }
+        #expect(value(installer.label, .storage, instance) == "USB")
+        #expect(value(external.label, .storage, instance) == "")
+
+        let unreadable = VMOverviewResolved(attachmentSizes: [
+            installer.id: VMBundleLayout.DiskSizes(), external.id: VMBundleLayout.DiskSizes(),
+        ])
+        #expect(value(installer.label, .storage, instance, resolved: unreadable) == "Unknown · USB")
+        #expect(value(external.label, .storage, instance, resolved: unreadable) == "Unknown")
+    }
+
+    @Test("Removable media are counted on one row after the disks")
+    func storageCountsRemovableMedia() {
         let many = makeInstance {
-            $0.storageDisks = [
-                StorageDisk(path: "Disk.asif", isInternal: true),
-                StorageDisk(path: "/tmp/extra.asif"),
-                StorageDisk(path: "/tmp/third.asif"),
-            ]
             $0.removableMedia = [
                 RemovableMediaItem(path: "/tmp/stick.img"),
                 RemovableMediaItem(path: "/tmp/installer.iso"),
             ]
         }
-        #expect(value("Other", .storage, many) == "2 more disks · 2 media")
+        #expect(rows(.storage, many).last == VMOverviewSummary.Row(label: "Removable media", value: "2 media"))
     }
 
     // MARK: - Network

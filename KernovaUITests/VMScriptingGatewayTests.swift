@@ -11,11 +11,13 @@ import Testing
 
 /// The Apple event front door: which verb a script runs, what it waits for
 /// before running one, how it addresses a VM by name, and how the consent a
-/// destructive verb needs is given.
+/// destructive verb needs is given, and how a command the gateway cannot
+/// answer yet — before the library lands, or one reading a VM's storage
+/// disks — is suspended and answered.
 ///
-/// A read that arrives before the library has landed is suspended and
-/// re-issued through Cocoa's own Apple event handling, which only a live
-/// script exercises; what is tested here is everything short of that.
+/// A script's own events are dispatched to the test host, in the shape
+/// AppleScript sends them (``ScriptEvent``), and answered by the gateway
+/// under test (``ScriptHost``).
 @Suite("VM scripting gateway", .caseScoped)
 @MainActor
 struct VMScriptingGatewayTests {
@@ -34,9 +36,8 @@ struct VMScriptingGatewayTests {
         ///
         /// A gate no test opens is a test defect, recorded as one — and then
         /// parked for good rather than returned from: a readiness that "lands"
-        /// on the backstop resumes whatever the gateway deferred, and a
-        /// re-issued command reaches Cocoa on the main actor with no Apple
-        /// event behind it.
+        /// on the backstop resumes whatever the gateway deferred, long after
+        /// the test that sent it has ended.
         func wait() async {
             isWaiting = true
             gate.notify()
@@ -70,11 +71,22 @@ struct VMScriptingGatewayTests {
         _ wired: WiredCommandCore,
         awaitReady: @escaping @Sendable () async -> Void = {},
         prepareToSurface: @escaping @MainActor @Sendable () -> Void = {},
-        currentCommand: @escaping @MainActor () -> NSScriptCommand? = { NSScriptCommand.current() }
+        runtime: VMScriptCommandRuntime = .cocoa
     ) -> VMScriptingGateway {
         VMScriptingGateway(
             commands: wired.core, readiness: LibraryReadiness(awaitReady: awaitReady),
-            prepareToSurface: prepareToSurface, currentCommand: currentCommand)
+            prepareToSurface: prepareToSurface, runtime: runtime)
+    }
+
+    /// A gateway whose library read has already landed, so a command it
+    /// answers is suspended for nothing but what that command reads.
+    private func makeLandedGateway(
+        _ wired: WiredCommandCore, runtime: VMScriptCommandRuntime
+    ) async -> VMScriptingGateway {
+        let readiness = LibraryReadiness(awaitReady: {})
+        await readiness.ready()
+        return VMScriptingGateway(
+            commands: wired.core, readiness: readiness, prepareToSurface: {}, runtime: runtime)
     }
 
     /// Cocoa's own `get`, as the command a property read is answered for.
@@ -95,37 +107,6 @@ struct VMScriptingGatewayTests {
         return description.createCommandInstance()
     }
 
-    private func makeContainer() throws -> NSScriptClassDescription {
-        try #require(NSScriptClassDescription(for: NSApplication.self))
-    }
-
-    private func makeNameSpecifier(_ name: String) throws -> NSNameSpecifier {
-        NSNameSpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey, name: name)
-    }
-
-    /// A specifier whose evaluation reads the library by name through the
-    /// gateway, as Cocoa's evaluation of a name it cannot read unevaluated does
-    /// through the element accessor.
-    private final class NameReadingSpecifier: NSScriptObjectSpecifier {
-        var read: (() -> Any?)?
-
-        override func objectsByEvaluating(withContainers containers: Any) -> Any? {
-            read?()
-        }
-    }
-
-    private func makeNameReadingSpecifier(
-        _ read: @escaping () -> Any?
-    ) throws -> NameReadingSpecifier {
-        let specifier = NameReadingSpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey)
-        specifier.read = read
-        return specifier
-    }
-
     /// A network list whose one network's kind no kind spells.
     private static let unreadableNetworkList = Data(
         """
@@ -137,6 +118,42 @@ struct VMScriptingGatewayTests {
     private static func isAmbiguous(_ error: CommandError) -> Bool {
         if case .ambiguous = error { return true }
         return false
+    }
+
+    // MARK: - Script references
+
+    /// `virtual machine "<name>"`.
+    private static func vm(named name: String) -> NSAppleEventDescriptor {
+        ScriptEvent.element("KvVM", named: name)
+    }
+
+    /// `virtual machine <index>`.
+    private static func vm(at index: Int32) -> NSAppleEventDescriptor {
+        ScriptEvent.element("KvVM", at: index)
+    }
+
+    /// `every virtual machine`.
+    private static let everyVM = ScriptEvent.every("KvVM")
+
+    /// `name of storage disk 1 of it`, as a `whose` test reads it.
+    private static let firstDiskName = ScriptEvent.property(
+        "pnam", of: ScriptEvent.element("KvSD", at: 1, of: ScriptEvent.examined))
+
+    /// `every virtual machine whose name of storage disk 1 is "<name>"`.
+    private static func vms(whoseFirstDiskIs name: String) -> NSAppleEventDescriptor {
+        ScriptEvent.every("KvVM", whose: ScriptEvent.equals(firstDiskName, NSAppleEventDescriptor(string: name)))
+    }
+
+    /// `every virtual machine whose name of storage disk 1 is not "<name>"`.
+    private static func vms(whoseFirstDiskIsNot name: String) -> NSAppleEventDescriptor {
+        ScriptEvent.every(
+            "KvVM",
+            whose: ScriptEvent.not(ScriptEvent.equals(firstDiskName, NSAppleEventDescriptor(string: name))))
+    }
+
+    /// `network "<name>"`.
+    private static func network(named name: String) -> NSAppleEventDescriptor {
+        ScriptEvent.element("KvNw", named: name)
     }
 
     // MARK: - Reads
@@ -169,14 +186,15 @@ struct VMScriptingGatewayTests {
     }
 
     @Test("A name several VMs answer to is refused in the core's words, with the candidates")
-    func anAmbiguousNameIsRefusedByTheCore() throws {
+    func anAmbiguousNameIsRefusedByTheCore() async throws {
         let wired = WiredCommandCore()
         wired.register(name: "Alpha")
         wired.register(name: "Alpha")
         let refusal = try #require(throws: CommandError.self) { try wired.core.info(.name("Alpha")) }
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let command = try makeGetCommand()
-        gateway.answeringCommand = command
+        standIn.command = command
 
         // Cocoa's own accessor would answer with the first, describing whichever
         // VM the library happens to list first as though it were the one asked
@@ -189,12 +207,13 @@ struct VMScriptingGatewayTests {
     }
 
     @Test("A name no VM answers to is refused in the core's words")
-    func anUnknownNameIsRefusedByTheCore() throws {
+    func anUnknownNameIsRefusedByTheCore() async throws {
         let wired = WiredCommandCore()
         wired.register(name: "Alpha")
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let command = try makeGetCommand()
-        gateway.answeringCommand = command
+        standIn.command = command
 
         #expect(gateway.virtualMachine(named: "Beta") == nil)
 
@@ -223,7 +242,6 @@ struct VMScriptingGatewayTests {
         ) {
             $0.cpuCount = 6
             $0.memorySizeInGB = .gibibytes(8)
-            $0.diskSizeInGB = 128
             $0.networkEnabled = true
             $0.networkMode = .nat
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -251,7 +269,6 @@ struct VMScriptingGatewayTests {
         #expect(vm.guestOperatingSystem == "macOS")
         #expect(vm.processorCount == 6)
         #expect(vm.memory == 8)
-        #expect(vm.diskSize == 128)
         #expect(vm.networkMode == "nat")
         #expect(vm.networkMembership == "common")
         #expect(vm.networkName == nil)
@@ -305,28 +322,31 @@ struct VMScriptingGatewayTests {
 
     // MARK: - Configuration
 
-    /// A VM on NAT's common network at a known MAC address.
+    /// A VM on `mode`'s common network at a known MAC address, attaching
+    /// `disks`, or its bundle's main disk alone when `disks` is empty.
     @discardableResult
     private func registerNetworked(
-        _ wired: WiredCommandCore, name: String, mode: VMNetworkMode = .nat
+        _ wired: WiredCommandCore, name: String, mode: VMNetworkMode = .nat, disks: [StorageDisk] = []
     ) -> VMInstance {
         wired.register(name: name) {
             $0.networkEnabled = true
             $0.networkMode = mode
             $0.macAddress = "02:4b:4e:56:0c:01"
+            $0.storageDisks = disks.isEmpty ? nil : disks
         }
     }
 
     @Test("Setting a VM's network membership, network mode or MAC address writes its key by identifier")
-    func settingANetworkPropertyWritesItsKey() throws {
+    func settingANetworkPropertyWritesItsKey() async throws {
         let wired = WiredCommandCore()
         let alpha = registerNetworked(wired, name: "Alpha")
         let twin = registerNetworked(wired, name: "Alpha")
         // The object holds its gateway weakly; the app's lives as long as it does.
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let vm = try #require(gateway.virtualMachines().first)
         let command = try makeSetCommand()
-        gateway.answeringCommand = command
+        standIn.command = command
 
         vm.networkMembership = "isolated"
         vm.networkMode = "hostOnly"
@@ -344,12 +364,13 @@ struct VMScriptingGatewayTests {
     }
 
     @Test("A scripted write carries no consent, so one that asks for it is refused and changes nothing")
-    func scriptedWriteCarriesNoConsent() throws {
+    func scriptedWriteCarriesNoConsent() async throws {
         let wired = WiredCommandCore()
         let alpha = wired.register(name: "Alpha") { $0.clipboardSharingEnabled = true }
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let command = try makeSetCommand()
-        gateway.answeringCommand = command
+        standIn.command = command
 
         gateway.setConfiguration(
             alpha.id, key: VMConfigurationKeyRegistry.clipboardPassthrough, value: "true")
@@ -362,18 +383,19 @@ struct VMScriptingGatewayTests {
     }
 
     @Test("Missing value writes none to a VM's network mode, and empty to its membership and MAC address")
-    func missingValueWrites() throws {
+    func missingValueWrites() async throws {
         let wired = WiredCommandCore()
         let alpha = registerNetworked(wired, name: "Alpha")
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let vm = try #require(gateway.virtualMachines().first)
         let membership = try makeSetCommand()
 
         // The core takes no empty membership, and its refusal quotes what was
         // written.
-        gateway.answeringCommand = membership
+        standIn.command = membership
         vm.networkMembership = nil
-        gateway.answeringCommand = nil
+        standIn.command = nil
         vm.networkMode = nil
         vm.macAddress = nil
 
@@ -387,7 +409,7 @@ struct VMScriptingGatewayTests {
     }
 
     @Test("A refused setting is recorded on the set command")
-    func aRefusedSettingIsRecorded() throws {
+    func aRefusedSettingIsRecorded() async throws {
         let wired = WiredCommandCore()
         let alpha = registerNetworked(wired, name: "Alpha")
         let refusal = try #require(throws: CommandError.self) {
@@ -395,10 +417,11 @@ struct VMScriptingGatewayTests {
                 .id(alpha.id), assignments: [VMConfigurationKeyRegistry.networkMembership.assigning("Nowhere")],
                 consent: .none)
         }
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let command = try makeSetCommand()
         let vm = try #require(gateway.virtualMachines().first)
-        gateway.answeringCommand = command
+        standIn.command = command
 
         vm.networkMembership = "Nowhere"
 
@@ -408,7 +431,7 @@ struct VMScriptingGatewayTests {
     }
 
     @Test("A set addressing several VMs stops at the first refusal, which stands")
-    func aRefusedSettingStopsTheRun() throws {
+    func aRefusedSettingStopsTheRun() async throws {
         let wired = WiredCommandCore()
         try wired.core.createNetwork(name: "Lab", kind: .hostOnly)
         // Lab runs its VMs host-only, so the NAT VM is refused it and the
@@ -420,10 +443,11 @@ struct VMScriptingGatewayTests {
                 .id(alpha.id), assignments: [VMConfigurationKeyRegistry.networkMembership.assigning("Lab")],
                 consent: .none)
         }
-        let gateway = makeGateway(wired)
+        let standIn = ScriptCommandStandIn()
+        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let command = try makeSetCommand()
         let vms = gateway.virtualMachines()
-        gateway.answeringCommand = command
+        standIn.command = command
 
         for vm in vms { vm.networkMembership = "Lab" }
 
@@ -527,112 +551,541 @@ struct VMScriptingGatewayTests {
 
     // MARK: - Addressing
 
-    @Test("A verb's evaluation records what the core refused on the verb's own command")
-    func addressingRecordsRefusalsOnTheCommand() async throws {
+    @Test("A verb's addressing reaches the script with what the core refused")
+    func addressingRecordsRefusalsInTheReply() async throws {
         let wired = WiredCommandCore()
         wired.register(name: "Alpha")
         wired.register(name: "Alpha")
         let refusal = try #require(throws: CommandError.self) { try wired.core.info(.name("Alpha")) }
-        let gateway = makeGateway(wired)
-        let command = try makeGetCommand()
-        let specifier = try makeNameReadingSpecifier { gateway.virtualMachine(named: "Alpha") }
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
 
-        await #expect(throws: VMScriptEvaluationFailure.self) {
-            try await gateway.address(specifier, for: command)
-        }
+        // `pause storage disk 1 of virtual machine "Alpha"`: the name is
+        // evaluated as the disk's container, which the core refuses.
+        let reply = try await host.send(
+            ScriptEvent.verb("Paus", ScriptEvent.element("KvSD", at: 1, of: Self.vm(named: "Alpha"))),
+            to: gateway)
 
-        #expect(command.scriptErrorNumber == Int(errAENoSuchObject))
-        #expect(command.scriptErrorString == refusal.message)
-        #expect(gateway.answeringCommand == nil)
+        #expect(reply.errorNumber == Int(errAENoSuchObject))
+        #expect(reply.errorString == refusal.message)
+        #expect(reply.offendingObject != nil)
     }
 
-    // MARK: - A read before the library has landed
+    @Test("A verb naming nothing is refused, naming the verb")
+    func aVerbNamingNothingIsRefused() async throws {
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(WiredCommandCore(), runtime: host.runtime)
 
-    @Test("A read arriving before the library lands is deferred once, however often it reads the element")
-    func aColdReadIsDeferredOnce() throws {
+        let reply = try await host.send(ScriptEvent.verb("Paus", .null()), to: gateway)
+
+        #expect(reply.errorNumber == Int(errAEWrongNumberArgs))
+        #expect(reply.errorString == "Name the virtual machine to pause.")
+    }
+
+    // MARK: - A command before the library has landed
+
+    @Test("A read arriving before the library lands is suspended once, however often it reads the element")
+    func aColdReadIsDeferredOnce() async throws {
         let wired = WiredCommandCore()
         wired.register(name: "Alpha")
-        // Never lands, so the deferred read stays parked: only Cocoa's Apple
-        // event handling can answer a resumed command, and a readiness that
-        // landed on a backstop instead re-issued this one on the main actor —
-        // Cocoa threw, HIToolbox swallowed it, and every main-actor test after
-        // it froze (#1196).
+        // Never lands, so the deferred read stays parked.
+        let standIn = ScriptCommandStandIn()
         let command = try makeGetCommand()
-        let gateway = makeGateway(
-            wired, awaitReady: { await Self.parkForever() }, currentCommand: { command })
+        standIn.command = command
+        var runtime = standIn.runtime
+        var suspensions: [ObjectIdentifier] = []
+        runtime.suspend = { suspensions.append(ObjectIdentifier($0)) }
+        let gateway = makeGateway(wired, awaitReady: { await Self.parkForever() }, runtime: runtime)
 
         #expect(gateway.virtualMachines().isEmpty)
         #expect(gateway.virtualMachine(named: "Alpha") == nil)
-        #expect(gateway.coldReads.map { ObjectIdentifier($0) } == [ObjectIdentifier(command)])
+        #expect(gateway.suspended.map { ObjectIdentifier($0.command) } == [ObjectIdentifier(command)])
+        #expect(suspensions == [ObjectIdentifier(command)])
     }
 
-    @Test("A re-issued get every virtual machine answers an empty library rather than refusing it")
-    func aReissuedReadAnswers() throws {
-        let command = try makeGetCommand()
-        // As Cocoa builds a `get every virtual machine`: the specifier is the
-        // direct parameter, and `setDirectParameter:` forwards a specifier to
-        // the receivers slot, which is what the re-issue pre-evaluates.
-        command.directParameter = NSPropertySpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: AppDelegate.virtualMachinesKey)
-        #expect(command.receiversSpecifier != nil)
+    @Test("A get arriving before the library lands answers the landed library")
+    func aColdReadAnswersTheLandedLibrary() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        wired.register(name: "Beta")
+        let readiness = ReadinessGate()
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
 
-        let result = makeGateway(WiredCommandCore()).reissue(command)
+        let suspended = try host.dispatch(
+            ScriptEvent.get(ScriptEvent.property("pnam", of: Self.everyVM)), to: gateway)
+        #expect(suspended == nil)
+        try await readiness.awaitWaiting()
+        readiness.open()
+        let reply = try await host.answer()
 
-        // The test host's element evaluates to nothing, which the pre-evaluation
-        // tells from a failure: the script reads Cocoa's own answer for it.
-        #expect(result != nil)
-        #expect(command.scriptErrorNumber == 0)
-        #expect(command.scriptErrorOffendingObjectDescriptor == nil)
+        #expect(reply.errorNumber == 0)
+        #expect(reply.texts == ["Alpha", "Beta"])
+        #expect(host.suspensions == 1)
     }
 
-    @Test("A re-issued read of a name no VM answers to carries the failure as Cocoa reports it")
-    func aReissuedReadCarriesItsFailure() throws {
-        let command = try makeGetCommand()
-        let specifier = try makeNameSpecifier("Nope")
-        specifier.evaluationErrorNumber = NSInternalSpecifierError
-        command.directParameter = specifier
-        #expect(command.receiversSpecifier != nil)
+    @Test("A cold read of a name no VM answers to reaches the script in the core's words")
+    func aColdReadCarriesTheCoresRefusal() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        let readiness = ReadinessGate()
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
 
-        _ = makeGateway(WiredCommandCore()).reissue(command)
+        _ = try host.dispatch(
+            ScriptEvent.get(ScriptEvent.property("pnam", of: Self.vm(named: "Nope"))), to: gateway)
+        try await readiness.awaitWaiting()
+        readiness.open()
+        let reply = try await host.answer()
 
-        // The stale failure was cleared and the re-evaluation failed afresh —
-        // which `execute()` reports as no receivers, the same as the empty
-        // answer above, so the pre-evaluation is what tells the two apart.
-        #expect(command.scriptErrorNumber == Int(errAENoSuchObject))
-        #expect(command.scriptErrorOffendingObjectDescriptor != nil)
+        #expect(reply.errorNumber == Int(errAENoSuchObject))
+        #expect(reply.errorString == CommandError.notFound(.name("Nope")).message)
     }
 
-    @Test("A re-issued exists answers false for what it cannot resolve")
-    func aReissuedExistsAnswersFalse() throws {
-        let description = try #require(
-            NSScriptSuiteRegistry.shared().commandDescription(
-                withAppleEventClass: FourCharCode(scriptingCode: "core"),
-                andAppleEventCode: FourCharCode(scriptingCode: "doex")))
-        let command = description.createCommandInstance()
-        let specifier = try makeNameSpecifier("Nope")
-        command.directParameter = specifier.descriptor
-        command.receiversSpecifier = specifier
+    @Test("A cold exists answers false for what it cannot resolve, and true for what it can")
+    func aColdExistsAnswers() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        func coldExists(_ index: Int32) async throws -> ScriptReply {
+            let host = ScriptHost()
+            let readiness = ReadinessGate()
+            let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
+            _ = try host.dispatch(ScriptEvent.exists(Self.vm(at: index)), to: gateway)
+            try await readiness.awaitWaiting()
+            readiness.open()
+            return try await host.answer()
+        }
 
-        let result = makeGateway(WiredCommandCore()).reissue(command)
+        let missing = try await coldExists(2)
+        let present = try await coldExists(1)
 
-        #expect((result as? NSNumber)?.boolValue == false)
-        #expect(command.scriptErrorNumber == 0)
+        #expect(missing.errorNumber == 0)
+        #expect((missing.result as? NSNumber)?.boolValue == false)
+        #expect(present.errorNumber == 0)
+        #expect((present.result as? NSNumber)?.boolValue == true)
     }
 
-    @Test("Clearing an evaluation failure clears the whole container chain")
-    func clearingAFailureClearsTheChain() throws {
-        let container = try makeNameSpecifier("Alpha")
-        let property = NSPropertySpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: container,
-            key: "name")
-        container.evaluationErrorNumber = NSInternalSpecifierError
-        property.evaluationErrorNumber = NSContainerSpecifierError
+    @Test("A set arriving before the library lands writes the key the script named")
+    func aColdSetWritesItsKey() async throws {
+        let wired = WiredCommandCore()
+        let alpha = registerNetworked(wired, name: "Alpha")
+        let readiness = ReadinessGate()
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
 
-        VMScriptingGateway.clearEvaluationFailure(property)
+        _ = try host.dispatch(
+            ScriptEvent.set(
+                ScriptEvent.property("KvNm", of: Self.vm(named: "Alpha")),
+                to: NSAppleEventDescriptor(string: "hostOnly")),
+            to: gateway)
+        #expect(alpha.configuration.networkMode == .nat)
+        try await readiness.awaitWaiting()
+        readiness.open()
+        let reply = try await host.answer()
 
-        #expect(property.evaluationErrorNumber == 0)
-        #expect(container.evaluationErrorNumber == 0)
+        #expect(reply.errorNumber == 0)
+        #expect(alpha.configuration.networkMode == .hostOnly)
+        #expect(host.suspensions == 1)
+    }
+
+    @Test("A delete arriving before the library lands deletes the network it named")
+    func aColdDeleteDeletesItsNetwork() async throws {
+        let wired = WiredCommandCore()
+        try wired.core.createNetwork(name: "Lab", kind: .nat)
+        let test = try wired.core.createNetwork(name: "Test", kind: .nat)
+        let readiness = ReadinessGate()
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
+
+        _ = try host.dispatch(ScriptEvent.delete(Self.network(named: "Lab")), to: gateway)
+        try await readiness.awaitWaiting()
+        readiness.open()
+        let reply = try await host.answer()
+
+        #expect(reply.errorNumber == 0)
+        #expect(try wired.core.networks().map(\.id) == [test.id])
+    }
+
+    @Test("A make arriving before the library lands makes the network once")
+    func aColdMakeMakesOnce() async throws {
+        let wired = WiredCommandCore()
+        let readiness = ReadinessGate()
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
+
+        // `make new network at end of networks with properties {name:"Lab"}`:
+        // the location reads the networks, which suspends the make, and Cocoa
+        // asks for the new element in the same dispatch.
+        _ = try host.dispatch(
+            ScriptEvent.make(
+                new: "KvNw", at: ScriptEvent.end(of: ScriptEvent.every("KvNw")),
+                properties: ["pnam": NSAppleEventDescriptor(string: "Lab")]),
+            to: gateway)
+        #expect(try wired.core.networks().isEmpty)
+        try await readiness.awaitWaiting()
+        readiness.open()
+        let reply = try await host.answer()
+
+        #expect(reply.errorNumber == 0)
+        #expect(try wired.core.networks().map(\.name) == ["Lab"])
+        #expect(host.suspensions == 1)
+    }
+
+    // MARK: - Storage disks
+
+    /// One `storage disk` as `get properties` answers it.
+    private struct DiskRow {
+        let id: String?
+        let name: String?
+        let kind: FourCharCode?
+        let readOnly: Bool?
+        let path: String?
+        let notes: String?
+        /// `nil` for missing value.
+        let capacity: Double?
+        let usedSpace: Double?
+
+        init(_ record: NSAppleEventDescriptor) {
+            func field(_ code: String) -> NSAppleEventDescriptor? {
+                record.forKeyword(ScriptEvent.code(code))
+            }
+            func number(_ code: String) -> Double? {
+                guard let value = field(code), value.descriptorType != typeType else { return nil }
+                return value.doubleValue
+            }
+            id = field("ID  ")?.stringValue
+            name = field("pnam")?.stringValue
+            kind = field("KvKd")?.enumCodeValue
+            readOnly = field("KvRo")?.booleanValue
+            path = field("KvPa")?.stringValue
+            notes = field("KvNo")?.stringValue
+            capacity = number("KvCa")
+            usedSpace = number("KvUs")
+        }
+    }
+
+    /// `get properties of <disks>`, one row per disk, in the order answered.
+    private func diskRows(_ reply: ScriptReply) -> [DiskRow] {
+        reply.items.map(DiskRow.init)
+    }
+
+    /// `properties of every storage disk of virtual machine 1`.
+    private static let firstVMDiskProperties = ScriptEvent.property(
+        "pALL", of: ScriptEvent.every("KvSD", of: vm(at: 1)))
+
+    private static func measured(capacity: UInt64, used: UInt64) -> VMBundleLayout.DiskSizes {
+        VMBundleLayout.DiskSizes(onDiskBytes: used, capacityBytes: capacity)
+    }
+
+    @Test("A get reaching a VM's disks suspends, then answers every disk in order, measured")
+    func aDiskReadSuspendsThenAnswersMeasured() async throws {
+        let wired = WiredCommandCore()
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio, notes: "boot")
+        let alpha = wired.register(name: "Alpha") { $0.storageDisks = [installer, main] }
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 100_000_000_000, used: 2_500_000_000), for: main.id)
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let suspended = try host.dispatch(ScriptEvent.get(Self.firstVMDiskProperties), to: gateway)
+        let reply = try await host.answer()
+
+        #expect(suspended == nil)
+        #expect(host.suspensions == 1)
+        #expect(reply.errorNumber == 0)
+        let rows = diskRows(reply)
+        try #require(rows.count == 2)
+        let (iso, disk) = (rows[0], rows[1])
+        #expect(iso.id == installer.id.uuidString)
+        #expect(iso.name == "Installer")
+        #expect(iso.kind == VMScriptStorageDiskKind.usbMassStorage.code)
+        #expect(iso.readOnly == true)
+        #expect(iso.path == "/Volumes/Media/installer.iso")
+        #expect(disk.id == main.id.uuidString)
+        #expect(disk.name == "Main Disk")
+        #expect(disk.kind == VMScriptStorageDiskKind.virtio.code)
+        #expect(disk.readOnly == false)
+        #expect(disk.path == alpha.bundleURL.appendingPathComponent("Disk.asif").path(percentEncoded: false))
+        #expect(disk.notes == "boot")
+        #expect(disk.capacity == 100)
+        #expect(disk.usedSpace == 2.5)
+        #expect(gateway.suspended.isEmpty)
+    }
+
+    @Test("A disk whose image can't be read answers its sizes with missing value")
+    func anUnreadableImageAnswersMissingValue() async throws {
+        let wired = WiredCommandCore()
+        // An image no test seeded reads as unreadable.
+        wired.register(name: "Alpha")
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let reply = try await host.send(ScriptEvent.get(Self.firstVMDiskProperties), to: gateway)
+
+        let disk = try #require(diskRows(reply).first)
+        #expect(disk.name == "Main Disk")
+        #expect(disk.capacity == nil)
+        #expect(disk.usedSpace == nil)
+    }
+
+    @Test("A get reaching no disk list suspends nothing")
+    func aReadOfNoDiskListDoesNotSuspend() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        wired.register(name: "Beta")
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let reply = try #require(
+            try host.dispatch(ScriptEvent.get(ScriptEvent.property("pnam", of: Self.everyVM)), to: gateway))
+
+        #expect(reply.texts == ["Alpha", "Beta"])
+        #expect(host.suspensions == 0)
+        #expect(gateway.suspended.isEmpty)
+    }
+
+    @Test("A verb filtering on disks reaches the core with exactly the VMs whose measured lists pass")
+    func aVerbFilteringOnDisksAddressesWhatPasses() async throws {
+        let wired = WiredCommandCore()
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID())) {
+            $0.storageDisks = [installer, main]
+        }
+        // Its one disk is the main disk its bundle holds.
+        let beta = wired.register(name: "Beta", phase: .running(sessionID: UUID()))
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        // `pause (every virtual machine whose name of storage disk 1 is
+        // "Installer")`: the first dispatch that reads the lists reads them
+        // unmeasured, so nothing passes it.
+        let reply = try await host.send(ScriptEvent.verb("Paus", Self.vms(whoseFirstDiskIs: "Installer")), to: gateway)
+
+        #expect(reply.errorNumber == 0)
+        #expect(reply.errorString == nil)
+        #expect(alpha.status == .paused)
+        #expect(beta.status == .running)
+        #expect(wired.machineFiles.diskSizeReads == 2)
+        // The verb's own event, and nothing more.
+        #expect(host.suspensions == 1)
+    }
+
+    @Test("A verb whose addressing reaches no disk list measures nothing")
+    func aVerbReachingNoDiskListMeasuresNothing() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let reply = try await host.send(ScriptEvent.verb("Paus", Self.everyVM), to: gateway)
+
+        #expect(reply.errorNumber == 0)
+        #expect(alpha.status == .paused)
+        #expect(wired.machineFiles.diskSizeReads == 0)
+    }
+
+    @Test("A get across several VMs' disks measures each VM it reaches")
+    func aReadAcrossVMsMeasuresEach() async throws {
+        let wired = WiredCommandCore()
+        let alphaDisk = StorageDisk(path: "Disk.asif", label: "Alpha Disk", isInternal: true, kind: .virtio)
+        let betaDisk = StorageDisk(path: "Disk.asif", label: "Beta Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [alphaDisk] }
+        wired.register(name: "Beta") { $0.storageDisks = [betaDisk] }
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 64_000_000_000, used: 1_000_000_000), for: alphaDisk.id)
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 32_000_000_000, used: 3_000_000_000), for: betaDisk.id)
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        // `get properties of storage disk 1 of every virtual machine`.
+        let reply = try await host.send(
+            ScriptEvent.get(ScriptEvent.property("pALL", of: ScriptEvent.element("KvSD", at: 1, of: Self.everyVM))),
+            to: gateway)
+
+        let rows = diskRows(reply)
+        #expect(rows.map(\.name) == ["Alpha Disk", "Beta Disk"])
+        #expect(rows.map(\.capacity) == [64, 32])
+        #expect(rows.map(\.usedSpace) == [1, 3])
+        #expect(rows.map(\.id) == [alphaDisk.id.uuidString, betaDisk.id.uuidString])
+        #expect(host.suspensions == 1)
+    }
+
+    @Test("A read of a VM's first disk arriving before the library lands answers it, measured")
+    func aColdReadMeasuresTheDisksItReaches() async throws {
+        let wired = WiredCommandCore()
+        let disk = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [disk] }
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 50_000_000_000, used: 5_000_000_000), for: disk.id)
+        let readiness = ReadinessGate()
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
+
+        // `get capacity of storage disk 1 of virtual machine "Alpha"`: the
+        // first dispatch reads no library, so it reaches no disk list, and
+        // the next reads the list unmeasured and fails on its first disk.
+        _ = try host.dispatch(
+            ScriptEvent.get(
+                ScriptEvent.property("KvCa", of: ScriptEvent.element("KvSD", at: 1, of: Self.vm(named: "Alpha")))),
+            to: gateway)
+        try await readiness.awaitWaiting()
+        readiness.open()
+        let reply = try await host.answer()
+
+        #expect(reply.errorNumber == 0)
+        #expect(reply.descriptor?.doubleValue == 50)
+        #expect(host.suspensions == 1)
+    }
+
+    @Test("Each command answers from a measurement of its own")
+    func commandsShareNoMeasurement() async throws {
+        let wired = WiredCommandCore()
+        let disk = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [disk] }
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 64_000_000_000, used: 1_000_000_000), for: disk.id)
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+        let first = try await host.send(ScriptEvent.get(Self.firstVMDiskProperties), to: gateway)
+
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 64_000_000_000, used: 9_000_000_000), for: disk.id)
+        let second = try await host.send(ScriptEvent.get(Self.firstVMDiskProperties), to: gateway)
+
+        #expect(diskRows(first).map(\.usedSpace) == [1])
+        #expect(diskRows(second).map(\.usedSpace) == [9])
+        #expect(host.suspensions == 2)
+    }
+
+    /// `set network membership of <reference> to "isolated"`.
+    private static func isolate(_ reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        ScriptEvent.set(ScriptEvent.property("KvMb", of: reference), to: NSAppleEventDescriptor(string: "isolated"))
+    }
+
+    @Test("A first dispatch's write is held back, and the answering one writes only to the VMs that match")
+    func aFirstPassWriteIsHeldBack() async throws {
+        let wired = WiredCommandCore()
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let alpha = registerNetworked(wired, name: "Alpha", disks: [installer, main])
+        let beta = registerNetworked(wired, name: "Beta")
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        // The first dispatch answers every list empty, which fails every
+        // VM's first disk name, so every VM is not the installer's.
+        let suspended = try host.dispatch(Self.isolate(Self.vms(whoseFirstDiskIsNot: "Installer")), to: gateway)
+
+        #expect(suspended == nil)
+        #expect(alpha.configuration.networkMembership == .common)
+        #expect(beta.configuration.networkMembership == .common)
+        let reply = try await host.answer()
+        #expect(reply.errorNumber == 0)
+        #expect(alpha.configuration.networkMembership == .common)
+        #expect(beta.configuration.networkMembership == .isolated)
+    }
+
+    @Test("A set filtering on disks writes only to the VMs whose first disk is the one it names")
+    func aSetFilteringOnDisksWritesWhatPasses() async throws {
+        let wired = WiredCommandCore()
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let alpha = registerNetworked(wired, name: "Alpha", disks: [installer, main])
+        let beta = registerNetworked(wired, name: "Beta")
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let reply = try await host.send(Self.isolate(Self.vms(whoseFirstDiskIs: "Installer")), to: gateway)
+
+        #expect(reply.errorNumber == 0)
+        #expect(alpha.configuration.networkMembership == .isolated)
+        #expect(beta.configuration.networkMembership == .common)
+        #expect(host.suspensions == 1)
+    }
+
+    @Test("A first dispatch reaching several VMs' lists after it suspends answers them all, measured")
+    func aFirstPassReachingSeveralListsAnswersAll() async throws {
+        let wired = WiredCommandCore()
+        let alphaDisk = StorageDisk(path: "Disk.asif", label: "Alpha Disk", isInternal: true, kind: .virtio)
+        let betaDisk = StorageDisk(path: "Disk.asif", label: "Beta Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [alphaDisk] }
+        wired.register(name: "Beta") { $0.storageDisks = [betaDisk] }
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        // `get name of every storage disk of every virtual machine`: the
+        // first VM's list suspends the command, and Cocoa reads the second's
+        // with no current command.
+        let reply = try await host.send(
+            ScriptEvent.get(ScriptEvent.property("pnam", of: ScriptEvent.every("KvSD", of: Self.everyVM))),
+            to: gateway)
+
+        #expect(reply.items.map { $0.items.compactMap(\.stringValue) } == [["Alpha Disk"], ["Beta Disk"]])
+        #expect(wired.machineFiles.diskSizeReads == 2)
+        #expect(host.suspensions == 1)
+    }
+
+    @Test("Several properties of one VM's disks, read in one command, answer from one measurement")
+    func severalPropertiesOfOneListAnswer() async throws {
+        let wired = WiredCommandCore()
+        let disk = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [disk] }
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 64_000_000_000, used: 4_000_000_000), for: disk.id)
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        // `get properties` reads the list once per property.
+        let reply = try await host.send(ScriptEvent.get(Self.firstVMDiskProperties), to: gateway)
+
+        let rows = diskRows(reply)
+        #expect(rows.map(\.name) == ["Main Disk"])
+        #expect(rows.map(\.capacity) == [64])
+        #expect(rows.map(\.usedSpace) == [4])
+        #expect(wired.machineFiles.diskSizeReads == 1)
+    }
+
+    @Test("A make of a storage disk is refused, in the reply the script reads")
+    func aMakeOfAStorageDiskIsRefused() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let reply = try await host.send(ScriptEvent.make(new: "KvSD", at: Self.vm(at: 1)), to: gateway)
+
+        #expect(reply.errorNumber == Int(errAECantHandleClass))
+        #expect(reply.errorString == VMScriptingGateway.cannotMakeStorageDisk)
+    }
+
+    @Test("A disk names itself back by identifier, of its VM by identifier")
+    func aDiskSpecifierNamesItsVMByID() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha")
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let reply = try await host.send(ScriptEvent.get(ScriptEvent.every("KvSD", of: Self.vm(at: 1))), to: gateway)
+        let properties = try await host.send(ScriptEvent.get(Self.firstVMDiskProperties), to: gateway)
+        let read = try #require(diskRows(properties).first)
+
+        let disk = try #require(reply.items.first)
+        let specifier = try #require(NSScriptObjectSpecifier(descriptor: disk) as? NSUniqueIDSpecifier)
+        let container = try #require(specifier.container as? NSUniqueIDSpecifier)
+        #expect(specifier.key == VMScriptObject.storageDisksKey)
+        #expect(specifier.uniqueID as? String == read.id)
+        #expect(container.key == VMScriptingRoot.virtualMachinesKey)
+        #expect(container.uniqueID as? String == alpha.id.uuidString)
+        #expect(container.container == nil)
+    }
+
+    @Test("A script can't make a storage disk")
+    func makingAStorageDiskIsRefused() throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        let vm = try #require(makeGateway(wired).virtualMachines().first)
+
+        let made = vm.newScriptingObject(
+            of: VMStorageDiskScriptObject.self, forValueForKey: VMScriptObject.storageDisksKey,
+            withContentsValue: nil, properties: [:])
+
+        #expect(made == nil)
     }
 
     // MARK: - Preparation
@@ -735,25 +1188,22 @@ struct VMScriptingGatewayTests {
 
     // MARK: - Readiness
 
-    /// How many times the gateway awaited the library read.
-    private actor AwaitCount {
-        private(set) var value = 0
-
-        func increment() { value += 1 }
-    }
-
-    @Test("Nothing an event addressed is resolved until the app's first library read has landed")
-    func addressingWaitsForTheFirstLibraryRead() async throws {
+    @Test("A verb arriving before the library lands addresses and runs once it has")
+    func aColdVerbRunsOnceTheLibraryLands() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
         let readiness = ReadinessGate()
-        let gateway = makeGateway(WiredCommandCore(), awaitReady: { await readiness.wait() })
-        let specifier = try makeNameSpecifier("Alpha")
+        let host = ScriptHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
 
-        let command = try makeGetCommand()
-        let run = Task { try await gateway.address(specifier, for: command) }
+        _ = try host.dispatch(ScriptEvent.verb("Paus", Self.vm(named: "Alpha")), to: gateway)
         try await readiness.awaitWaiting()
+        #expect(alpha.status == .running)
         readiness.open()
+        let reply = try await host.answer()
 
-        #expect(try await run.value == [.name("Alpha")])
+        #expect(reply.errorNumber == 0)
+        #expect(alpha.status == .paused)
     }
 
     @Test("No verb reaches the core until the app's first library read has landed")

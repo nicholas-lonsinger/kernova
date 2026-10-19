@@ -42,17 +42,34 @@ struct AttachmentRowViewTests {
             }.isEmpty)
     }
 
-    @Test("update(title:notes:...) replaces both the name and the note in place")
+    @Test("update(title:notes:...) replaces the name, the note and the subtitle in place")
     func updateReplacesNameAndNotes() {
         let row = makeRow(title: "Data Disk", notes: "before")
 
         row.update(
-            title: "Renamed Disk", notes: "after", iconSystemName: "externaldrive",
+            title: "Renamed Disk", notes: "after", subtitle: "2 GB used", iconSystemName: "externaldrive",
             missingPath: nil, readOnly: false, controlsEnabled: true, ejectEnabled: true)
 
         #expect(findLabel(withText: "Renamed Disk", in: row) != nil)
         #expect(findLabel(withText: "after", in: row) != nil)
         #expect(findLabel(withText: "before", in: row) == nil)
+        #expect(findLabel(withText: "2 GB used", in: row) != nil)
+    }
+
+    @Test("A missing file's path replaces the subtitle until the file is back")
+    func missingPathReplacesTheSubtitle() {
+        let row = makeRow()
+
+        row.update(
+            title: "Data Disk", notes: "", subtitle: "2 GB used", iconSystemName: "externaldrive",
+            missingPath: "/Volumes/Gone/data.img", readOnly: false, controlsEnabled: true, ejectEnabled: true)
+        #expect(findLabel(withText: "Missing — /Volumes/Gone/data.img", in: row) != nil)
+        #expect(findLabel(withText: "2 GB used", in: row) == nil)
+
+        row.update(
+            title: "Data Disk", notes: "", subtitle: "2 GB used", iconSystemName: "externaldrive",
+            missingPath: nil, readOnly: false, controlsEnabled: true, ejectEnabled: true)
+        #expect(findLabel(withText: "2 GB used", in: row) != nil)
     }
 
     @Test("A note holding a newline raises the overflow callback instead of editing inline")
@@ -115,8 +132,8 @@ struct AttachmentRowViewTests {
 
         row.beginRename()
         row.update(
-            title: "Projects", notes: "", iconSystemName: "folder", missingPath: nil,
-            readOnly: true, controlsEnabled: true, ejectEnabled: true)
+            title: "Projects", notes: "", subtitle: "/Users/test/Projects", iconSystemName: "folder",
+            missingPath: nil, readOnly: true, controlsEnabled: true, ejectEnabled: true)
         row.beginRename()
 
         #expect(!editBegan)

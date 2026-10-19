@@ -73,7 +73,7 @@ extension KernovaCommand {
     }
 
     /// `kernova info <vm>` — everything one virtual machine reports.
-    struct Info: VerbCommand {
+    struct Info: GlobalOptionsCommand {
         /// What `kernova info --help` says.
         static let configuration = CommandConfiguration(
             commandName: "info",
@@ -86,19 +86,37 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
-        /// The request this command line stands for.
-        func verb() throws -> VMCommandRequest.Verb {
-            .info(try SelectorParsing.selector(from: vm, forcingID: options.id))
-        }
-
         /// Reads the VM and writes it.
         func run() throws {
-            let result = try answer()
-            guard case .info(let info) = result else { throw result.unexpectedAnswer }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(info)
-                    : TableRenderer.render(info, quiet: options.quiet))
+            let selector = try selector()
+            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
+            defer { client.close() }
+            Console.out(try output(for: selector, from: client))
+        }
+
+        /// The VM this command line names, decided before Kernova is started
+        /// to hear it.
+        ///
+        /// - Throws: ``CLIFailure`` with ``CLIExitCode/usage`` for `--id` on
+        ///   something that is not an identifier.
+        func selector() throws -> VMSelector {
+            try SelectorParsing.selector(from: vm, forcingID: options.id)
+        }
+
+        /// What this command line prints for the VM `selector` names, read
+        /// through `client`.
+        ///
+        /// The disks are asked for by the identifier the first answer carries,
+        /// so both reads describe one VM whatever is renamed between them.
+        /// `--quiet` text is the name alone, which needs no disk read.
+        func output(for selector: VMSelector, from client: VMCommandClient) throws -> String {
+            let described = try client.send(.info(selector)).payload()
+            guard case .info(let info) = described else { throw described.unexpectedAnswer }
+            guard options.format == .json || !options.quiet else { return info.name }
+            let listed = try client.send(.storageDisks(.id(info.id))).payload()
+            guard case .storageDisks(let disks) = listed else { throw listed.unexpectedAnswer }
+            let report = VMInfoReport(info, storageDisks: disks)
+            return options.format == .json ? try JSONRenderer.render(report) : TableRenderer.render(report)
         }
     }
 

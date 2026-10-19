@@ -35,8 +35,11 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
         var sizes: [UUID: SnapshotSize] = [:]
+        var diskSizes: [UUID: VMBundleLayout.DiskSizes] = [:]
         var sizeReads = 0
         var sizeReadHold: DispatchSemaphore?
+        var diskSizeReads = 0
+        var diskSizeReadHold: DispatchSemaphore?
         var captureError: (any Error)?
         var stageError: (any Error)?
         var discardError: (any Error)?
@@ -66,6 +69,12 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     /// Seeds the size one snapshot reports.
     func setSize(_ size: SnapshotSize, for snapshotID: UUID) {
         state.withLock { $0.sizes[snapshotID] = size }
+    }
+
+    /// Seeds the figures one disk image reports; an image not seeded reads
+    /// as unreadable.
+    func setDiskSizes(_ sizes: VMBundleLayout.DiskSizes, for imageID: UUID) {
+        state.withLock { $0.diskSizes[imageID] = sizes }
     }
 
     /// Seeds the configuration one snapshot captured, as `prepareSnapshot`
@@ -199,6 +208,36 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         sizeReadEntered.notify()
         hold?.wait()
         return sizes
+    }
+
+    func diskSizes(
+        bundleURL: URL, images: [UUID: DiskImageReference]
+    ) -> [UUID: VMBundleLayout.DiskSizes] {
+        let (sizes, hold) = state.withLock { state in
+            let sizes = Dictionary(
+                uniqueKeysWithValues: images.keys.map { ($0, state.diskSizes[$0] ?? VMBundleLayout.DiskSizes()) })
+            state.diskSizeReads += 1
+            let hold = state.diskSizeReadHold
+            state.diskSizeReadHold = nil
+            return (sizes, hold)
+        }
+        diskSizeReadEntered.notify()
+        hold?.wait()
+        return sizes
+    }
+
+    /// How many disk size reads have taken their figures.
+    var diskSizeReads: Int { state.withLock { $0.diskSizeReads } }
+
+    /// Fires as each disk size read has taken its figures.
+    let diskSizeReadEntered = AsyncGate()
+
+    /// Holds the next disk size read, after it has taken its figures, until the
+    /// returned semaphore is signalled — so a test can land it after a later one.
+    func holdNextDiskSizeRead() -> DispatchSemaphore {
+        let hold = DispatchSemaphore(value: 0)
+        state.withLock { $0.diskSizeReadHold = hold }
+        return hold
     }
 
     /// How many size reads have taken their figures.

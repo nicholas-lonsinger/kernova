@@ -127,6 +127,8 @@ package struct VMCommandEnvelopeRouter {
             return .snapshotSizes(try await commands.snapshotSizes(of: selector))
         case .sharedDirectories(let selector):
             return .sharedDirectories(try commands.sharedDirectories(of: selector))
+        case .storageDisks(let selector):
+            return .storageDisks(try await commands.storageDisks(of: selector))
         case .usbAccessories(let selector):
             return .usbAccessories(try commands.usbAccessories(of: selector))
         case .availableUSBAccessories:

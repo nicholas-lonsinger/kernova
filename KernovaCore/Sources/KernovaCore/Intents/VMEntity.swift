@@ -45,9 +45,6 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "Memory in Bytes")
     var memoryBytes: Int
 
-    @Property(title: "Disk Size in Gigabytes")
-    var diskSizeInGB: Int
-
     @Property(title: "Network Mode")
     var networkMode: String?
 
@@ -105,7 +102,6 @@ package struct VMEntity: IndexedEntity {
         self.guestOS = info.guestOS
         self.cpuCount = info.cpuCount
         self.memoryBytes = Int(clamping: info.memoryBytes)
-        self.diskSizeInGB = info.diskSizeInGB
         self.networkMode = info.networkMode
         self.networkMembership = info.networkMembership
         self.networkName = info.networkName?.title

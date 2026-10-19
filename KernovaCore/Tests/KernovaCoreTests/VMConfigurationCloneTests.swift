@@ -74,14 +74,12 @@ struct VMConfigurationCloneTests {
             guestOS: .linux,
             bootMode: .efi,
             cpuCount: 8,
-            memorySizeInGB: .gibibytes(16),
-            diskSizeInGB: 128
+            memorySizeInGB: .gibibytes(16)
         )
         let clone = original.clonedForNewInstance(existingNames: [])
 
         #expect(clone.cpuCount == 8)
         #expect(clone.memorySizeInGB == .gibibytes(16))
-        #expect(clone.diskSizeInGB == 128)
     }
 
     @Test("Clone preserves display settings")

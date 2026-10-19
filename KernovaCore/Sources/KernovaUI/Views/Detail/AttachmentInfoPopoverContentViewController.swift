@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Popover content shown by an attachment row's "Get Info" context-menu item
 /// (storage disks and removable media alike).
@@ -11,8 +12,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
     private let label: String
     private let fileName: String
     private let fullPath: String
-    private let usedText: String
-    private let allocatedText: String
+    private let sizes: VMBundleLayout.DiskSizes
     private let readOnly: Bool
     private let busText: String
     private let createdText: String
@@ -29,8 +29,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         label: String,
         fileName: String,
         fullPath: String,
-        usedText: String,
-        allocatedText: String,
+        sizes: VMBundleLayout.DiskSizes,
         readOnly: Bool,
         busText: String,
         createdText: String,
@@ -41,8 +40,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         self.label = label
         self.fileName = fileName
         self.fullPath = fullPath
-        self.usedText = usedText
-        self.allocatedText = allocatedText
+        self.sizes = sizes
         self.readOnly = readOnly
         self.busText = busText
         self.createdText = createdText
@@ -119,8 +117,8 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         grid.rowSpacing = Spacing.hairline
         grid.columnSpacing = Spacing.standard
         grid.addRow(with: [keyLabel("File"), valueLabel(fileName)])
-        grid.addRow(with: [keyLabel("Used"), valueLabel(usedText)])
-        grid.addRow(with: [keyLabel("Allocated"), valueLabel(allocatedText)])
+        grid.addRow(with: [keyLabel("Used"), valueLabel(sizes.usedText)])
+        grid.addRow(with: [keyLabel("Allocated"), valueLabel(sizes.allocatedText)])
         grid.addRow(with: [keyLabel("Read only"), valueLabel(readOnly ? "Yes" : "No")])
         grid.addRow(with: [keyLabel("Bus"), valueLabel(busText)])
         grid.addRow(with: [keyLabel("Created"), valueLabel(createdText)])

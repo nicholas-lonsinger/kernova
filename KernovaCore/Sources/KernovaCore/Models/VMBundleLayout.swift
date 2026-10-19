@@ -176,7 +176,7 @@ package struct VMBundleLayout: Sendable {
     }
 
     /// On-disk footprint and virtual capacity of a disk image.
-    package struct DiskSizes: Sendable {
+    package struct DiskSizes: Sendable, Equatable {
         /// Actual bytes consumed on disk (`st_blocks * 512`), or `nil` if the
         /// file doesn't resolve.
         package var onDiskBytes: UInt64?
@@ -255,6 +255,11 @@ package struct DiskImageReference: Sendable, Equatable {
     package var path: String
     package var isInternal: Bool
     var bookmark: Data?
+
+    /// What a row names the image by: an in-bundle placeholder, or the path.
+    package var displayPath: String {
+        isInternal ? "In-bundle disk image" : path
+    }
 }
 
 extension StorageDisk {

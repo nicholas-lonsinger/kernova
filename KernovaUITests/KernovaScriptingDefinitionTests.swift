@@ -134,7 +134,7 @@ struct KernovaScriptingDefinitionTests {
         let vm = try #require(classes.first as? XMLElement)
         let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
 
-        #expect(properties.count == 17, "One property per VMInfo field")
+        #expect(properties.count == 16, "One property per VMInfo field")
         for property in properties {
             let key = try #require(try values("cocoa", "key", in: property).first)
             #expect(
@@ -176,13 +176,13 @@ struct KernovaScriptingDefinitionTests {
 
         let key = try #require(try values("cocoa", "key", in: element).first)
 
-        #expect(key == AppDelegate.virtualMachinesKey)
-        #expect(AppDelegate.instancesRespond(to: NSSelectorFromString(key)))
+        #expect(key == VMScriptingRoot.virtualMachinesKey)
+        #expect(VMScriptingRoot.instancesRespond(to: NSSelectorFromString(key)))
         // Cocoa resolves `virtual machine "…"` through the accessor named for
         // that key, and answers with its own case-insensitive first match when
         // there is none — so the spelling is part of the contract.
         #expect(
-            AppDelegate.instancesRespond(
+            VMScriptingRoot.instancesRespond(
                 to: NSSelectorFromString("valueInVirtualMachinesWithName:")))
     }
 
@@ -206,6 +206,58 @@ struct KernovaScriptingDefinitionTests {
         #expect(VMNetworkScriptObject.instancesRespond(to: NSSelectorFromString("setName:")))
     }
 
+    @Test("A virtual machine's storage disks element reads the key the object answers to")
+    func theStorageDisksElementIsTheObjectKey() throws {
+        let elements = try loadSuite().nodes(
+            forXPath: "class[@name='virtual machine']/element[@type='storage disk']")
+        let element = try #require(elements.first as? XMLElement)
+
+        let key = try #require(try values("cocoa", "key", in: element).first)
+
+        #expect(key == VMScriptObject.storageDisksKey)
+        #expect(VMScriptObject.instancesRespond(to: NSSelectorFromString(key)))
+        #expect(element.attribute(forName: "access")?.stringValue == "r")
+        #expect(
+            Set(try values("accessor", "style", in: element)) == ["index", "name", "id", "range", "test"])
+    }
+
+    @Test("Every property of a storage disk reads a key the object answers to, and none is writable")
+    func everyStorageDiskKeyResolves() throws {
+        let classes = try loadSuite().nodes(forXPath: "class[@name='storage disk']")
+        let disk = try #require(classes.first as? XMLElement)
+        let properties = try disk.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
+
+        #expect(disk.attribute(forName: "plural")?.stringValue == "storage disks")
+        #expect(properties.count == 8, "One property per StorageDiskSummary field")
+        for property in properties {
+            let name = try #require(property.attribute(forName: "name")?.stringValue)
+            let key = try #require(try values("cocoa", "key", in: property).first)
+            #expect(
+                VMStorageDiskScriptObject.instancesRespond(to: NSSelectorFromString(key)),
+                "VMStorageDiskScriptObject answers to no \(key)")
+            #expect(property.attribute(forName: "access")?.stringValue == "r", "\(name) is writable")
+        }
+        // `id` is what Cocoa resolves `storage disk id "…"` against.
+        #expect(try values("property[@name='id']", "code", in: disk) == ["ID  "])
+    }
+
+    @Test("A term the dictionary gives two classes carries one code in both")
+    func sharedTermsShareACode() throws {
+        let suite = try loadSuite()
+        var codes: [String: Set<String>] = [:]
+        for case let property as XMLElement in try suite.nodes(forXPath: "class/property") {
+            guard let name = property.attribute(forName: "name")?.stringValue,
+                let code = property.attribute(forName: "code")?.stringValue
+            else { continue }
+            codes[name, default: []].insert(code)
+        }
+
+        for (name, used) in codes {
+            #expect(used.count == 1, "\(name) carries the codes \(used.sorted())")
+        }
+        #expect(codes["kind"] == ["KvKd"])
+    }
+
     @Test("The application's networks element reads, makes and deletes through the delegate")
     func theNetworksElementIsTheDelegateKey() throws {
         let extensions = try loadSuite().nodes(
@@ -214,15 +266,15 @@ struct KernovaScriptingDefinitionTests {
 
         let key = try #require(try values("cocoa", "key", in: element).first)
 
-        #expect(key == AppDelegate.networksKey)
-        #expect(AppDelegate.scriptingKeys.contains(key))
+        #expect(key == VMScriptingRoot.networksKey)
+        #expect(VMScriptingRoot.scriptingKeys.contains(key))
         // The spellings Cocoa's KVC looks for, which nothing else checks.
         for selector in [
             key, "insertInNetworks:", "insertInNetworks:atIndex:", "removeFromNetworksAtIndex:",
         ] {
             #expect(
-                AppDelegate.instancesRespond(to: NSSelectorFromString(selector)),
-                "AppDelegate answers to no \(selector)")
+                VMScriptingRoot.instancesRespond(to: NSSelectorFromString(selector)),
+                "The scripting root answers to no \(selector)")
         }
     }
 
@@ -293,5 +345,24 @@ struct KernovaScriptingDefinitionTests {
         }
         let suite = try loadSuite()
         #expect(try values("class[@name='network']/property[@name='kind']", "type", in: suite) == ["network kind"])
+    }
+
+    @Test("Every bus a storage disk attaches on has a term a script can compare against")
+    func everyStorageDiskKindHasAnEnumerator() throws {
+        let declared = try enumerators("storage disk kind")
+
+        // `VMScriptStorageDiskKind` covers every `StorageDiskKind` by an
+        // exhaustive switch, so a new bus cannot compile without landing here.
+        #expect(declared.count == VMScriptStorageDiskKind.allCases.count)
+        for kind in VMScriptStorageDiskKind.allCases {
+            #expect(declared[kind.term] == kind.code, "No \(kind.term) enumerator")
+        }
+        #expect(VMScriptStorageDiskKind(wireName: "virtio") == .virtio)
+        #expect(VMScriptStorageDiskKind(wireName: "usbMassStorage") == .usbMassStorage)
+        #expect(VMScriptStorageDiskKind(wireName: "scsi") == nil)
+        let suite = try loadSuite()
+        #expect(
+            try values("class[@name='storage disk']/property[@name='kind']", "type", in: suite)
+                == ["storage disk kind"])
     }
 }

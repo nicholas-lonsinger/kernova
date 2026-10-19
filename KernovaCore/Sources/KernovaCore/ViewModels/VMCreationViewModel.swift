@@ -959,7 +959,6 @@ package final class VMCreationViewModel {
             bootMode: bootMode,
             cpuCount: cpuCount,
             memorySizeInGB: memorySize,
-            diskSizeInGB: diskSizeInGB,
             networkEnabled: networkEnabled,
             macAddress: macAddress,
             genericMachineIdentifierData: genericMachineIdentifierData,

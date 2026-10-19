@@ -105,8 +105,8 @@ extension VMCommandCore {
 
     // MARK: - Create
 
-    /// Writes a new VM's bundle and disk image, answering the row the write
-    /// fills.
+    /// Writes a new VM's bundle and a main disk image of `diskSizeInGB`,
+    /// answering the row the write fills.
     ///
     /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
     /// write starts nothing.
@@ -123,7 +123,7 @@ extension VMCommandCore {
     /// given for a configuration naming no account.
     @discardableResult
     func create(
-        configuration: VMConfiguration, startAfterCreate: Bool,
+        configuration: VMConfiguration, diskSizeInGB: Int, startAfterCreate: Bool,
         guestAccountPassword: String?
     ) throws -> VMSummary {
         let bundleURL: URL
@@ -150,7 +150,6 @@ extension VMCommandCore {
 
         let storage = storageService
         let diskImages = diskImageService
-        let diskSizeInGB = configuration.diskSizeInGB
         let name = configuration.name
         let autoStart: @MainActor (VMInstance) -> [VMFollowUp] = { [weak self] instance in
             guard let self else { return [] }

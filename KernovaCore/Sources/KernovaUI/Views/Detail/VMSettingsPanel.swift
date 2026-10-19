@@ -25,9 +25,9 @@ final class VMSettingsPanelContext {
     /// the overview's cards and the panels stating the same figure both read.
     let overview: VMOverviewResolver
 
-    /// Existence of every attachment file this VM's rows stand for, shared by
-    /// the panels that render those rows so one watch serves them all.
-    let fileMonitor: AttachmentFileMonitor
+    /// Existence of every attachment file this VM's rows stand for, which the
+    /// overview's resolution seeds and every surface reads.
+    var fileMonitor: AttachmentFileMonitor { overview.fileMonitor }
 
     /// Routes a mirrored toggle into the shell's one write path for it, the
     /// same one the overview card's switch takes.
@@ -53,9 +53,9 @@ final class VMSettingsPanelContext {
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
-        self.fileMonitor = AttachmentFileMonitor(hostNotifications: viewModel.hostNotifications)
         self.overview = VMOverviewResolver(
             instance: instance, viewModel: viewModel,
+            fileMonitor: AttachmentFileMonitor(hostNotifications: viewModel.hostNotifications),
             bridgedInterfaces: bridgedInterfaces, micPermissionStatus: micPermissionStatus)
     }
 
@@ -69,18 +69,6 @@ final class VMSettingsPanelContext {
 
     func setDismissed(_ isDismissed: Bool) {
         self.isDismissed = isDismissed
-    }
-
-    /// Points the file monitor at the current instance's monitored attachment
-    /// paths.
-    ///
-    /// Idempotent, and every caller computes the same union, so the panels that
-    /// render those rows each seed it from their own `rebuild()` and `refresh()`
-    /// — which is what keeps the watch off a VM whose settings nobody opened.
-    func seedFileMonitor() {
-        let refs = instance.configuration.externalFileReferences
-            .filter(\.kind.isExistenceMonitored).bookmarksByPath
-        Task { [fileMonitor] in await fileMonitor.setPaths(refs) }
     }
 }
 

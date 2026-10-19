@@ -207,7 +207,7 @@ final class VMSettingsViewController: NSViewController {
         super.viewDidAppear()
         panelContext.setDismissed(false)
         livePanels.forEach { $0.hostDidAppear() }
-        // The pane coming back is a coarse re-ask: `seedFileMonitor()` only diffs,
+        // The pane coming back is a coarse re-ask: seeding the monitor only diffs,
         // so an attachment deleted while this was off screen keeps its old answer
         // until something re-probes it.
         panelContext.fileMonitor.revalidate()
@@ -237,6 +237,9 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.instance.heldByAnotherCopy
                 _ = self.instance.snapshotManifest
                 _ = self.instance.unreadableFiles
+                // Every attachment row's missing badge, and the sizes the
+                // overview measures again when a file comes or goes.
+                _ = self.panelContext.fileMonitor.existsByPath
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
                 // Registers every instance's configuration, so the
@@ -334,6 +337,9 @@ extension VMSettingsViewController {
     /// What the cards are currently painted from.
     var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
 
+    /// The resolution the cards and panels read, so a test awaits its reads.
+    var overviewForTesting: VMOverviewResolver { panelContext.overview }
+
     /// Whether the panels were last bound read-only.
     var isReadOnlyForTesting: Bool { panelContext.isReadOnly }
     #endif
@@ -373,6 +379,11 @@ extension VMSettingsViewController {
             window.makeFirstResponder(nil)
         }
         selectedCategory = category
+        // The overview's Storage card and the Storage panel state the
+        // attachment sizes.
+        if category == nil || category == .storage {
+            panelContext.overview.remeasureAttachmentSizes()
+        }
         if installedPanel != category {
             removeInstalledPanel()
             if let category { installPanel(category) }
@@ -435,7 +446,6 @@ extension VMSettingsViewController {
         identityHeader.configure(
             with: instance,
             mode: selectedCategory.map { .category($0.title) } ?? .identity,
-            bootDiskBytes: panelContext.overview.resolved.bootDiskBytes,
             leadingAccessories: chrome?.leading ?? [],
             trailingAccessories: chrome?.trailing ?? [])
     }
@@ -470,9 +480,6 @@ extension VMSettingsViewController {
         if selectedCategory == category, builtPanels.contains(category) {
             panelControllers[category]?.refresh()
         }
-        // The facts line carries the boot disk's capacity, so the header follows
-        // the Storage read in both states.
-        if category == .storage { refreshHeader() }
         guard selectedCategory == nil else { return }
         overviewVC.configureCard(
             category, instance: instance, resolved: panelContext.overview.resolved,

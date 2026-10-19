@@ -131,7 +131,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 14)
+        #expect(VMCommandRequest.currentProtocolVersion == 15)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -193,6 +193,51 @@ struct VMCommandEnvelopeRouterTests {
         let response = try await harness.transport.send(.snapshotSizes(.id(instance.id)))
 
         #expect(response.result == .snapshotSizes([snapshot.id: size]))
+    }
+
+    @Test("A VM's storage disks cross the wire in their configured order, each measured from its image")
+    func storageDisksCrossTheWireInOrder() async throws {
+        let harness = makeHarness()
+        let installerPath = externalPath("installer.iso")
+        let installer = StorageDisk(path: installerPath, readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio, notes: "boot")
+        let instance = makeInstance(in: harness, name: "Measured") { $0.storageDisks = [installer, main] }
+        let measured = VMBundleLayout.DiskSizes(onDiskBytes: 10_000_000_000, capacityBytes: 100_000_000_000)
+        harness.snapshots.setDiskSizes(measured, for: main.id)
+
+        let response = try await harness.transport.send(.storageDisks(.id(instance.id)))
+
+        let mainPath = instance.bundleURL.appendingPathComponent("Disk.asif").path(percentEncoded: false)
+        #expect(
+            response.result
+                == .storageDisks([
+                    StorageDiskSummary(
+                        id: installer.id, label: "Installer", kind: "usbMassStorage", readOnly: true,
+                        path: installerPath, notes: "", capacityBytes: nil, usedBytes: nil),
+                    StorageDiskSummary(
+                        id: main.id, label: "Main Disk", kind: "virtio", readOnly: false, path: mainPath,
+                        notes: "boot", capacityBytes: 100_000_000_000, usedBytes: 10_000_000_000),
+                ]))
+    }
+
+    @Test("A VM with no configured disk list answers the main disk its bundle holds")
+    func storageDisksOfAnUnlistedVMAnswerTheMainDisk() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Plain") { $0.storageDisks = nil }
+        let main = try #require(instance.effectiveStorageDisks.first)
+        harness.snapshots.setDiskSizes(
+            VMBundleLayout.DiskSizes(onDiskBytes: 1_000, capacityBytes: 64_000_000_000), for: main.id)
+
+        let response = try await harness.transport.send(.storageDisks(.name("Plain")))
+
+        #expect(
+            response.result
+                == .storageDisks([
+                    StorageDiskSummary(
+                        id: main.id, label: "Main Disk", kind: "virtio", readOnly: false,
+                        path: instance.bundleURL.appendingPathComponent("Disk.asif").path(percentEncoded: false),
+                        notes: "", capacityBytes: 64_000_000_000, usedBytes: 1_000)
+                ]))
     }
 
     @Test("A VM's shares cross the wire as their own listing, addressed by identifier")

@@ -255,6 +255,29 @@ struct VMCommandCoreArrivalTests {
         await arrival.settle()
     }
 
+    @Test("An arrival's storage disks answer the list its write was asked for, unmeasured")
+    func storageDisksOfAnArrivalAreUnmeasured() async throws {
+        let harness = makeHarness()
+        let source = makeSource(in: harness)
+        let hold = DispatchSemaphore(value: 0)
+        storage.setCloneHold(hold)
+        defer { hold.signal() }
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+        let arrival = try #require(harness.library.arrivals.first)
+
+        let disks = try await harness.core.storageDisks(of: .id(row.id))
+
+        #expect(disks.map(\.label) == ["Main Disk"])
+        #expect(
+            disks.map(\.path)
+                == [arrival.destinationURL.appendingPathComponent("Disk.asif").path(percentEncoded: false)])
+        #expect(disks.allSatisfy { $0.capacityBytes == nil && $0.usedBytes == nil })
+        hold.signal()
+        await arrival.settle()
+    }
+
     // MARK: - F14: Cancel Around the Rename
 
     @Test("A cancel during the rename of a create that starts after creating trashes it and starts nothing")
@@ -268,7 +291,8 @@ struct VMCommandCoreArrivalTests {
         let destination = try storage.bundleURL(for: configuration)
 
         let row = try harness.core.create(
-            configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: true, guestAccountPassword: nil)
         let arrival = try #require(harness.library.arrivals.first)
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
         #expect(arrival.stage == .publishing)
@@ -298,7 +322,8 @@ struct VMCommandCoreArrivalTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         try harness.core.create(
-            configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: true, guestAccountPassword: nil)
         let arrival = try #require(harness.library.arrivals.first)
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
         #expect(arrival.stage == .publishing)
@@ -327,7 +352,8 @@ struct VMCommandCoreArrivalTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
 
         try core.create(
-            configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
+            configuration: configuration, diskSizeInGB: 64,
+            startAfterCreate: true, guestAccountPassword: nil)
         let arrival = try #require(library.arrivals.first)
         let instance = try #require(await arrival.settle())
 

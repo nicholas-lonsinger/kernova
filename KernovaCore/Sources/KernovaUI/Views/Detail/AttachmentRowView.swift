@@ -19,9 +19,7 @@ final class AttachmentRowView: NSView {
     /// The leading icon view, exposed so the controller can anchor the Get Info
     /// popover to it.
     let infoAnchor: NSView
-    /// The subtitle label, exposed so the controller can (re-)populate it with
-    /// the live, off-main size read.
-    let subtitleField: NSTextField
+    private let subtitleField: NSTextField
     private let iconButton: AttachmentIconButton
     private let readOnlyToggle: NSSwitch
     /// Trailing inline Eject control, present only on removable-media rows.
@@ -93,15 +91,15 @@ final class AttachmentRowView: NSView {
             readOnlyCaption: readOnlyCaption, ejectButton: ejectButton)
     }
 
-    /// Updates the row's display state in place, without a teardown/rebuild.
+    /// Updates the row's display state in place, without a teardown/rebuild;
+    /// the title view leaves an edit in progress alone.
     ///
-    /// Never invoked mid-edit (the controller suppresses refreshes while an
-    /// edit is active), but the title view leaves an edit alone if one is
-    /// somehow live.
+    /// `missingPath`, when set, replaces `subtitle` with the missing state.
     func update(
-        title: String, notes: String, iconSystemName: String, missingPath: String?,
+        title: String, notes: String, subtitle: String, iconSystemName: String, missingPath: String?,
         readOnly: Bool, controlsEnabled: Bool, ejectEnabled: Bool
     ) {
+        updateAttachmentSubtitle(subtitleField, text: subtitle, missingPath: missingPath)
         titleView.update(
             name: title, notes: notes, controlsEnabled: controlsEnabled && isTitleEditable)
         readOnlyToggle.state = readOnly ? .on : .off

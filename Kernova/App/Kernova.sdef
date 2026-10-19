@@ -33,6 +33,11 @@
 			<enumerator name="host only" code="KnHo" description="The guests reach this Mac and each other, nothing else."/>
 		</enumeration>
 
+		<enumeration name="storage disk kind" code="KvDK" description="The bus the guest sees a storage disk on.">
+			<enumerator name="virtio" code="KdVi" description="A virtio block device."/>
+			<enumerator name="USB mass storage" code="KdUs" description="A USB mass storage device."/>
+		</enumeration>
+
 		<class-extension extends="application" description="Kernova's top-level scripting object.">
 			<cocoa class="NSApplication"/>
 			<element type="virtual machine" access="r" description="The virtual machines in the library.">
@@ -73,9 +78,6 @@
 			<property name="memory" code="KvMm" type="real" access="r" description="Guest memory in gigabytes.">
 				<cocoa key="memory"/>
 			</property>
-			<property name="disk size" code="KvDs" type="integer" access="r" description="The main disk's configured size in gigabytes.">
-				<cocoa key="diskSize"/>
-			</property>
 			<property name="network mode" code="KvNm" type="text" description="The network it joins, or missing value when networking is off. Set it to nat, bridged or hostOnly, or to none to turn networking off.">
 				<cocoa key="networkMode"/>
 			</property>
@@ -105,6 +107,42 @@
 			</property>
 			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
 				<cocoa key="bundlePath"/>
+			</property>
+			<element type="storage disk" access="r" description="The disks it attaches, in the order it attaches them.">
+				<cocoa key="storageDisks"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+		</class>
+
+		<class name="storage disk" code="KvSD" plural="storage disks" description="A disk a virtual machine attaches. Its sizes are measured from its image file each time a script reads them.">
+			<cocoa class="VMStorageDiskScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, which a storage disk edit names it by.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" access="r" description="Its label.">
+				<cocoa key="name"/>
+			</property>
+			<property name="kind" code="KvKd" type="storage disk kind" access="r" description="The bus the guest sees it on.">
+				<cocoa key="kind"/>
+			</property>
+			<property name="read only" code="KvRo" type="boolean" access="r" description="Whether the guest may read it but not write to it.">
+				<cocoa key="readOnly"/>
+			</property>
+			<property name="path" code="KvPa" type="text" access="r" description="Its image file, as this Mac names it.">
+				<cocoa key="path"/>
+			</property>
+			<property name="notes" code="KvNo" type="text" access="r" description="The user&#8217;s note on it, empty when there is none.">
+				<cocoa key="notes"/>
+			</property>
+			<property name="capacity" code="KvCa" type="real" access="r" description="Its size as the guest sees it, in gigabytes of 10^9 bytes, or missing value when its image can&#8217;t be read.">
+				<cocoa key="capacity"/>
+			</property>
+			<property name="used space" code="KvUs" type="real" access="r" description="What its image takes on its volume, in gigabytes of 10^9 bytes, or missing value when its image can&#8217;t be read.">
+				<cocoa key="usedSpace"/>
 			</property>
 		</class>
 

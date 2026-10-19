@@ -47,6 +47,22 @@ func applyAttachmentSubtitle(to field: NSTextField, path: String, isMissing: Boo
     }
 }
 
+/// Repaints a row's subtitle in place: `missingPath`, when set, in the
+/// missing state at once, otherwise `text`, faded in when it differs from
+/// what the field shows — sizes land after the row is on screen, and snapping
+/// them in reads as an abrupt pop.
+@MainActor
+func updateAttachmentSubtitle(_ field: NSTextField, text: String, missingPath: String?) {
+    if let missingPath {
+        applyAttachmentSubtitle(to: field, path: missingPath, isMissing: true)
+        return
+    }
+    guard field.stringValue != text else { return }
+    field.alphaValue = 0
+    applyAttachmentSubtitle(to: field, path: text, isMissing: false)
+    animateFade(field, to: 1)
+}
+
 extension NSFont {
     /// Returns a font with the given weight, preserving the descriptor's
     /// other traits (point size, design, slant).

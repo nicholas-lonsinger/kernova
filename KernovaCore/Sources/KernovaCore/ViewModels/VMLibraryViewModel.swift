@@ -838,6 +838,7 @@ package final class VMLibraryViewModel {
     package func createVM(from wizard: VMCreationViewModel) throws {
         try commands.create(
             configuration: wizard.buildConfiguration(),
+            diskSizeInGB: wizard.diskSizeInGB,
             startAfterCreate: wizard.startAfterCreate,
             guestAccountPassword: wizard.guestAccountPasswordForCreate)
     }

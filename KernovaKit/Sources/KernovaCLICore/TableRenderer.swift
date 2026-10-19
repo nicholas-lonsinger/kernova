@@ -30,41 +30,52 @@ enum TableRenderer {
 
     /// One VM's full description, as a field-per-line block.
     ///
-    /// `quiet` prints the name alone, so the block never has to be parsed for
-    /// the one field a script wanted.
-    static func render(_ info: VMInfo, quiet: Bool) -> String {
-        guard !quiet else { return info.name }
-        var fields: [(String, String)] = [
-            ("Name", info.name),
-            ("Identifier", info.id.uuidString),
-            ("Status", VMStatus.displayName(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)),
-            ("Guest", info.guestOS),
-            ("CPUs", String(info.cpuCount)),
-            ("Memory", memory(info.memoryBytes)),
-            ("Disk", "\(info.diskSizeInGB) GB"),
-            (
-                "Network",
-                info.networkMode.map { mode in
-                    let joined: String? = info.networkName?.title ?? info.networkMembership
-                    return [mode, joined].compactMap(\.self).joined(separator: ", ")
-                }
-                    ?? "Off"
-            ),
+    /// The disks are one field of a line per disk, in attachment order; the
+    /// lines after the first start at the value column.
+    static func render(_ report: VMInfoReport) -> String {
+        let info = report.info
+        let network =
+            info.networkMode.map { mode in
+                let joined: String? = info.networkName?.title ?? info.networkMembership
+                return [mode, joined].compactMap(\.self).joined(separator: ", ")
+            } ?? "Off"
+        var fields: [(String, [String])] = [
+            ("Name", [info.name]),
+            ("Identifier", [info.id.uuidString]),
+            ("Status", [VMStatus.displayName(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)]),
+            ("Guest", [info.guestOS]),
+            ("CPUs", [String(info.cpuCount)]),
+            ("Memory", [memory(info.memoryBytes)]),
+            ("Disks", report.storageDisks.isEmpty ? ["\u{2013}"] : report.storageDisks.map(disk)),
+            ("Network", [network]),
         ]
-        if let mac = info.macAddress { fields.append(("MAC Address", mac)) }
-        fields.append(("IP Address", render(info.ipAddress)))
+        if let mac = info.macAddress { fields.append(("MAC Address", [mac])) }
+        fields.append(("IP Address", [render(info.ipAddress)]))
         fields.append(contentsOf: [
-            ("Guest Agent", info.agentStatus ?? "\u{2013}"),
-            ("Saved State", info.hasSavedState ? "Yes" : "No"),
-            ("Ephemeral", info.isEphemeral ? "Yes" : "No"),
-            ("Snapshots", String(info.snapshotCount)),
-            ("Bundle", info.bundlePath),
+            ("Guest Agent", [info.agentStatus ?? "\u{2013}"]),
+            ("Saved State", [info.hasSavedState ? "Yes" : "No"]),
+            ("Ephemeral", [info.isEphemeral ? "Yes" : "No"]),
+            ("Snapshots", [String(info.snapshotCount)]),
+            ("Bundle", [info.bundlePath]),
         ])
         let width = fields.map(\.0.count).max() ?? 0
         return
             fields
-            .map { "\(padded($0.0, to: width))  \($0.1)" }
+            .flatMap { key, lines in
+                lines.enumerated().map { "\(padded($0.offset == 0 ? key : "", to: width))  \($0.element)" }
+            }
             .joined(separator: "\n")
+    }
+
+    /// One storage disk as its line of the `Disks` field: its label and
+    /// capacity, then what it uses, its bus and its access where they say
+    /// something.
+    private static func disk(_ disk: StorageDiskSummary) -> String {
+        var parts = ["\(disk.label): \(size(disk.capacityBytes))"]
+        if let used = disk.usedBytes { parts.append("\(size(used)) used") }
+        if disk.kind == "usbMassStorage" { parts.append("USB") }
+        if disk.readOnly { parts.append("read-only") }
+        return parts.joined(separator: ", ")
     }
 
     /// A VM's restore points, in the order the app listed them (newest first).
@@ -231,8 +242,8 @@ enum TableRenderer {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    /// A snapshot's size, in the unit Finder's Get Info would state it in, or
-    /// `Unknown` for a snapshot the size read did not answer for.
+    /// A size, in the unit Finder's Get Info would state it in, or `Unknown`
+    /// for one the read did not answer for.
     private static func size(_ bytes: UInt64?) -> String {
         guard let bytes else { return "Unknown" }
         return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)

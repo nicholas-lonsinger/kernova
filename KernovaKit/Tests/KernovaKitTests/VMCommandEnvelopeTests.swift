@@ -23,7 +23,7 @@ struct VMCommandEnvelopeTests {
     private var info: VMInfo {
         VMInfo(
             id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "nat", networkMembership: "common",
+            memoryBytes: 8_589_934_592, networkMode: "nat", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: .observed("192.168.66.2"),
             agentStatus: "current",
@@ -80,6 +80,7 @@ struct VMCommandEnvelopeTests {
             .snapshots(selector),
             .snapshotSizes(selector),
             .sharedDirectories(selector),
+            .storageDisks(selector),
             .usbAccessories(selector),
             .availableUSBAccessories,
             .events,
@@ -246,6 +247,19 @@ struct VMCommandEnvelopeTests {
                 SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
             ]),
             .sharedDirectories([]),
+            // A disk past 4 GiB must survive the trip at full width, and an
+            // unreadable image's missing figures as missing.
+            .storageDisks([
+                StorageDiskSummary(
+                    id: diskID, label: "Main Disk", kind: "virtio", readOnly: false,
+                    path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "boot volume",
+                    capacityBytes: 107_374_182_400, usedBytes: 10_845_000_000),
+                StorageDiskSummary(
+                    id: snapshotID, label: "Installer", kind: "usbMassStorage", readOnly: true,
+                    path: "/Users/somebody/Downloads/installer.iso", notes: "",
+                    capacityBytes: nil, usedBytes: nil),
+            ]),
+            .storageDisks([]),
             .usbAccessories([
                 USBAccessorySummary(
                     registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",

@@ -52,9 +52,6 @@ final class VMIdentityHeaderView: NSView {
     private(set) var renderedFactsLine = ""
 
     private var instance: VMInstance?
-    /// The boot disk's capacity as last configured, `nil` while its read is
-    /// still out.
-    private var bootDiskBytes: UInt64?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -73,19 +70,17 @@ final class VMIdentityHeaderView: NSView {
         backButton.action = action
     }
 
-    /// Binds the header to `instance`, painting what the facts line states —
-    /// `bootDiskBytes` among it, once the pane's off-main read has landed.
+    /// Binds the header to `instance`, painting what the facts line states.
     ///
     /// `mode` decides what the tile and the title state; a category hosts
     /// `leadingAccessories` beside its title and `trailingAccessories` at the
     /// title row's far edge.
     func configure(
-        with instance: VMInstance, mode: Mode = .identity, bootDiskBytes: UInt64? = nil,
+        with instance: VMInstance, mode: Mode = .identity,
         leadingAccessories: [NSView] = [], trailingAccessories: [NSView] = []
     ) {
         self.instance = instance
         self.mode = mode
-        self.bootDiskBytes = bootDiskBytes
         setAccessories(leadingAccessories, trailingAccessories)
         render()
     }
@@ -93,13 +88,13 @@ final class VMIdentityHeaderView: NSView {
     /// How the facts line reads, skipping every segment this VM has no answer
     /// for rather than standing a placeholder in its place.
     static func factsLine(
-        status: String, osVersion: String?, cores: Int, memory: VMMemorySize, diskBytes: UInt64?
+        status: String, osVersion: String?, cores: Int, memory: VMMemorySize, disks: Int
     ) -> String {
         var parts = [status]
         if let osVersion { parts.append(osVersion) }
         parts.append(cores == 1 ? "1 core" : "\(cores) cores")
         parts.append("\(memory.gibibytesText) GB memory")
-        if let diskBytes { parts.append("\(DataFormatters.formatBytes(diskBytes)) disk") }
+        parts.append(disks == 1 ? "1 disk" : "\(disks) disks")
         return parts.joined(separator: " · ")
     }
 
@@ -154,7 +149,7 @@ final class VMIdentityHeaderView: NSView {
             osVersion: instance.guestOSVersionDisplay,
             cores: config.cpuCount,
             memory: config.memorySizeInGB,
-            diskBytes: bootDiskBytes)
+            disks: instance.effectiveStorageDisks.count)
         factsLabel.stringValue = renderedFactsLine
     }
 

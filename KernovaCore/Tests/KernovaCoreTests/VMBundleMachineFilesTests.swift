@@ -623,6 +623,28 @@ struct VMBundleMachineFilesTests {
         #expect(sizes[empty] == SnapshotSize(bytes: 0, privateBytes: nil))
     }
 
+    @Test("Disk sizes answer every image asked about, with no figures for one whose file is missing")
+    func diskSizesAnswerEveryImage() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        try Data(count: 4096).write(to: fixture.bundleURL.appendingPathComponent("Extra.img"))
+        let present = UUID()
+        let missing = UUID()
+
+        let sizes = store.diskSizes(
+            bundleURL: fixture.bundleURL,
+            images: [
+                present: DiskImageReference(path: "Extra.img", isInternal: true),
+                missing: DiskImageReference(path: "Gone.img", isInternal: true),
+            ])
+
+        #expect(Set(sizes.keys) == [present, missing])
+        #expect(sizes[present]?.capacityBytes == 4096)
+        #expect(sizes[present]?.onDiskBytes != nil)
+        #expect(sizes[missing]?.capacityBytes == nil)
+        #expect(sizes[missing]?.onDiskBytes == nil)
+    }
+
     // MARK: - Suspend slot
 
     @Test("Removing the suspend slot deletes it, and a bundle holding none is a success")

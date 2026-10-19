@@ -56,6 +56,28 @@ struct GetVMIPAddressIntent: AppIntent {
     }
 }
 
+struct FindStorageDisksIntent: AppIntent {
+    static let title: LocalizedStringResource = "Find Disks"
+    static let description: IntentDescription? = IntentDescription(
+        "Answers every disk a virtual machine attaches, in the order it attaches them, with each image's size as read now.",
+        categoryName: "Virtual Machines",
+        resultValueName: "Disks")
+
+    @Parameter(title: "Virtual Machine")
+    var vm: VMEntity
+
+    @Dependency private var gateway: VMIntentGateway
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Find the disks of \(\.$vm)")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<[StorageDiskEntity]> {
+        .result(value: try await gateway.storageDisks(ofVM: vm.id))
+    }
+}
+
 struct TakeSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Take Snapshot"
     static let description: IntentDescription? = IntentDescription(
