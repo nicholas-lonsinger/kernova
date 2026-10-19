@@ -259,6 +259,16 @@ package final class VMBundle {
         guard !ids.isEmpty else { return [:] }
         return await offMainActorInfallibly { $0.snapshotSizes(bundleURL: $1, snapshotIDs: ids) }
     }
+
+    /// The footprint and capacity of each image in `images`, keyed as given,
+    /// read off the main actor; every key has an entry, whose figures are
+    /// `nil` where its file can't be read.
+    func diskSizes(
+        of images: [UUID: DiskImageReference]
+    ) async -> [UUID: VMBundleLayout.DiskSizes] {
+        guard !images.isEmpty else { return [:] }
+        return await offMainActorInfallibly { $0.diskSizes(bundleURL: $1, images: images) }
+    }
 }
 
 extension VMBundle {

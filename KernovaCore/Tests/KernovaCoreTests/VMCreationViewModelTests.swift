@@ -244,7 +244,6 @@ struct VMCreationViewModelTests {
         vm.vmName = "  Test Linux  "
         vm.cpuCount = 4
         vm.memorySize = .gibibytes(8)
-        vm.diskSizeInGB = 64
         vm.networkEnabled = true
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
 
@@ -255,7 +254,6 @@ struct VMCreationViewModelTests {
         #expect(config.bootMode == .efi)
         #expect(config.cpuCount == 4)
         #expect(config.memorySizeInGB == .gibibytes(8))
-        #expect(config.diskSizeInGB == 64)
         #expect(config.networkEnabled == true)
         #expect(config.macAddress != nil)  // generated for networking
         #expect(config.genericMachineIdentifierData != nil)  // generated for EFI
@@ -281,7 +279,6 @@ struct VMCreationViewModelTests {
         vm.vmName = "Kernel VM"
         vm.cpuCount = 2
         vm.memorySize = .gibibytes(4)
-        vm.diskSizeInGB = 32
         vm.networkEnabled = false
         vm.kernelPath = "/path/to/vmlinuz"
         vm.initrdPath = "/path/to/initrd"

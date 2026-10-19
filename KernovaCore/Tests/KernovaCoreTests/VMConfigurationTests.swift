@@ -59,7 +59,6 @@ struct VMConfigurationTests {
         #expect(config.name == "Test macOS VM")
         #expect(config.guestOS == .macOS)
         #expect(config.bootMode == .macOS)
-        #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
         #expect(config.networkEnabled == true)
         #expect(config.displayWidth == 1920)
         #expect(config.displayHeight == 1200)
@@ -78,7 +77,6 @@ struct VMConfigurationTests {
 
         #expect(config.guestOS == .linux)
         #expect(config.bootMode == .efi)
-        #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
     @Test("An existing config's whole-gigabyte memory decodes unchanged and re-encodes as the same integer")
@@ -91,6 +89,17 @@ struct VMConfigurationTests {
         let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         #expect(String(decoding: encoded, as: UTF8.self).contains("\"memorySizeInGB\" : 8,"))
         #expect(object["memorySizeInGB"] as? Int == 8)
+    }
+
+    @Test("A config.json carrying the creation-time disk size decodes, and its next write drops the key")
+    func creationDiskSizeKeyDecodesAndIsDropped() throws {
+        let json = Self.makeBaseJSON()
+        #expect(json.contains("\"diskSizeInGB\""))
+        let config = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+
+        let encoded = try VMConfiguration.makeJSONEncoder().encode(config)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["diskSizeInGB"] == nil)
     }
 
     @Test("A decimal memory size decodes to the nearest megabyte and re-encodes as the same decimal")
@@ -1083,7 +1092,6 @@ struct VMConfigurationTests {
             bootMode: .macOS,
             cpuCount: 12,
             memorySizeInGB: .gibibytes(24),
-            diskSizeInGB: 256,
             displayWidth: 2560,
             displayHeight: 1440,
             displayPPI: 192,

@@ -107,7 +107,6 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     package var cpuCount: Int
     /// Persisted under this key as a number of gibibytes.
     package var memorySizeInGB: VMMemorySize
-    var diskSizeInGB: Int
 
     // MARK: - Display
 
@@ -381,7 +380,6 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         bootMode: VMBootMode,
         cpuCount: Int,
         memorySizeInGB: VMMemorySize,
-        diskSizeInGB: Int? = nil,
         displayWidth: Int = 1920,
         displayHeight: Int = 1200,
         displayPPI: Int = 144,
@@ -427,7 +425,6 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.bootMode = bootMode
         self.cpuCount = cpuCount
         self.memorySizeInGB = memorySizeInGB
-        self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.displayPPI = displayPPI
@@ -485,7 +482,6 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.bootMode = bootMode
         self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
         self.memorySizeInGB = try c.decode(VMMemorySize.self, forKey: .memorySizeInGB)
-        self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
         self.displayWidth = try c.decode(Int.self, forKey: .displayWidth)
         self.displayHeight = try c.decode(Int.self, forKey: .displayHeight)
         self.displayPPI = try c.decode(Int.self, forKey: .displayPPI)

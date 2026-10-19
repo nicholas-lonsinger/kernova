@@ -105,8 +105,6 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let cpuCount: Int
     /// Guest memory in bytes.
     public let memoryBytes: UInt64
-    /// The main disk's configured size in gigabytes.
-    public let diskSizeInGB: Int
     /// The network the VM joins, `nil` when networking is off.
     public let networkMode: String?
     /// Which network of its mode the VM joins — `common`, `isolated`, or a
@@ -151,7 +149,6 @@ public struct VMInfo: Codable, Sendable, Hashable {
         guestOS: String,
         cpuCount: Int,
         memoryBytes: UInt64,
-        diskSizeInGB: Int,
         networkMode: String?,
         networkMembership: String?,
         networkName: VMNetworkName?,
@@ -173,7 +170,6 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.guestOS = guestOS
         self.cpuCount = cpuCount
         self.memoryBytes = memoryBytes
-        self.diskSizeInGB = diskSizeInGB
         self.networkMode = networkMode
         self.networkMembership = networkMembership
         self.networkName = networkName
@@ -246,6 +242,42 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     public init(path: String, readOnly: Bool) {
         self.path = path
         self.readOnly = readOnly
+    }
+}
+
+/// One disk on a VM's storage-device list, as its configuration attaches it
+/// and as its image measured when the read was answered.
+public struct StorageDiskSummary: Codable, Sendable, Hashable {
+    /// The disk's stable identifier, which a storage-disk edit names it by.
+    public let id: UUID
+    /// What the user calls the disk.
+    public let label: String
+    /// The bus the guest sees the disk on: `virtio` or `usbMassStorage`.
+    public let kind: String
+    /// Whether the guest may read the disk but not write to it.
+    public let readOnly: Bool
+    /// The image file, as this Mac names it.
+    public let path: String
+    /// The user's free-form note, empty when there is none.
+    public let notes: String
+    /// The disk's size as the guest sees it, `nil` when the image can't be read.
+    public let capacityBytes: UInt64?
+    /// What the image takes on its volume, `nil` when the image can't be read.
+    public let usedBytes: UInt64?
+
+    /// Describes one disk.
+    public init(
+        id: UUID, label: String, kind: String, readOnly: Bool, path: String, notes: String,
+        capacityBytes: UInt64?, usedBytes: UInt64?
+    ) {
+        self.id = id
+        self.label = label
+        self.kind = kind
+        self.readOnly = readOnly
+        self.path = path
+        self.notes = notes
+        self.capacityBytes = capacityBytes
+        self.usedBytes = usedBytes
     }
 }
 

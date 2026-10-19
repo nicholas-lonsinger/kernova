@@ -55,6 +55,26 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 extension VMCommandCore {
     // MARK: - Storage Disks
 
+    /// The VM's storage disks in the order its guest sees them, each measured
+    /// from its image off the main actor.
+    ///
+    /// An arrival answers the disks its write was asked for, unmeasured: the
+    /// images are not at their path until the write lands.
+    func storageDisks(of selector: VMSelector) async throws -> [StorageDiskSummary] {
+        switch try resolveEntry(selector) {
+        case .vm(let instance):
+            let layout = instance.bundleLayout
+            let disks = instance.effectiveStorageDisks
+            let sizes = await instance.bundle.diskSizes(
+                of: Dictionary(disks.map { ($0.id, $0.imageReference) }) { first, _ in first })
+            return disks.map { StorageDiskSummary($0, in: layout, measured: sizes[$0.id]) }
+        case .arriving(let arrival):
+            let layout = VMBundleLayout(bundleURL: arrival.destinationURL)
+            return arrival.configuration.effectiveStorageDisks(layout: layout)
+                .map { StorageDiskSummary($0, in: layout, measured: nil) }
+        }
+    }
+
     /// Appends `files` to the VM's storage-disk list, skipping paths it already
     /// carries.
     ///
@@ -1177,5 +1197,17 @@ extension VMCommandCore {
             items.removeAll { $0.id == id }
             config.removableMedia = items.isEmpty ? nil : items
         }
+    }
+}
+
+extension StorageDiskSummary {
+    /// `disk` as the wire carries it, its path resolved against `layout` and
+    /// its sizes from `sizes`.
+    fileprivate init(_ disk: StorageDisk, in layout: VMBundleLayout, measured sizes: VMBundleLayout.DiskSizes?) {
+        self.init(
+            id: disk.id, label: disk.label, kind: disk.kind.rawValue, readOnly: disk.readOnly,
+            path: layout.diskURL(forRelativePath: disk.path, isInternal: disk.isInternal)
+                .path(percentEncoded: false),
+            notes: disk.notes, capacityBytes: sizes?.capacityBytes, usedBytes: sizes?.onDiskBytes)
     }
 }

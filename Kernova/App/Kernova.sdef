@@ -73,9 +73,6 @@
 			<property name="memory" code="KvMm" type="real" access="r" description="Guest memory in gigabytes.">
 				<cocoa key="memory"/>
 			</property>
-			<property name="disk size" code="KvDs" type="integer" access="r" description="The main disk's configured size in gigabytes.">
-				<cocoa key="diskSize"/>
-			</property>
 			<property name="network mode" code="KvNm" type="text" description="The network it joins, or missing value when networking is off. Set it to nat, bridged or hostOnly, or to none to turn networking off.">
 				<cocoa key="networkMode"/>
 			</property>

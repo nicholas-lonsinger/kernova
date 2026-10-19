@@ -223,7 +223,6 @@ struct VMScriptingGatewayTests {
         ) {
             $0.cpuCount = 6
             $0.memorySizeInGB = .gibibytes(8)
-            $0.diskSizeInGB = 128
             $0.networkEnabled = true
             $0.networkMode = .nat
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -251,7 +250,6 @@ struct VMScriptingGatewayTests {
         #expect(vm.guestOperatingSystem == "macOS")
         #expect(vm.processorCount == 6)
         #expect(vm.memory == 8)
-        #expect(vm.diskSize == 128)
         #expect(vm.networkMode == "nat")
         #expect(vm.networkMembership == "common")
         #expect(vm.networkName == nil)

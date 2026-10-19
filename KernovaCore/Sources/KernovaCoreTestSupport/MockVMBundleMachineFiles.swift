@@ -35,6 +35,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
         var sizes: [UUID: SnapshotSize] = [:]
+        var diskSizes: [UUID: VMBundleLayout.DiskSizes] = [:]
         var sizeReads = 0
         var sizeReadHold: DispatchSemaphore?
         var captureError: (any Error)?
@@ -66,6 +67,12 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     /// Seeds the size one snapshot reports.
     func setSize(_ size: SnapshotSize, for snapshotID: UUID) {
         state.withLock { $0.sizes[snapshotID] = size }
+    }
+
+    /// Seeds the figures one disk image reports; an image not seeded reads
+    /// as unreadable.
+    func setDiskSizes(_ sizes: VMBundleLayout.DiskSizes, for imageID: UUID) {
+        state.withLock { $0.diskSizes[imageID] = sizes }
     }
 
     /// Seeds the configuration one snapshot captured, as `prepareSnapshot`
@@ -199,6 +206,15 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         sizeReadEntered.notify()
         hold?.wait()
         return sizes
+    }
+
+    func diskSizes(
+        bundleURL: URL, images: [UUID: DiskImageReference]
+    ) -> [UUID: VMBundleLayout.DiskSizes] {
+        state.withLock { state in
+            Dictionary(
+                uniqueKeysWithValues: images.keys.map { ($0, state.diskSizes[$0] ?? VMBundleLayout.DiskSizes()) })
+        }
     }
 
     /// How many size reads have taken their figures.

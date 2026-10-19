@@ -109,6 +109,13 @@ package protocol VMBundleMachineFileWorking: VMPlatformFileWriting {
     /// whose size can't be read has no entry.
     func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize]
 
+    /// The footprint and capacity of each image in `images`, keyed as given;
+    /// every key has an entry, whose figures are `nil` where its file can't be
+    /// read.
+    func diskSizes(
+        bundleURL: URL, images: [UUID: DiskImageReference]
+    ) -> [UUID: VMBundleLayout.DiskSizes]
+
     // MARK: Suspend slot
 
     /// Removes the bundle's suspend slot; a bundle holding none is a success.

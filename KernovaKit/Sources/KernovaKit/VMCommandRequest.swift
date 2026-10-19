@@ -10,7 +10,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 14
+    public static let currentProtocolVersion = 15
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -38,6 +38,9 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case snapshotSizes(VMSelector)
         /// The folders the VM shares with its guest.
         case sharedDirectories(VMSelector)
+        /// The VM's storage disks in the order its guest sees them, each
+        /// measured from its image.
+        case storageDisks(VMSelector)
         /// The USB accessories this VM's guest currently holds.
         case usbAccessories(VMSelector)
         /// The USB accessories macOS has assigned to Kernova and no guest holds.
@@ -136,6 +139,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .snapshots: .snapshots
             case .snapshotSizes: .snapshotSizes
             case .sharedDirectories: .sharedDirectories
+            case .storageDisks: .storageDisks
             case .usbAccessories: .usbAccessories
             case .availableUSBAccessories: .availableUSBAccessories
             case .usbPairings: .usbPairings

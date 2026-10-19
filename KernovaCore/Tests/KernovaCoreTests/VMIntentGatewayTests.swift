@@ -56,7 +56,6 @@ struct VMIntentGatewayTests {
         #expect(entity.guestOS == info.guestOS)
         #expect(entity.cpuCount == info.cpuCount)
         #expect(entity.memoryBytes == Int(info.memoryBytes))
-        #expect(entity.diskSizeInGB == info.diskSizeInGB)
         #expect(entity.networkMode == info.networkMode)
         #expect(entity.macAddress == info.macAddress)
         #expect(entity.ipAddress == info.ipAddress.address)

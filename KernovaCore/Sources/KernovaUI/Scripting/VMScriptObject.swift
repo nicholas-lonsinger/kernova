@@ -60,8 +60,6 @@ package final class VMScriptObject: NSObject {
     /// reads and writes, so one number means one thing on every surface.
     @objc var memory: Double { Double(info.memoryBytes) / Double(1 << 30) }
 
-    @objc var diskSize: Int { info.diskSizeInGB }
-
     /// `missing value` written is networking turned off, as a read answers it.
     @objc var networkMode: String? {
         get { info.networkMode }

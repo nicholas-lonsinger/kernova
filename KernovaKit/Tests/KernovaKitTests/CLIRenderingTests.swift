@@ -22,12 +22,29 @@ struct CLIRenderingTests {
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "nat", networkMembership: networkMembership,
+            memoryBytes: memoryBytes, networkMode: "nat", networkMembership: networkMembership,
             networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: ipAddress, agentStatus: agentStatus,
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
             stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
+    }
+
+    private let mainDisk = StorageDiskSummary(
+        id: UUID(uuid: (1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6)), label: "Main Disk", kind: "virtio",
+        readOnly: false, path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "",
+        capacityBytes: 100_000_000_000, usedBytes: 10_100_000_000)
+    private let installer = StorageDiskSummary(
+        id: UUID(uuid: (6, 5, 4, 3, 2, 1, 0, 9, 8, 7, 6, 5, 4, 3, 2, 1)),
+        label: "ubuntu-26.04.1-desktop-arm64", kind: "usbMassStorage", readOnly: true,
+        path: "/Users/somebody/Downloads/ubuntu-26.04.1-desktop-arm64.iso", notes: "",
+        capacityBytes: 4_150_000_000, usedBytes: 4_150_000_000)
+    private let unreadable = StorageDiskSummary(
+        id: UUID(uuid: (9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9)), label: "Scratch", kind: "virtio",
+        readOnly: false, path: "/Volumes/Gone/Scratch.img", notes: "", capacityBytes: nil, usedBytes: nil)
+
+    private func report(_ info: VMInfo, disks: [StorageDiskSummary]? = nil) -> VMInfoReport {
+        VMInfoReport(info, storageDisks: disks ?? [mainDisk])
     }
 
     // MARK: - Listing
@@ -90,7 +107,7 @@ struct CLIRenderingTests {
         let base = info()
         let heldInfo = VMInfo(
             id: base.id, name: base.name, status: "stopped", guestOS: base.guestOS,
-            cpuCount: base.cpuCount, memoryBytes: base.memoryBytes, diskSizeInGB: base.diskSizeInGB,
+            cpuCount: base.cpuCount, memoryBytes: base.memoryBytes,
             networkMode: base.networkMode, networkMembership: base.networkMembership, networkName: nil,
             macAddress: base.macAddress, ipAddress: .notObserved,
             agentStatus: base.agentStatus, hasSavedState: false, isEphemeral: base.isEphemeral,
@@ -98,7 +115,7 @@ struct CLIRenderingTests {
             stateBucket: .heldByAnotherCopy,
             bundlePath: base.bundlePath, heldByAnotherCopy: true)
         let status = try #require(
-            TableRenderer.render(heldInfo, quiet: false).components(separatedBy: "\n")
+            TableRenderer.render(report(heldInfo)).components(separatedBy: "\n")
                 .first { $0.hasPrefix("Status") })
         #expect(status.hasSuffix("In use by another copy of Kernova"))
 
@@ -124,10 +141,10 @@ struct CLIRenderingTests {
 
     @Test("An info block names every field, and reads the status in words")
     func infoNamesEveryField() {
-        let rendered = TableRenderer.render(info(), quiet: false)
+        let rendered = TableRenderer.render(report(info()))
 
         for field in [
-            "Name", "Identifier", "Status", "Guest", "CPUs", "Memory", "Disk", "Network",
+            "Name", "Identifier", "Status", "Guest", "CPUs", "Memory", "Disks", "Network",
             "MAC Address", "IP Address", "Guest Agent", "Saved State", "Ephemeral", "Snapshots",
             "Bundle",
         ] {
@@ -140,7 +157,7 @@ struct CLIRenderingTests {
 
     @Test("A VM with no session reads its guest agent as absent")
     func infoWithoutSessionReadsTheAgentAsAbsent() throws {
-        let rendered = TableRenderer.render(info(agentStatus: nil), quiet: false)
+        let rendered = TableRenderer.render(report(info(agentStatus: nil)))
         let row = try #require(
             rendered.components(separatedBy: "\n").first { $0.hasPrefix("Guest Agent") })
         #expect(row.hasSuffix("  \u{2013}"))
@@ -158,7 +175,7 @@ struct CLIRenderingTests {
     func anUnreadableNetworkNameReadsAsSuch() throws {
         let id = "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"
         let rendered = TableRenderer.render(
-            info(networkMembership: id, networkName: .unreadable), quiet: false)
+            report(info(networkMembership: id, networkName: .unreadable)))
         let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
 
         #expect(network.hasSuffix("nat, Network List Can\u{2019}t Be Read"))
@@ -169,7 +186,7 @@ struct CLIRenderingTests {
     func anUnlistedNetworkReadsAsItsIdentifier() throws {
         let id = try #require(UUID(uuidString: "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"))
         let rendered = TableRenderer.render(
-            info(networkMembership: id.uuidString, networkName: .unlisted(id)), quiet: false)
+            report(info(networkMembership: id.uuidString, networkName: .unlisted(id))))
         let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
 
         #expect(network.hasSuffix("nat, \(id.uuidString)"))
@@ -179,7 +196,7 @@ struct CLIRenderingTests {
     func infoStatesMemoryAsTheKeyDoes() throws {
         let memory = { (bytes: UInt64) throws -> String in
             try #require(
-                TableRenderer.render(self.info(memoryBytes: bytes), quiet: false)
+                TableRenderer.render(self.report(self.info(memoryBytes: bytes)))
                     .components(separatedBy: "\n").first { $0.hasPrefix("Memory") })
         }
         #expect(try memory(1536 << 20).hasSuffix(" 1.5 GB"))
@@ -187,9 +204,39 @@ struct CLIRenderingTests {
         #expect(try memory(8 << 30).hasSuffix(" 8 GB"))
     }
 
-    @Test("--quiet on info prints the name alone")
-    func quietInfoIsTheNameAlone() {
-        #expect(TableRenderer.render(info(), quiet: true) == "Alpha")
+    @Test("Every disk reads on its own line under one Disks key, in the order listed, between Memory and Network")
+    func infoListsEveryDiskInOrder() throws {
+        let lines = TableRenderer.render(report(info(), disks: [mainDisk, installer, unreadable]))
+            .components(separatedBy: "\n")
+        let first = try #require(lines.firstIndex { $0.hasPrefix("Disks") })
+        let valueColumn = try #require(lines[first].range(of: "Main Disk")).lowerBound
+        let offset = lines[first].distance(from: lines[first].startIndex, to: valueColumn)
+
+        #expect(lines[first - 1].hasPrefix("Memory"))
+        #expect(lines[first + 3].hasPrefix("Network"))
+        #expect(
+            lines[first...(first + 2)].map { String($0.dropFirst(offset)) } == [
+                "Main Disk: 100 GB, 10.1 GB used",
+                "ubuntu-26.04.1-desktop-arm64: 4.15 GB, 4.15 GB used, USB, read-only",
+                "Scratch: Unknown",
+            ])
+        #expect(lines[(first + 1)...(first + 2)].allSatisfy { line in line.prefix(offset).allSatisfy { $0 == " " } })
+    }
+
+    @Test("info's JSON is the description's own fields beside the ordered disk list, and reads back")
+    func infoJSONCarriesTheDiskList() throws {
+        let rendered = try JSONRenderer.render(report(info(), disks: [mainDisk, installer, unreadable]))
+        let data = Data(rendered.utf8)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let disks = try #require(object["storageDisks"] as? [[String: Any]])
+
+        #expect(try JSONDecoder().decode(VMInfo.self, from: data) == info())
+        #expect(disks.compactMap { $0["label"] as? String } == ["Main Disk", installer.label, "Scratch"])
+        #expect(disks[2]["capacityBytes"] == nil)
+        #expect(disks[2]["usedBytes"] == nil)
+        struct Disks: Decodable { let storageDisks: [StorageDiskSummary] }
+        #expect(
+            try JSONDecoder().decode(Disks.self, from: data).storageDisks == [mainDisk, installer, unreadable])
     }
 
     // MARK: - Snapshots

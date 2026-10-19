@@ -304,4 +304,11 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         }
         return sizes
     }
+
+    package func diskSizes(
+        bundleURL: URL, images: [UUID: DiskImageReference]
+    ) -> [UUID: VMBundleLayout.DiskSizes] {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        return images.mapValues(layout.diskSizes(of:))
+    }
 }
