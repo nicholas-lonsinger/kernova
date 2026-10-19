@@ -16,6 +16,9 @@ import KernovaLogging
 /// landed yet reads an empty library as if it were the whole one. A verb
 /// suspends its own event and waits; a property read is Cocoa's command, so
 /// the element accessors suspend that one and re-issue it once the read lands.
+/// A VM's storage disks are measured from their image files, which the main
+/// thread never reads, so a command whose evaluation reaches a disk list is
+/// suspended the same way and re-issued once that list is measured.
 /// **Addressing:** a script names a VM the way a person does, so this addresses
 /// VMs by ``VMSelector/name(_:)`` as readily as by identifier and the ambiguity
 /// refusal can fire here — on a verb and on a read alike.
@@ -35,28 +38,32 @@ final class VMScriptingGateway {
     /// `activate`.
     private let prepareToSurface: @MainActor @Sendable () -> Void
 
-    /// Cocoa's own commands suspended on a read that arrived before the library
-    /// landed, each answered once it has.
-    private(set) var coldReads: [NSScriptCommand] = []
+    /// Cocoa's own commands suspended until what their answer reads is in
+    /// hand, each answered once it is.
+    private(set) var suspended: [SuspendedCommand] = []
+
+    /// The suspended command whose re-issue is being evaluated, which every
+    /// read that evaluation reaches answers for.
+    private var reissuing: SuspendedCommand?
 
     /// The command an evaluation this gateway runs is answering — a verb's own
-    /// while it addresses its specifier, the fresh instance while a cold read
-    /// is re-issued — which is where a refusal is recorded while Cocoa has no
-    /// current command.
+    /// while it addresses its specifier, the fresh instance while a suspended
+    /// command is re-issued — which is where a refusal is recorded while Cocoa
+    /// has no current command.
     var answeringCommand: NSScriptCommand?
 
-    /// Reads the command Cocoa is executing on this thread, if any.
-    private let currentCommand: @MainActor () -> NSScriptCommand?
+    /// How the gateway reaches the command Cocoa is executing.
+    private let runtime: VMScriptCommandRuntime
 
     init(
         commands: VMCommandCore, readiness: LibraryReadiness,
         prepareToSurface: @escaping @MainActor @Sendable () -> Void,
-        currentCommand: @escaping @MainActor () -> NSScriptCommand? = { NSScriptCommand.current() }
+        runtime: VMScriptCommandRuntime = .cocoa
     ) {
         self.commands = commands
         self.readiness = readiness
         self.prepareToSurface = prepareToSurface
-        self.currentCommand = currentCommand
+        self.runtime = runtime
     }
 
     // MARK: - Reads
@@ -109,7 +116,7 @@ final class VMScriptingGateway {
     }
 
     /// The command Cocoa is executing on this thread, if any.
-    private var executing: NSScriptCommand? { currentCommand() }
+    private var executing: NSScriptCommand? { runtime.current() }
 
     /// The command a read is being answered for: the one Cocoa is executing,
     /// or the one an evaluation of this gateway's own is answering.
@@ -117,43 +124,145 @@ final class VMScriptingGateway {
         executing ?? answeringCommand
     }
 
-    // MARK: - A read before the library has landed
+    /// The storage disks of the VM `vm` identifies, in the order its guest
+    /// sees them, from the measurement held for the command being answered.
+    ///
+    /// A command that holds none is suspended, once, and answered nothing for
+    /// now: ``answer(_:)`` measures every VM whose list its evaluation reached
+    /// and re-issues it. A read no Cocoa command is executing or being
+    /// re-issued for — a verb's own addressing among them — answers nothing,
+    /// and measures nothing.
+    ///
+    /// Cocoa carries on evaluating a command after it is suspended, and a
+    /// `whose` test can match the empty list answered for now — so the pass is
+    /// refused, which holds back every write left in it
+    /// (``run(_:on:_:)``). Only a pass that reads every list measured answers
+    /// the script, and its outcome replaces the refusal.
+    func storageDisks(of vm: UUID) -> [VMStorageDiskScriptObject] {
+        let suspension: SuspendedCommand
+        if let reissuing {
+            suspension = reissuing
+        } else if let command = executing {
+            suspension = suspend(command, because: "reached a storage disk list")
+        } else {
+            return []
+        }
+        guard let disks = suspension.measured[vm] else {
+            if !suspension.unmeasured.contains(vm) { suspension.unmeasured.append(vm) }
+            answering?.refuse(Int(errAEEventFailed), Self.measuringStorageDisks)
+            return []
+        }
+        return disks.map { VMStorageDiskScriptObject($0, of: vm) }
+    }
+
+    /// The refusal a pass that read a disk list unmeasured carries, which the
+    /// pass that answers the script replaces.
+    nonisolated static let measuringStorageDisks = "Kernova is measuring the storage disks this reads."
+
+    // MARK: - Suspended commands
+
+    /// One of Cocoa's commands, suspended until what its answer reads is in
+    /// hand: the landed library, and every disk list its evaluation reaches.
+    ///
+    /// The measurements live only as long as the suspension, so no command
+    /// answers from another's.
+    @MainActor
+    final class SuspendedCommand {
+        let command: NSScriptCommand
+        /// Each reached VM's storage disks, as measured for this command.
+        fileprivate(set) var measured: [UUID: [StorageDiskSummary]] = [:]
+        /// The VMs whose disk lists an evaluation reached unmeasured, in the
+        /// order it reached them.
+        fileprivate(set) var unmeasured: [UUID] = []
+
+        init(_ command: NSScriptCommand) {
+            self.command = command
+        }
+    }
 
     /// Suspends the command Cocoa is evaluating a specifier for, when the
     /// library it evaluates against has not landed, and answers it once it has.
-    ///
-    /// Cocoa evaluates a specifier inside the Apple event's own callout,
-    /// through synchronous KVC with no suspension of its own to await in — but
-    /// the command being executed is `NSScriptCommand.current()`, and a
-    /// command can be suspended from anywhere on its own stack.
-    /// ``answer(coldRead:)`` supplies what it answers with.
     ///
     /// - Returns: Whether the read was deferred, which is the caller's cue to
     ///   answer nothing now.
     private func deferUntilLanded() -> Bool {
         guard !readiness.hasLanded, let command = executing else { return false }
-        // One evaluation can read the element more than once.
-        if coldReads.contains(where: { $0 === command }) { return true }
-        coldReads.append(command)
-        #log(
-            Self.logger, .notice,
-            "A \(command.commandDescription.commandName, privacy: .public) arrived before the library read landed; suspended until it does"
-        )
-        command.suspendExecution()
-        Task { await answer(coldRead: command) }
+        suspend(command, because: "arrived before the library read landed")
         return true
     }
 
-    /// Resumes a suspended command with its answer once the library has landed.
-    private func answer(coldRead command: NSScriptCommand) async {
-        await readiness.ready()
-        let result = reissue(command)
-        coldReads.removeAll { $0 === command }
+    /// The suspension `command` is held under, suspending it first when it is
+    /// not held yet: one evaluation can reach the library and its disk lists
+    /// many times, and the command is suspended and answered once.
+    ///
+    /// Cocoa evaluates a specifier inside the Apple event's own callout,
+    /// through synchronous KVC with no suspension of its own to await in — but
+    /// the command being executed is `NSScriptCommand.current()`, and a
+    /// command can be suspended from anywhere on its own stack.
+    @discardableResult
+    private func suspend(_ command: NSScriptCommand, because reason: String) -> SuspendedCommand {
+        if let held = suspended.first(where: { $0.command === command }) { return held }
+        let suspension = SuspendedCommand(command)
+        suspended.append(suspension)
         #log(
             Self.logger, .notice,
-            "The library read landed; answering the \(command.commandDescription.commandName, privacy: .public) that waited on it"
+            "A \(command.commandDescription.commandName, privacy: .public) \(reason, privacy: .public); suspended until it can be answered"
         )
-        command.resumeExecution(withResult: result)
+        runtime.suspend(command)
+        Task { await answer(suspension) }
+        return suspension
+    }
+
+    /// Resumes a suspended command with its answer, once the library has
+    /// landed and every disk list its evaluation reaches is measured.
+    ///
+    /// Each pass measures what the one before it reached unmeasured, then
+    /// re-issues the command, and a pass that reaches nothing unmeasured is
+    /// the answer: Cocoa stops a failed evaluation early, so a pass can reach
+    /// a list the one before never got to. Each pass but the last measures a
+    /// VM no earlier one did, so the passes end.
+    private func answer(_ suspension: SuspendedCommand) async {
+        await readiness.ready()
+        var result: Any?
+        repeat {
+            let reached = suspension.unmeasured
+            suspension.unmeasured = []
+            for vm in reached {
+                suspension.measured[vm] = await measureStorageDisks(of: vm)
+            }
+            result = reissue(suspension)
+        } while !suspension.unmeasured.isEmpty
+        suspended.removeAll { $0 === suspension }
+        #log(
+            Self.logger, .notice,
+            "Answering the suspended \(suspension.command.commandDescription.commandName, privacy: .public)"
+        )
+        runtime.resume(suspension.command, result)
+    }
+
+    /// The storage disks of the VM `vm` identifies, measured off the main
+    /// thread — none for a VM that has left the library.
+    ///
+    /// The re-issue evaluates against the library as it stands, so a
+    /// departed VM is reached again only if it is listed again.
+    private func measureStorageDisks(of vm: UUID) async -> [StorageDiskSummary] {
+        do {
+            return try await commands.storageDisks(of: .id(vm))
+        } catch {
+            #log(
+                Self.logger, .notice,
+                "No storage disks read for \(vm.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return []
+        }
+    }
+
+    /// Re-issues `suspension`'s command, every read its evaluation reaches
+    /// answering from the suspension.
+    func reissue(_ suspension: SuspendedCommand) -> Any? {
+        reissuing = suspension
+        defer { reissuing = nil }
+        return reissue(suspension.command)
     }
 
     /// Runs `command` again against the landed library, recording on it what
@@ -173,7 +282,7 @@ final class VMScriptingGateway {
     /// evaluation itself does — `nil` against an empty list — so the receivers
     /// are evaluated once beforehand to tell the two apart. `exists` is the one
     /// command whose answer *is* that failure, and keeps its `false`.
-    func reissue(_ command: NSScriptCommand) -> Any? {
+    private func reissue(_ command: NSScriptCommand) -> Any? {
         let answer = command.commandDescription.createCommandInstance()
         answer.directParameter = command.directParameter
         answer.receiversSpecifier = command.receiversSpecifier
@@ -312,6 +421,9 @@ final class VMScriptingGateway {
 
     /// What a script that asks to make a virtual machine reads back.
     nonisolated static let cannotMakeVirtualMachine = "A script can\u{2019}t make a virtual machine."
+
+    /// What a script that asks to make a storage disk reads back.
+    nonisolated static let cannotMakeStorageDisk = "A script can\u{2019}t make a storage disk."
 
     /// Every named network, ordered by name — or nothing, with the command
     /// asking deferred, until the library has landed, and with the command
@@ -453,5 +565,24 @@ final class VMScriptingGateway {
                 }
             }
         }
+    }
+}
+
+/// How ``VMScriptingGateway`` reaches the command Cocoa is executing on this
+/// thread: reading it, suspending it, and resuming it with its answer.
+///
+/// Cocoa resumes only a command an Apple event suspended, so a test answers a
+/// command it built through closures of its own.
+struct VMScriptCommandRuntime {
+    var current: @MainActor () -> NSScriptCommand?
+    var suspend: @MainActor (NSScriptCommand) -> Void
+    var resume: @MainActor (NSScriptCommand, Any?) -> Void
+
+    /// Cocoa's own.
+    static var cocoa: Self {
+        Self(
+            current: { NSScriptCommand.current() },
+            suspend: { $0.suspendExecution() },
+            resume: { $0.resumeExecution(withResult: $1) })
     }
 }

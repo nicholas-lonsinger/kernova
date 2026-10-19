@@ -60,7 +60,7 @@ extension VMCommandCore {
     ///
     /// An arrival answers the disks its write was asked for, unmeasured: the
     /// images are not at their path until the write lands.
-    func storageDisks(of selector: VMSelector) async throws -> [StorageDiskSummary] {
+    package func storageDisks(of selector: VMSelector) async throws -> [StorageDiskSummary] {
         switch try resolveEntry(selector) {
         case .vm(let instance):
             let layout = instance.bundleLayout

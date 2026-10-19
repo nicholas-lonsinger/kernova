@@ -98,11 +98,42 @@ package final class VMScriptObject: NSObject {
         gateway?.setConfiguration(info.id, key: key, value: value)
     }
 
+    // MARK: - Elements
+
+    /// The literal KVC key the dictionary's `storage disk` element is declared
+    /// with.
+    nonisolated static let storageDisksKey = "storageDisks"
+
+    /// Every disk the VM attaches, in the order its guest sees them, measured
+    /// for the command being answered — see
+    /// ``VMScriptingGateway/storageDisks(of:)``.
+    @objc var storageDisks: [VMStorageDiskScriptObject] {
+        gateway?.storageDisks(of: info.id) ?? []
+    }
+
+    /// Refuses `make new storage disk at` a VM: a script adds no disk.
+    ///
+    /// Cocoa's own answer allocates the element's class with `init()`, which
+    /// ``VMStorageDiskScriptObject`` does not have — so it would trap.
+    package nonisolated override func newScriptingObject(
+        of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
+        properties: [String: Any]
+    ) -> Any? {
+        NSScriptCommand.current()?.refuse(
+            Int(errAECantHandleClass), VMScriptingGateway.cannotMakeStorageDisk)
+        return nil
+    }
+
     // MARK: - Specifier
 
     /// How a script names this VM back — `virtual machine id "…"` of the
     /// application, which is the one form no rename or reorder invalidates.
     package nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
+        Self.specifier(for: info.id)
+    }
+
+    /// `virtual machine id "…"` of the application, for the VM `id` identifies.
+    nonisolated static func specifier(for id: UUID) -> NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
             #log(Self.logger, .fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")
@@ -112,7 +143,7 @@ package final class VMScriptObject: NSObject {
             containerClassDescription: application,
             containerSpecifier: nil,
             key: AppDelegate.virtualMachinesKey,
-            uniqueID: info.id.uuidString)
+            uniqueID: id.uuidString)
     }
 }
 
