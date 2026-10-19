@@ -198,20 +198,26 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: 0.1)
+        let notified = AtomicInt()
+        let agent = makeAgent(
+            agentFd: agentFd,
+            heartbeatInterval: 0.1,
+            onHostCapabilitiesChanged: { _ in notified.increment() })
         defer { agent.stop() }
         agent.start()
 
         // Discard agent's outbound Hello.
         _ = try await nextFrame(from: host)
 
-        // Send host Hello + a few heartbeats. Behaviorally we just verify the
-        // agent stays connected (its outbound heartbeat stream keeps flowing).
-        try host.send(makeHostHelloFrame())
+        // The agent handles its channel's frames in order, so the report the
+        // trailing Hello raises — the second, after the connection's own — is
+        // also proof the heartbeats ahead of it were handled.
         for n in 1...3 {
             try host.send(makeHeartbeatFrame(nonce: UInt64(n)))
-            try await Task.sleep(nanoseconds: 50_000_000)
         }
+        try host.send(makeHostHelloFrame())
+        try await notified.changed.wait { notified.value >= 2 }
+        #expect(agent.connectionState == .connected)
 
         // The agent should still be sending heartbeats: read the next frame
         // and expect either a heartbeat or — at worst — a successful round

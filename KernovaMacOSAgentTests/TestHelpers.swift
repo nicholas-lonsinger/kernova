@@ -3,37 +3,6 @@ import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
 
-// MARK: - awaitFirst
-
-/// Awaits the first value emitted by `stream`, with the `testWaitBackstop`
-/// deadline.
-///
-/// - Throws: `TestFailure("Timed out…")` if no value arrives in time.
-/// - Throws: `TestFailure("Stream finished…")` when the stream ends without
-///   ever producing a value, so the two failure shapes are identifiable.
-func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
-    let timeout = testWaitBackstop
-    let stopwatch = BackstopStopwatch()
-    let task = Task<T?, Never> {
-        var iterator = stream.makeAsyncIterator()
-        return await iterator.next()
-    }
-    let timeoutTask = Task<Void, Never> {
-        try? await MonotonicEngineClock().sleep(for: timeout)
-        task.cancel()
-    }
-    defer { timeoutTask.cancel() }
-    guard let value = await task.value else {
-        if stopwatch.elapsed >= timeout {
-            throw TestFailure.backstop(
-                "Timed out waiting for stream value after \(timeout) s",
-                stopwatch: stopwatch, timeout: timeout)
-        }
-        throw TestFailure("Stream finished without producing a value")
-    }
-    return value
-}
-
 // MARK: - Clock-parameterized client factory
 
 /// Builds a `VsockGuestClient` on the clock `kind` names, for suites
