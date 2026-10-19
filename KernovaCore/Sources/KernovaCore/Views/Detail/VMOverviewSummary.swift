@@ -67,8 +67,9 @@ package struct VMOverviewResolved: Sendable {
     var networkModeLabel: NetworkChoiceLabel?
     /// What the guest's address resolves to for the mode it is on.
     package var ipAddress: GuestIPAddress = .unavailable
-    /// The boot disk's capacity, once its off-main read lands.
-    package var bootDiskBytes: UInt64?
+    /// Each storage disk's and removable medium's sizes by attachment id, once
+    /// the off-main measurement covering it lands.
+    package var attachmentSizes: [UUID: VMBundleLayout.DiskSizes] = [:]
     /// Each snapshot's size, once the off-main size read
     /// lands; a snapshot whose size can't be read has no entry.
     package var snapshotSizes: [UUID: SnapshotSize] = [:]
@@ -86,8 +87,9 @@ package struct VMOverviewResolved: Sendable {
 /// What each overview card states about a VM: the facts answering "what is this
 /// VM right now", never the panel's full row list.
 ///
-/// Status, guest OS version, cores, memory and disk capacity are the header's
-/// facts line, so no card repeats them.
+/// Status, guest OS version, cores, memory and the number of disks are the
+/// header's facts line, so no card repeats them; the Storage card lists the
+/// disks themselves.
 package enum VMOverviewSummary {
     /// A trailing copy button on a row.
     package struct RowCopy: Equatable, Sendable {
@@ -150,18 +152,15 @@ package enum VMOverviewSummary {
             }
             return rows
         case .storage:
-            let disks = instance.effectiveStorageDisks
-            guard let boot = disks.first else { return [Row(label: "Disks", value: "None")] }
-            let capacity = resolved.bootDiskBytes.map {
-                " \u{00B7} \(DataFormatters.formatBytes($0))"
+            // Attachment order is the order the guest enumerates its devices,
+            // not a boot order: an installed EFI guest boots from the BootOrder
+            // variable in its own variable store (UEFI Specification, "Boot
+            // Manager").
+            let disks = instance.effectiveStorageDisks.map { disk in
+                Row(label: disk.label, value: diskValue(disk, sizes: resolved.attachmentSizes[disk.id]))
             }
-            return [
-                Row(label: "Boot disk", value: boot.label + (capacity ?? "")),
-                Row(
-                    label: "Other",
-                    value:
-                        "\(otherDisksValue(disks.count - 1)) \u{00B7} \(mediaValue((config.removableMedia ?? []).count))"
-                ),
+            return disks + [
+                Row(label: "Removable media", value: mediaValue((config.removableMedia ?? []).count))
             ]
         case .network:
             guard config.networkEnabled, let mode = resolved.networkModeLabel?.text else {
@@ -286,13 +285,11 @@ package enum VMOverviewSummary {
         }
     }
 
-    /// How many disks follow the boot disk.
-    private static func otherDisksValue(_ count: Int) -> String {
-        switch count {
-        case ..<1: "No other disks"
-        case 1: "1 more disk"
-        default: "\(count) more disks"
-        }
+    /// A disk's capacity once measured, and whether it attaches over USB.
+    private static func diskValue(_ disk: StorageDisk, sizes: VMBundleLayout.DiskSizes?) -> String {
+        let capacity = sizes?.allocatedText
+        guard disk.kind == .usbMassStorage else { return capacity ?? "" }
+        return capacity.map { "\($0) \u{00B7} USB" } ?? "USB"
     }
 
     /// One accessory names itself; several are counted, because the USB Device
@@ -306,7 +303,7 @@ package enum VMOverviewSummary {
 
     private static func mediaValue(_ count: Int) -> String {
         switch count {
-        case ..<1: "No media"
+        case ..<1: "None"
         case 1: "1 medium"
         default: "\(count) media"
         }

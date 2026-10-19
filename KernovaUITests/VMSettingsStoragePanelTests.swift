@@ -82,35 +82,52 @@ struct VMSettingsStoragePanelTests {
         try await waitUntil { !self.showsMissingBadge(in: vc) }
     }
 
-    @Test("Each disk row shows its subtitle: the in-bundle label while no size is readable, the sizes once they are")
-    func diskRowsShowTheirSubtitles() async throws {
-        let directory = scratch.url.appendingPathComponent(
-            "kernova-settings-storage-sizes", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let path = directory.appendingPathComponent("data.img").path(percentEncoded: false)
-        FileManager.default.createFile(atPath: path, contents: Data(repeating: 1, count: 8192))
-
-        let viewModel = makeViewModel()
-        // The main disk's `Disk.asif` is never written, so its sizes stay
-        // unreadable; the external disk's file is real.
-        let instance = makeSettingsInstance(guestOS: .linux) {
-            let layout = VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: $0.id))
-            $0.storageDisks = [
-                StorageDisk.mainDisk(layout: layout), StorageDisk(path: path, label: "Data"),
-            ]
+    @Test("Each row paints the pane's measured sizes: the in-bundle label or path until they land")
+    func rowsPaintTheResolvedSizes() async throws {
+        // The external files exist, so neither row reads as missing; their
+        // figures come from the mock alone.
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let dataPath = scratch.url.appendingPathComponent("data.img").path(percentEncoded: false)
+        let stickPath = scratch.url.appendingPathComponent("stick.img").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: dataPath, contents: Data([0]))
+        FileManager.default.createFile(atPath: stickPath, contents: Data([0]))
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true)
+        let data = StorageDisk(path: dataPath, label: "Data")
+        let stick = RemovableMediaItem(path: stickPath)
+        let files = MockVMBundleMachineFiles()
+        files.setDiskSizes(
+            VMBundleLayout.DiskSizes(onDiskBytes: 3_000_000_000, capacityBytes: 64_000_000_000), for: main.id)
+        files.setDiskSizes(VMBundleLayout.DiskSizes(onDiskBytes: 1_000_000), for: stick.id)
+        // `data` is left unseeded, so it measures unreadable.
+        let viewModel = makeSettingsViewModel(preferences: preferences, machineFiles: files)
+        let instance = viewModel.library.registerFixture(guestOS: .linux) {
+            $0.storageDisks = [main, data]
+            $0.removableMedia = [stick]
         }
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.storage)
         let panel = try #require(vc.panelForTesting(.storage))
+        // Nothing has suspended since the measurement was issued.
+        #expect(findLabel(withText: "In-bundle disk image", in: panel) != nil)
+        #expect(findLabel(withText: stickPath, in: panel) != nil)
 
-        // Genuine no-signal predicate — the subtitles land from an off-main
-        // file read with no Observable or `AsyncGate` signal to arm against.
-        try await waitUntil {
-            findLabel(withText: "In-bundle disk image", in: panel) != nil
-                && findLabel(containing: "(used) / ", in: panel) != nil
-        }
+        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
+
+        let used = DataFormatters.formatBytes(3_000_000_000)
+        let allocated = DataFormatters.formatBytes(64_000_000_000)
+        #expect(findLabel(withText: "\(used) (used) / \(allocated) (allocated)", in: panel) != nil)
+        #expect(findLabel(withText: "\(DataFormatters.formatBytes(1_000_000)) used", in: panel) != nil)
+        #expect(findLabel(withText: dataPath, in: panel) != nil)
+
+        // A newer measurement repaints the same row.
+        let grown = DataFormatters.formatBytes(5_000_000_000)
+        files.setDiskSizes(
+            VMBundleLayout.DiskSizes(onDiskBytes: 5_000_000_000, capacityBytes: 64_000_000_000), for: main.id)
+        vc.showCategory(.storage)
+        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
+        #expect(findLabel(withText: "\(grown) (used) / \(allocated) (allocated)", in: panel) != nil)
     }
 
     // MARK: - Section lock hints

@@ -452,14 +452,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             makeRow: { model in makeSharedRow(model) },
             applyRow: { model, row in
                 row.update(
-                    title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
-                    missingPath: model.missingPath, readOnly: model.readOnly,
-                    controlsEnabled: model.controlsEnabled, ejectEnabled: model.ejectEnabled)
-                // The attachment lists repaint their subtitle from an off-main
-                // size read, so the row leaves that field alone; a share's
-                // subtitle is its path and is written here.
-                applyAttachmentSubtitle(
-                    to: row.subtitleField, path: model.subtitle, isMissing: model.isMissing)
+                    title: model.title, notes: model.notes, subtitle: model.subtitle,
+                    iconSystemName: model.iconSystemName, missingPath: model.missingPath,
+                    readOnly: model.readOnly, controlsEnabled: model.controlsEnabled,
+                    ejectEnabled: model.ejectEnabled)
             })
     }
 

@@ -334,6 +334,9 @@ extension VMSettingsViewController {
     /// What the cards are currently painted from.
     var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
 
+    /// The resolution the cards and panels read, so a test awaits its reads.
+    var overviewForTesting: VMOverviewResolver { panelContext.overview }
+
     /// Whether the panels were last bound read-only.
     var isReadOnlyForTesting: Bool { panelContext.isReadOnly }
     #endif
@@ -373,6 +376,11 @@ extension VMSettingsViewController {
             window.makeFirstResponder(nil)
         }
         selectedCategory = category
+        // The overview's Storage card and the Storage panel state the
+        // attachment sizes.
+        if category == nil || category == .storage {
+            panelContext.overview.remeasureAttachmentSizes()
+        }
         if installedPanel != category {
             removeInstalledPanel()
             if let category { installPanel(category) }
@@ -435,7 +443,6 @@ extension VMSettingsViewController {
         identityHeader.configure(
             with: instance,
             mode: selectedCategory.map { .category($0.title) } ?? .identity,
-            bootDiskBytes: panelContext.overview.resolved.bootDiskBytes,
             leadingAccessories: chrome?.leading ?? [],
             trailingAccessories: chrome?.trailing ?? [])
     }
@@ -470,9 +477,6 @@ extension VMSettingsViewController {
         if selectedCategory == category, builtPanels.contains(category) {
             panelControllers[category]?.refresh()
         }
-        // The facts line carries the boot disk's capacity, so the header follows
-        // the Storage read in both states.
-        if category == .storage { refreshHeader() }
         guard selectedCategory == nil else { return }
         overviewVC.configureCard(
             category, instance: instance, resolved: panelContext.overview.resolved,

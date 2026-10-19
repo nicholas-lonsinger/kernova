@@ -2,6 +2,7 @@ import AppKit
 import KernovaTestSupport
 import Testing
 
+@testable import KernovaCore
 @testable import KernovaUI
 
 @Suite("AttachmentInfoPopover Tests", .caseScoped)
@@ -14,14 +15,15 @@ struct AttachmentInfoPopoverContentViewControllerTests {
     }
 
     private func makeController(
-        notes: String = "", canEdit: Bool = true, recorder: NoteRecorder = NoteRecorder()
+        notes: String = "", canEdit: Bool = true, recorder: NoteRecorder = NoteRecorder(),
+        sizes: VMBundleLayout.DiskSizes = VMBundleLayout.DiskSizes(
+            onDiskBytes: 2_000_000_000, capacityBytes: 20_000_000_000)
     ) -> AttachmentInfoPopoverContentViewController {
         let controller = AttachmentInfoPopoverContentViewController(
             label: "Data Disk",
             fileName: "data.asif",
             fullPath: "/Users/test/data.asif",
-            usedText: "2 GB",
-            allocatedText: "20 GB",
+            sizes: sizes,
             readOnly: false,
             busText: "Virtio block",
             createdText: "Jan 1, 2025",
@@ -42,6 +44,18 @@ struct AttachmentInfoPopoverContentViewControllerTests {
         #expect(findLabel(withText: "File", in: controller.view) != nil)
         #expect(findLabel(withText: "data.asif", in: controller.view) != nil)
         #expect(findLabel(withText: "Virtio block", in: controller.view) != nil)
+    }
+
+    @Test("Used and Allocated read through the subtitle's formatter, an unreadable figure as Unknown")
+    func figuresReadThroughTheSharedFormatter() {
+        let measured = makeController()
+        #expect(findLabel(withText: DataFormatters.formatBytes(2_000_000_000), in: measured.view) != nil)
+        #expect(findLabel(withText: DataFormatters.formatBytes(20_000_000_000), in: measured.view) != nil)
+
+        let unreadable = makeController(sizes: VMBundleLayout.DiskSizes())
+        let values = collectLabels(in: unreadable.view).map(\.stringValue)
+        #expect(values.filter { $0 == "Unknown" }.count == 2)
+        #expect(!values.contains("\u{2014}"))
     }
 
     @Test("An editable popover always offers the Notes box, empty or not")

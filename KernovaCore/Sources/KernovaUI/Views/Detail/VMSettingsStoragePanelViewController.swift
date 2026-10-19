@@ -74,6 +74,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             .createRemovableMedia, on: instance)
         refreshStorageList()
         refreshRemovableList()
+        bootOrderSheet?.show(sizes: attachmentSizes)
         context.seedFileMonitor()
     }
 
@@ -104,6 +105,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private var fileMonitorLoop: ObservationLoop?
 
     private let reorderSheetPresenter = SheetPresenter()
+    /// The Boot Order sheet while it is up, which states the sizes the rows do.
+    private weak var bootOrderSheet: StorageDiskReorderSheetContentViewController?
     private let attachmentInfoPresenter = PopoverPresenter()
     private lazy var storageDiskCoordinator = DiskSizePopoverCoordinator(
         headline: "Create New Disk",
@@ -163,6 +166,11 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     private var currentRemovableMedia: [RemovableMediaItem] {
         instance.configuration.removableMedia ?? []
+    }
+
+    /// Every attachment's sizes as the pane last measured them.
+    private var attachmentSizes: [UUID: VMBundleLayout.DiskSizes] {
+        context.overview.resolved.attachmentSizes
     }
 
     /// Re-renders both lists whenever a watched path appears or disappears, so
@@ -247,6 +255,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private func refreshStorageList() {
         let disks = currentStorageDisks
         editBootOrderButton.isHidden = disks.count <= 1
+        let sizes = attachmentSizes
         let models = disks.map { disk -> VMSettingsRenderedRow in
             let isMissing = !disk.isInternal && !context.fileMonitor.exists(disk.path)
             return VMSettingsRenderedRow(
@@ -254,9 +263,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 iconSystemName: diskIconSystemName(for: disk),
                 title: disk.label,
                 notes: disk.notes,
-                // Structural subtitle only — the live size is read off-main and
-                // filled in by `populate`, so it isn't part of the rebuild diff.
-                subtitle: disk.isInternal ? "In-bundle disk image" : disk.path,
+                subtitle: VMBundleLayout.DiskSizes.subtitle(of: disk.imageReference, measured: sizes[disk.id]),
                 isMissing: isMissing,
                 missingPath: isMissing ? disk.path : nil,
                 readOnly: disk.readOnly,
@@ -265,24 +272,17 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         }
         storageList?.update(
             models,
-            readsUnchangedRows: sizesCanMove,
             makeRow: { model in
                 makeAttachmentRow(
                     model: model, kind: .storage,
                     readOnlySelector: #selector(storageReadOnlyToggled))
             },
-            applyRow: applyAttachmentRow,
-            readLiveSubtitle: { model, row in
-                guard let disk = currentStorageDisks.first(where: { $0.id == model.id })
-                else { return }
-                populateDiskSubtitle(
-                    row.subtitleField, for: disk, bundleLayout: instance.bundleLayout,
-                    isMissing: model.isMissing)
-            })
+            applyRow: applyAttachmentRow)
     }
 
     private func refreshRemovableList() {
         let items = currentRemovableMedia
+        let sizes = attachmentSizes
         let models = items.map { item -> VMSettingsRenderedRow in
             let isMissing = !context.fileMonitor.exists(item.path)
             return VMSettingsRenderedRow(
@@ -290,7 +290,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 iconSystemName: "opticaldisc",
                 title: item.label,
                 notes: item.notes,
-                subtitle: item.path,
+                subtitle: VMBundleLayout.DiskSizes.subtitle(of: item.imageReference, measured: sizes[item.id]),
                 isMissing: isMissing,
                 missingPath: isMissing ? item.path : nil,
                 readOnly: item.readOnly,
@@ -299,38 +299,20 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         }
         removableList?.update(
             models,
-            readsUnchangedRows: sizesCanMove,
             makeRow: { model in
                 makeAttachmentRow(
                     model: model, kind: .removable,
                     readOnlySelector: #selector(removableReadOnlyToggled))
             },
-            applyRow: applyAttachmentRow,
-            readLiveSubtitle: { model, row in
-                guard let item = currentRemovableMedia.first(where: { $0.id == model.id })
-                else { return }
-                populateDiskSubtitle(
-                    row.subtitleField, for: item, bundleLayout: instance.bundleLayout,
-                    isMissing: model.isMissing)
-            })
-    }
-
-    /// Whether a row's size can have moved without anything about the row
-    /// changing.
-    ///
-    /// The size behind a row is a filesystem walk, so it is re-read on every
-    /// pass only while the guest is running and writing to the disk. A stopped
-    /// VM's sizes cannot move on their own, so those rows are re-read when
-    /// something about them changed and not otherwise.
-    private var sizesCanMove: Bool {
-        instance.status == .running
+            applyRow: applyAttachmentRow)
     }
 
     private func applyAttachmentRow(_ model: VMSettingsRenderedRow, to row: AttachmentRowView) {
         row.update(
-            title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
-            missingPath: model.missingPath, readOnly: model.readOnly,
-            controlsEnabled: model.controlsEnabled, ejectEnabled: model.ejectEnabled)
+            title: model.title, notes: model.notes, subtitle: model.subtitle,
+            iconSystemName: model.iconSystemName, missingPath: model.missingPath,
+            readOnly: model.readOnly, controlsEnabled: model.controlsEnabled,
+            ejectEnabled: model.ejectEnabled)
     }
 
     private func refresh(_ kind: AttachmentKind) {
@@ -370,7 +352,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             notes: model.notes,
             controlsEnabled: model.controlsEnabled,
             icon: icon,
-            subtitle: makeAttachmentSubtitleLabel(path: "", isMissing: false),
+            subtitle: makeAttachmentSubtitleLabel(
+                path: model.missingPath ?? model.subtitle, isMissing: model.isMissing),
             readOnlyToggle: makeGroupedFormReadOnlySwitch(
                 id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
                 target: self, action: readOnlySelector),
@@ -422,7 +405,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 self.viewModel.renameRemovableMedia(ref.id, newLabel: newLabel, on: instance)
             }
             // A no-op rename (empty / unchanged) fires no observation, so force a
-            // refresh to pick up any size update suppressed during the edit.
+            // refresh to land any rebuild the edit deferred.
             self.refresh(ref.kind)
         }
     }
@@ -472,12 +455,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     @objc private func editBootOrderTapped() {
         guard let window = view.window else { return }
         let sheet = StorageDiskReorderSheetContentViewController(
-            disks: currentStorageDisks, instance: instance, fileMonitor: context.fileMonitor)
+            disks: currentStorageDisks, sizes: attachmentSizes, fileMonitor: context.fileMonitor)
         sheet.onReorder = { [weak self] disks in
             guard let self else { return }
             viewModel.reorderStorageDisks(disks.map(\.id), on: instance)
         }
         sheet.onDone = { [weak self] in self?.reorderSheetPresenter.close() }
+        bootOrderSheet = sheet
         reorderSheetPresenter.show(content: sheet, in: window)
     }
 
@@ -724,7 +708,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     ///
     /// Reads the on-disk/allocated figures and creation date **off the main
     /// thread** — the file may live on a slow or sleeping external volume — then
-    /// presents when they land.
+    /// presents when they land. Read here rather than taken from the pane's
+    /// measurement: it is the detail asked for at this moment, and the pane
+    /// measures no creation date.
     private func presentAttachmentInfoPopover(
         _ info: AttachmentInfo, for ref: AttachmentRef, from anchor: NSView
     ) {
@@ -747,8 +733,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 label: info.label,
                 fileName: url.lastPathComponent,
                 fullPath: url.path(percentEncoded: false),
-                usedText: sizes.onDiskBytes.map { DataFormatters.formatBytes($0) } ?? "—",
-                allocatedText: sizes.capacityBytes.map { DataFormatters.formatBytes($0) } ?? "Unknown",
+                sizes: sizes,
                 readOnly: info.readOnly,
                 busText: info.busText,
                 createdText: created.map { Self.diskInfoDateFormatter.string(from: $0) } ?? "Unknown",

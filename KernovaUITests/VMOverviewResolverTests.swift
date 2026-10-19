@@ -570,6 +570,131 @@ struct VMOverviewResolverTests {
         #expect(resolver.resolved.snapshotSizes[first.id] != nil)
     }
 
+    // MARK: - Attachment sizes
+
+    /// An installer image ahead of the main disk, and one removable medium.
+    private static let installer = StorageDisk(path: "/tmp/ubuntu-26.04.1-desktop-arm64.iso")
+    private static let mainDisk = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true)
+    private static let stick = RemovableMediaItem(path: "/tmp/stick.img")
+
+    private static let installerSizes = VMBundleLayout.DiskSizes(
+        onDiskBytes: 4_150_000_000, capacityBytes: 4_150_000_000)
+    private static let mainDiskSizes = VMBundleLayout.DiskSizes(
+        onDiskBytes: 9_000_000_000, capacityBytes: 100_000_000_000)
+    private static let stickSizes = VMBundleLayout.DiskSizes(onDiskBytes: 1_000_000, capacityBytes: 8_000_000_000)
+
+    /// A resolver over a VM attaching ``installer`` and ``mainDisk`` with
+    /// ``stick`` beside them, whose sizes `files` reports.
+    private func makeAttachmentResolver(
+        _ files: MockVMBundleMachineFiles, phase: VMLifecyclePhase = .stopped
+    ) -> (VMOverviewResolver, VMInstance, VMLibraryViewModel) {
+        files.setDiskSizes(Self.installerSizes, for: Self.installer.id)
+        files.setDiskSizes(Self.mainDiskSizes, for: Self.mainDisk.id)
+        files.setDiskSizes(Self.stickSizes, for: Self.stick.id)
+        let viewModel = makeSettingsViewModel(preferences: preferences, machineFiles: files)
+        let instance = viewModel.library.registerFixture(phase: phase) {
+            $0.storageDisks = [Self.installer, Self.mainDisk]
+            $0.removableMedia = [Self.stick]
+        }
+        return (makeResolver(instance: instance, viewModel: viewModel), instance, viewModel)
+    }
+
+    @Test("Every storage disk and removable medium is measured, keyed by its attachment")
+    func everyAttachmentIsMeasured() async {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, _) = makeAttachmentResolver(files)
+        var reported: [VMSettingsCategory] = []
+        resolver.onCategoryResolved = { reported.append($0) }
+
+        resolver.refresh()
+        #expect(resolver.resolved.attachmentSizes.isEmpty)
+        await resolver.attachmentSizeTaskForTesting?.value
+
+        #expect(
+            resolver.resolved.attachmentSizes == [
+                Self.installer.id: Self.installerSizes, Self.mainDisk.id: Self.mainDiskSizes,
+                Self.stick.id: Self.stickSizes,
+            ])
+        #expect(reported == [.storage])
+    }
+
+    @Test("A stopped VM is measured once per attachment set and phase; a running one on every pass")
+    func onlyARunningVMIsRemeasuredEveryPass() async {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, instance, _) = makeAttachmentResolver(files)
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+        resolver.refresh()
+        #expect(files.diskSizeReads == 1)
+
+        // The phase committing measures again, and while the guest runs and
+        // writes, so does every pass after it.
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+        #expect(files.diskSizeReads == 2)
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+        #expect(files.diskSizeReads == 3)
+    }
+
+    @Test("Showing the sizes again measures a stopped VM again, with nothing else changed")
+    func remeasuringAttachmentsReadsAgain() async {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, _) = makeAttachmentResolver(files)
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+
+        let grown = VMBundleLayout.DiskSizes(onDiskBytes: 12_000_000_000, capacityBytes: 100_000_000_000)
+        files.setDiskSizes(grown, for: Self.mainDisk.id)
+        resolver.remeasureAttachmentSizes()
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+
+        #expect(files.diskSizeReads == 2)
+        #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == grown)
+    }
+
+    @Test("Detaching a medium drops its sizes at once and leaves the disks' on screen")
+    func detachingDropsOnlyItsOwnSizes() async {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, instance, viewModel) = makeAttachmentResolver(files)
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+        let hold = files.holdNextDiskSizeRead()
+
+        viewModel.ejectRemovableMedia(Self.stick.id, from: instance)
+        resolver.refresh()
+
+        // Before the measurement the detach issued has landed.
+        #expect(resolver.resolved.attachmentSizes[Self.stick.id] == nil)
+        #expect(resolver.resolved.attachmentSizes[Self.installer.id] == Self.installerSizes)
+        #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == Self.mainDiskSizes)
+        hold.signal()
+        await resolver.attachmentSizeTaskForTesting?.value
+    }
+
+    @Test("A measurement landing after a newer one never replaces it")
+    func aStaleAttachmentMeasurementCannotOverwriteANewerOne() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, _) = makeAttachmentResolver(files)
+        let hold = files.holdNextDiskSizeRead()
+        resolver.refresh()
+        let staleRead = resolver.attachmentSizeTaskForTesting
+        try await files.diskSizeReadEntered.wait { files.diskSizeReads == 1 }
+
+        let fresh = VMBundleLayout.DiskSizes(onDiskBytes: 12_000_000_000, capacityBytes: 100_000_000_000)
+        files.setDiskSizes(fresh, for: Self.mainDisk.id)
+        resolver.remeasureAttachmentSizes()
+        resolver.refresh()
+        await resolver.attachmentSizeTaskForTesting?.value
+        #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == fresh)
+
+        hold.signal()
+        await staleRead?.value
+        #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == fresh)
+    }
+
     @Test("Binding to another VM drops what described the outgoing one")
     func rebindingClearsTheOutgoingVMsValues() async {
         let viewModel = makeSettingsViewModel(preferences: preferences)
@@ -581,15 +706,16 @@ struct VMOverviewResolverTests {
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
-        await resolver.bootDiskTaskForTesting?.value
+        await resolver.attachmentSizeTaskForTesting?.value
         #expect(!resolver.resolved.snapshotSizes.isEmpty)
+        #expect(!resolver.resolved.attachmentSizes.isEmpty)
 
         resolver.bind(instance: VMInstanceFixture.make { $0.networkEnabled = false }, viewModel: viewModel)
 
         // Nothing of the previous VM's survives to be stated on the new one's
         // rows, and the network is the new one's.
         #expect(resolver.resolved.snapshotSizes.isEmpty)
-        #expect(resolver.resolved.bootDiskBytes == nil)
+        #expect(resolver.resolved.attachmentSizes.isEmpty)
         #expect(resolver.resolved.networkModeLabel == .noNetwork)
     }
 
@@ -607,7 +733,7 @@ struct VMOverviewResolverTests {
 
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
-        await resolver.bootDiskTaskForTesting?.value
+        await resolver.attachmentSizeTaskForTesting?.value
 
         #expect(reported.contains(.snapshots))
         #expect(reported.contains(.storage))

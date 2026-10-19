@@ -176,7 +176,7 @@ package struct VMBundleLayout: Sendable {
     }
 
     /// On-disk footprint and virtual capacity of a disk image.
-    package struct DiskSizes: Sendable {
+    package struct DiskSizes: Sendable, Equatable {
         /// Actual bytes consumed on disk (`st_blocks * 512`), or `nil` if the
         /// file doesn't resolve.
         package var onDiskBytes: UInt64?

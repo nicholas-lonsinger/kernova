@@ -389,14 +389,37 @@ struct VMSettingsOverviewTests {
         #expect(findLabel(withText: mode, in: network) != nil)
     }
 
-    @Test("The Storage card names the boot disk and folds the rest into one line")
-    func storageCardStatesBootDiskAndTheRest() throws {
-        let (vc, instance, _) = makeController()
+    @Test("The Storage card lists every disk in order with its measured capacity, and the header counts them")
+    func storageCardListsEveryDisk() async throws {
+        let installer = StorageDisk(path: "/tmp/ubuntu-26.04.1-desktop-arm64.iso")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true)
+        let files = MockVMBundleMachineFiles()
+        files.setDiskSizes(
+            VMBundleLayout.DiskSizes(onDiskBytes: 4_150_000_000, capacityBytes: 4_150_000_000), for: installer.id)
+        files.setDiskSizes(
+            VMBundleLayout.DiskSizes(onDiskBytes: 9_000_000_000, capacityBytes: 100_000_000_000), for: main.id)
+        let viewModel = makeSettingsViewModel(preferences: preferences, machineFiles: files)
+        let instance = viewModel.library.registerFixture(guestOS: .linux) {
+            $0.macAddress = nil
+            $0.storageDisks = [installer, main]
+            $0.removableMedia = [RemovableMediaItem(path: "/tmp/stick.img")]
+        }
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
+
         let storage = try card(.storage, in: vc)
-        #expect(findLabel(withText: "Boot disk", in: storage) != nil)
-        #expect(findLabel(withText: instance.effectiveStorageDisks[0].label, in: storage) != nil)
-        #expect(findLabel(withText: "No other disks · No media", in: storage) != nil)
-        // Cores, memory and the disk figure belong to the header's facts line.
+        #expect(findLabel(withText: "ubuntu-26.04.1-desktop-arm64", in: storage) != nil)
+        #expect(findLabel(withText: "\(DataFormatters.formatBytes(4_150_000_000)) · USB", in: storage) != nil)
+        #expect(findLabel(withText: "Main Disk", in: storage) != nil)
+        #expect(findLabel(withText: DataFormatters.formatBytes(100_000_000_000), in: storage) != nil)
+        #expect(findLabel(withText: "1 medium", in: storage) != nil)
+        #expect(findLabel(containing: "Boot", in: storage) == nil)
+
+        let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
+        #expect(header.renderedFactsLine.hasSuffix(" · 2 disks"))
+        // Cores, memory and the disk count belong to the header's facts line.
         #expect(findLabel(withText: "CPU cores", in: try card(.system, in: vc)) == nil)
         #expect(findLabel(withText: "Memory", in: try card(.system, in: vc)) == nil)
     }

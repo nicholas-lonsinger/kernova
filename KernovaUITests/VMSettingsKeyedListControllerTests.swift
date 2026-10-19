@@ -18,7 +18,6 @@ struct VMSettingsKeyedListControllerTests {
     @MainActor
     private final class Row: NSView {
         var title = ""
-        var subtitleReads = 0
     }
 
     /// The list plus the counters its hooks bump, so a test can assert which
@@ -29,7 +28,6 @@ struct VMSettingsKeyedListControllerTests {
         let list: VMSettingsKeyedListController<Model, Row>
         var built: [UUID] = []
         var applied: [UUID] = []
-        var subtitleReads: [UUID] = []
 
         init(emptyMessage: String? = nil, separator: (() -> NSView)? = nil) {
             stack.orientation = .vertical
@@ -37,10 +35,9 @@ struct VMSettingsKeyedListControllerTests {
                 listStack: stack, emptyMessage: emptyMessage, separator: separator)
         }
 
-        func update(_ models: [Model], readsUnchangedRows: Bool = false) {
+        func update(_ models: [Model]) {
             list.update(
                 models,
-                readsUnchangedRows: readsUnchangedRows,
                 makeRow: { model in
                     built.append(model.id)
                     return Row()
@@ -48,10 +45,6 @@ struct VMSettingsKeyedListControllerTests {
                 applyRow: { model, row in
                     applied.append(model.id)
                     row.title = model.title
-                },
-                readLiveSubtitle: { model, row in
-                    subtitleReads.append(model.id)
-                    row.subtitleReads += 1
                 })
         }
     }
@@ -72,7 +65,6 @@ struct VMSettingsKeyedListControllerTests {
 
         #expect(fixture.built == [first.id, second.id])
         #expect(fixture.applied == [first.id, second.id])
-        #expect(fixture.subtitleReads == [first.id, second.id])
         #expect(fixture.list.row(first.id)?.title == "One")
         #expect(fixture.stack.arrangedSubviews.count == 2)
         #expect(fixture.list.rendered?.map(\.id) == [first.id, second.id])
@@ -114,22 +106,16 @@ struct VMSettingsKeyedListControllerTests {
         #expect(fixture.list.row(first.id) === firstRow)
         #expect(firstRow.title == "Renamed")
         #expect(fixture.applied == [first.id, second.id, first.id])
-        #expect(fixture.subtitleReads == [first.id, second.id, first.id])
     }
 
-    @Test("An unchanged row is re-read only when the caller says its subtitle can move")
-    func unchangedRowsAreReReadOnlyWhenAsked() {
+    @Test("A pass that changed nothing about a row leaves it alone")
+    func unchangedRowsAreNotReapplied() {
         let fixture = Fixture()
         let model = makeModel("One")
         fixture.update([model])
 
         fixture.update([model])
-        #expect(fixture.subtitleReads == [model.id])
-        #expect(fixture.applied == [model.id])
 
-        fixture.update([model], readsUnchangedRows: true)
-        // Re-read, but not re-applied: nothing about the row changed.
-        #expect(fixture.subtitleReads == [model.id, model.id])
         #expect(fixture.applied == [model.id])
     }
 
