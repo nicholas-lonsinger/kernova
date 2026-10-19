@@ -113,18 +113,28 @@ public func expectPeerOpen(_ peer: Int32) throws {
 
 // MARK: - nextFrame
 
-/// Reads the next frame from `channel`, distinguishing timeout from EOF.
+/// Reads the next frame from `channel`, as ``nextFrameOrEnd(from:)`` does.
 ///
-/// - Throws: `TestFailure("Timed out…")` when no frame arrives within the
-///   `testWaitBackstop` deadline.
 /// - Throws: `TestFailure("Channel finished…")` when the channel closes without
-///   producing a frame (EOF), so the two failure shapes are identifiable.
-///   Conflating them once masked a CI flake as a peer-disconnect bug.
+///   producing a frame (EOF), distinct from the timeout failure. Conflating the
+///   two once masked a CI flake as a peer-disconnect bug.
+public func nextFrame(from channel: VsockChannel) async throws -> Frame {
+    guard let frame = try await nextFrameOrEnd(from: channel) else {
+        throw TestFailure("Channel finished without producing a frame (EOF)")
+    }
+    return frame
+}
+
+/// Reads the next frame from `channel`, or nil once the channel finishes (EOF).
+///
+/// - Throws: `TestFailure("Timed out…")` when neither arrives within the
+///   `testWaitBackstop` deadline, so a stall never reads as EOF.
+/// - Throws: the error that finishes the channel's stream, if one does.
 ///
 /// Single-consumer: `VsockChannel.incoming` allows one iteration at a time, so a
 /// test that also needs "prove nothing arrived" against the same channel uses
 /// ``FrameRecorder`` instead of mixing the two.
-public func nextFrame(from channel: VsockChannel) async throws -> Frame {
+public func nextFrameOrEnd(from channel: VsockChannel) async throws -> Frame? {
     let timeout = testWaitBackstop
     let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {
@@ -137,24 +147,16 @@ public func nextFrame(from channel: VsockChannel) async throws -> Frame {
     }
     defer { timeoutTask.cancel() }
 
-    do {
-        guard let frame = try await receiver.value else {
-            // Cancelling the task suspended in `AsyncThrowingStream.next()`
-            // makes it return nil rather than throw, so the timeout lands here
-            // too, distinguishable from a genuine EOF only by the clock.
-            if stopwatch.elapsed >= timeout {
-                throw TestFailure.backstop(
-                    "Timed out waiting for a frame after \(timeout) s",
-                    stopwatch: stopwatch, timeout: timeout)
-            }
-            throw TestFailure("Channel finished without producing a frame (EOF)")
-        }
-        return frame
-    } catch is CancellationError {
+    let frame = try await receiver.value
+    // Cancelling the task suspended in `AsyncThrowingStream.next()` makes it
+    // return nil rather than throw, so the timeout is told from a genuine EOF
+    // only by the clock.
+    if frame == nil, stopwatch.elapsed >= timeout {
         throw TestFailure.backstop(
             "Timed out waiting for a frame after \(timeout) s",
             stopwatch: stopwatch, timeout: timeout)
     }
+    return frame
 }
 
 // MARK: - FrameRecorder

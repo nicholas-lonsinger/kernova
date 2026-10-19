@@ -801,13 +801,12 @@ struct VsockControlServiceTests {
         // silent-for-another-reason service can't pass this test.
         try await recorder.waitForFrameCount(2)
 
-        // Snapshot the baseline only after a settle window: a heartbeat written
-        // just before the flip is still in flight through the socket and the
-        // recorder's task, and counting it against the frozen guest would be a
-        // false failure. No signal marks that frame landing, so the settle is a
-        // fixed window.
+        // A heartbeat written just before the flip can still be in flight. The
+        // suspension check and its send share one main-actor turn, and the
+        // socket is FIFO, so every pre-flip heartbeat precedes this marker.
         suspension.isSuspended = true
-        try await Task.sleep(for: .milliseconds(150))
+        try host.sendErrorFrame(code: "test.marker", message: "", inReplyTo: nil)
+        try await recorder.waitForFrames { recorder.errors.contains { $0.code == "test.marker" } }
 
         // Spans many heartbeat intervals.
         try await recorder.expectNoNewFrames(sinceCount: recorder.count, for: 0.4)
