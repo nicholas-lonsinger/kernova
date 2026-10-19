@@ -336,20 +336,22 @@ struct ClassifySocketErrnoTests {
         #expect(calls.value == 0, "Paused client should not invoke socketProvider")
     }
 
+    /// The provider blocks until the test has paused, so `pause()` lands after
+    /// the provider was entered and before it returns. An aborted channel's
+    /// `close()` shuts the socket down, ending the remote's `incoming`; the loop
+    /// never closes a channel it handed to `serve`, so the first event names the
+    /// branch `connectAndServe` took.
     @Test("pause() during in-flight connect aborts the channel before serve runs")
     func pauseDuringInFlightConnectAborts() async throws {
-        // Regression for a race: pause() that lands while connectAndServe
-        // is mid-call (after socketProvider returned, before the lock-
-        // protected currentChannel publish) must NOT result in serve(...)
-        // being invoked. The fix is for connectAndServe to re-check `paused`
-        // under the lock before publishing the channel.
+        enum Outcome { case channelClosed, served }
+
         let (localFd, remoteFd) = try makeRawSocketPair()
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
         defer { remote.close() }
 
-        let providerSleepMs = 100
         let providerEntered = AtomicInt()
+        let providerRelease = DispatchSemaphore(value: 0)
 
         let client = makeTestClient(
             kind: .monotonic,
@@ -357,34 +359,35 @@ struct ClassifySocketErrnoTests {
             label: "test",
             retryInterval: 0.02
         ) { _, _ in
-            _ = providerEntered.increment()
-            // Block the synchronous provider long enough for the test to
-            // call pause() between provider-returns and the lock publish.
-            // Thread.sleep is appropriate — the provider is sync and runs
-            // on a detached cooperative-pool task.
-            Thread.sleep(forTimeInterval: Double(providerSleepMs) / 1000.0)
+            guard providerEntered.increment() == 1 else {
+                return .failure(.transient("test: one connect only"))
+            }
+            providerRelease.wait()
             return .success(localFd)
         }
         defer { client.stop() }
 
+        let (outcomes, continuation) = AsyncStream<Outcome>.makeStream()
+        let remoteReader = Task {
+            do { for try await _ in remote.incoming {} } catch {}
+            continuation.yield(.channelClosed)
+        }
+        defer { remoteReader.cancel() }
+
         let serveCalled = AtomicInt()
-        client.start { _ in
+        client.start { channel in
             _ = serveCalled.increment()
-            // Hold so the test sees the increment if the bug regresses.
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            continuation.yield(.served)
+            do { for try await _ in channel.incoming {} } catch {}
         }
 
-        // Wait for the provider to be entered, then pause while it's mid-sleep.
-        // The lock check inside connectAndServe must observe paused=true when
-        // the provider returns, and abort the publish.
         try await providerEntered.changed.wait { providerEntered.value >= 1 }
         client.pause()
+        providerRelease.signal()
 
-        // Wait past the provider's sleep so connectAndServe has returned.
-        try await Task.sleep(nanoseconds: UInt64(providerSleepMs + 100) * 1_000_000)
-        #expect(
-            serveCalled.value == 0,
-            "serve() must not run when pause() landed during connectAndServe")
+        let outcome = try await awaitFirst(outcomes)
+        #expect(outcome == .channelClosed)
+        #expect(serveCalled.value == 0)
     }
 
     @Test(
