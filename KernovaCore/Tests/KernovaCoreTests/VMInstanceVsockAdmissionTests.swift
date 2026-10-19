@@ -237,7 +237,7 @@ struct VMInstanceVsockAdmissionTests {
     }
 
     @Test("Tearing the vsock services down clears the gate and the data sinks")
-    func stopClearsGateAndSinks() async throws {
+    func stopClearsGateAndSinks() throws {
         let instance = makeInstance()
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(
@@ -252,7 +252,7 @@ struct VMInstanceVsockAdmissionTests {
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
         for sink in [instance.clipboardDataSink, instance.dropDataSink] {
-            try await expectSinkCleared(sink)
+            try expectSinkCleared(sink)
         }
     }
 

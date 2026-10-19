@@ -57,11 +57,15 @@ struct VsockDataConnectionSinkTests {
     }
 
     @Test("Clearing the service ends later descriptors")
-    func clearedSinkEndsTheDescriptor() async throws {
+    func clearedSinkEndsTheDescriptor() throws {
+        let (a, b) = try makeRawSocketPair()
+        defer { close(b) }
+
         let sink = VsockDataConnectionSink()
         sink.set(RecordingAcceptor())
         sink.set(nil)
+        sink.accept(fd: a)
 
-        try await expectSinkCleared(sink)
+        try expectPeerClosed(b)
     }
 }

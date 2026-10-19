@@ -36,10 +36,11 @@ public func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel
 ///
 /// - Throws: `TestFailure` when the backstop fires first, or when `peer`
 ///   receives a byte instead of EOF.
-public func awaitPeerEOF(_ peer: Int32, timeout: TimeInterval = testWaitBackstop) async throws {
+public func awaitPeerEOF(_ peer: Int32) async throws {
     enum Observation: Sendable {
         case eof, byte(UInt8), timedOut, failed(errno: Int32)
     }
+    let timeout = testWaitBackstop
     let stopwatch = BackstopStopwatch()
     let observation = await offCooperativePool { () -> Observation in
         var pollFd = pollfd(fd: peer, events: Int16(POLLIN), revents: 0)
@@ -70,6 +71,25 @@ public func awaitPeerEOF(_ peer: Int32, timeout: TimeInterval = testWaitBackstop
             timeout: timeout)
     case .failed(let code):
         throw TestFailure("Awaiting EOF on fd \(peer) failed: errno \(code)")
+    }
+}
+
+/// Throws unless the socket connected to `peer` has already closed: a
+/// non-blocking read on `peer` finds EOF.
+public func expectPeerClosed(_ peer: Int32) throws {
+    var byte: UInt8 = 0
+    let received = recv(peer, &byte, 1, MSG_DONTWAIT)
+    let code = errno
+    switch received {
+    case 0:
+        return
+    case 1:
+        throw TestFailure("Expected the socket closed, but peer fd \(peer) received byte \(byte)")
+    default:
+        guard code == EAGAIN else {
+            throw TestFailure("Probing peer fd \(peer) failed: errno \(code)")
+        }
+        throw TestFailure("Expected the socket closed, but peer fd \(peer) is still open")
     }
 }
 

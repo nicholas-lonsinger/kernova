@@ -57,7 +57,7 @@ struct VsockListenerTests {
         await drainMainQueue()
         #expect(connected.withLock { $0 } == false)
         // The refusal path closes the duplicate before returning.
-        try await awaitPeerEOF(b, timeout: 0)
+        try expectPeerClosed(b)
     }
 
     @Test("A passing admission check accepts and hands the channel to main")
@@ -153,7 +153,7 @@ struct VsockListenerTests {
             VsockAdmission.notReady(reason: "test: handshake pending"),
             .denied(reason: "test: peer not entitled"),
         ])
-    func dataListenerRefusalClosesFd(verdict: VsockAdmission) async throws {
+    func dataListenerRefusalClosesFd(verdict: VsockAdmission) throws {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
@@ -164,6 +164,6 @@ struct VsockListenerTests {
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
         #expect(handedOver.withLock { $0 } == nil)
-        try await awaitPeerEOF(b, timeout: 0)
+        try expectPeerClosed(b)
     }
 }

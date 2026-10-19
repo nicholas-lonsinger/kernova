@@ -49,7 +49,7 @@ struct VMSessionContextTests {
     // MARK: - Teardown
 
     @Test("tearDown releases every service, pipe and hand-off the session held")
-    func tearDownReleasesEverything() async throws {
+    func tearDownReleasesEverything() throws {
         let instance = makeInstance(guestOS: .linux)
         let context = instance.beginSessionContextForTesting()
 
@@ -86,7 +86,7 @@ struct VMSessionContextTests {
         #expect(context.agentPostStartTask == nil)
         #expect(context.vsock.livePolicyApplication == nil)
         // The instance-owned sinks the session published into are cleared too.
-        try await expectSinkCleared(instance.clipboardDataSink)
+        try expectSinkCleared(instance.clipboardDataSink)
     }
 
     @Test("tearDownSession drops the context, and every projection reads empty after")
