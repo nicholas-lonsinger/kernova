@@ -184,12 +184,12 @@ struct LogMessageTests {
         let formatString: String
         let arguments: [String?]
 
-        /// Logs `shape` at `.notice` through a sink-less logger, then writes
-        /// every record of its category in this process's store to standard
-        /// output as JSON.
+        /// Logs `shape` at `.notice` through a sink-less logger under a fresh
+        /// category, then writes every record of that category in this
+        /// process's store to standard output as JSON.
         static func emitAndReadBack(_ shape: EmittedShape) throws {
             let subsystem = "app.kernova.tests"
-            let category = "Emit-\(shape.rawValue)"
+            let category = "Emit-\(shape.rawValue)-\(UUID().uuidString)"
             KernovaLogger(subsystem: subsystem, category: category).log(.notice, shape.message)
             let entries = try OSLogStore(scope: .currentProcessIdentifier)
                 .getEntries(matching: NSPredicate(format: "subsystem == %@ AND category == %@", subsystem, category))
