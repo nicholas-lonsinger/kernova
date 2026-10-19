@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import KernovaSynchronization
 import Testing
@@ -17,8 +18,24 @@ struct LazyPullCoordinatorMainThreadTests {
     // ms-scale and same-thread, so 5 s never masks a failure.
     private static let window: TimeInterval = 5
 
+    /// Subtype of the event that sequences `nestedWaitsBothResolve`'s inner
+    /// delivery behind the outer's wake.
+    private nonisolated static let markerSubtype: Int16 = 0x7E57
+
     private nonisolated func inlineRep(_ text: String) -> ClipboardContent.Representation {
         ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data(text.utf8))
+    }
+
+    /// A coordinator whose main-thread waits block each `nextEvent` at most
+    /// `slice`, recording every wait it vends into `waits` in order.
+    private nonisolated func coordinator(
+        slice: TimeInterval, recordingInto waits: Locked<[NestedEventLoopWait]>
+    ) -> LazyPullCoordinator {
+        LazyPullCoordinator(eventLoopWait: {
+            let wait = NestedEventLoopWait.current(slice: slice)
+            if let wait { waits.withLock { $0.append(wait) } }
+            return wait
+        })
     }
 
     @Test("a main-thread pull keeps the run loop turning: a block performed on it resolves the pull")
@@ -51,24 +68,44 @@ struct LazyPullCoordinatorMainThreadTests {
         }
     }
 
-    @Test("nested main-thread waits both resolve, and the outer is not stranded by the inner (#860)")
-    func nestedWaitsBothResolve() {
-        let coordinator = LazyPullCoordinator()
+    @Test("an inner wait that consumed the outer's wake hands it a fresh one, so both waits end resolved (#860)")
+    func nestedWaitsBothResolve() throws {
+        let waits = Locked<[NestedEventLoopWait]>([])
+        // A slice past the deadline: only the inner's exit wake can end the
+        // outer's `nextEvent` before it.
+        let coordinator = coordinator(slice: Self.window * 2, recordingInto: waits)
         let innerResolved = Locked(false)
-        let clock = ContinuousClock()
-        let started = clock.now
+        // Dispatching the marker queues the inner's delivery, so the inner is
+        // waiting again when that delivery's wake lands, and dequeues it too.
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .applicationDefined) { event in
+            if event.subtype.rawValue == Self.markerSubtype {
+                RunLoop.main.perform { coordinator.deliver(2, self.inlineRep("inner")) }
+            }
+            return event
+        }
+        defer { monitor.map(NSEvent.removeMonitor) }
 
-        // The outer pull runs the event loop. From inside it, a nested inner pull
-        // for a different id runs its own loop while the outer is resolved. The
-        // wait's wake events are not addressed to a specific loop, so the inner
-        // can consume the outer's; the outer must still return promptly rather
-        // than stranding to its window — the per-slice re-check is what guarantees
-        // that under any interleaving.
-        let outcome = coordinator.pull(transferID: 1, timeout: 5, retire: {}) {
+        let outcome = coordinator.pull(transferID: 1, timeout: Self.window, retire: {}) {
             RunLoop.main.perform {
-                let inner = coordinator.pull(transferID: 2, timeout: 5, retire: {}) {
+                let inner = coordinator.pull(transferID: 2, timeout: Self.window, retire: {}) {
+                    // The outer's wake and then the marker are queued in one
+                    // run-loop pass, so the inner dequeues and discards that
+                    // wake before the marker's dispatch resolves the inner.
                     coordinator.deliver(1, self.inlineRep("outer"))
-                    RunLoop.main.perform { coordinator.deliver(2, self.inlineRep("inner")) }
+                    CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                        MainActor.assumeIsolated {
+                            guard
+                                let marker = NSEvent.otherEvent(
+                                    with: .applicationDefined, location: .zero, modifierFlags: [],
+                                    timestamp: 0, windowNumber: 0, context: nil,
+                                    subtype: Self.markerSubtype, data1: 0, data2: 0)
+                            else {
+                                Issue.record("NSEvent.otherEvent refused the marker")
+                                return
+                            }
+                            NSApp.postEvent(marker, atStart: false)
+                        }
+                    }
                 }
                 if case .delivered(let rep) = inner, rep.inMemoryData == Data("inner".utf8) {
                     innerResolved.withLock { $0 = true }
@@ -82,10 +119,47 @@ struct LazyPullCoordinatorMainThreadTests {
         }
         #expect(rep.inMemoryData == Data("outer".utf8))
         #expect(innerResolved.withLock { $0 })
-        // Both resolved rather than blocking to the 5 s window. The bound sits
-        // just under it: stranding takes the whole window, the per-slice
-        // re-check returns in ~0.1 s, and every second between the two is
-        // jitter tolerance rather than a sharper assertion.
-        #expect(clock.now - started < .seconds(4))
+        let waitsTaken = waits.withLock { $0 }
+        try #require(waitsTaken.count == 2)
+        // A stranded outer still delivers — its outcome was set — but only once
+        // its wait reaches the deadline.
+        #expect(waitsTaken[0].endingsForTesting == [.resolved], "outer")
+        #expect(waitsTaken[1].endingsForTesting == [.resolved], "inner")
+    }
+
+    @Test("a loop run inside the wait that takes its wake leaves the slice to end the wait resolved")
+    func sliceRecoversWakeTakenByForeignLoop() throws {
+        let waits = Locked<[NestedEventLoopWait]>([])
+        let coordinator = coordinator(slice: NestedEventLoopWait.defaultSlice, recordingInto: waits)
+        let foreignTookEvent = Locked(false)
+        let foreignWindow = Self.window
+
+        let outcome = coordinator.pull(transferID: 3, timeout: Self.window, retire: {}) {
+            // A callout inside the wait's `nextEvent`, as `performOnMainRunLoop`
+            // runs one: resolve the pull, then run a tracking-mode loop that
+            // takes the wake before control returns to the wait.
+            RunLoop.main.perform {
+                coordinator.deliver(3, self.inlineRep("foreign"))
+                MainActor.assumeIsolated {
+                    let taken = NSApp.nextEvent(
+                        matching: .applicationDefined,
+                        until: Date(timeIntervalSinceNow: foreignWindow),
+                        inMode: .eventTracking, dequeue: true)
+                    foreignTookEvent.withLock { $0 = taken != nil }
+                }
+            }
+        }
+
+        guard case .delivered(let rep) = outcome else {
+            Issue.record("Expected the pull to deliver, got \(outcome)")
+            return
+        }
+        #expect(rep.inMemoryData == Data("foreign".utf8))
+        #expect(foreignTookEvent.withLock { $0 })
+        let waitsTaken = waits.withLock { $0 }
+        try #require(waitsTaken.count == 1)
+        // Nothing returns from the wait's `nextEvent` once the foreign loop
+        // ends; only the slice re-checks before the deadline.
+        #expect(waitsTaken[0].endingsForTesting == [.resolved])
     }
 }

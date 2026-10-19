@@ -204,7 +204,9 @@ final class LazyPullCoordinator: Sendable {
 
     /// Creates an idle coordinator whose synchronous pulls take their wait from
     /// `eventLoopWait`.
-    init(eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait? = NestedEventLoopWait.current) {
+    init(
+        eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait? = { NestedEventLoopWait.current() }
+    ) {
         self.eventLoopWait = eventLoopWait
     }
 
@@ -257,12 +259,11 @@ final class LazyPullCoordinator: Sendable {
             onProgress: onProgress)
         let slotTimeout = enter(waiter, timeout: timeout, retire: retire, start: start)
         while true {
-            // Each wait holds one slice and re-checks: the waiter's own outcome,
-            // never the wait's return, decides — so a signal racing the deadline
-            // is still honored, and the timeout *decision* stays the slot timer's
-            // alone.
+            // The waiter's own outcome, never the wait's return, decides — so a
+            // signal racing the deadline is still honored, and the timeout
+            // *decision* stays the slot timer's alone.
             if let eventLoop {
-                eventLoop.wait(timeout: slotTimeout) { waiter.outcome != nil }
+                _ = eventLoop.wait(timeout: slotTimeout) { waiter.outcome != nil }
             } else {
                 _ = semaphore.wait(timeout: .now() + slotTimeout)
             }
