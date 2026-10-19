@@ -12,11 +12,6 @@ import Testing
 /// ``AppResidencyController/handleReopen()`` — against an ``AppPresence`` that
 /// records its calls instead of unhiding or activating the test host.
 ///
-/// No reopen here asserts a library show: the presence read scans
-/// `NSApp.windows`, which also holds the windows of every test running
-/// alongside this one, so only the no-show outcome is deterministic;
-/// `AppResidencyReopenPresentationTests` pins the decision itself.
-///
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``,
 /// for the reason `AppResidencyPresentationTests` gives.
 @Suite("AppResidencyController summon", .serialized, .caseScoped, .scopedWindows)
@@ -154,6 +149,22 @@ struct AppResidencySummonTests {
 
         #expect(viewModel.selectedID == arrival.id)
         #expect(foreground.steps == [.activate(libraryOnScreen: true)])
+    }
+
+    @Test("A reopen with no user window on screen shows the library")
+    func windowlessReopenShowsTheLibrary() async throws {
+        let foreground = RecordingForeground(isHidden: false)
+        let (controller, registry, _) = makeController(foreground: foreground)
+        let presentations = PresentationCounter()
+        registry.residency = presentations
+
+        controller.handleReopen()
+        // Enqueued behind the reopen's job, so it records once that job has run.
+        Task { @MainActor in foreground.record(.laterJob) }
+        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+
+        #expect(presentations.count == 1)
+        #expect(registry.libraryWindow?.isVisible == true)
     }
 
     @Test("A reopen while hidden leaves the hidden state before it decides")

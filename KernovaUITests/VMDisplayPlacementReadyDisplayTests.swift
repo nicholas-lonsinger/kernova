@@ -43,6 +43,11 @@ struct VMDisplayPlacementReadyDisplayTests {
         return (placement, residency)
     }
 
+    /// Whether the display window `window` last went up in front.
+    private func shownInFront(_ window: NSWindow) throws -> Bool? {
+        try #require(window.windowController as? VMDisplayWindowController).shownInFrontForTesting
+    }
+
     @Test("A bring-up while the app presents no GUI opens no window")
     func absentOpensNoWindow() {
         let (placement, residency) = makeController(posture: .absent)
@@ -67,7 +72,7 @@ struct VMDisplayPlacementReadyDisplayTests {
 
         let window = try #require(placement.window(for: instance.instanceID))
         #expect(window.isVisible)
-        #expect(!window.isKeyWindow)
+        #expect(try shownInFront(window) == false)
         #expect(!window.styleMask.contains(.fullScreen))
         #expect(instance.displayMode == .popOut)
         #expect(instance.hostState.displayPreference == .fullscreen)
@@ -98,13 +103,10 @@ struct VMDisplayPlacementReadyDisplayTests {
 
         #expect(popOut.status == .running && fullscreen.status == .running)
         #expect(presences == [.unattended, .unattended])
-        // That a window readied behind takes no key is read in
-        // backgroundOpensAnUnkeyWindow, with no await before it. Past the await
-        // above, AppKit's one key window is whatever the suites running
-        // alongside left it (CI run 38955117057).
         for instance in [popOut, fullscreen] {
             let window = try #require(placement.window(for: instance.instanceID))
             #expect(window.isVisible)
+            #expect(try shownInFront(window) == false)
         }
         // Put up behind, the fullscreen VM runs in a pop-out window with its
         // preference kept — a front readying would have entered fullscreen.

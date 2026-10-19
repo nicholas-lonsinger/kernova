@@ -292,7 +292,7 @@ final class AppWindowRegistry {
         if hasTrackedUserWindow { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
         // so a reconcile can't strip the Dock icon while one is the last visible.
-        return NSApp.windows.contains(where: Self.isUntrackedUserPanel)
+        return stage.windows().contains(where: Self.isUntrackedUserPanel)
     }
 
     /// Whether `window` is an untracked, AppKit-owned top-level panel whose
@@ -301,7 +301,8 @@ final class AppWindowRegistry {
     /// The standard About panel is the motivating example. The visible +
     /// normal-level + titled filter excludes chrome: the status item's backing
     /// `NSStatusBarWindow` is borderless and sits above `.normal`, so an
-    /// unfiltered `NSApp.windows` scan would pin the agent to `.regular` forever.
+    /// unfiltered scan of the app's windows would pin the agent to `.regular`
+    /// forever.
     static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
         (window.isVisible || window.isMiniaturized)
             && window.level == .normal
