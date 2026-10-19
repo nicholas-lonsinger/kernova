@@ -119,8 +119,9 @@ package final class VMScriptObject: NSObject {
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
-        NSScriptCommand.current()?.refuse(
-            Int(errAECantHandleClass), VMScriptingGateway.cannotMakeStorageDisk)
+        MainActor.assumeIsolated {
+            gateway?.refuseToMake(VMScriptingGateway.cannotMakeStorageDisk)
+        }
         return nil
     }
 

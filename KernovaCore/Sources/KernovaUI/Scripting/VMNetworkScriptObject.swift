@@ -55,8 +55,9 @@ package final class VMNetworkScriptObject: NSObject {
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
-        NSScriptCommand.current()?.refuse(
-            Int(errAECantHandleClass), VMScriptingGateway.cannotMakeVirtualMachine)
+        MainActor.assumeIsolated {
+            gateway?.refuseToMake(VMScriptingGateway.cannotMakeVirtualMachine)
+        }
         return nil
     }
 

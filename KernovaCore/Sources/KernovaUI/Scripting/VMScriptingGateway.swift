@@ -48,6 +48,17 @@ final class VMScriptingGateway {
     /// answers from.
     private var evaluating: CommandEvaluation?
 
+    /// The command Cocoa suspended during the first pass it is still
+    /// evaluating, which `NSScriptCommand.current()` stops reporting the
+    /// moment it is suspended while Cocoa carries on evaluating the rest of
+    /// the specifier.
+    ///
+    /// Open from ``suspend(_:because:)`` until ``answer(_:)`` begins: that is
+    /// a main-actor task, and Cocoa runs the whole pass inside one Apple event
+    /// callout on the main thread, so it cannot begin before the pass returns
+    /// (observed on macOS 27 with a probe app that stalls inside the pass).
+    private var openFirstPass: CommandEvaluation?
+
     /// The command an evaluation this gateway runs is answering — a verb's own
     /// while it addresses its specifier, the fresh instance while a suspended
     /// command is re-issued — which is where a refusal is recorded while Cocoa
@@ -117,13 +128,30 @@ final class VMScriptingGateway {
         }
     }
 
-    /// The command Cocoa is executing on this thread, if any.
-    private var executing: NSScriptCommand? { runtime.current() }
+    /// The command Cocoa is running its own first pass of: the one it is
+    /// executing, or the one it suspended earlier in the same pass.
+    ///
+    /// A command Cocoa is executing is always the newer: one that arrives
+    /// before ``openFirstPass`` closes is reported until it is itself
+    /// suspended, and then replaces it.
+    private var firstPass: NSScriptCommand? {
+        runtime.current() ?? openFirstPass?.command
+    }
 
-    /// The command a read is being answered for: the one Cocoa is executing,
-    /// or the one an evaluation of this gateway's own is answering.
+    /// The command whatever is read or written now answers for — where every
+    /// refusal is recorded, and what ``run(_:on:_:)`` holds a write back on:
+    /// the one an evaluation of this gateway's own is answering while it runs
+    /// a pass, Cocoa's first pass otherwise.
     private var answering: NSScriptCommand? {
-        executing ?? answeringCommand
+        evaluating != nil ? answeringCommand : (firstPass ?? answeringCommand)
+    }
+
+    /// Records a `make` the dictionary refuses on the command being answered.
+    ///
+    /// `NSScriptCommand.current()` reports no command once the `make` is
+    /// suspended, and none while it is re-issued.
+    func refuseToMake(_ message: String) {
+        answering?.refuse(Int(errAECantHandleClass), message)
     }
 
     /// The storage disks of the VM `vm` identifies, in attachment order, from
@@ -131,21 +159,21 @@ final class VMScriptingGateway {
     ///
     /// Every evaluation that can reach a disk list runs under
     /// ``evaluate(_:_:)``: a verb's addressing, and a re-issued command. A
-    /// command Cocoa is executing for the first time holds no measurement, so
-    /// it is suspended, once, and answered by such an evaluation. A list not
+    /// first pass of Cocoa's holds no measurement, so its command is
+    /// suspended, once, and answered by such an evaluation. A list not
     /// measured yet answers nothing for now, and the evaluation measures it
     /// before its next pass.
     ///
-    /// Cocoa carries on evaluating a command after it is suspended, and a
-    /// `whose` test can match the empty list answered for now — so the pass is
-    /// refused, which holds back every write left in it
+    /// Cocoa evaluates the rest of a first pass after its command is
+    /// suspended, and a `whose` test can match the empty list answered for
+    /// now — so the pass is refused, which holds back every write left in it
     /// (``run(_:on:_:)``). Only a pass that reads every list measured answers
     /// the script, and its outcome replaces the refusal.
     func storageDisks(of vm: UUID) -> [VMStorageDiskScriptObject] {
         let evaluation: CommandEvaluation
         if let evaluating {
             evaluation = evaluating
-        } else if let command = executing {
+        } else if let command = firstPass {
             evaluation = suspend(command, because: "reached a storage disk list")
         } else {
             #log(
@@ -240,19 +268,20 @@ final class VMScriptingGateway {
     /// - Returns: Whether the read was deferred, which is the caller's cue to
     ///   answer nothing now.
     private func deferUntilLanded() -> Bool {
-        guard !readiness.hasLanded, let command = executing else { return false }
+        guard !readiness.hasLanded, let command = firstPass else { return false }
         suspend(command, because: "arrived before the library read landed")
         return true
     }
 
     /// The evaluation `command` is suspended under, suspending it first when
-    /// it is not yet: one evaluation can reach the library and its disk lists
+    /// it is not yet: one first pass can reach the library and its disk lists
     /// many times, and the command is suspended and answered once.
     ///
     /// Cocoa evaluates a specifier inside the Apple event's own callout,
     /// through synchronous KVC with no suspension of its own to await in — but
     /// the command being executed is `NSScriptCommand.current()`, and a
-    /// command can be suspended from anywhere on its own stack.
+    /// command can be suspended from anywhere on its own stack. From then on
+    /// the pass reaches it as ``openFirstPass``.
     @discardableResult
     private func suspend(_ command: NSScriptCommand, because reason: String) -> CommandEvaluation {
         if let held = suspended.first(where: { $0.command === command }) { return held }
@@ -263,13 +292,16 @@ final class VMScriptingGateway {
             "A \(command.commandDescription.commandName, privacy: .public) \(reason, privacy: .public); suspended until it can be answered"
         )
         runtime.suspend(command)
+        openFirstPass = evaluation
         Task { await answer(evaluation) }
         return evaluation
     }
 
-    /// Resumes a suspended command with its answer, once the library has
-    /// landed and every disk list its re-issue reaches is measured.
+    /// Resumes a suspended command with its answer, once its first pass has
+    /// returned, the library has landed, and every disk list its re-issue
+    /// reaches is measured.
     private func answer(_ evaluation: CommandEvaluation) async {
+        if openFirstPass === evaluation { openFirstPass = nil }
         await readiness.ready()
         let result = await evaluate(evaluation) { reissue(evaluation.command) }
         suspended.removeAll { $0 === evaluation }
@@ -494,7 +526,7 @@ final class VMScriptingGateway {
     /// ``VMScriptObject`` does not have.
     func makeElement(forKey key: String, name: String?, kind: NSNumber?) -> VMNetworkScriptObject? {
         guard key == AppDelegate.networksKey else {
-            answering?.refuse(Int(errAECantHandleClass), Self.cannotMakeVirtualMachine)
+            refuseToMake(Self.cannotMakeVirtualMachine)
             return nil
         }
         return run(.createNetwork, on: nil) {

@@ -93,7 +93,9 @@ struct VMScriptingGatewayTests {
     /// executing, and every suspension and resumption the gateway asks of it.
     ///
     /// A command a test builds has no Apple event behind it to resume, so it is
-    /// answered here instead.
+    /// answered here instead. It reports what Cocoa does: no current command
+    /// once the one executing is suspended, for the rest of that pass, and none
+    /// while a re-issued instance executes.
     @MainActor
     private final class CommandHost {
         /// The command Cocoa is executing on this thread, as the gateway reads it.
@@ -105,7 +107,10 @@ struct VMScriptingGatewayTests {
         var runtime: VMScriptCommandRuntime {
             VMScriptCommandRuntime(
                 current: { self.executing },
-                suspend: { self.suspensions.append(ObjectIdentifier($0)) },
+                suspend: {
+                    self.suspensions.append(ObjectIdentifier($0))
+                    self.executing = nil
+                },
                 resume: { command, result in
                     self.resumptions.append((ObjectIdentifier(command), result))
                     self.resumed.notify()
@@ -949,28 +954,160 @@ struct VMScriptingGatewayTests {
         #expect(host.suspensions == [ObjectIdentifier(first.command), ObjectIdentifier(second.command)])
     }
 
-    @Test("A pass that read a disk list unmeasured writes nothing, and the answering pass clears its refusal")
-    func aPlaceholderPassWritesNothing() async throws {
+    /// A VM on NAT's common network attaching `disks`, or its bundle's main
+    /// disk alone when `disks` is empty.
+    @discardableResult
+    private func registerNetworked(
+        _ wired: WiredCommandCore, name: String, disks: [StorageDisk]
+    ) -> VMInstance {
+        wired.register(name: name) {
+            $0.networkEnabled = true
+            $0.networkMode = .nat
+            $0.macAddress = "02:4b:4e:56:0c:01"
+            $0.storageDisks = disks.isEmpty ? nil : disks
+        }
+    }
+
+    @Test("A first pass's write is held back, and the answering pass writes only to the VMs that match")
+    func aFirstPassWriteIsHeldBack() async throws {
         let wired = WiredCommandCore()
-        let alpha = registerNetworked(wired, name: "Alpha")
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let alpha = registerNetworked(wired, name: "Alpha", disks: [installer, main])
+        let beta = registerNetworked(wired, name: "Beta", disks: [])
         let host = CommandHost()
         let gateway = await makeLandedGateway(wired, runtime: host.runtime)
-        let command = try makeGetCommand { gateway.virtualMachines().first?.storageDisks }
-
-        // As a `set … of every virtual machine whose (count of storage disks)
-        // is 0` evaluates: the empty list answered for now matches, and the
-        // write that follows in the same pass must not land.
-        _ = host.firstPass(of: command) {
-            let vm = gateway.virtualMachines().first
-            _ = vm?.storageDisks
-            vm?.networkMembership = "isolated"
-            return nil
+        // As `set network membership of every virtual machine whose (count of
+        // storage disks) < 2 to "isolated"` evaluates: the first pass answers
+        // every list empty, which every VM matches.
+        let write: () -> Any? = {
+            for vm in gateway.virtualMachines() where vm.storageDisks.count < 2 {
+                vm.networkMembership = "isolated"
+            }
+            return []
         }
+        let command = try makeGetCommand(reading: write)
+
+        _ = host.firstPass(of: command, write)
 
         #expect(alpha.configuration.networkMembership == .common)
+        #expect(beta.configuration.networkMembership == .common)
         _ = try await host.answer(to: command)
         #expect(command.scriptErrorNumber == 0)
         #expect(alpha.configuration.networkMembership == .common)
+        #expect(beta.configuration.networkMembership == .isolated)
+    }
+
+    @Test("A first pass reaching several VMs' lists after it suspends answers them all, measured")
+    func aFirstPassReachingSeveralListsAnswersAll() async throws {
+        let wired = WiredCommandCore()
+        let alphaDisk = StorageDisk(path: "Disk.asif", label: "Alpha Disk", isInternal: true, kind: .virtio)
+        let betaDisk = StorageDisk(path: "Disk.asif", label: "Beta Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [alphaDisk] }
+        wired.register(name: "Beta") { $0.storageDisks = [betaDisk] }
+        let host = CommandHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        // `get name of storage disks of every virtual machine`: the first
+        // VM's list suspends the command, and Cocoa reads the second's with no
+        // current command.
+        let read = try await readDisks(host) { gateway.virtualMachines().flatMap(\.storageDisks) }
+
+        #expect(read.firstPass?.isEmpty == true)
+        #expect(read.answered.map(\.name) == ["Alpha Disk", "Beta Disk"])
+        #expect(read.answeredIDs == [alphaDisk.id.uuidString, betaDisk.id.uuidString])
+        #expect(wired.machineFiles.diskSizeReads == 2)
+        #expect(host.suspensions == [ObjectIdentifier(read.command)])
+    }
+
+    @Test("Several properties of one VM's disks, read in one command, answer from one measurement")
+    func severalPropertiesOfOneListAnswer() async throws {
+        let wired = WiredCommandCore()
+        let disk = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        wired.register(name: "Alpha") { $0.storageDisks = [disk] }
+        wired.machineFiles.setDiskSizes(Self.measured(capacity: 64_000_000_000, used: 4_000_000_000), for: disk.id)
+        let host = CommandHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+        let properties = PropertyLog()
+
+        // `get {name, capacity} of every storage disk of virtual machine 1`
+        // reads the list once per property.
+        let read = try await readDisks(host) {
+            guard let vm = gateway.virtualMachines().first else { return nil }
+            properties.names = vm.storageDisks.map(\.name)
+            properties.capacities = vm.storageDisks.map(\.capacity)
+            return vm.storageDisks
+        }
+
+        #expect(properties.names == ["Main Disk"])
+        #expect(properties.capacities == [64])
+        #expect(read.answered.map(\.usedSpace) == [4])
+        #expect(wired.machineFiles.diskSizeReads == 1)
+    }
+
+    /// What the last pass read of each property.
+    @MainActor
+    private final class PropertyLog {
+        var names: [String] = []
+        var capacities: [NSNumber?] = []
+    }
+
+    @Test("A cold first pass that carries on after suspending reads nothing from the unlanded library")
+    func aColdFirstPassReadsNoUnlandedLibrary() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        let readiness = ReadinessGate()
+        let host = CommandHost()
+        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
+        // How many VMs the reads after the first one found.
+        let found = Tally()
+        let read: () -> Any? = {
+            // The first read suspends the command; Cocoa evaluates the rest
+            // with no current command.
+            let first = gateway.virtualMachines()
+            found.count += gateway.virtualMachines().count
+            found.count += gateway.virtualMachine(named: "Alpha") == nil ? 0 : 1
+            return first
+        }
+        let command = try makeGetCommand()
+        command.directParameter = try makeReadingSpecifier(read)
+
+        let firstPass = host.firstPass(of: command, read)
+        #expect((firstPass as? [VMScriptObject])?.isEmpty == true)
+        #expect(found.count == 0)
+        try await readiness.awaitWaiting()
+        readiness.open()
+
+        _ = try await host.answer(to: command)
+        // The re-issue evaluates twice, each finding Alpha both ways.
+        #expect(found.count == 4)
+        #expect(host.suspensions == [ObjectIdentifier(command)])
+    }
+
+    @Test("A re-issued make of a storage disk is refused on the original command")
+    func aReissuedMakeIsRefusedOnTheCommand() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha")
+        let host = CommandHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+        // As Cocoa evaluates `make new storage disk at virtual machine 1`: it
+        // reads the element list, which suspends the make, then asks the VM
+        // for the new element — on the first pass and on the re-issue, with
+        // no current command either time.
+        let make: () -> Any? = {
+            guard let vm = gateway.virtualMachines().first else { return nil }
+            _ = vm.storageDisks
+            return vm.newScriptingObject(
+                of: VMStorageDiskScriptObject.self, forValueForKey: VMScriptObject.storageDisksKey,
+                withContentsValue: nil, properties: [:])
+        }
+        let command = try makeGetCommand(reading: make)
+
+        _ = host.firstPass(of: command, make)
+        _ = try await host.answer(to: command)
+
+        #expect(command.scriptErrorNumber == Int(errAECantHandleClass))
+        #expect(command.scriptErrorString == VMScriptingGateway.cannotMakeStorageDisk)
     }
 
     @Test("A disk names itself back by identifier, of its VM by identifier")
