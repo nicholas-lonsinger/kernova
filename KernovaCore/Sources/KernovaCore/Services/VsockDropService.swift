@@ -80,6 +80,10 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     /// never had a live connection for.
     @ObservationIgnored private var hasStopped = false
 
+    #if DEBUG
+    var lifecycleTasksForTesting: [Task<Void, Never>] { endpoint.lifecycleTasksForTesting }
+    #endif
+
     // MARK: - Init
 
     init(

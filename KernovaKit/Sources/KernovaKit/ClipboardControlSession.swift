@@ -250,6 +250,11 @@ public final class ClipboardControlSession {
         await consumeTask?.value
     }
 
+    #if DEBUG
+    /// The task draining the channel, empty before `start()` and after `stop()`.
+    var lifecycleTasksForTesting: [Task<Void, Never>] { [consumeTask].compactMap { $0 } }
+    #endif
+
     /// Ends the connection: stops draining, wakes every transfer, and closes the
     /// channel. Idempotent.
     public func stop() {

@@ -707,9 +707,13 @@ struct VsockDropServiceTests {
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        try await awaitDeadline(harness, armed: 1)
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
-        try await Task.sleep(for: .milliseconds(50))
 
+        // The verdict retires the drop's deadline in the turn that reports it,
+        // and the report's own emission is queued to the main queue behind it.
+        try await harness.clock.parkedChanged.wait { harness.clock.parked.isEmpty }
+        await drainMainQueue()
         #expect(harness.failure == nil)
     }
 

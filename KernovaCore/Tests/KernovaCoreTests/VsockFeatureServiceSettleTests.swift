@@ -69,6 +69,14 @@ struct VsockFeatureServiceSettleTests {
         return Fixture(service: service, peer: peer, lost: lost)
     }
 
+    /// Returns once nothing `tasks` started can still reach the owner: each task
+    /// has ended, and so has the main-queue hop a clipboard endpoint's end takes
+    /// (`ClipboardEndpoint.lifecycleTasksForTesting`).
+    private func settled(_ tasks: [Task<Void, Never>]) async {
+        for task in tasks { await task.value }
+        await drainMainQueue()
+    }
+
     // MARK: - The channel dying under the service
 
     @Test(
@@ -91,6 +99,7 @@ struct VsockFeatureServiceSettleTests {
     fileprivate func ownerStopIsSilent(kind: ServiceKind) async throws {
         let fixture = try makeFixture(kind)
         defer { fixture.peer.close() }
+        let tasks = fixture.service.lifecycleTasksForTesting
 
         // Session teardown, a live policy withdrawal, and the accept path's
         // replace-the-previous-service all route here. The owner already knows,
@@ -100,7 +109,7 @@ struct VsockFeatureServiceSettleTests {
 
         // The service's own consume tail also unwinds in here, and its settle
         // must not fire the callback either: the owner's stop() latched first.
-        try await Task.sleep(for: .milliseconds(200))
+        await settled(tasks)
         #expect(fixture.lost.count == 0)
     }
 
@@ -108,6 +117,7 @@ struct VsockFeatureServiceSettleTests {
     fileprivate func startAfterSettleIsANoOp(kind: ServiceKind) async throws {
         let fixture = try makeFixture(kind)
         defer { fixture.peer.close() }
+        let tasks = fixture.service.lifecycleTasksForTesting
 
         fixture.service.stop()
         // Terminal, not merely idempotent: a reconnect is served by a fresh
@@ -117,7 +127,8 @@ struct VsockFeatureServiceSettleTests {
         // teardown the owner itself asked for.
         fixture.service.start()
 
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(fixture.service.lifecycleTasksForTesting.isEmpty)
+        await settled(tasks)
         #expect(fixture.lost.count == 0)
     }
 
@@ -126,6 +137,7 @@ struct VsockFeatureServiceSettleTests {
         arguments: ServiceKind.allCases)
     fileprivate func stopAfterChannelLossIsSilent(kind: ServiceKind) async throws {
         let fixture = try makeFixture(kind)
+        let tasks = fixture.service.lifecycleTasksForTesting
 
         fixture.peer.close()
         try await fixture.lost.changed.wait { fixture.lost.count == 1 }
@@ -134,7 +146,7 @@ struct VsockFeatureServiceSettleTests {
         // `stopVsockServices()` produces after a mid-session agent exit.
         fixture.service.stop()
 
-        try await Task.sleep(for: .milliseconds(200))
+        await settled(tasks)
         #expect(fixture.lost.count == 1)
     }
 }

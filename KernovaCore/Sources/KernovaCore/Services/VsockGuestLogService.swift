@@ -27,6 +27,10 @@ final class VsockGuestLogService: VsockFeatureService {
     /// owner-requested `stop()`.
     var onChannelLost: (@MainActor () -> Void)?
 
+    #if DEBUG
+    var lifecycleTasksForTesting: [Task<Void, Never>] { [consumeTask].compactMap { $0 } }
+    #endif
+
     /// - Parameters:
     ///   - channel: the channel accepted from the guest's vsock connection.
     ///   - label: human-readable identifier used in host-side diagnostics
