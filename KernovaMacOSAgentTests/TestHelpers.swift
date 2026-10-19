@@ -77,6 +77,43 @@ final class AtomicInt: Sendable {
     }
 }
 
+// MARK: - ReleaseProbe
+
+/// Reports when the closure ``tracking(_:)`` built has been released by
+/// everything holding it — the proof that nothing can call it again.
+final class ReleaseProbe: Sendable {
+    private final class Token: Sendable {
+        let probe: ReleaseProbe
+        init(probe: ReleaseProbe) { self.probe = probe }
+        deinit { probe.markReleased() }
+    }
+
+    private let released = Locked(false)
+    private let changed = AsyncGate()
+
+    /// Wraps `body` in a closure holding a token whose release this probe
+    /// reports; hand the result over and keep no copy of it.
+    func tracking<T: Sendable>(
+        _ body: @escaping @Sendable (T) async -> Void
+    ) -> @Sendable (T) async -> Void {
+        let token = Token(probe: self)
+        return { value in
+            withExtendedLifetime(token) {}
+            await body(value)
+        }
+    }
+
+    /// Suspends until the tracked closure has been released.
+    func waitUntilReleased() async throws {
+        try await changed.wait { released.withLock { $0 } }
+    }
+
+    private func markReleased() {
+        released.withLock { $0 = true }
+        changed.notify()
+    }
+}
+
 // MARK: - AtomicBox
 
 /// Lock-protected optional slot for handing a value between a non-async closure

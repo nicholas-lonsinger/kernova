@@ -74,9 +74,8 @@ struct VsockGuestClientTests {
             return .success(localFd)
         }
 
-        client.start { _ in
-            serveCallCount.increment()
-        }
+        let serve = ReleaseProbe()
+        client.start(serve: serve.tracking { _ in serveCallCount.increment() })
 
         // Wait (on a background thread) until the provider is entered, then
         // stop the client, then release the provider. The provider parks its own
@@ -91,11 +90,9 @@ struct VsockGuestClientTests {
         }
         try await stopDone.changed.wait { stopDone.value > 0 }
 
-        // The provider only returns `.success(localFd)` after the release above,
-        // so the window has to span the loop's post-provider `stopped` check.
-        // `nanoseconds:`, not `for:` — this target deploys to macOS 12.
-        try await Task.sleep(nanoseconds: 300_000_000)
-
+        // The loop drops `serve` only on exiting, which is past its
+        // post-provider `stopped` check.
+        try await serve.waitUntilReleased()
         #expect(serveCallCount.value == 0)
         #expect(client.liveChannelForTesting == nil)
     }
@@ -117,18 +114,20 @@ struct VsockGuestClientTests {
 
         let (enteredStream, continuation) = AsyncStream<Void>.makeStream()
 
-        client.start { channel in
-            await callCounter.increment()
-            continuation.yield(())
-            do { for try await _ in channel.incoming {} } catch {}
-        }
+        let serve = ReleaseProbe()
+        client.start(
+            serve: serve.tracking { channel in
+                await callCounter.increment()
+                continuation.yield(())
+                do { for try await _ in channel.incoming {} } catch {}
+            })
 
         _ = try await awaitFirst(enteredStream)
 
         // Stop while serve is in flight
         client.stop()
 
-        try await Task.sleep(nanoseconds: 150_000_000)
+        try await serve.waitUntilReleased()
         #expect(await callCounter.value == 1)
         #expect(client.liveChannelForTesting == nil)
     }
@@ -149,9 +148,11 @@ struct VsockGuestClientTests {
         }
 
         client.stop()
-        client.start { _ in }
+        let serve = ReleaseProbe()
+        client.start(serve: serve.tracking { _ in })
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        // A start that ran no loop holds nothing to call `serve` from.
+        try await serve.waitUntilReleased()
         #expect(provideCounter.value == 0)
         #expect(client.liveChannelForTesting == nil)
     }
@@ -186,9 +187,10 @@ struct VsockGuestClientTests {
         _ = try await awaitFirst(enteredStream)
 
         // Second start — no-op
-        client.start { _ in }
+        let secondServe = ReleaseProbe()
+        client.start(serve: secondServe.tracking { _ in })
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await secondServe.waitUntilReleased()
         #expect(provideCounter.value == 1)
     }
 
@@ -246,19 +248,18 @@ struct VsockGuestClientTests {
             return .failure(.permanent("AF_VSOCK not supported"))
         }
 
-        client.start { _ in }
+        let firstServe = ReleaseProbe()
+        client.start(serve: firstServe.tracking { _ in })
 
-        // Wait (event-driven) for the provider to be invoked once; the
-        // permanent failure terminates the loop, so the count never climbs
-        // past 1.
-        try await provideCounter.changed.wait { provideCounter.value >= 1 }
+        // The permanent failure ends the loop, which drops `serve` on exiting.
+        try await firstServe.waitUntilReleased()
         #expect(provideCounter.value == 1)
 
         // Re-start — must be a no-op because stopped == true.
-        client.start { _ in }
+        let secondServe = ReleaseProbe()
+        client.start(serve: secondServe.tracking { _ in })
 
-        // Wait another retry window; provider count must remain 1.
-        try await Task.sleep(nanoseconds: 300_000_000)
+        try await secondServe.waitUntilReleased()
         #expect(provideCounter.value == 1)
         #expect(client.liveChannelForTesting == nil)
     }
@@ -317,11 +318,9 @@ struct ClassifySocketErrnoTests {
         defer { remote.close() }
 
         let calls = AtomicInt()
-        let client = makeTestClient(
-            kind: kind,
-            port: 12345,
-            label: "test",
-            retryInterval: fastRetry
+        let clock = SleepCountingEngineClock(wrapping: kind.makeClock())
+        let client = VsockGuestClient(
+            port: 12345, label: "test", clock: clock, retryInterval: fastRetry
         ) { _, _ in
             _ = calls.increment()
             return .success(localFd)
@@ -331,8 +330,9 @@ struct ClassifySocketErrnoTests {
         client.pause()  // pause before start
         client.start { _ in }
 
-        // Give the loop several retry intervals to attempt a connect.
-        try await Task.sleep(nanoseconds: 150_000_000)
+        // Each sleep follows an iteration's connect-or-skip decision, so the
+        // second proves two paused iterations, one after a real sleep.
+        try await clock.sleepRequested.wait { clock.sleepCount >= 2 }
         #expect(calls.value == 0, "Paused client should not invoke socketProvider")
     }
 
@@ -401,11 +401,9 @@ struct ClassifySocketErrnoTests {
         defer { remote.close() }
 
         let calls = AtomicInt()
-        let client = makeTestClient(
-            kind: kind,
-            port: 12345,
-            label: "test",
-            retryInterval: fastRetry
+        let clock = SleepCountingEngineClock(wrapping: kind.makeClock())
+        let client = VsockGuestClient(
+            port: 12345, label: "test", clock: clock, retryInterval: fastRetry
         ) { _, _ in
             _ = calls.increment()
             return .success(localFd)
@@ -419,8 +417,8 @@ struct ClassifySocketErrnoTests {
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        // Sanity: paused, no connect.
-        try await Task.sleep(nanoseconds: 100_000_000)
+        // Sanity: the loop has skipped its connect and gone to sleep.
+        try await clock.sleepRequested.wait { clock.sleepCount >= 1 }
         #expect(calls.value == 0)
 
         // Resume: loop wakes within retryInterval and connects.

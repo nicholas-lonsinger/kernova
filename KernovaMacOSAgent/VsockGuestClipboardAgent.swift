@@ -139,6 +139,10 @@ final class VsockGuestClipboardAgent {
     /// polling for its side effects.
     var onFileResolveCompletedForTesting: (() -> Void)?
 
+    /// Whether a copy's off-main file resolve is in flight; read it in the
+    /// poll's own main-actor turn, before the resolve can land.
+    var isResolvingFilesForTesting: Bool { resolveInFlight }
+
     /// Delivers a control frame as the consume loop's main-queue hop would, but
     /// synchronously on the caller's main-actor turn, so a test can order it
     /// against a poll's own asynchronous completion.

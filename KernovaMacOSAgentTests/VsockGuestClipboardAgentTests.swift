@@ -526,11 +526,14 @@ struct VsockGuestClipboardAgentTests {
         // The next poll finds nothing new: the promise this agent wrote is not
         // read back as a copy — nothing offered, no copy blamed for coming up
         // empty, the menu still on the host's offer.
-        await MainActor.run { agent.checkClipboardChange() }
-        try await expectNoOffer(from: hostChannel)
-        let activity = await MainActor.run { agent.clipboardActivity }
+        let activity = await MainActor.run {
+            agent.checkClipboardChange()
+            return agent.clipboardActivity
+        }
         #expect(activity == .offeredFromHost)
         #expect(pasteboard.promisedTypes.contains(.string))
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     @Test(
@@ -690,7 +693,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(release.generation == offer.generation)
         try await notices.changed.wait { notices.value == 1 }
         #expect(await MainActor.run { agent.clipboardActivity } == .copyCarriedNothing)
-        try await expectNoOffer(from: hostChannel)
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     @Test("outbound: a copy whose second file can't be read offers the first and names the loss")
@@ -897,8 +901,8 @@ struct VsockGuestClipboardAgentTests {
         ])
         await MainActor.run { agent.checkClipboardChange() }
 
-        let extra = try await maybeNextFrame(from: hostChannel)
-        #expect(extra == nil)
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     /// Requests representation `repIndex` of `offer` and reads the transfer the
@@ -993,7 +997,8 @@ struct VsockGuestClipboardAgentTests {
         ])
         await MainActor.run { agent.checkClipboardChange() }
 
-        try await expectNoOffer(from: hostChannel)
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     @Test("outbound concealed: a password snapshot is offered with isConcealed set")
@@ -1075,11 +1080,12 @@ struct VsockGuestClipboardAgentTests {
         // self-trigger.
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "from host"))
         try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
 
         // A poll right after the promise is registered must not re-offer it.
         await MainActor.run { agent.checkClipboardChange() }
-        try await expectNoOffer(from: hostChannel)
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     @Test("a file materialized into the staging root is not offered back (staging-path guard)")
@@ -1120,10 +1126,19 @@ struct VsockGuestClipboardAgentTests {
                 .flatMap(URL.init(string:)))
         #expect(FileManager.default.fileExists(atPath: staged.path))
 
-        // A poll now sees a .fileURL pointing inside the staging root; the
-        // staging-path guard must skip it so it isn't offered back to the host.
-        await MainActor.run { agent.checkClipboardChange() }
-        try await expectNoOffer(from: hostChannel)
+        // The user copies the staged file (Finder ⌘C), so the poll reads a
+        // .fileURL inside the staging root; the staging-path guard must skip it
+        // so it isn't offered back to the host — neither from the poll itself
+        // nor from a file resolve it started, whose offer the marker copy below
+        // would otherwise retire unsent.
+        pasteboard.setItem([(type: .fileURL, data: Data(staged.absoluteString.utf8))])
+        let resolving = await MainActor.run {
+            agent.checkClipboardChange()
+            return agent.isResolvingFilesForTesting
+        }
+        #expect(!resolving)
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     // MARK: - Inbound (agent is the receiver, lazy promise model)
@@ -1147,7 +1162,7 @@ struct VsockGuestClipboardAgentTests {
         // for the text UTI and pulls NOTHING — no data connection is opened.
         try hostChannel.send(makeTextOfferFrame(generation: 42, text: "clipboard payload"))
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.string] }
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
 
         // The promise write is scoped `.currentHostOnly` so the guest's
         // continuity-pasteboard advertiser can't fetch the promised flavors at
@@ -1159,7 +1174,8 @@ struct VsockGuestClipboardAgentTests {
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == 42)
         await MainActor.run { agent.checkClipboardChange() }
-        try await expectNoOffer(from: hostChannel)
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     @Test("disable and stop keep materialized receive staging — a vended URL's file survives")
@@ -1243,7 +1259,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
     }
 
     @Test("after the connection ends a cached rep still pastes and an unstaged file set is refused")
@@ -1505,7 +1521,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(!promised.contains(NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
         #expect(!promised.contains(NSPasteboard.PasteboardType("public.file-url")))
         // Pulling is lazy — the offer opens no data connection.
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
     }
 
     // MARK: - Disk full
@@ -1790,7 +1806,7 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
 
         try await notices.changed.wait { notices.value == 1 }
         #expect(
@@ -2173,7 +2189,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.string) }
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == 1)
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
     }
 
     @Test("a failed pasteboard promise write clears the inbound promise generation")
@@ -2201,7 +2217,7 @@ struct VsockGuestClipboardAgentTests {
         // The write attempt bumps the changeCount via clearContents; wait for
         // that observable side effect, then confirm no promise was retained.
         try await pasteboard.changed.wait { pasteboard.changeCount > 0 }
-        try await expectNoPull(on: dialled)
+        try await dialled.expectNoNewDials()
         let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == nil)
         #expect(pasteboard.promisedTypes.isEmpty)
@@ -2298,15 +2314,27 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = await makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let provided = AtomicInt()
+        let clientClock = SleepCountingEngineClock(wrapping: MonotonicEngineClock())
+        let client = VsockGuestClient(
+            port: KernovaVsockPort.clipboard, label: "clipboard-policy-test",
+            clock: clientClock, retryInterval: 0.05
+        ) { _, _ in
+            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
+        }
+        let agent = await VsockGuestClipboardAgent(
+            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
+            reporter: ClipboardTransferReporter())
         defer { agent.stop() }
 
         agent.start()
 
-        // Without an enabling policy, no connection should come up.
-        try await Task.sleep(nanoseconds: 150_000_000)
-        let stillNil = agent.liveChannelForTesting
-        #expect(stillNil == nil)
+        // Without an enabling policy, no connection should come up. Each sleep
+        // follows an iteration's connect-or-skip decision, so the second proves
+        // two iterations passed it up.
+        try await clientClock.sleepRequested.wait { clientClock.sleepCount >= 2 }
+        #expect(provided.value == 0)
+        #expect(agent.liveChannelForTesting == nil)
 
         // Enable: connection comes up.
         agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
@@ -2501,50 +2529,25 @@ struct VsockGuestClipboardAgentTests {
 
     // MARK: - Negative-wait helpers
 
-    /// Asserts no `ClipboardOffer` arrives on `channel` within a short window.
-    private func expectNoOffer(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel),
-            case .clipboardOffer = frame.payload
-        {
-            throw TestFailure("Unexpected ClipboardOffer; echo/skip suppression failed")
-        }
-    }
-
-    /// Asserts the agent pulls nothing within a short window.
+    /// Throws unless the next frame the agent sends is the offer for a copy made
+    /// now — so it sent nothing after the last frame read.
     ///
-    /// A pull is the data connection it opens, so a dial that never happened is
-    /// what "nothing was requested" looks like now.
-    ///
-    /// NOTE: a bounded negative wait — there is no event to await for "no
-    /// connection will ever be dialled", and the agent's reaction (if any) runs
-    /// on the main queue and would have been dispatched before this window
-    /// elapses.
-    private func expectNoPull(
-        on connections: DialledDataConnections, window: TimeInterval = 0.2
+    /// The agent writes every control frame to one FIFO socket from the main
+    /// actor, so the marker's offer arriving first closes the window on
+    /// everything the main actor did before this call.
+    private func expectNothingSentBeforeNextCopy(
+        agent: VsockGuestClipboardAgent, pasteboard: FakePasteboard, channel: VsockChannel
     ) async throws {
-        try await MonotonicEngineClock().sleep(for: window)
-        guard connections.count == 0 else {
+        let marker = "marker \(UUID().uuidString)"
+        pasteboard.setString(marker, forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let frame = try await nextFrame(from: channel)
+        guard case .clipboardOffer(let offer) = frame.payload,
+            offer.repInfo.map(\.byteCount) == [UInt64(marker.utf8.count)]
+        else {
             throw TestFailure(
-                "Unexpected pull: the agent dialled \(connections.count) data connection(s)")
+                "Expected the marker copy's offer, got \(String(describing: frame.payload))")
         }
-    }
-
-    /// Reads one frame if one arrives within a short window, else returns nil.
-    ///
-    /// NOTE: This is a bounded negative wait. There's no event to await for "no
-    /// frame will ever arrive," so a small sleep is the pragmatic backstop — the
-    /// agent's reaction (if any) runs on the main queue and would have been
-    /// dispatched before this window elapses.
-    private func maybeNextFrame(
-        from channel: VsockChannel, window: TimeInterval = 0.2
-    ) async throws -> Frame? {
-        let receiver = Task<Frame?, Never> {
-            let iterator = channel.incoming.makeAsyncIterator()
-            return try? await iterator.next()
-        }
-        try await MonotonicEngineClock().sleep(for: window)
-        receiver.cancel()
-        return await receiver.value
     }
 
     // MARK: - Image / temp-file helpers

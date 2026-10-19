@@ -83,6 +83,23 @@ public final class DialledDataConnections: Sendable {
         return next
     }
 
+    /// Observes for `duration` and throws when any connection was dialled past
+    /// `sinceCount`.
+    ///
+    /// A pull dials from a transfer thread that nothing a test can observe is
+    /// ordered after, so this negative assertion takes a fixed observation
+    /// window, as `FrameRecorder.expectNoNewFrames` does.
+    public func expectNoNewDials(
+        sinceCount before: Int = 0, for duration: TimeInterval = 0.2
+    ) async throws {
+        try await MonotonicEngineClock().sleep(for: duration)
+        let dialled = count
+        guard dialled == before else {
+            throw TestFailure(
+                "Expected no new data connections over \(duration) s; got \(dialled - before)")
+        }
+    }
+
     /// Closes every connection nothing took, so a torn-down test leaks none.
     public func closeAll() {
         let leftover = state.withLock { state -> [Int32] in
