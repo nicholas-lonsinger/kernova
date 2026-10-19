@@ -38,8 +38,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case snapshotSizes(VMSelector)
         /// The folders the VM shares with its guest.
         case sharedDirectories(VMSelector)
-        /// The VM's storage disks in the order its guest sees them, each
-        /// measured from its image.
+        /// The VM's storage disks in attachment order, each measured from its
+        /// image.
         case storageDisks(VMSelector)
         /// The USB accessories this VM's guest currently holds.
         case usbAccessories(VMSelector)

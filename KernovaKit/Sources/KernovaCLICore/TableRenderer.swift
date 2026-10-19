@@ -30,8 +30,8 @@ enum TableRenderer {
 
     /// One VM's full description, as a field-per-line block.
     ///
-    /// The disks are one field of a line per disk, in the order the guest
-    /// sees them; the lines after the first start at the value column.
+    /// The disks are one field of a line per disk, in attachment order; the
+    /// lines after the first start at the value column.
     static func render(_ report: VMInfoReport) -> String {
         let info = report.info
         let network =

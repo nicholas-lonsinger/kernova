@@ -12,7 +12,7 @@ import KernovaKit
 struct VMInfoReport: Encodable, Sendable, Hashable {
     /// The VM itself, exactly as the app described it.
     let info: VMInfo
-    /// The VM's storage disks, in the order its guest sees them.
+    /// The VM's storage disks, in attachment order.
     let storageDisks: [StorageDiskSummary]
 
     /// Pairs one VM with its disks.

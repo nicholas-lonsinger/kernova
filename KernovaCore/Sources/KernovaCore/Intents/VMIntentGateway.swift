@@ -146,8 +146,7 @@ package final class VMIntentGateway {
         }
     }
 
-    /// The VM's disks in the order its guest sees them, each measured from
-    /// its image.
+    /// The VM's disks in attachment order, each measured from its image.
     func storageDisks(ofVM id: UUID) async throws -> [StorageDiskEntity] {
         try await perform(.storageDisks, on: id) {
             try await self.commands.storageDisks(of: .id(id)).map(StorageDiskEntity.init)

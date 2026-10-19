@@ -55,8 +55,9 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 extension VMCommandCore {
     // MARK: - Storage Disks
 
-    /// The VM's storage disks in the order its guest sees them, each measured
-    /// from its image off the main actor.
+    /// The VM's storage disks in attachment order — the order of the
+    /// storage-device list the VM's configuration builds — each measured from
+    /// its image off the main actor.
     ///
     /// An arrival answers the disks its write was asked for, unmeasured: the
     /// images are not at their path until the write lands.

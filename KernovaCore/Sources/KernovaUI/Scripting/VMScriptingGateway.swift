@@ -126,8 +126,8 @@ final class VMScriptingGateway {
         executing ?? answeringCommand
     }
 
-    /// The storage disks of the VM `vm` identifies, in the order its guest
-    /// sees them, from the measurement the running evaluation holds.
+    /// The storage disks of the VM `vm` identifies, in attachment order, from
+    /// the measurement the running evaluation holds.
     ///
     /// Every evaluation that can reach a disk list runs under
     /// ``evaluate(_:_:)``: a verb's addressing, and a re-issued command. A

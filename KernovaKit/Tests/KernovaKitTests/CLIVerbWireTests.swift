@@ -112,8 +112,22 @@ struct CLIVerbWireTests {
         client.waitForFrames(upTo: testWaitBackstop)
         listener.serve(answers)
 
-        let printed = try command.output(from: client)
+        let printed = try command.output(for: try command.selector(), from: client)
         return (listener.requests().map(\.verb), printed)
+    }
+
+    @Test("info --id on something that is not an identifier refuses as a usage error before it connects")
+    func infoRefusesANonIdentifierBeforeConnecting() throws {
+        let command = try #require(
+            try KernovaCommand.parseAsRoot(["info", "not-a-uuid", "--id"]) as? KernovaCommand.Info)
+
+        do {
+            _ = try command.selector()
+            Issue.record("expected a usage refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .usage)
+            #expect(failure.message.contains("not-a-uuid"))
+        }
     }
 
     @Test("ip asks for the guest's address once, the answer deciding whether it asks again")

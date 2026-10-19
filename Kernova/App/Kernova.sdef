@@ -108,7 +108,7 @@
 			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
 				<cocoa key="bundlePath"/>
 			</property>
-			<element type="storage disk" access="r" description="The disks it attaches, in the order its guest sees them.">
+			<element type="storage disk" access="r" description="The disks it attaches, in the order it attaches them.">
 				<cocoa key="storageDisks"/>
 				<accessor style="index"/>
 				<accessor style="name"/>

@@ -376,7 +376,7 @@ struct VMIntentGatewayTests {
 
     // MARK: - Disks
 
-    @Test("The disk read answers every disk in the order the guest sees them, an installer first")
+    @Test("The disk read answers every disk in attachment order, an installer first")
     func disksAnswerInAttachmentOrder() async throws {
         let harness = WiredCommandCore()
         let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")

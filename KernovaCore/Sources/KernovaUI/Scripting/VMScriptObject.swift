@@ -104,7 +104,7 @@ package final class VMScriptObject: NSObject {
     /// with.
     nonisolated static let storageDisksKey = "storageDisks"
 
-    /// Every disk the VM attaches, in the order its guest sees them, measured
+    /// Every disk the VM attaches, in attachment order, measured
     /// for the command being answered — see
     /// ``VMScriptingGateway/storageDisks(of:)``.
     @objc var storageDisks: [VMStorageDiskScriptObject] {

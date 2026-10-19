@@ -59,7 +59,7 @@ struct GetVMIPAddressIntent: AppIntent {
 struct FindStorageDisksIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Disks"
     static let description: IntentDescription? = IntentDescription(
-        "Answers every disk a virtual machine attaches, in the order its guest sees them, with each image's size as read now.",
+        "Answers every disk a virtual machine attaches, in the order it attaches them, with each image's size as read now.",
         categoryName: "Virtual Machines",
         resultValueName: "Disks")
 

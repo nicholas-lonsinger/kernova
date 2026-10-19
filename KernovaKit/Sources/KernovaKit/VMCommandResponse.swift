@@ -36,7 +36,7 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case snapshotSizes([UUID: SnapshotSize])
         /// The folders a VM shares with its guest.
         case sharedDirectories([SharedDirectorySummary])
-        /// A VM's storage disks, in the order its guest sees them.
+        /// A VM's storage disks, in attachment order.
         case storageDisks([StorageDiskSummary])
         /// USB accessories — the ones a VM holds, or the ones available to
         /// attach. Each summary says which it is.
