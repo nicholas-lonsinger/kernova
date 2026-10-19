@@ -194,7 +194,7 @@ struct CLICompletionTests {
         let names = CompletionSource.vmNames(byIdentifier: false, in: context(to: listener))
 
         #expect(names == ["Alpha", "Beta"])
-        #expect(listener.requests().map(\.verb) == [.list()])
+        #expect(try listener.requests().map(\.verb) == [.list()])
     }
 
     @Test("--id offers the identifiers the same listing carries")
@@ -220,7 +220,7 @@ struct CLICompletionTests {
         #expect(names == ["Before Update"])
         // The listing alone: the size walk a `snapshot list` performs would
         // spend a second round trip on a column nobody is completing.
-        #expect(listener.requests().map(\.verb) == [.snapshots(.idOrName("Alpha"))])
+        #expect(try listener.requests().map(\.verb) == [.snapshots(.idOrName("Alpha"))])
     }
 
     @Test("A share removal offers the folders that machine actually shares")
@@ -233,7 +233,7 @@ struct CLICompletionTests {
             ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
 
         #expect(paths == ["/Users/somebody/Sites", "/Users/somebody/Reference"])
-        #expect(listener.requests().map(\.verb) == [.sharedDirectories(.idOrName("Alpha"))])
+        #expect(try listener.requests().map(\.verb) == [.sharedDirectories(.idOrName("Alpha"))])
     }
 
     @Test("zsh is told which of the shared folders the guest may write to")
@@ -263,7 +263,7 @@ struct CLICompletionTests {
         // A row carrying no attachment is one no guest holds, so there is
         // nothing there to detach and nothing to offer.
         #expect(devices == ["AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"])
-        #expect(listener.requests().map(\.verb) == [.usbAccessories(.idOrName("Alpha"))])
+        #expect(try listener.requests().map(\.verb) == [.usbAccessories(.idOrName("Alpha"))])
     }
 
     @Test("A USB attachment offers the free accessories, described by what they are")
@@ -278,7 +278,7 @@ struct CLICompletionTests {
         // Nothing tells two accessories apart by identifier, so the description
         // is what a person completes against.
         #expect(offered == ["12:05ac:12a8 \u{00B7} Composite"])
-        #expect(listener.requests().map(\.verb) == [.availableUSBAccessories])
+        #expect(try listener.requests().map(\.verb) == [.availableUSBAccessories])
     }
 
     @Test("Forgetting a USB accessory offers the keys the named machine remembers")
@@ -302,7 +302,7 @@ struct CLICompletionTests {
         // The key carries colons, which zsh would otherwise read as the start
         // of the description.
         #expect(keys == ["04e8\\:6300\\:0100\\:0373:Samsung Type-C"])
-        #expect(listener.requests().map(\.verb) == [.usbPairings(.idOrName("Alpha"))])
+        #expect(try listener.requests().map(\.verb) == [.usbPairings(.idOrName("Alpha"))])
     }
 
     @Test("Under --id a virtual machine argument that is not one asks nothing")
@@ -360,7 +360,7 @@ struct CLICompletionTests {
             connect: { try VMCommandClient(socketPath: listener.path) }, deadline: 0.5, shell: nil)
 
         #expect(CompletionSource.vmNames(byIdentifier: false, in: silent).isEmpty)
-        #expect(listener.requests().map(\.verb) == [.list()])
+        #expect(try listener.requests().map(\.verb) == [.list()])
     }
 
     @Test("zsh is answered with each value's description beside it")
@@ -387,7 +387,7 @@ struct CLICompletionTests {
         defer { plain.close() }
         plain.serve([[VMCommandResponse(result: .configurationKeys(keyspace))]])
         #expect(CompletionSource.configurationKeys(in: context(to: plain)) == ["cpus"])
-        #expect(plain.requests().map(\.verb) == [.configurationKeys])
+        #expect(try plain.requests().map(\.verb) == [.configurationKeys])
 
         let assigning = try TestCommandSocket()
         defer { assigning.close() }
@@ -413,7 +413,7 @@ struct CLICompletionTests {
         #expect(
             CompletionSource.networkNames(in: context(to: listener, asking: .zsh))
                 == ["Lab:hostOnly"])
-        #expect(listener.requests().map(\.verb) == [.networks])
+        #expect(try listener.requests().map(\.verb) == [.networks])
     }
 
     @Test("--smart-group and --folder each offer their own kind's groups by name, described by their size")
@@ -434,8 +434,8 @@ struct CLICompletionTests {
             CompletionSource.groupNames(of: .smartGroup, in: context(to: smart, asking: .zsh))
                 == ["Linux\\: Lab:2 VMs"])
         #expect(CompletionSource.groupNames(of: .folder, in: context(to: folders, asking: .zsh)) == ["Client:1 VMs"])
-        #expect(smart.requests().map(\.verb) == [.groups])
-        #expect(folders.requests().map(\.verb) == [.groups])
+        #expect(try smart.requests().map(\.verb) == [.groups])
+        #expect(try folders.requests().map(\.verb) == [.groups])
     }
 
     @Test("A --network value offers every mode with no app to ask, then the named networks")

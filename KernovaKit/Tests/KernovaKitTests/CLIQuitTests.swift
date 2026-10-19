@@ -32,6 +32,6 @@ struct CLIQuitTests {
         // nothing it needs runs on an actor this call could be starving. The
         // socket's own receive deadline is the backstop.
         #expect(throws: Never.self) { try KernovaCommand.Quit.awaitExit(of: client) }
-        #expect(listener.requests().map(\.verb) == [.quit])
+        #expect(try listener.requests().map(\.verb) == [.quit])
     }
 }

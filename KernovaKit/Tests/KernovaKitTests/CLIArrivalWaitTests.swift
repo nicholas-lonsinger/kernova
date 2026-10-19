@@ -55,7 +55,7 @@ struct CLIArrivalWaitTests {
 
         // Ends the double's held-open read the way the tool exiting would.
         client.close()
-        #expect(listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
+        #expect(try listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
     }
 
     @Test("A waited import answers the settled row from its one request")
@@ -71,7 +71,7 @@ struct CLIArrivalWaitTests {
         #expect(
             try PreparingCopy.importing(source, waitingForTheCopy: true, within: nil, on: client)
                 == settled)
-        #expect(listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
+        #expect(try listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
     }
 
     @Test("A copy that failed reaches the caller as its own refusal, never as a success")

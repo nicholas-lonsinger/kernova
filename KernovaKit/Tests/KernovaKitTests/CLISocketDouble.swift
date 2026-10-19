@@ -20,7 +20,7 @@ final class TestCommandSocket: Sendable {
 
     private let descriptor: Int32
 
-    /// Runs the serve loop, and orders ``requests()`` and ``close()`` behind it.
+    /// Runs the serve loop; ``requests()`` and ``close()`` wait behind it.
     private let queue = DispatchQueue(label: "test.kernova.command-socket")
 
     private struct State: Sendable {
@@ -49,16 +49,6 @@ final class TestCommandSocket: Sendable {
         }
     }
 
-    /// How long the accepted connection waits for a frame before giving up.
-    ///
-    /// This loop owns ``queue``, which ``requests()`` and ``close()`` both
-    /// enter synchronously, so a read with nothing coming would take the whole
-    /// test process down with it. Sized far past the microseconds a test's own
-    /// frames take, so it only ever fires on a test that queued a response the
-    /// tool never asks for — which then fails on `requests()` instead of
-    /// hanging.
-    private static let readDeadline = timeval(tv_sec: 5, tv_usec: 0)
-
     /// Accepts the pending client and answers its requests with `groups` in
     /// order, closing once they run out.
     ///
@@ -85,11 +75,14 @@ final class TestCommandSocket: Sendable {
         queue.async { [self] in
             let connection = accept(descriptor, nil, nil)
             guard connection >= 0 else { return }
-            state.withLock { $0.accepted = connection }
-            var deadline = Self.readDeadline
-            _ = setsockopt(
-                connection, SOL_SOCKET, SO_RCVTIMEO, &deadline,
-                socklen_t(MemoryLayout<timeval>.size))
+            let isOpen = state.withLock { state in
+                if !state.isClosed { state.accepted = connection }
+                return !state.isClosed
+            }
+            guard isOpen else {
+                Darwin.close(connection)
+                return
+            }
             var remaining = groups[...]
             var decoder = StreamFrameDecoder()
             var buffer = [UInt8](repeating: 0, count: 64 * 1024)
@@ -109,28 +102,44 @@ final class TestCommandSocket: Sendable {
                 let count = buffer.withUnsafeMutableBytes {
                     Darwin.read(connection, $0.baseAddress, $0.count)
                 }
-                guard count > 0 else { break }  // the client hung up, or the deadline
+                guard count > 0 else { break }  // the client hung up, or close() shut it down
                 decoder.feed(Data(buffer[0..<count]))
             }
-            Darwin.close(connection)
             state.withLock { $0.accepted = nil }
+            Darwin.close(connection)
         }
     }
 
-    /// What the tool asked for, in the order it asked.
-    func requests() -> [VMCommandRequest] {
-        queue.sync { state.withLock { $0.received } }
+    /// What the tool asked for, in the order it asked, once the serve loop
+    /// has ended — the groups ran out or the client hung up.
+    ///
+    /// Throws at ``testWaitBackstop`` when the loop is still reading: a test
+    /// that queued an answer the tool never asks for, or held the connection
+    /// open without closing its client first.
+    func requests() throws -> [VMCommandRequest] {
+        let stopwatch = BackstopStopwatch()
+        let loopEnded = DispatchSemaphore(value: 0)
+        queue.async { loopEnded.signal() }
+        guard loopEnded.wait(timeout: .now() + testWaitBackstop) == .success else {
+            throw TestFailure.backstop(
+                "The command socket double was still reading",
+                stopwatch: stopwatch, timeout: testWaitBackstop)
+        }
+        return state.withLock { $0.received }
     }
 
     /// Closes the listener and any connection it accepted; idempotent.
+    ///
+    /// Shutting the accepted connection down ends a read parked on it, so the
+    /// serve loop this waits behind returns once a client has connected.
     func close() {
+        let wasOpen = state.withLock { state in
+            defer { state.isClosed = true }
+            if let accepted = state.accepted { shutdown(accepted, SHUT_RDWR) }
+            return !state.isClosed
+        }
+        guard wasOpen else { return }
         queue.sync {
-            let (wasOpen, accepted) = state.withLock { state in
-                defer { state.isClosed = true }
-                return (!state.isClosed, state.accepted)
-            }
-            guard wasOpen else { return }
-            if let accepted { Darwin.close(accepted) }
             Darwin.close(descriptor)
             unlink(path)
         }
@@ -168,6 +177,6 @@ enum CLIWire {
         listener.serve([[response]])
 
         let answer = try client.send(request)
-        return (listener.requests().map(\.verb), answer)
+        return (try listener.requests().map(\.verb), answer)
     }
 }
