@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Records passing test runs and posts the `tests` commit status on HEAD.
+# Records passing test runs and posts the `Test Attestation` commit status on HEAD.
 #
 #     Tools/attest.sh record -- <command> [<arg>...]
 #         Runs the command untouched and exits with its status. On exit 0 with
@@ -21,7 +21,7 @@ set -uo pipefail
 
 # The "Require Tests" ruleset requires this context by name: renaming it means
 # editing the ruleset.
-CONTEXT=tests
+CONTEXT='Test Attestation'
 
 usage() {
     echo 'usage: Tools/attest.sh [record -- <command> [<arg>...] | post <success|failure> <description> [<target-url>]]' >&2
