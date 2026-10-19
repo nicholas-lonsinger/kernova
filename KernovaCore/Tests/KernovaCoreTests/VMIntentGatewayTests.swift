@@ -374,6 +374,61 @@ struct VMIntentGatewayTests {
         #expect(vm.status == .running)
     }
 
+    // MARK: - Disks
+
+    @Test("The disk read answers every disk in the order the guest sees them, an installer first")
+    func disksAnswerInAttachmentOrder() async throws {
+        let harness = WiredCommandCore()
+        let installer = StorageDisk(path: "/Volumes/Media/installer.iso", readOnly: true, label: "Installer")
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let data = StorageDisk(path: "/Volumes/Media/data.img", label: "Data", notes: "scratch")
+        let vm = harness.register(name: "Wired") { $0.storageDisks = [installer, main, data] }
+
+        let disks = try await makeGateway(over: harness).storageDisks(ofVM: vm.id)
+
+        #expect(disks.map(\.label) == ["Installer", "Main Disk", "Data"])
+        #expect(disks.map(\.kind) == ["usbMassStorage", "virtio", "virtio"])
+        #expect(disks.map(\.readOnly) == [true, false, false])
+        #expect(disks.map(\.notes) == ["", "", "scratch"])
+        #expect(
+            disks.map(\.path) == [
+                "/Volumes/Media/installer.iso",
+                vm.bundleURL.appendingPathComponent("Disk.asif").path(percentEncoded: false),
+                "/Volumes/Media/data.img",
+            ])
+    }
+
+    @Test("A disk's sizes are the ones measured from its image, and an unreadable image has none")
+    func diskSizesComeFromTheMeasurement() async throws {
+        let harness = WiredCommandCore()
+        let main = StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio)
+        let missing = StorageDisk(path: "/Volumes/Gone/data.img", label: "Data")
+        let vm = harness.register(name: "Wired") { $0.storageDisks = [main, missing] }
+        harness.machineFiles.setDiskSizes(
+            VMBundleLayout.DiskSizes(onDiskBytes: 10_000_000_000, capacityBytes: 100_000_000_000),
+            for: main.id)
+
+        let disks = try await makeGateway(over: harness).storageDisks(ofVM: vm.id)
+
+        #expect(disks.map(\.capacityBytes) == [100_000_000_000, nil])
+        #expect(disks.map(\.usedBytes) == [10_000_000_000, nil])
+        let subtitle = try #require(disks[0].displayRepresentation.subtitle)
+        #expect(String(localized: subtitle) == DataFormatters.formatBytes(100_000_000_000))
+        #expect(disks[1].displayRepresentation.subtitle == nil)
+        #expect(String(localized: disks[0].displayRepresentation.title) == "Main Disk")
+    }
+
+    @Test("A VM that has left the library is refused its disks")
+    func disksOfAMissingVMAreRefused() async throws {
+        let harness = WiredCommandCore()
+        harness.register(name: "Wired")
+        let missing = UUID()
+
+        await #expect(throws: CommandError.notFound(.id(missing))) {
+            try await makeGateway(over: harness).storageDisks(ofVM: missing)
+        }
+    }
+
     // MARK: - Search
 
     @Test("A search term reaches the library's search once the library has landed, addressing no VM")
