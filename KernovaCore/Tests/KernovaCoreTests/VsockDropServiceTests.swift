@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 import UniformTypeIdentifiers
@@ -36,7 +37,8 @@ struct VsockDropServiceTests {
         let recorder: FrameRecorder
         /// The drop deadlines' clock: one passes only when a test releases it.
         let clock = GatedEngineClock()
-        private let host: VsockChannel
+        /// The service's end, for a FIFO marker sent behind what the service wrote.
+        let host: VsockChannel
 
         init(
             // Zeroed so a transfer's readout is on screen while it runs; a test
@@ -344,13 +346,22 @@ struct VsockDropServiceTests {
     func metadataIsReadOffTheMainActor() async throws {
         // The hop never runs, so anything the offer needs that this test can
         // still observe would have been read on the drag's own actor.
-        let harness = try Harness(runOffMainActor: { _ in })
+        let handedOff = Locked(0)
+        let harness = try Harness(runOffMainActor: { _ in handedOff.withLock { $0 += 1 } })
         defer { harness.tearDown() }
         let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
+        #expect(handedOff.withLock { $0 } == 1)
 
-        try await harness.recorder.expectNoNewFrames(sinceCount: 0, for: 0.2)
+        // An offer sent from the drag's own turn, or from a main-queue hop it
+        // queued, precedes this marker on the FIFO socket.
+        await drainMainQueue()
+        try harness.host.sendErrorFrame(code: "test.marker", message: "", inReplyTo: nil)
+        try await harness.recorder.waitForFrames {
+            harness.recorder.errors.contains { $0.code == "test.marker" }
+        }
+        #expect(harness.recorder.dropOffers.isEmpty)
         #expect(harness.reports.latest == .idle)
     }
 

@@ -81,18 +81,9 @@ struct VsockControlServiceTests {
         }
     }
 
-    /// Default liveness windows, set far beyond any test's wall-clock budget.
-    ///
-    /// The watchdog can't tear the channel down mid-test at these values. Tests
-    /// that *exercise* the watchdog (silence/recovery/terminate) pass explicit
-    /// short windows to opt back in.
-    ///
-    /// The watchdog measures elapsed time since the last inbound frame, which
-    /// keeps advancing while a contended CI MainActor stalls the test: a
-    /// sub-second window makes every test's runtime an implicit deadline, so a
-    /// test that pauses past it (waiting on a frame, a `waitUntil`, or scheduler
-    /// jitter) sees the channel closed out from under it as an EOF / `.closed`
-    /// flake. These values make the watchdog an explicit opt-in instead.
+    /// Default liveness windows, far beyond any test's wall-clock budget, so the
+    /// watchdog never acts on the real clock: a test that exercises it crosses
+    /// the gated windows on a `GatedEngineClock` instead.
     private static let watchdogDisabledUnresponsive: TimeInterval = 3_600
     private static let watchdogDisabledTerminate: TimeInterval = 7_200
 
@@ -130,27 +121,6 @@ struct VsockControlServiceTests {
         )
         service.onChannelLost = onChannelLost
         return service
-    }
-
-    /// Completes the handshake for a test that arms a sub-second
-    /// `terminateAfter`, latching the Hello instead of observing `isConnected`.
-    ///
-    /// Those tests cannot wait on `isConnected`: it is a transient the watchdog
-    /// reverts. The watchdog measures elapsed time since the last inbound
-    /// frame, so a stall longer than the window leaves the next liveness tick
-    /// already past its deadline — and if that tick runs before the waiter's
-    /// continuation, the service settles `isConnected` back to `false` before
-    /// the waiter ever sees it. Nothing changes it again, so the waiter blocks
-    /// to its backstop and fails a service that connected exactly as asked.
-    /// `onAgentInfoObserved` fires inside the same MainActor turn that sets
-    /// `isConnected`, and the recorder only ever counts up, so a stall of any
-    /// length delays this wait rather than losing it.
-    private func connectLatched(
-        guest: VsockChannel, hello: ObservedRecorder, agentVersion: String = "0.9.0"
-    ) async throws {
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: agentVersion))
-        try await hello.changed.wait { !hello.values.isEmpty }
     }
 
     // MARK: - Hello
@@ -420,17 +390,14 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Terminate stays disabled (the makeService default): it is not under
-        // test here, and with the old finite 2 s value a starved scheduler
-        // could delay the first liveness tick past `terminateAfter`, so that
-        // tick closed the channel *without ever latching `.unresponsive`* —
-        // the waited condition then could never become true (see checkLiveness:
-        // the terminate branch skips the unresponsive latch).
+        let clock = GatedEngineClock()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.06,
-            unresponsiveAfter: 0.1
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate
         )
         service.start()
         defer { service.stop() }
@@ -439,10 +406,10 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitForChange { service.isConnected }
 
-        // Don't send any further inbound. After ~100ms+ the watchdog flips.
-        try await waitForChange {
-            service.agentStatus == .unresponsive(version: "0.9.0")
-        }
+        // Three ticks judge 60 s, still inside the window; the fourth judges 80 s.
+        try await runLoop(every: Self.gatedTick, times: 3, on: clock, of: service)
+        #expect(service.agentStatus == .current(version: "0.9.0"))
+        try await runLoop(every: Self.gatedTick, times: 1, on: clock, of: service)
         #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
     }
 
@@ -484,17 +451,14 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Widen cadences for CI runner jitter (the original 40/80/200 ms
-        // pairing was tight enough that on slow runners the watchdog could
-        // miss its window before the terminate condition fired).
-        let helloObserved = ObservedRecorder()
+        let clock = GatedEngineClock()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.1,
-            unresponsiveAfter: 0.2,
-            terminateAfter: 0.5,
-            onAgentInfoObserved: { helloObserved.append($0) }
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate
         )
 
         service.start()
@@ -503,12 +467,16 @@ struct VsockControlServiceTests {
         // Captured now: the teardown clears the handles.
         let lifecycleTasks = service.lifecycleTasksForTesting
 
-        try await connectLatched(guest: guest, hello: helloObserved)
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
 
-        // Send nothing further: the watchdog terminates the connection. The
-        // service has to settle rather than re-fire every tick against a peer
-        // that has gone quiet for good.
-        try await waitForChange { !service.isConnected }
+        // Send nothing further: the seventh tick judges 140 s, past terminate.
+        // The service has to settle rather than re-fire every tick against a
+        // peer that has gone quiet for good.
+        try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
+        // `#require`: the tasks awaited below end only once the service settles.
+        try #require(!service.isConnected)
 
         // Every periodic task runs to completion — no watchdog tick and no
         // heartbeat send survives the teardown.
@@ -796,13 +764,15 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        let clock = GatedEngineClock()
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.1,
-            unresponsiveAfter: 0.2,
-            terminateAfter: 0.5,
+            clock: clock,
+            heartbeatInterval: Self.gatedHeartbeat,
+            unresponsiveAfter: Self.gatedUnresponsive,
+            terminateAfter: Self.gatedTerminate,
             onChannelLost: { lost.record() }
         )
         lost.sample = { [weak service] in service?.agentVersion }
@@ -810,12 +780,12 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
-        // No wait on `isConnected` in between: with a terminate window this
-        // short the settle can beat the observation, and the callback — not the
-        // connected state — is what this test is about.
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
 
-        try await lost.changed.wait { lost.count == 1 }
+        // The seventh silent tick judges 140 s, past terminate.
+        try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
+        #expect(lost.count == 1)
         // The callback runs on fully-settled state, which is what lets
         // `VMInstance` re-arm its agent watchdog on a nil `agentVersion`
         // instead of no-oping against the stale one.
