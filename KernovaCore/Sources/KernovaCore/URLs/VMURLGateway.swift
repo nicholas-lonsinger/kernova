@@ -61,14 +61,14 @@ package final class VMURLGateway {
     package func handle(_ url: URL) async {
         switch VMURLRoute.delivery(of: url) {
         case .notALink:
-            #log(Self.logger, .fault, "A URL carrying no Kernova link reached the link front door")
+            Self.logger.log(.fault, "A URL carrying no Kernova link reached the link front door")
             assertionFailure("A URL carrying no Kernova link reached the link front door: \(url)")
         case .refused(let refusal):
-            #log(Self.logger, .notice, "Refused a Kernova link: \(refusal.message, privacy: .public)")
+            Self.logger.log(.notice, "Refused a Kernova link: \(refusal.message, privacy: .public)")
             surface(.invalidArgument(refusal.message))
         case .route(let route):
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Kernova link asks \(route.verb.rawValue, privacy: .public) of '\(route.selector.displayText, privacy: .private)'"
             )
             await readiness.ready()

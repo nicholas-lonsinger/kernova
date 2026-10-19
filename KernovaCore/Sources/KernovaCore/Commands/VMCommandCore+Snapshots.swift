@@ -55,8 +55,8 @@ extension VMCommandCore {
             }
         }
         if let baselineFailure {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Took a snapshot of '\(instance.name, privacy: .public)' but could not make it the Ephemeral baseline: \(baselineFailure.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(
@@ -81,8 +81,8 @@ extension VMCommandCore {
             let mode = VMAdmission.settledCaptureMode(
                 phase: instance.phase, facts: instance.admissionFacts)
         else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
             )
             throw invalidState(instance)
@@ -98,8 +98,8 @@ extension VMCommandCore {
                 alsoRecord(permit, captured)
             }
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .takeSnapshot, on: instance)
@@ -213,8 +213,8 @@ extension VMCommandCore {
         identity: VMIdentityOverride = .unavailable, resolving outcome: VMOutcome
     ) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
             )
             throw CommandError.operationFailed(
@@ -253,8 +253,8 @@ extension VMCommandCore {
         do {
             try await outcome.value()
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .revertToSnapshot, on: instance)
@@ -274,8 +274,8 @@ extension VMCommandCore {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return nil }
         return VMFollowUp(scope: .vm, rank: .restoration) { [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
             )
             try self.launchRevert(
@@ -315,8 +315,8 @@ extension VMCommandCore {
         } catch let failure as CommandError {
             throw failure
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             guard unlisted else { throw failure(error, verb: .deleteSnapshot, on: instance) }
@@ -326,8 +326,8 @@ extension VMCommandCore {
                     "\u{201C}\(snapshot.name)\u{201D} was removed from the list, but its files could not be moved to the Trash. \(error.localizedDescription)"
             )
         }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
     }
@@ -339,8 +339,8 @@ extension VMCommandCore {
         _ snapshot: VMSnapshot, on instance: VMInstance
     ) throws {
         guard instance.isEphemeralBaseline(snapshot) else { return }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
         )
         throw CommandError.stepRequired(ephemeralBaselineDeleteRefusal(snapshot, on: instance))
@@ -447,8 +447,8 @@ extension VMCommandCore {
         } catch let refused as VMAdmissionRefusal {
             throw admissionRefusal(refused.refusal, on: instance, verb: verb)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: verb, error: error)

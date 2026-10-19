@@ -1,6 +1,6 @@
 import os
 
-/// The level a `#log` emission carries, locally and on the wire.
+/// The level a `KernovaLogger` emission carries, locally and on the wire.
 public enum KernovaLogLevel: Sendable {
     /// Method entry and intermediate state.
     case debug
@@ -19,7 +19,7 @@ public enum KernovaLogLevel: Sendable {
     ///
     /// `.warning` and `.error` share `OSLogType.error`, as they do in
     /// `os.Logger`; the distinction survives on the forwarded record.
-    public var osLogType: OSLogType {
+    var osLogType: OSLogType {
         switch self {
         case .debug: .debug
         case .info: .info

@@ -248,7 +248,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateToolbarItems() {
         guard let toolbar = window?.toolbar else {
-            #log(Self.logger, .warning, "updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
+            Self.logger.log(.warning, "updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
             return
         }
         toolbarManager.updateToolbarItems(in: toolbar)

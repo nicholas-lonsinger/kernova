@@ -12,7 +12,7 @@ package struct IPSWService: Sendable {
     package init() {}
 
     package func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
-        #log(Self.logger, .info, "Fetching latest supported macOS restore image...")
+        Self.logger.log(.info, "Fetching latest supported macOS restore image...")
         let restoreImage = try await VZMacOSRestoreImage.latestSupported
         return LatestRestoreImage(
             url: restoreImage.url,

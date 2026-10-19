@@ -136,10 +136,10 @@ enum TestAdmission {
             let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let value = Int(text), value >= 0 else { continue }
             let summary = "\(value > 0 ? "gating" : "pass-through") width \(value) from \(source)"
-            #log(logger, .notice, "Test admission \(summary, privacy: .public)")
+            logger.log(.notice, "Test admission \(summary, privacy: .public)")
             return value
         }
-        #log(logger, .notice, "Test admission pass-through: no width source")
+        logger.log(.notice, "Test admission pass-through: no width source")
         return 0
     }
 

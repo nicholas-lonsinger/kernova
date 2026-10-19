@@ -91,8 +91,8 @@ extension EntitlementService {
     /// value, via `SecTaskCopyValueForEntitlement`.
     static func processClaims(_ key: String) -> Bool {
         guard let task = SecTaskCreateFromSelf(nil) else {
-            #log(
-                logger, .fault,
+            logger.log(
+                .fault,
                 "SecTaskCreateFromSelf returned nil — treating entitlement '\(key, privacy: .public)' as absent"
             )
             assertionFailure("SecTaskCreateFromSelf returned nil")
@@ -101,8 +101,8 @@ extension EntitlementService {
         var error: Unmanaged<CFError>?
         let value = SecTaskCopyValueForEntitlement(task, key as CFString, &error)
         if let error = error?.takeRetainedValue() {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Entitlement query for '\(key, privacy: .public)' failed — treating as absent: \(String(describing: error), privacy: .public)"
             )
         }

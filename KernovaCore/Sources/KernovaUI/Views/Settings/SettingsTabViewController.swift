@@ -258,7 +258,7 @@ final class SettingsTabViewController: NSTabViewController {
     /// degrading to no image in Release (per the project's defensive-unwrap rule).
     private static func symbol(_ name: String) -> NSImage? {
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else {
-            #log(logger, .fault, "Missing SF Symbol '\(name, privacy: .public)' for Settings tab")
+            logger.log(.fault, "Missing SF Symbol '\(name, privacy: .public)' for Settings tab")
             assertionFailure("Missing SF Symbol: \(name)")
             return nil
         }

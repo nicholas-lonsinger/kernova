@@ -70,8 +70,8 @@ package struct AlertConfiguration {
         dismiss: @escaping () -> Void = {}
     ) {
         if !prompt.alternatives.isEmpty, alternative == nil {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Confirmation '\(prompt.kind.rawValue, privacy: .public)' offers alternatives with no handler"
             )
             assertionFailure(

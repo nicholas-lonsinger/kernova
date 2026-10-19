@@ -33,14 +33,14 @@ struct SystemSettingsLink {
     @discardableResult
     func openMicrophonePrivacy() -> Bool {
         guard let url = URL(string: Self.microphonePrivacyURL) else {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Malformed System Settings URL '\(Self.microphonePrivacyURL, privacy: .public)'")
             assertionFailure("Malformed System Settings URL: \(Self.microphonePrivacyURL)")
             return false
         }
         guard open(url) else {
-            #log(Self.logger, .warning, "System Settings did not open for microphone permission")
+            Self.logger.log(.warning, "System Settings did not open for microphone permission")
             return false
         }
         return true

@@ -267,7 +267,7 @@ extension SidebarViewController {
             try change()
         } catch {
             let message = error.localizedDescription
-            #log(Self.logger, .notice, "\(title, privacy: .public): \(message, privacy: .public)")
+            Self.logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
             guard let window = view.window else { return }
             presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
         }

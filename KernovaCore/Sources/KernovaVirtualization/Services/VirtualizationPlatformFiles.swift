@@ -14,8 +14,8 @@ package struct VirtualizationPlatformFiles: VMPlatformFileWriting {
         let url = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
         guard !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return }
         _ = try VZEFIVariableStore(creatingVariableStoreAt: url, options: [])
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Created the EFI variable store in '\(bundleURL.lastPathComponent, privacy: .public)'")
     }
 
@@ -36,8 +36,8 @@ package struct VirtualizationPlatformFiles: VMPlatformFileWriting {
         _ = try VZMacAuxiliaryStorage(
             creatingStorageAt: layout.auxiliaryStorageURL, hardwareModel: model,
             options: [.allowOverwrite])
-        #log(
-            Self.logger, .info,
+        Self.logger.log(
+            .info,
             "Created platform files in '\(bundleURL.lastPathComponent, privacy: .public)'")
         return try Data(contentsOf: layout.machineIdentifierURL)
     }

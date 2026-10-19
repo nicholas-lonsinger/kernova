@@ -44,7 +44,7 @@ public enum KernovaOSVersion {
     ///   contains no digits.
     public static func numericVersion(in reported: String) -> String? {
         guard let regex = Self.dottedDecimalRegex else {
-            #log(logger, .fault, "Dotted-decimal version pattern failed to compile")
+            logger.log(.fault, "Dotted-decimal version pattern failed to compile")
             assertionFailure("Dotted-decimal version pattern failed to compile")
             return nil
         }

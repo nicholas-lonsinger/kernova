@@ -219,32 +219,32 @@ package final class VMSessionContext {
         do {
             try clipboardInputPipe?.fileHandleForReading.close()
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to close clipboard input read handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         do {
             try clipboardInputPipe?.fileHandleForWriting.close()
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to close clipboard input write handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         do {
             try clipboardOutputPipe?.fileHandleForReading.close()
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to close clipboard output read handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         do {
             try clipboardOutputPipe?.fileHandleForWriting.close()
         } catch {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Failed to close clipboard output write handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

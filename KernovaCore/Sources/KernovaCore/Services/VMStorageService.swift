@@ -107,8 +107,8 @@ package struct VMStorageService: Sendable {
         default:
             throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO)
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Published VM bundle \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
@@ -120,8 +120,8 @@ package struct VMStorageService: Sendable {
     /// and its source still exists.
     package func discardStagedBundle(at stagedURL: URL) throws {
         try FileManager.default.removeItem(at: stagedURL)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Discarded the staged bundle at \(stagedURL.lastPathComponent, privacy: .public)")
     }
 
@@ -160,8 +160,8 @@ package struct VMStorageService: Sendable {
     /// ``publishBundle(from:to:)``.
     package func createVMBundle(at bundleURL: URL) throws {
         try stagingRoot.createDirectory(at: bundleURL)
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Created VM bundle directory \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
@@ -177,8 +177,8 @@ package struct VMStorageService: Sendable {
         try VMBundleItems.copyItems(
             relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Cloned VM bundle from '\(sourceBundleURL.lastPathComponent, privacy: .public)' to '\(destinationBundleURL.lastPathComponent, privacy: .public)'"
         )
     }
@@ -189,7 +189,7 @@ package struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
-        #log(Self.logger, .notice, "Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
+        Self.logger.log(.notice, "Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
     /// Permanently deletes a VM bundle directory and all its contents, bypassing the Trash.
@@ -198,7 +198,7 @@ package struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.removeItem(at: bundleURL)
-        #log(Self.logger, .notice, "Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
+        Self.logger.log(.notice, "Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
     }
 }
 

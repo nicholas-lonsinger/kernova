@@ -16,14 +16,14 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
         to instance: VMInstance
     ) async throws -> RemovableMediaDeviceInfo {
         guard let session = instance.session else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Cannot attach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
             throw RemovableMediaDeviceError.noVirtualMachine
         }
         guard session.hasUSBController else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Cannot attach USB device: no USB controller for '\(instance.name, privacy: .public)'")
             throw RemovableMediaDeviceError.noUSBController
         }
@@ -36,17 +36,17 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
             let basename = URL(fileURLWithPath: diskImagePath).lastPathComponent
             switch error {
             case .notFound:
-                #log(Self.logger, .error, "USB disk image not found: '\(basename, privacy: .public)'")
+                Self.logger.log(.error, "USB disk image not found: '\(basename, privacy: .public)'")
                 throw RemovableMediaDeviceError.diskImageNotFound(diskImagePath)
             case .unexpectedType:
-                #log(Self.logger, .error, "USB disk image path is a directory: '\(basename, privacy: .public)'")
+                Self.logger.log(.error, "USB disk image path is a directory: '\(basename, privacy: .public)'")
                 throw RemovableMediaDeviceError.diskImageIsDirectory(diskImagePath)
             case .notWritable:
-                #log(Self.logger, .error, "USB disk image is not writable: '\(basename, privacy: .public)'")
+                Self.logger.log(.error, "USB disk image is not writable: '\(basename, privacy: .public)'")
                 throw RemovableMediaDeviceError.diskImageNotWritable(diskImagePath)
             case .notReadable:
-                #log(
-                    Self.logger, .fault, "Unexpected .notReadable from resolveFile for '\(basename, privacy: .public)'")
+                Self.logger.log(
+                    .fault, "Unexpected .notReadable from resolveFile for '\(basename, privacy: .public)'")
                 assertionFailure("resolveFile should never throw .notReadable")
                 throw RemovableMediaDeviceError.diskImageNotFound(diskImagePath)
             }
@@ -57,14 +57,14 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
         do {
             uuid = try await session.attachMassStorage(url: url, readOnly: readOnly, uuid: desiredUUID)
         } catch let error as VMSessionError {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Cannot attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             throw RemovableMediaDeviceError.noUSBController
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
@@ -72,8 +72,8 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
 
         let info = RemovableMediaDeviceInfo(id: uuid, path: diskImagePath, readOnly: readOnly)
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Attached USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
         )
         return info
@@ -84,14 +84,14 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
         from instance: VMInstance
     ) async throws {
         guard let session = instance.session else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Cannot detach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
             throw RemovableMediaDeviceError.noVirtualMachine
         }
         guard session.hasUSBController else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Cannot detach USB device: no USB controller for '\(instance.name, privacy: .public)'")
             throw RemovableMediaDeviceError.noUSBController
         }
@@ -99,23 +99,23 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
         do {
             try await session.detachUSBDevice(uuid: deviceInfo.id)
         } catch VMSessionError.usbDeviceNotFound {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "USB device '\(deviceInfo.displayName, privacy: .public)' not found on controller for VM '\(instance.name, privacy: .public)'"
             )
             throw RemovableMediaDeviceError.deviceNotFound
         } catch VMSessionError.usbControllerUnavailable {
             throw RemovableMediaDeviceError.noUSBController
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
 
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'"
         )
     }

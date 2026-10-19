@@ -213,8 +213,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         }
         isConnected = true
         endpoint.start()
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Vsock clipboard service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }
@@ -264,8 +264,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         // superseded service's later failure belongs to the VM either way.
         previewOperation?.abandon()
         previewOperation = nil
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Vsock clipboard service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
         // Last, so the owner observes fully-settled state from inside the
@@ -326,8 +326,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         let generation = nextDropGeneration
         nextDropGeneration += 1
         guard let url = try? dropStaging.reserveScratchDirectory(generation: generation) else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Failed to reserve a clipboard drop directory for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
             )
             return nil
@@ -369,8 +369,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         dropDirectories.removeAll { drop in
             guard drop.wasAdopted, !isRead(drop) else { return false }
             dropStaging.discardGeneration(drop.generation)
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Reclaimed the staged files of a superseded clipboard drop for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
             )
             return true
@@ -533,8 +533,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         let budget = endpoint.pasteBudget(generation: offer.generation)
         let overBudget = budget?.exceeds == true
         if let budget, overBudget {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Copy-to-Mac refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(budget.total, privacy: .public) bytes, over the \(budget.limit, privacy: .public)-byte cap; refusing the whole file set"
             )
             // The click reports its own outcome, but an automatic passthrough
@@ -650,8 +650,8 @@ extension VsockClipboardService: ClipboardEndpointDelegate {
         case .released: hasSuccessor = false
         }
         reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: hasSuccessor))
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — the guest offer it advertised is no longer servable"
         )
     }

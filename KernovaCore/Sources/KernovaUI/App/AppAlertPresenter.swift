@@ -395,7 +395,7 @@ final class AppAlertPresenter {
                 stillHolds: stillHolds,
                 drop: { request in
                     discard(request)
-                    #log(Self.logger, .notice, "Dropped an alert whose premise lapsed while it waited")
+                    Self.logger.log(.notice, "Dropped an alert whose premise lapsed while it waited")
                 })
         {
             show(entry, on: window)
@@ -584,14 +584,14 @@ final class AppAlertPresenter {
         // ⌘⌫ then ⌥⌘⌫ upgrades to Delete Immediately.
         if let delete = deletes[instance.id] {
             guard !delete.presenter.isShown else {
-                #log(
-                    Self.logger, .debug,
+                Self.logger.log(
+                    .debug,
                     "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
                 return
             }
             delete.permanently = permanently
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Delete sheet already in flight; coalescing repeat request for '\(instance.name, privacy: .public)'")
             return
         }
@@ -630,8 +630,8 @@ final class AppAlertPresenter {
         }
         let isShown = slots.values.contains { $0.occupant?.snapshotSheet?.instance.id == instance.id }
         guard !isWaiting, !isShown else {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Take Snapshot sheet already requested; ignoring request for '\(instance.name, privacy: .public)'"
             )
             return
@@ -724,8 +724,8 @@ final class AppAlertPresenter {
     func presentConfirmationRequest(_ request: ConfirmationRequest) {
         let confirmation = OneShotQuestion(request.answer)
         guard let window = askableWindow(about: request.instance.id) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Nowhere to ask '\(request.prompt.title, privacy: .public)'; leaving its refusal standing")
             confirmation(.unasked)
             return
@@ -742,8 +742,8 @@ final class AppAlertPresenter {
     func presentStepRoutes(_ request: StepRouteRequest) {
         let choice = OneShotQuestion(request.answer)
         guard let window = askableWindow(about: request.instance.id) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Nowhere to ask '\(request.requirement.title, privacy: .public)'; leaving its refusal standing")
             choice(.unasked)
             return
@@ -765,8 +765,8 @@ final class AppAlertPresenter {
     /// Mac, one menu item from being placed.
     func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
         guard let window = askableWindow(about: nil) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Holding a USB accessory for the host: there is nowhere on screen to ask which virtual machine should take it"
             )
             request.answer(nil)
@@ -798,16 +798,16 @@ final class AppAlertPresenter {
         if let asking = windowAsking(about: vmID) {
             asking.makeKeyAndOrderFront(nil)
             windows.presence.activate()
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Already asking for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; raising that question"
             )
             request.answer(.answered(.cancelled))
             return
         }
         guard let window = askableWindow(about: vmID) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Nowhere to ask for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; leaving its refusal standing"
             )
             request.answer(.unasked)

@@ -83,8 +83,8 @@ package enum ClipboardPasteboardIntake {
                 message: Self.unreadableItemsMessage(count: intake.skipped), unreadable: true)
         }
         if intake.skipped > 0 {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Skipped \(intake.skipped, privacy: .public) unreadable copied item(s)")
         }
         return .content(

@@ -40,8 +40,8 @@ extension VMCommandCore {
             throw CommandError.unsupportedByBuild(capability: probe.entitledCapability)
         }
         let network = try library.networks.create(name: name, kind: kind, verb: .createNetwork)
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Created the \(kind.rawValue, privacy: .public) network \(network.id.uuidString, privacy: .public)"
         )
         return summary(network)
@@ -53,7 +53,7 @@ extension VMCommandCore {
         library.networks.reload()
         let network = try library.networks.requireNetwork(named: network, verb: .renameNetwork)
         try library.networks.rename(network.id, to: newName, verb: .renameNetwork)
-        #log(logger, .notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
+        logger.log(.notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
     }
 
     /// Stops listing the network `network` names.
@@ -117,8 +117,8 @@ extension VMCommandCore {
         // here on: one naming a network the library does not list is on
         // ``VMLibraryFilter/Network/unlisted``, never on the network itself.
         try library.networks.remove(network.id, verb: .deleteNetwork)
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Deleted the network \(network.id.uuidString, privacy: .public)"
         )
     }

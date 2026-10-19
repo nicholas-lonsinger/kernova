@@ -192,8 +192,8 @@ package final class NetworkAttachmentCoordinator {
     /// and guest reboot — so it is never surfaced as a VM error; the answer
     /// is always to reattach.
     func attachmentWasDisconnected(error: any Error) {
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "Network attachment for '\(self.vmName, privacy: .public)' disconnected: \(error.localizedDescription, privacy: .public)"
         )
         // Ahead of the guards: the framework already nil'd the attachment, and
@@ -237,8 +237,8 @@ package final class NetworkAttachmentCoordinator {
         guard let choice = choice() else {
             // The picker disables None while the VM runs — a session losing its
             // network device mid-flight has no supported path here.
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Network reconcile for '\(self.vmName, privacy: .public)' found no network choice — leaving the attachment alone"
             )
             setPending(false)
@@ -250,13 +250,13 @@ package final class NetworkAttachmentCoordinator {
             if device.currentPlan != desired {
                 lastAttachAttemptAt = clock.now
                 if device.apply(desired) {
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "Attached network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public), on \(trigger, privacy: .public))"
                     )
                 } else {
-                    #log(
-                        Self.logger, .warning,
+                    Self.logger.log(
+                        .warning,
                         "Could not attach network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public) refused, on \(trigger, privacy: .public))"
                     )
                 }
@@ -389,8 +389,8 @@ package final class NetworkAttachmentCoordinator {
         guard let choice = choice(), let selection = resolvePlan(for: choice)?.vmnetSelection else {
             return
         }
-        #log(
-            Self.logger, .warning,
+        Self.logger.log(
+            .warning,
             "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(selection.logDescription, privacy: .public) network"
         )
     }
@@ -398,8 +398,8 @@ package final class NetworkAttachmentCoordinator {
     private func setPending(_ pending: Bool) {
         guard pending != isPending else { return }
         isPending = pending
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Network attachment for '\(self.vmName, privacy: .public)' is \(pending ? "pending reattach" : "attached", privacy: .public)"
         )
         onPendingChange(pending)

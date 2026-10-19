@@ -57,7 +57,7 @@ final class VsockGuestLogService: VsockFeatureService {
             // or it spoke on the wrong port and the loop closed it.
             self?.settle(reason: .channelLost)
         }
-        #log(Self.logger, .info, "Guest log service started for '\(self.label, privacy: .public)'")
+        Self.logger.log(.info, "Guest log service started for '\(self.label, privacy: .public)'")
     }
 
     /// Tears the service down at the owner's request.
@@ -103,10 +103,10 @@ final class VsockGuestLogService: VsockFeatureService {
                     break
                 }
             }
-            #log(logger, .info, "Guest log channel closed for '\(label, privacy: .public)'")
+            logger.log(.info, "Guest log channel closed for '\(label, privacy: .public)'")
         } catch {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Guest log channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -120,8 +120,8 @@ final class VsockGuestLogService: VsockFeatureService {
         label: String
     ) -> Bool {
         guard frame.protocolVersion == 1 else {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(label, privacy: .public)'"
             )
             return true
@@ -131,8 +131,8 @@ final class VsockGuestLogService: VsockFeatureService {
             emitter.emit(record)
             return true
         case .error(let error):
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
             return true
@@ -142,13 +142,13 @@ final class VsockGuestLogService: VsockFeatureService {
             // Hello, Heartbeat, and PolicyUpdate belong on the control channel;
             // clipboard payloads belong on the clipboard channel, drop payloads
             // on the drop channel.
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port; closing the channel"
             )
             return false
         case .none:
-            #log(logger, .debug, "Frame with no payload for '\(label, privacy: .public)'")
+            logger.log(.debug, "Frame with no payload for '\(label, privacy: .public)'")
             return true
         }
     }
@@ -163,51 +163,28 @@ protocol GuestLogEmitter: Sendable {
 
 /// Republishes guest log records via `KernovaLogger`.
 ///
-/// Each record is emitted at the closest matching host log level, with the
-/// guest's subsystem and category preserved in the message body.
+/// Each record is emitted at the closest matching host log level, behind a
+/// public `[subsystem/category] ` label, with each guest segment keeping the
+/// privacy the guest gave it.
 struct OSLogGuestLogEmitter: GuestLogEmitter {
     private let logger: KernovaLogger
 
+    /// Emits through a logger with its own subsystem, so guest logs are
+    /// filterable separately from host logs, and `label` as its category.
     init(label: String) {
-        // Use a distinct subsystem so guest logs are filterable separately
-        // from host logs in Console.app and `log stream` queries.
-        self.logger = KernovaLogger(subsystem: "app.kernova.guest", category: label)
+        self.init(logger: KernovaLogger(subsystem: "app.kernova.guest", category: label))
+    }
+
+    init(logger: KernovaLogger) {
+        self.logger = logger
     }
 
     func emit(_ record: Kernova_V1_LogRecord) {
-        let composed = Composition(record: record)
-        let level = Self.level(record.level)
-        // Two arguments, so the host's `logd` redacts the guest's private values
-        // by default and reveals them exactly where it would reveal a host
-        // record's own — under Xcode or a logging profile.
-        guard !composed.cleartext.isEmpty else {
-            #log(logger, level, "\(composed.placeholder, privacy: .public)")
-            return
-        }
-        #log(
-            logger, level,
-            "\(composed.placeholder, privacy: .public) \(composed.cleartext, privacy: .private)")
-    }
-
-    /// The two forms a forwarded record takes on the host.
-    struct Composition: Equatable {
-        /// The message with every private segment replaced by `<private>`,
-        /// behind the guest's `[subsystem/category]` label.
-        let placeholder: String
-
-        /// The same message with nothing replaced, empty when the record
-        /// carries no private segment and there is therefore nothing to reveal.
-        let cleartext: String
-
-        init(record: Kernova_V1_LogRecord) {
-            let label = "[\(record.subsystem)/\(record.category)] "
-            placeholder =
-                label + record.segments.map { $0.private ? "<private>" : $0.text }.joined()
-            cleartext =
-                record.segments.contains { $0.private }
-                ? label + record.segments.map(\.text).joined()
-                : ""
-        }
+        logger.log(
+            Self.level(record.level),
+            LogMessage(
+                segments: [LogSegment(text: "[\(record.subsystem)/\(record.category)] ", isPrivate: false)]
+                    + record.segments.map { LogSegment(text: $0.text, isPrivate: $0.private) }))
     }
 
     private static func level(_ level: Kernova_V1_LogRecord.Level) -> KernovaLogLevel {

@@ -58,20 +58,20 @@ final class SerialSocketRelay: Sendable {
         } catch .address(let failure) {
             // A path the app derived itself, so one that does not fit is a bug
             // in how it was derived rather than a condition to recover from.
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "Serial relay socket path unusable for '\(self.label, privacy: .public)' — \(String(describing: failure), privacy: .public): \(self.path, privacy: .public)"
             )
             return
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Serial relay could not bind for '\(self.label, privacy: .public)' — \(String(describing: error), privacy: .public): \(self.path, privacy: .public)"
             )
             return
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Serial relay listening for '\(self.label, privacy: .public)' at \(self.path, privacy: .public)")
     }
 
@@ -82,7 +82,7 @@ final class SerialSocketRelay: Sendable {
         client.withLock { $0.tearDown() }
 
         listener.stop()
-        #log(Self.logger, .notice, "Serial relay stopped for '\(self.label, privacy: .public)'")
+        Self.logger.log(.notice, "Serial relay stopped for '\(self.label, privacy: .public)'")
     }
 
     // MARK: - Output tee (guest → client)
@@ -137,7 +137,7 @@ final class SerialSocketRelay: Sendable {
             source.resume()
         }
 
-        #log(Self.logger, .info, "Serial relay client connected for '\(self.label, privacy: .public)'")
+        Self.logger.log(.info, "Serial relay client connected for '\(self.label, privacy: .public)'")
     }
 
     private func readFromClient() {
@@ -170,7 +170,7 @@ final class SerialSocketRelay: Sendable {
         case .nothing:
             return
         case .disconnected:
-            #log(Self.logger, .info, "Serial relay client disconnected for '\(self.label, privacy: .public)'")
+            Self.logger.log(.info, "Serial relay client disconnected for '\(self.label, privacy: .public)'")
             return
         case .input(let input):
             data = input
@@ -178,8 +178,8 @@ final class SerialSocketRelay: Sendable {
         do {
             try guestInput.write(contentsOf: data)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Serial relay failed to write client input to guest for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

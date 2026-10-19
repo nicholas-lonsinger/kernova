@@ -58,7 +58,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         if statusObservation == nil { observeStatus() }
-        #log(Self.logger, .debug, "Clipboard window shown for VM '\(self.instance.name, privacy: .public)'")
+        Self.logger.log(.debug, "Clipboard window shown for VM '\(self.instance.name, privacy: .public)'")
     }
 
     // MARK: - NSWindowDelegate
@@ -70,7 +70,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         }
         statusObservation?.cancel()
         statusObservation = nil
-        #log(Self.logger, .debug, "Clipboard window closing for VM '\(self.instance.name, privacy: .public)'")
+        Self.logger.log(.debug, "Clipboard window closing for VM '\(self.instance.name, privacy: .public)'")
         onWillClose?()
     }
 
@@ -95,16 +95,16 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
                 self.updateWindowTitle()
                 let status = self.instance.status
                 if status == .stopped || status == .error {
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))"
                     )
                     self.window?.close()
                     return
                 }
                 if !self.instance.configuration.clipboardSharingEnabled {
-                    #log(
-                        Self.logger, .notice,
+                    Self.logger.log(
+                        .notice,
                         "Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (clipboard sharing disabled by user)"
                     )
                     self.window?.close()

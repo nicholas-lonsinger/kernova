@@ -1,17 +1,8 @@
-import Foundation
 import KernovaSynchronization
+import os
 
-// A `#log` expansion calls `os` members at its call site, so a module built
-// with MemberImportVisibility resolves them only if `os` comes in with this one.
-@_exported import os
-
-/// An `os.Logger` plus the labels a forwarded copy of each message carries.
-///
-/// The `#log` macro is the only way to emit through one: it hands the message
-/// literal straight to `osLogger`, so `logd`-side laziness, per-value privacy
-/// and `format:`/`align:` all behave exactly as they do at a bare `os.Logger`
-/// call site, and renders the interpolations a second time only when the
-/// logger has a `forwardingSink`.
+/// Emits each message to the unified log under its subsystem and category,
+/// and to the forwarding sink when there is one.
 public struct KernovaLogger: Sendable {
     /// The `os.Logger` subsystem, also tagged on each forwarded record.
     public let subsystem: String
@@ -19,9 +10,8 @@ public struct KernovaLogger: Sendable {
     /// The `os.Logger` category, also tagged on each forwarded record.
     public let category: String
 
-    /// The logger the local emission goes to. Called by the `#log` expansion
-    /// and nothing else — a direct call would bypass the forwarding sink.
-    public let osLogger: os.Logger
+    private let osLog: OSLog
+    private let osLogger: os.Logger
 
     /// This logger's own sink, which `forwardingSink` prefers over the
     /// `processSink`.
@@ -32,8 +22,25 @@ public struct KernovaLogger: Sendable {
     public init(subsystem: String, category: String, sink: ForwardingSink? = nil) {
         self.subsystem = subsystem
         self.category = category
-        self.osLogger = os.Logger(subsystem: subsystem, category: category)
+        self.osLog = OSLog(subsystem: subsystem, category: category)
+        self.osLogger = os.Logger(osLog)
         self.sink = sink
+    }
+
+    /// Logs `message` at `level`.
+    ///
+    /// `message` is built only when the unified log records `level` for this
+    /// logger or a forwarding sink exists; otherwise it is never evaluated.
+    public func log(_ level: KernovaLogLevel, _ message: @autoclosure () -> LogMessage) {
+        let sink = forwardingSink
+        let type = level.osLogType
+        let isEnabled = osLog.isEnabled(type: type)
+        guard isEnabled || sink != nil else { return }
+        let segments = message().segments
+        if isEnabled {
+            LocalLogRecord(segments: segments).emit(to: osLogger, at: type)
+        }
+        sink?(level, subsystem, category, segments)
     }
 
     // MARK: - Forwarding sink
@@ -48,9 +55,9 @@ public struct KernovaLogger: Sendable {
             _ segments: [LogSegment]
         ) -> Void
 
-    /// Where `#log` forwards this logger's records: its own `sink`, or else
-    /// the `processSink`; `nil` when there is neither.
-    public var forwardingSink: ForwardingSink? {
+    /// Where `log(_:_:)` forwards this logger's records: its own `sink`, or
+    /// else the `processSink`; `nil` when there is neither.
+    var forwardingSink: ForwardingSink? {
         sink ?? Self.processSink
     }
 
@@ -75,20 +82,3 @@ public struct KernovaLogger: Sendable {
         }
     }
 }
-
-/// Logs `message` through `logger` at `level`.
-///
-/// `message` must be written as a string literal. Its interpolations take the
-/// same `privacy:`, `format:` and `align:` arguments an `os.Logger` call takes,
-/// and the literal reaches `os.Logger` untouched. A forwarded copy carries the
-/// same message split into `LogSegment`s, each interpolation marked private or
-/// public by its `privacy:` argument — or, with none, by whether `os.Logger`
-/// would redact that value's type by default.
-///
-/// - Parameters:
-///   - logger: the logger to emit through.
-///   - level: the level to emit at; any `KernovaLogLevel` expression.
-///   - message: the message, written literally at the call site.
-@freestanding(expression)
-public macro log(_ logger: KernovaLogger, _ level: KernovaLogLevel, _ message: OSLogMessage) =
-    #externalMacro(module: "KernovaLoggingMacros", type: "LogMacro")

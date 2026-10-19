@@ -22,7 +22,7 @@ final class RuntimeFileAccess {
     func adoptConfigScopes(_ scopes: [ScopedAccess]) {
         configScopes.forEach { $0.release() }
         configScopes = scopes
-        #log(Self.logger, .debug, "Adopted \(scopes.count, privacy: .public) config scope(s)")
+        Self.logger.log(.debug, "Adopted \(scopes.count, privacy: .public) config scope(s)")
     }
 
     /// Registers the scope backing an attachment the running VM can take back
@@ -44,7 +44,7 @@ final class RuntimeFileAccess {
     func releaseAll() {
         let count = configScopes.count + attachmentScopes.count
         if count > 0 {
-            #log(Self.logger, .debug, "Releasing all \(count, privacy: .public) scope(s)")
+            Self.logger.log(.debug, "Releasing all \(count, privacy: .public) scope(s)")
         }
         configScopes.forEach { $0.release() }
         configScopes.removeAll()

@@ -413,7 +413,7 @@ package final class VMLibrary: VMAdmissionPeers {
         guard selectedID == nil || !entries.contains(where: { $0.id == selectedID }) else { return }
         if let saved = preferences.sidebarSelection, let row = sidebarLayout.resolve(saved) {
             selection = row
-            #log(logger, .debug, "Restored the last-selected sidebar row for \(row.entryID.uuidString)")
+            logger.log(.debug, "Restored the last-selected sidebar row for \(row.entryID.uuidString)")
         } else {
             selection = firstShownRow
         }
@@ -647,8 +647,8 @@ package final class VMLibrary: VMAdmissionPeers {
             {
                 return reportDuplicate(at: url, holderName: instance.name, existing: instance)
             }
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
             )
             instance.rebind(to: bundleFactory.make(scanned.read))
@@ -705,8 +705,8 @@ package final class VMLibrary: VMAdmissionPeers {
     ) -> Adoption {
         let bundleName = url.deletingPathExtension().lastPathComponent
         if reportedDuplicateBundles.insert(bundleName).inserted {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "\(url.lastPathComponent, privacy: .public) carries the identifier of '\(holderName, privacy: .public)', which the library already holds — left out"
             )
             surfaceError(
@@ -730,8 +730,8 @@ package final class VMLibrary: VMAdmissionPeers {
     /// (``recordUnreadable(_:under:)``).
     private func recordUnreadable(of read: VMBundleRead) {
         for unreadable in read.unreadableFiles {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "'\(read.configuration.name, privacy: .public)' left \(unreadable.fileName, privacy: .public) in place: \(String(describing: unreadable.problems), privacy: .public)"
             )
         }
@@ -779,7 +779,7 @@ package final class VMLibrary: VMAdmissionPeers {
     func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
         entries.moveSubranges(RangeSet(source.rangeView), to: destination)
         persistOrder()
-        #log(logger, .notice, "Reordered VMs in sidebar")
+        logger.log(.notice, "Reordered VMs in sidebar")
     }
 
     /// Sorts rows by custom order, falling back to `createdAt` for unordered
@@ -837,8 +837,8 @@ package final class VMLibrary: VMAdmissionPeers {
         let instance = permit.instance
         let outcome = updateConfiguration(permit) { $0.pendingGuestAccount = nil }
         guard case .saved = outcome else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Kept the guest account for '\(instance.name, privacy: .public)': the retraction did not land"
             )
             return outcome
@@ -1042,8 +1042,8 @@ package final class VMLibrary: VMAdmissionPeers {
             return .stopped(.refused(.heldByAnotherCopy))
         } catch {
             if let mutateFailure { throw mutateFailure }
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to save the configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let failure = SettingsWriteFailure(
@@ -1059,8 +1059,8 @@ package final class VMLibrary: VMAdmissionPeers {
     private func outsidePermit(
         _ refused: VMStateFieldRefusal, on instance: VMInstance
     ) -> SettingsRefusal {
-        #log(
-            logger, .error,
+        logger.log(
+            .error,
             "Refused a write to '\(instance.name, privacy: .public)' that moved \(refused.fields.joined(separator: ", "), privacy: .public) outside its permit"
         )
         return .outsidePermit(refused)
@@ -1117,8 +1117,8 @@ package final class VMLibrary: VMAdmissionPeers {
         } catch let refused as VMAdmissionRefusal where refused.refusal == .heldByAnotherCopy {
             return .refused(.heldByAnotherCopy)
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let failure = SettingsWriteFailure(
@@ -1146,16 +1146,16 @@ package final class VMLibrary: VMAdmissionPeers {
         do {
             try permit.bundle.commitConfiguration { $0.removableMedia = media }
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to settle the removable media config for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             presentError(error, about: .vm(instance))
             return
         }
         guard instance.bundle.configuration.removableMedia != old else { return }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Settled the removable media config for '\(instance.name, privacy: .public)' on its live state after a reconcile error"
         )
     }
@@ -1191,8 +1191,8 @@ package final class VMLibrary: VMAdmissionPeers {
         } catch let refused as VMAdmissionRefusal {
             throw refused
         } catch {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Failed to save the USB accessory pairings for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error

@@ -11,7 +11,7 @@ extension NSImage {
     /// deployment-target mismatch.
     static func systemSymbol(_ name: String, accessibilityDescription: String) -> NSImage {
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: accessibilityDescription) else {
-            #log(logger, .fault, "Failed to load system symbol '\(name, privacy: .public)'")
+            logger.log(.fault, "Failed to load system symbol '\(name, privacy: .public)'")
             assertionFailure("Missing SF Symbol: \(name)")
             return NSImage()
         }

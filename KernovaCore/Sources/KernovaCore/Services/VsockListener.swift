@@ -87,8 +87,8 @@ package struct VsockListener: Sendable {
     /// port's `onAcceptFd` runs synchronously right here.
     package func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
         guard fd >= 0 else {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "dup() failed for accepted vsock connection on port \(self.port, privacy: .public): errno=\(dupErrno, privacy: .public)"
             )
             return false
@@ -102,15 +102,15 @@ package struct VsockListener: Sendable {
         case .admit:
             break
         case .notReady(let reason):
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "Refusing vsock connection on port \(self.port, privacy: .public) — \(reason, privacy: .public)"
             )
             close(fd)
             return false
         case .denied(let reason):
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "Refusing vsock connection on port \(self.port, privacy: .public) — \(reason, privacy: .public)"
             )
             close(fd)
@@ -122,8 +122,8 @@ package struct VsockListener: Sendable {
             configureAcceptedSocket(fd)
             let channel = VsockChannel(fileDescriptor: fd)
             channel.start()
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Accepted vsock connection on port \(self.port, privacy: .public)")
             // Only the hand-off hops: the channel is already draining, and the
             // async bridge keeps FIFO order with the reporter emissions queued
@@ -133,8 +133,8 @@ package struct VsockListener: Sendable {
             // No `configureAcceptedSocket` here: a data connection's options are
             // the endpoint's, applied where the first read on the descriptor
             // happens rather than in two places that must stay in step.
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Accepted vsock data connection on port \(self.port, privacy: .public)")
             onAcceptFd(fd)
         }
@@ -160,8 +160,8 @@ package struct VsockListener: Sendable {
         let rc = setsockopt(
             fd, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size))
         if rc != 0 {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "setsockopt(SO_SNDBUF) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — host→guest throughput stays at the 8 KiB-default transport ceiling"
             )
             return
@@ -170,13 +170,13 @@ package struct VsockListener: Sendable {
         var len = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &applied, &len) == 0 else { return }
         if applied < Int32(Self.sendBufferBytes) {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "SO_SNDBUF on vsock port \(self.port, privacy: .public) clamped to \(applied, privacy: .public) bytes (requested \(Self.sendBufferBytes, privacy: .public)) — host→guest throughput may stay below the unlocked ceiling"
             )
         } else {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "SO_SNDBUF on vsock port \(self.port, privacy: .public) set to \(applied, privacy: .public) bytes"
             )
         }
@@ -194,8 +194,8 @@ package struct VsockListener: Sendable {
         let rc = setsockopt(
             fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         if rc != 0 {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "setsockopt(SO_SNDTIMEO) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — a write to a stalled guest is bounded only by the channel's own teardown"
             )
         }

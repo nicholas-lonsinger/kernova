@@ -103,8 +103,8 @@ final class ClipboardTransferInbox: Sendable {
             return prior != nil
         }
         guard displaced else { return }
-        #log(
-            Self.logger, .fault,
+        Self.logger.log(
+            .fault,
             "Clipboard transfer \(transferID, privacy: .public) was awaited twice — the earlier awaiter is dropped"
         )
         assertionFailure("Clipboard transfer \(transferID) was awaited twice")
@@ -148,8 +148,8 @@ final class ClipboardTransferInbox: Sendable {
     /// sees for both.
     func adopt(fd: Int32, reply: Kernova_V1_ClipboardTransferReply) {
         guard let awaiter = state.withLock({ $0.awaiters[reply.transferID] }) else {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Closing a data connection for clipboard transfer \(reply.transferID, privacy: .public) — nothing is awaiting it"
             )
             ClipboardDataConnection.end(fd: fd)

@@ -59,7 +59,7 @@ The app is sandboxed in every build configuration, and each of these works until
 
 ### Logging
 
-`#log` on a `KernovaLogger` is the one logging spelling: it emits the native `os.Logger` record and, in the guest agent, forwards the same record to the host — a record emitted any other way never leaves the guest.
+`KernovaLogger.log(_:_:)` is the one logging spelling: it emits the `os.Logger` record and, in the guest agent, forwards the same message to the host — a record emitted any other way never leaves the guest.
 
 Capture with `subsystem BEGINSWITH "app.kernova"` — an exact `==` match drops the agent's own records while the capture still looks complete.
 

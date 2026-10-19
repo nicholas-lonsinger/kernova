@@ -229,8 +229,8 @@ final class VMDisplayPlacementController {
             lastDisplayID: lastDisplayID, screens: NSScreen.screens, libraryScreen: host?.libraryScreen,
             displayID: \.displayID)
         if let lastDisplayID, screen?.displayID != lastDisplayID {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': saved display \(lastDisplayID, privacy: .public) not found, falling back"
             )
         }
@@ -285,8 +285,8 @@ final class VMDisplayPlacementController {
                 self.persist(preference, for: instance)
             }
             let policy = self.host.map { String($0.presence.activationPolicy.rawValue) } ?? "-"
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: reason), privacy: .public), policy=\(policy, privacy: .public))"
             )
 

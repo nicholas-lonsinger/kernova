@@ -72,8 +72,8 @@ package final class ConfigCheckSession {
                 self.report = ConfigCheckReport(files: files, libraryDirectory: source.libraryDirectory)
                 self.failure = nil
             case .failure(let error):
-                #log(
-                    Self.logger, .error,
+                Self.logger.log(
+                    .error,
                     "The config check couldn't list the VMs folder: \(error.localizedDescription, privacy: .public)"
                 )
                 self.report = nil

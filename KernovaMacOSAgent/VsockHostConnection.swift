@@ -208,10 +208,10 @@ final class VsockHostConnection: Sendable {
         if enabled { client.resume() }
         guard needsTransition else { return }
         if enabled {
-            #log(logger, .notice, "Log forwarding enabled by host policy")
+            logger.log(.notice, "Log forwarding enabled by host policy")
         } else {
             client.pause()
-            #log(logger, .notice, "Log forwarding disabled by host policy")
+            logger.log(.notice, "Log forwarding disabled by host policy")
         }
     }
 
@@ -281,8 +281,8 @@ final class VsockHostConnection: Sendable {
     /// then, so the append it makes announces nothing and the recursion stops
     /// one frame deep.
     private func reportDroppingStarted() {
-        #log(
-            logger, .warning,
+        logger.log(
+            .warning,
             "Log forward buffer full at \(Self.logBufferLimit, privacy: .public) records — dropping the oldest until the host channel drains"
         )
     }
@@ -320,8 +320,8 @@ final class VsockHostConnection: Sendable {
             case .reportDrops(let dropped):
                 // `drainScheduled` still stands here, so this line's own record
                 // rides the run reporting it rather than scheduling another.
-                #log(
-                    logger, .warning,
+                logger.log(
+                    .warning,
                     "Dropped \(dropped, privacy: .public) buffered log record(s) while the host channel was behind"
                 )
             case .send(let framed, let channel):
@@ -353,14 +353,14 @@ final class VsockHostConnection: Sendable {
         do {
             for try await frame in channel.incoming {
                 guard frame.protocolVersion == 1 else {
-                    #log(
-                        logger, .warning,
+                    logger.log(
+                        .warning,
                         "Dropping inbound frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
                     )
                     continue
                 }
-                #log(
-                    logger, .debug,
+                logger.log(
+                    .debug,
                     "Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
         } catch {
@@ -377,13 +377,13 @@ final class VsockHostConnection: Sendable {
             return state.heldCount
         }
         if let failure {
-            #log(
-                logger, .warning,
+            logger.log(
+                .warning,
                 "Vsock channel ended with error, holding \(held, privacy: .public) record(s) for the next connection: \(failure.localizedDescription, privacy: .public)"
             )
         } else {
-            #log(
-                logger, .notice,
+            logger.log(
+                .notice,
                 "Vsock channel closed by host, holding \(held, privacy: .public) record(s) for the next connection"
             )
         }

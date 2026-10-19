@@ -64,8 +64,8 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
     /// the controller stops tracking the previous instance's properties.
     func reconfigure(instance newInstance: VMInstance) {
         guard newInstance !== instance else { return }
-        #log(
-            Self.logger, .debug,
+        Self.logger.log(
+            .debug,
             "Reconfigured to instance '\(newInstance.name, privacy: .public)'"
         )
         instance = newInstance

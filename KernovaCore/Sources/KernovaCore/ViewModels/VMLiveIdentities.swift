@@ -24,7 +24,7 @@ final class VMLiveIdentities {
 
     private var instances: [VMInstance] {
         guard let roster else {
-            #log(Self.logger, .fault, "VMLiveIdentities has no roster — answering as an empty library")
+            Self.logger.log(.fault, "VMLiveIdentities has no roster — answering as an empty library")
             assertionFailure("VMLiveIdentities.roster was never assigned")
             return []
         }
@@ -72,8 +72,8 @@ final class VMLiveIdentities {
                 vm: instance, other: other, reason: .macAddress, configuration: configuration)
         }
         if let identityTwin {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Starting '\(instance.name, privacy: .public)' beside '\(identityTwin.name, privacy: .public)', which has the same machine identity, as the user confirmed"
             )
         }

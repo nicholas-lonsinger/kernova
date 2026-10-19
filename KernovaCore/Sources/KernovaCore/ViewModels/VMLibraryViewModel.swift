@@ -225,8 +225,8 @@ package final class VMLibraryViewModel {
                 library.updateHostState($0) { $0.lastFullscreenDisplayID = displayID }
             }
         } catch {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Did not record the fullscreen display of '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
             )
         }
@@ -253,8 +253,8 @@ package final class VMLibraryViewModel {
         do {
             return try await commands.snapshotSizes(of: .id(instance.id))
         } catch {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "No snapshot sizes for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return [:]
@@ -265,8 +265,8 @@ package final class VMLibraryViewModel {
         do {
             return try await commands.externalAttachments(of: .id(instance.id))
         } catch {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "No external attachments for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return []
@@ -280,8 +280,8 @@ package final class VMLibraryViewModel {
             return try await commands.sharingVMNames(
                 .id(instance.id), path: path, bookmark: bookmark)
         } catch {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "No sharing names for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return []
@@ -420,8 +420,8 @@ package final class VMLibraryViewModel {
         } catch let error as CommandError {
             // Setup finishing between the button appearing and the click is a
             // normal race, not something to alert the user about.
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
             )
         } catch {
@@ -441,8 +441,8 @@ package final class VMLibraryViewModel {
     package var agentInstallPromptDisabled: Bool {
         didSet {
             guard agentInstallPromptDisabled != oldValue else { return }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Setting app-wide agent install prompt disabled=\(self.agentInstallPromptDisabled, privacy: .public)"
             )
             preferences.agentInstallPromptDisabled = agentInstallPromptDisabled
@@ -459,8 +459,8 @@ package final class VMLibraryViewModel {
     package var keepInMenuBarOnQuit: Bool {
         didSet {
             guard keepInMenuBarOnQuit != oldValue else { return }
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Setting keep in menu bar=\(self.keepInMenuBarOnQuit, privacy: .public)"
             )
             preferences.keepInMenuBarOnQuit = keepInMenuBarOnQuit
@@ -604,8 +604,8 @@ package final class VMLibraryViewModel {
         do {
             try await library.moveToTrash(bundle)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Couldn't move \(bundle.bundleURL.lastPathComponent, privacy: .public) to the Trash: \(error.localizedDescription, privacy: .public)"
             )
             surfaceError(
@@ -792,8 +792,8 @@ package final class VMLibraryViewModel {
     /// every surface, so the prompt has one less thing to keep in step.
     private func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
         guard let presenter else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Holding a USB accessory for the host: no surface is attached to ask which virtual machine should take it"
             )
             request.answer(nil)
@@ -922,8 +922,8 @@ package final class VMLibraryViewModel {
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
         guard instances.contains(where: { $0 === instance }) else {
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "Start-failed recovery for '\(instance.name, privacy: .public)' arrived after it left the library"
             )
             return
@@ -988,13 +988,13 @@ package final class VMLibraryViewModel {
             }
             return true
         } catch is GuestAccountPromptDismissed {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Start of '\(instance.name, privacy: .public)' cancelled at the account password"
             )
         } catch is ConfirmationDeclined {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "'\(instance.name, privacy: .public)': the user declined the confirmation it asked for"
             )
         } catch {
@@ -1233,8 +1233,8 @@ package final class VMLibraryViewModel {
     /// Opens the delete-snapshot confirmation.
     package func requestDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
         guard capabilities.isAvailable(.deleteSnapshot, on: instance) else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': '\(instance.name, privacy: .public)' does not offer a delete now"
             )
             return
@@ -1320,8 +1320,8 @@ package final class VMLibraryViewModel {
             // there is nothing to tell the user about a delete they can retry.
             switch error {
             case .notFound, .invalidState, .busy:
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "Refusing delete of '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
                 )
             default:
@@ -1350,7 +1350,7 @@ package final class VMLibraryViewModel {
     package func importVMs(fromDroppedURLs urls: [URL], intoFolder folder: UUID? = nil) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
-        #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
+        Self.logger.log(.notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
         let batch = commands.beginImports(from: bundles, intoFolder: folder)
         for case .failure(let error) in batch.imports { present(error, about: .library) }
         if let failure = batch.membershipFailure {
@@ -1384,8 +1384,8 @@ package final class VMLibraryViewModel {
             try commands.beginClone(.id(instance.id), outcome: outcome)
         } catch let error as CommandError {
             if case .invalidState = error {
-                #log(
-                    Self.logger, .debug,
+                Self.logger.log(
+                    .debug,
                     "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
                 )
             } else {
@@ -1410,8 +1410,8 @@ package final class VMLibraryViewModel {
         } catch let error as CommandError {
             // The arrival settled while the confirmation was up: a failed one
             // left no row, and an adopted one is a VM the cancel refuses.
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message, privacy: .public)"
             )
         } catch {
@@ -1447,15 +1447,15 @@ package final class VMLibraryViewModel {
     /// asked for no rename.
     package func renameVMInSidebar(_ instance: VMInstance) {
         guard library.selectRevealing(instance.id) != nil else {
-            #log(Self.logger, .notice, "No sidebar row lists '\(instance.name, privacy: .public)' — no rename opened")
+            Self.logger.log(.notice, "No sidebar row lists '\(instance.name, privacy: .public)' — no rename opened")
             return
         }
-        #log(Self.logger, .debug, "Starting sidebar rename for '\(instance.name, privacy: .public)'")
+        Self.logger.log(.debug, "Starting sidebar rename for '\(instance.name, privacy: .public)'")
         activeRename = .sidebar(instance.id)
     }
 
     package func renameVMInDetail(_ instance: VMInstance) {
-        #log(Self.logger, .debug, "Starting detail rename for '\(instance.name, privacy: .public)'")
+        Self.logger.log(.debug, "Starting detail rename for '\(instance.name, privacy: .public)'")
         activeRename = .detail(instance.id)
     }
 
@@ -1473,8 +1473,8 @@ package final class VMLibraryViewModel {
             // The configuration funnel already told the user the write failed;
             // the verb throws so a wire client hears about it, and a second
             // alert saying the same thing is not what the user needs.
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message, privacy: .public)"
             )
         } catch {
@@ -1662,8 +1662,8 @@ package final class VMLibraryViewModel {
         if let command = error as? CommandError {
             if let prompt = command.confirmationPrompt { return .consentRequired(prompt) }
             if command.isOperationFailure {
-                #log(
-                    Self.logger, .debug,
+                Self.logger.log(
+                    .debug,
                     "Edit on '\(instance.name, privacy: .public)' did not apply: \(command.message, privacy: .public)"
                 )
                 return .refused
@@ -1699,8 +1699,8 @@ package final class VMLibraryViewModel {
         case (.confirmationRequired(let prompt), .vm(let instance)):
             presentConfirmation(prompt, for: instance)
         case (.confirmationRequired(let prompt), .library):
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public) about no VM"
             )
         case (.operationFailed(_, _, _, .removeStartFailedAttachment(let failure)?), .vm(let instance)):
@@ -1731,8 +1731,8 @@ package final class VMLibraryViewModel {
             // Raised where it could not be asked: the refusal it stands for.
             surfaceError(prompt.message, title: ConflictReason.machineIdentity.title, about: .vm(instance))
         default:
-            #log(
-                Self.logger, .debug,
+            Self.logger.log(
+                .debug,
                 "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public)"
             )
         }

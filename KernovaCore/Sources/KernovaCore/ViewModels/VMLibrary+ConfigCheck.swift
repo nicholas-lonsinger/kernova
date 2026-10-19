@@ -118,13 +118,13 @@ extension VMLibrary {
             }
         }.value
         for failure in failures {
-            #log(
-                logger, .error,
+            logger.log(
+                .error,
                 "Use Defaults left \(failure.file.url.path(percentEncoded: false), privacy: .public) as it was: \(failure.reason, privacy: .public)"
             )
         }
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Use Defaults rewrote \(repairable.count - failures.count, privacy: .public) of \(repairable.count, privacy: .public) repairable config file(s)"
         )
         reconcileWithDisk()
@@ -152,8 +152,8 @@ extension VMLibrary {
                 try storage.deleteVMBundle(at: url)
             }
         }.value
-        #log(
-            logger, .notice,
+        logger.log(
+            .notice,
             "Moved the unreadable bundle \(url.lastPathComponent, privacy: .public) to the Trash")
         reconcileWithDisk()
     }

@@ -27,8 +27,8 @@ package struct ISOFilenameGlob: Sendable {
         do {
             regex = try NSRegularExpression(pattern: "\\A\(translated)\\z")
         } catch {
-            #log(
-                Self.logger, .fault,
+            Self.logger.log(
+                .fault,
                 "ISO pattern '\(pattern, privacy: .public)' did not translate to a regex")
             assertionFailure("ISO pattern did not translate to a regex: \(pattern)")
             return nil

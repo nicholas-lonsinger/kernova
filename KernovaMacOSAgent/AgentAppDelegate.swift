@@ -19,7 +19,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private static let version: String = {
         guard let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else {
-            #log(logger, .fault, "Version string not found in Info.plist")
+            logger.log(.fault, "Version string not found in Info.plist")
             assertionFailure("Version string not found in Info.plist")
             return "unknown"
         }
@@ -28,12 +28,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private static let buildNumber: String = {
         guard let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
-            #log(logger, .fault, "Build number not found in Info.plist")
+            logger.log(.fault, "Build number not found in Info.plist")
             assertionFailure("Build number not found in Info.plist")
             return "unknown"
         }
         guard b != "AGENT_BUILD_NUMBER" else {
-            #log(logger, .fault, "Build number was not preprocessed — literal macro name found in Info.plist")
+            logger.log(.fault, "Build number was not preprocessed — literal macro name found in Info.plist")
             assertionFailure("Build number was not preprocessed")
             return "unknown"
         }
@@ -90,8 +90,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             vsockConnection.forwardLog(
                 level: level, subsystem: subsystem, category: category, segments: segments)
         }
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
         )
 
@@ -215,7 +215,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // no main-actor isolation. Must exit 0 — the LaunchAgent's
         // `KeepAlive={SuccessfulExit:false}` only keeps a clean exit quit.
         let handler: @Sendable () -> Void = {
-            #log(Self.logger, .notice, "Received termination signal, shutting down")
+            Self.logger.log(.notice, "Received termination signal, shutting down")
             controlAgent.stop()
             clipboardAgent.stop()
             dropAgent.stop()

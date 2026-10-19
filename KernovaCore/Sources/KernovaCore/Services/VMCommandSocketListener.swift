@@ -79,26 +79,26 @@ package final class VMCommandSocketListener {
         case .success(let claim):
             socketPath = claim.socketPath
         case .failure(.unnamed(.noContainer)):
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "No app-group container resolved — the command socket is unavailable in this build")
             return
         case .failure(.unnamed(.unresolvableBundle(let error))):
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "This app's bundle could not be looked up (\(error.description, privacy: .public)) — the command socket is unavailable"
             )
             return
         case .failure(.unlockable(let error)):
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "This copy's lock file could not be opened (\(error.description, privacy: .public)) — the command socket is unavailable"
             )
             return
         }
         guard let authorizer else {
-            #log(
-                Self.logger, .warning,
+            Self.logger.log(
+                .warning,
                 "No peer authorizer for this build's signature — the command socket stays closed")
             return
         }
@@ -126,15 +126,15 @@ package final class VMCommandSocketListener {
                 }
             }
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "The command socket could not bind at \(socketPath, privacy: .public) — \(String(describing: error), privacy: .public)"
             )
             return
         }
         self.listener = listener
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Listening for VM commands at \(socketPath, privacy: .public)")
     }
 
@@ -212,8 +212,8 @@ package final class VMCommandSocketListener {
         _ fd: Int32, router: VMCommandEnvelopeRouter, refusal: PeerRefusal
     ) {
         let reason = refusal.reason
-        #log(
-            Self.logger, .notice,
+        Self.logger.log(
+            .notice,
             "Refused a connection on the command socket: \(reason, privacy: .public)")
         let payload = router.encode(
             VMCommandResponse(result: .refused(.authorizationRefused(reason: reason))))
@@ -344,7 +344,7 @@ actor VMCommandConnection {
         let deadline = DispatchSource.makeTimerSource(queue: queue)
         deadline.schedule(deadline: .now() + Self.firstFrameTimeout)
         deadline.setEventHandler { [weak self] in
-            #log(Self.logger, .notice, "Closing a command connection that sent no frame in time")
+            Self.logger.log(.notice, "Closing a command connection that sent no frame in time")
             self?.assumeIsolated { $0.closeNow() }
         }
         timeoutSource = deadline
@@ -356,14 +356,14 @@ actor VMCommandConnection {
     private func sendNow(_ payload: Data) {
         guard !isClosed else { return }
         guard let framed = try? StreamFrame.encode(payload) else {
-            #log(Self.logger, .error, "A response was too large to frame; closing the connection")
+            Self.logger.log(.error, "A response was too large to frame; closing the connection")
             closeNow()
             return
         }
         pendingWrite.append(framed)
         guard pendingWrite.count <= Self.maxPendingWriteBytes else {
-            #log(
-                Self.logger, .notice,
+            Self.logger.log(
+                .notice,
                 "A client stopped reading with \(self.pendingWrite.count, privacy: .public) bytes owed; closing the connection"
             )
             closeNow()
@@ -408,8 +408,8 @@ actor VMCommandConnection {
             do {
                 payload = try decoder.nextFrame()
             } catch {
-                #log(
-                    Self.logger, .notice,
+                Self.logger.log(
+                    .notice,
                     "A client framed a request this build will not buffer; closing the connection")
                 closeNow()
                 return

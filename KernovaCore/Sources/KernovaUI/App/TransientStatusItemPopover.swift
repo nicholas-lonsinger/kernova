@@ -52,8 +52,8 @@ final class TransientStatusItemPopover: NSObject {
         let onScreen = statusItem.isButtonOnScreen
         let dropdownOpen = isDropdownOpen()
         guard let button = statusItem.button, visible, onScreen, !dropdownOpen else {
-            #log(
-                Self.logger, .info,
+            Self.logger.log(
+                .info,
                 "\(description, privacy: .public) skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(dropdownOpen, privacy: .public)"
             )
             return false

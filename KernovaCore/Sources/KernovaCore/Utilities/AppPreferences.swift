@@ -97,8 +97,8 @@ package struct AppPreferences {
         do {
             return try JSONDecoder().decodeRepairing(type, from: data)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Stored \(key, privacy: .public) did not decode; using the default: \(error.localizedDescription, privacy: .public)"
             )
             return nil
@@ -115,8 +115,8 @@ package struct AppPreferences {
         do {
             defaults.set(try JSONEncoder().encode(value), forKey: key)
         } catch {
-            #log(
-                Self.logger, .error,
+            Self.logger.log(
+                .error,
                 "Could not store \(key, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }

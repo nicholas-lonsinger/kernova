@@ -66,7 +66,7 @@ package final class VMNetworkScriptObject: NSObject {
     /// application, which no rename invalidates.
     package nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
-            #log(Self.logger, .fault, "NSApplication has no scripting class description")
+            Self.logger.log(.fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")
             return nil
         }
