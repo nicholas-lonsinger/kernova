@@ -252,12 +252,7 @@ struct VMInstanceVsockAdmissionTests {
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
         for sink in [instance.clipboardDataSink, instance.dropDataSink] {
-            let (a, b) = try makeRawSocketPair()
-            defer { close(b) }  // `a` is owned — and must be closed — by the sink.
-            sink.accept(fd: a)
-            #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-            var byte: UInt8 = 0
-            #expect(recv(b, &byte, 1, 0) == 0)
+            try expectSinkCleared(sink)
         }
     }
 

@@ -85,15 +85,8 @@ struct VMSessionContextTests {
         #expect(context.session == nil)
         #expect(context.agentPostStartTask == nil)
         #expect(context.vsock.livePolicyApplication == nil)
-        // The instance-owned sinks the session published into are cleared too:
-        // a descriptor handed to a cleared sink is closed, which its peer sees
-        // as EOF.
-        let (owned, peer) = try makeRawSocketPair()
-        defer { close(peer) }  // `owned` is the sink's to close.
-        instance.clipboardDataSink.accept(fd: owned)
-        #expect(fcntl(peer, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(peer, &byte, 1, 0) == 0)
+        // The instance-owned sinks the session published into are cleared too.
+        try expectSinkCleared(instance.clipboardDataSink)
     }
 
     @Test("tearDownSession drops the context, and every projection reads empty after")

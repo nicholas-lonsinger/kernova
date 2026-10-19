@@ -25,6 +25,92 @@ public func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel
     return (a, b)
 }
 
+// MARK: - Peer-observed socket state
+
+// A socket's own descriptor number says nothing once it may be closed: the
+// kernel reissues the lowest free number, so a concurrent test's `socketpair`
+// can take it before a check by number runs. Each check below reads the
+// socket's state from its peer end, which the test keeps open.
+
+/// Suspends until the socket connected to `peer` has closed — `peer` reads EOF.
+///
+/// - Throws: `TestFailure` when the backstop fires first, or when `peer`
+///   receives a byte instead of EOF.
+public func awaitPeerEOF(_ peer: Int32) async throws {
+    enum Observation: Sendable {
+        case eof, byte(UInt8), timedOut, failed(errno: Int32)
+    }
+    let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
+    let observation = await offCooperativePool { () -> Observation in
+        var pollFd = pollfd(fd: peer, events: Int16(POLLIN), revents: 0)
+        while true {
+            let remaining = max(0, timeout - stopwatch.elapsed)
+            let ready = poll(&pollFd, 1, Int32((remaining * 1000).rounded(.up)))
+            if ready == 0 { return .timedOut }
+            if ready < 0 {
+                if errno == EINTR { continue }
+                return .failed(errno: errno)
+            }
+            var byte: UInt8 = 0
+            switch recv(peer, &byte, 1, MSG_DONTWAIT) {
+            case 0: return .eof
+            case 1: return .byte(byte)
+            default: return .failed(errno: errno)
+            }
+        }
+    }
+    switch observation {
+    case .eof:
+        return
+    case .byte(let byte):
+        throw TestFailure("Expected EOF on fd \(peer), received byte \(byte)")
+    case .timedOut:
+        throw TestFailure.backstop(
+            "Peer fd \(peer) read no EOF within \(timeout) s", stopwatch: stopwatch,
+            timeout: timeout)
+    case .failed(let code):
+        throw TestFailure("Awaiting EOF on fd \(peer) failed: errno \(code)")
+    }
+}
+
+/// Throws unless the socket connected to `peer` has already closed: a
+/// non-blocking read on `peer` finds EOF.
+public func expectPeerClosed(_ peer: Int32) throws {
+    var byte: UInt8 = 0
+    let received = recv(peer, &byte, 1, MSG_DONTWAIT)
+    let code = errno
+    switch received {
+    case 0:
+        return
+    case 1:
+        throw TestFailure("Expected the socket closed, but peer fd \(peer) received byte \(byte)")
+    default:
+        guard code == EAGAIN else {
+            throw TestFailure("Probing peer fd \(peer) failed: errno \(code)")
+        }
+        throw TestFailure("Expected the socket closed, but peer fd \(peer) is still open")
+    }
+}
+
+/// Throws unless the socket connected to `peer` is still open and has sent
+/// nothing: a non-blocking read on `peer` finds no byte and no EOF.
+public func expectPeerOpen(_ peer: Int32) throws {
+    var byte: UInt8 = 0
+    let received = recv(peer, &byte, 1, MSG_DONTWAIT)
+    let code = errno
+    switch received {
+    case 0:
+        throw TestFailure("Expected the socket open, but peer fd \(peer) read EOF")
+    case 1:
+        throw TestFailure("Expected the socket silent, but peer fd \(peer) received byte \(byte)")
+    default:
+        guard code == EAGAIN else {
+            throw TestFailure("Probing peer fd \(peer) failed: errno \(code)")
+        }
+    }
+}
+
 // MARK: - nextFrame
 
 /// Reads the next frame from `channel`, distinguishing timeout from EOF.

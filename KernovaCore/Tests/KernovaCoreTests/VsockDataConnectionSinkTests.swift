@@ -19,14 +19,6 @@ struct VsockDataConnectionSinkTests {
         }
     }
 
-    /// Whether the peer end reads EOF — the sink (or its service) closed the
-    /// forwarded descriptor.
-    private func peerSeesEOF(_ peer: Int32) -> Bool {
-        guard fcntl(peer, F_SETFL, O_NONBLOCK) >= 0 else { return false }
-        var byte: UInt8 = 0
-        return recv(peer, &byte, 1, 0) == 0
-    }
-
     @Test("A set service takes over the descriptor as it is")
     func setServiceTakesTheDescriptor() throws {
         let (a, b) = try makeRawSocketPair()
@@ -42,10 +34,7 @@ struct VsockDataConnectionSinkTests {
 
         #expect(service.accepted == [a])
         // Forwarded open, not closed: the service owns it now.
-        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(b, &byte, 1, 0) == -1)
-        #expect(errno == EAGAIN || errno == EWOULDBLOCK)
+        try expectPeerOpen(b)
     }
 
     @Test("Replacing the service routes later descriptors to the replacement")
@@ -77,6 +66,6 @@ struct VsockDataConnectionSinkTests {
         sink.set(nil)
         sink.accept(fd: a)
 
-        #expect(peerSeesEOF(b))
+        try expectPeerClosed(b)
     }
 }
