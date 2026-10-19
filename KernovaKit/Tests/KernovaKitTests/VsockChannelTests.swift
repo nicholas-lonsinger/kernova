@@ -4,7 +4,6 @@ import Darwin
 import SwiftProtobuf
 import KernovaTestSupport
 @testable import KernovaKit
-import KernovaSynchronization
 
 @Suite("VsockChannel", .caseScoped)
 struct VsockChannelTests {
@@ -54,31 +53,6 @@ struct VsockChannelTests {
         return (channel, rawPeerFd)
     }
 
-    /// Awaits the next frame from a channel's `incoming` stream, failing if it doesn't
-    /// arrive within `timeout`.
-    private func waitForNextFrame(
-        on channel: VsockChannel,
-        timeout: Duration = .seconds(2)
-    ) async throws -> Frame? {
-        let receiver = Task<Frame?, Error> {
-            let iterator = channel.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        let timeoutTask = Task<Void, Error> {
-            try await Task.sleep(for: timeout)
-            receiver.cancel()
-        }
-        defer { timeoutTask.cancel() }
-
-        do {
-            return try await receiver.value
-        } catch is CancellationError {
-            throw TestTimeout()
-        }
-    }
-
-    private struct TestTimeout: Error {}
-
     private func makeHello(serviceVersion: UInt32 = 1) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -106,14 +80,14 @@ struct VsockChannelTests {
         let sent = makeHello(serviceVersion: 7)
         try a.send(sent)
 
-        let received = try await waitForNextFrame(on: b)
-        #expect(received?.protocolVersion == 1)
-        if case .hello(let hello) = received?.payload {
+        let received = try await nextFrame(from: b)
+        #expect(received.protocolVersion == 1)
+        if case .hello(let hello) = received.payload {
             #expect(hello.serviceVersion == 7)
             #expect(hello.capabilities == ["clipboard.text"])
             #expect(hello.agentInfo.os == "macOS")
         } else {
-            Issue.record("Expected hello payload, got \(String(describing: received?.payload))")
+            Issue.record("Expected hello payload, got \(String(describing: received.payload))")
         }
     }
 
@@ -129,26 +103,10 @@ struct VsockChannelTests {
         }
 
         var received: [UInt32] = []
-        let iterator = b.incoming.makeAsyncIterator()
-        let collector = Task<[UInt32], Error> {
-            var collected: [UInt32] = []
-            while collected.count < 5, let frame = try await iterator.next() {
-                if case .hello(let hello) = frame.payload {
-                    collected.append(hello.serviceVersion)
-                }
+        for _ in 1...5 {
+            if case .hello(let hello) = try await nextFrame(from: b).payload {
+                received.append(hello.serviceVersion)
             }
-            return collected
-        }
-        let timeoutTask = Task<Void, Error> {
-            try await Task.sleep(for: .seconds(2))
-            collector.cancel()
-        }
-        defer { timeoutTask.cancel() }
-
-        do {
-            received = try await collector.value
-        } catch is CancellationError {
-            Issue.record("Timed out collecting frames")
         }
         #expect(received == [1, 2, 3, 4, 5])
     }
@@ -160,13 +118,7 @@ struct VsockChannelTests {
         b.start()
         defer { b.close() }
 
-        // Spawn the consumer first so it's blocked in next().
-        let consumer = Task<Frame?, Error> {
-            let iterator = a.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        // Tiny yield to let the consumer enter next().
-        try await Task.sleep(for: .milliseconds(10))
+        let consumer = Task { try await nextFrameOrEnd(from: a) }
 
         a.close()
 
@@ -181,11 +133,7 @@ struct VsockChannelTests {
         b.start()
         defer { a.close() }
 
-        let consumer = Task<Frame?, Error> {
-            let iterator = a.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        try await Task.sleep(for: .milliseconds(10))
+        let consumer = Task { try await nextFrameOrEnd(from: a) }
 
         b.close()
 
@@ -228,9 +176,9 @@ struct VsockChannelTests {
 
         try sendAsOneChunk([makeHello(serviceVersion: 1), makeHello(serviceVersion: 2)], on: a)
 
-        let first = try await waitForNextFrame(on: b)
-        guard case .hello(let hello) = first?.payload, hello.serviceVersion == 1 else {
-            Issue.record("Expected the first hello, got \(String(describing: first?.payload))")
+        let first = try await nextFrame(from: b)
+        guard case .hello(let hello) = first.payload, hello.serviceVersion == 1 else {
+            Issue.record("Expected the first hello, got \(String(describing: first.payload))")
             return
         }
         // The test's premise, and not otherwise observable: the first frame's
@@ -241,7 +189,7 @@ struct VsockChannelTests {
 
         b.close()
 
-        let afterClose = try await waitForNextFrame(on: b)
+        let afterClose = try await nextFrameOrEnd(from: b)
         #expect(afterClose == nil)
     }
 
@@ -254,19 +202,19 @@ struct VsockChannelTests {
 
         try sendAsOneChunk([makeHello(serviceVersion: 1), makeHello(serviceVersion: 2)], on: a)
 
-        _ = try await waitForNextFrame(on: b)
+        _ = try await nextFrame(from: b)
 
         // The peer's own close is not this channel's: what it had already sent
         // is still owed to the consumer.
         a.close()
 
-        let second = try await waitForNextFrame(on: b)
-        guard case .hello(let hello) = second?.payload else {
-            Issue.record("Expected the second hello, got \(String(describing: second?.payload))")
+        let second = try await nextFrame(from: b)
+        guard case .hello(let hello) = second.payload else {
+            Issue.record("Expected the second hello, got \(String(describing: second.payload))")
             return
         }
         #expect(hello.serviceVersion == 2)
-        let afterSecond = try await waitForNextFrame(on: b)
+        let afterSecond = try await nextFrameOrEnd(from: b)
         #expect(afterSecond == nil)
     }
 
@@ -282,10 +230,10 @@ struct VsockChannelTests {
         // stream with its error rather than with EOF.
         try a.writeFramed(try StreamFrame.encode(Data([0xFF, 0xFF, 0xFF, 0xFF])))
 
-        // The specific decode error, not `any Error`: `waitForNextFrame`'s own
-        // `TestTimeout` would satisfy that and pass this test on a stall.
+        // The specific decode error, not `any Error`: `nextFrame`'s own
+        // `TestFailure` would satisfy that and pass this test on a stall.
         await #expect(throws: BinaryDecodingError.self) {
-            _ = try await waitForNextFrame(on: b)
+            _ = try await nextFrame(from: b)
         }
     }
 
@@ -312,10 +260,10 @@ struct VsockChannelTests {
 
         try a.sendErrorFrame(code: "test.code", message: "test message", inReplyTo: "test.reply")
 
-        let received = try await waitForNextFrame(on: b)
-        #expect(received?.protocolVersion == 1)
-        guard case .error(let err) = received?.payload else {
-            Issue.record("Expected error payload, got \(String(describing: received?.payload))")
+        let received = try await nextFrame(from: b)
+        #expect(received.protocolVersion == 1)
+        guard case .error(let err) = received.payload else {
+            Issue.record("Expected error payload, got \(String(describing: received.payload))")
             return
         }
         #expect(err.code == "test.code")
@@ -333,9 +281,9 @@ struct VsockChannelTests {
 
         try a.sendErrorFrame(code: "test.code", message: "test", inReplyTo: nil)
 
-        let received = try await waitForNextFrame(on: b)
-        #expect(received?.protocolVersion == 1)
-        guard case .error(let err) = received?.payload else {
+        let received = try await nextFrame(from: b)
+        #expect(received.protocolVersion == 1)
+        guard case .error(let err) = received.payload else {
             Issue.record("Expected error payload")
             return
         }
@@ -364,11 +312,7 @@ struct VsockChannelTests {
         }
         defer { writeTask.cancel() }
 
-        // Courtesy delay only — not the pass/fail signal. The write blocks
-        // permanently once the buffer fills (the peer never drains), so this
-        // just biases toward the write already being parked before we probe;
-        // `waitForNextFrame`'s own timeout below is the real gate.
-        try await Task.sleep(for: .milliseconds(50))
+        try await awaitReadable(rawPeerFd)
 
         let helloBytes = try VsockChannel.serializeFramed(makeHello(serviceVersion: 42))
         try helloBytes.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
@@ -380,23 +324,24 @@ struct VsockChannelTests {
             }
         }
 
-        let received = try await waitForNextFrame(on: channel)
-        if case .hello(let hello) = received?.payload {
+        let received = try await nextFrame(from: channel)
+        if case .hello(let hello) = received.payload {
             #expect(hello.serviceVersion == 42)
         } else {
-            Issue.record("Expected hello payload, got \(String(describing: received?.payload))")
+            Issue.record("Expected hello payload, got \(String(describing: received.payload))")
         }
     }
 
     @Test("Teardown unblocks a write parked on a stalled peer (#457)")
     func teardownUnblocksParkedWrite() async throws {
         let (channel, rawPeerFd) = try makeChannelWithRawPeer()
-        defer { Darwin.close(rawPeerFd) }
+        defer {
+            channel.close()
+            Darwin.close(rawPeerFd)
+        }
 
         let bigBlob = Data(count: 1024 * 1024)
-        let finished = Locked<Bool>(false)
         let writeTask = Task<VsockChannelError?, Never> {
-            defer { finished.withLock { $0 = true } }
             do {
                 try channel.writeFramed(bigBlob)
                 return nil
@@ -407,27 +352,15 @@ struct VsockChannelTests {
             }
         }
 
-        // Sanity check: the write is genuinely still parked before teardown —
-        // not the pass/fail signal (see the courtesy-delay note above).
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(finished.withLock { $0 } == false)
+        // The 1 MiB write cannot fit the 4 KiB buffers the peer never drains, so
+        // once its first bytes land it stays parked until teardown.
+        try await awaitReadable(rawPeerFd)
 
         channel.close()
 
-        let outcome = try await withThrowingTaskGroup(of: VsockChannelError?.self) { group in
-            group.addTask { await writeTask.value }
-            group.addTask {
-                try await Task.sleep(for: .seconds(5))
-                throw TestTimeout()
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
-        }
         // The parked write unblocks and surfaces as a write failure once
-        // `close()` shuts the descriptor down out from under it. On pre-#457
-        // code `close()` blocks forever waiting on the same lock the parked
-        // write holds, so this `outcome` fetch itself would time out.
+        // `close()` shuts the descriptor down out from under it.
+        let outcome = await writeTask.value
         #expect(outcome == .write(POSIXError(.EPIPE)))
     }
 

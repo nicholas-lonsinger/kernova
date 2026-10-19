@@ -32,46 +32,46 @@ public func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel
 // can take it before a check by number runs. Each check below reads the
 // socket's state from its peer end, which the test keeps open.
 
+/// Suspends until `fd` has something to read — a byte, or EOF once the socket
+/// connected to it has closed.
+///
+/// - Throws: `TestFailure` when the backstop fires first, or when `poll` fails.
+public func awaitReadable(_ fd: Int32) async throws {
+    enum Observation: Sendable {
+        case readable, timedOut, failed(errno: Int32)
+    }
+    let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
+    let observation = await offCooperativePool { () -> Observation in
+        var pollFd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while true {
+            let remaining = max(0, timeout - stopwatch.elapsed)
+            let ready = poll(&pollFd, 1, Int32((remaining * 1000).rounded(.up)))
+            if ready > 0 { return .readable }
+            if ready == 0 { return .timedOut }
+            if errno == EINTR { continue }
+            return .failed(errno: errno)
+        }
+    }
+    switch observation {
+    case .readable:
+        return
+    case .timedOut:
+        throw TestFailure.backstop(
+            "fd \(fd) had nothing to read, not even EOF, within \(timeout) s",
+            stopwatch: stopwatch, timeout: timeout)
+    case .failed(let code):
+        throw TestFailure("Polling fd \(fd) failed: errno \(code)")
+    }
+}
+
 /// Suspends until the socket connected to `peer` has closed — `peer` reads EOF.
 ///
 /// - Throws: `TestFailure` when the backstop fires first, or when `peer`
 ///   receives a byte instead of EOF.
 public func awaitPeerEOF(_ peer: Int32) async throws {
-    enum Observation: Sendable {
-        case eof, byte(UInt8), timedOut, failed(errno: Int32)
-    }
-    let timeout = testWaitBackstop
-    let stopwatch = BackstopStopwatch()
-    let observation = await offCooperativePool { () -> Observation in
-        var pollFd = pollfd(fd: peer, events: Int16(POLLIN), revents: 0)
-        while true {
-            let remaining = max(0, timeout - stopwatch.elapsed)
-            let ready = poll(&pollFd, 1, Int32((remaining * 1000).rounded(.up)))
-            if ready == 0 { return .timedOut }
-            if ready < 0 {
-                if errno == EINTR { continue }
-                return .failed(errno: errno)
-            }
-            var byte: UInt8 = 0
-            switch recv(peer, &byte, 1, MSG_DONTWAIT) {
-            case 0: return .eof
-            case 1: return .byte(byte)
-            default: return .failed(errno: errno)
-            }
-        }
-    }
-    switch observation {
-    case .eof:
-        return
-    case .byte(let byte):
-        throw TestFailure("Expected EOF on fd \(peer), received byte \(byte)")
-    case .timedOut:
-        throw TestFailure.backstop(
-            "Peer fd \(peer) read no EOF within \(timeout) s", stopwatch: stopwatch,
-            timeout: timeout)
-    case .failed(let code):
-        throw TestFailure("Awaiting EOF on fd \(peer) failed: errno \(code)")
-    }
+    try await awaitReadable(peer)
+    try expectPeerClosed(peer)
 }
 
 /// Throws unless the socket connected to `peer` has already closed: a
@@ -113,18 +113,28 @@ public func expectPeerOpen(_ peer: Int32) throws {
 
 // MARK: - nextFrame
 
-/// Reads the next frame from `channel`, distinguishing timeout from EOF.
+/// Reads the next frame from `channel`, as ``nextFrameOrEnd(from:)`` does.
 ///
-/// - Throws: `TestFailure("Timed out…")` when no frame arrives within the
-///   `testWaitBackstop` deadline.
 /// - Throws: `TestFailure("Channel finished…")` when the channel closes without
-///   producing a frame (EOF), so the two failure shapes are identifiable.
-///   Conflating them once masked a CI flake as a peer-disconnect bug.
+///   producing a frame (EOF), distinct from the timeout failure. Conflating the
+///   two once masked a CI flake as a peer-disconnect bug.
+public func nextFrame(from channel: VsockChannel) async throws -> Frame {
+    guard let frame = try await nextFrameOrEnd(from: channel) else {
+        throw TestFailure("Channel finished without producing a frame (EOF)")
+    }
+    return frame
+}
+
+/// Reads the next frame from `channel`, or nil once the channel finishes (EOF).
+///
+/// - Throws: `TestFailure("Timed out…")` when neither arrives within the
+///   `testWaitBackstop` deadline, so a stall never reads as EOF.
+/// - Throws: the error that finishes the channel's stream, if one does.
 ///
 /// Single-consumer: `VsockChannel.incoming` allows one iteration at a time, so a
 /// test that also needs "prove nothing arrived" against the same channel uses
 /// ``FrameRecorder`` instead of mixing the two.
-public func nextFrame(from channel: VsockChannel) async throws -> Frame {
+public func nextFrameOrEnd(from channel: VsockChannel) async throws -> Frame? {
     let timeout = testWaitBackstop
     let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {
@@ -137,24 +147,16 @@ public func nextFrame(from channel: VsockChannel) async throws -> Frame {
     }
     defer { timeoutTask.cancel() }
 
-    do {
-        guard let frame = try await receiver.value else {
-            // Cancelling the task suspended in `AsyncThrowingStream.next()`
-            // makes it return nil rather than throw, so the timeout lands here
-            // too, distinguishable from a genuine EOF only by the clock.
-            if stopwatch.elapsed >= timeout {
-                throw TestFailure.backstop(
-                    "Timed out waiting for a frame after \(timeout) s",
-                    stopwatch: stopwatch, timeout: timeout)
-            }
-            throw TestFailure("Channel finished without producing a frame (EOF)")
-        }
-        return frame
-    } catch is CancellationError {
+    let frame = try await receiver.value
+    // Cancelling the task suspended in `AsyncThrowingStream.next()` makes it
+    // return nil rather than throw, so the timeout is told from a genuine EOF
+    // only by the clock.
+    if frame == nil, stopwatch.elapsed >= timeout {
         throw TestFailure.backstop(
             "Timed out waiting for a frame after \(timeout) s",
             stopwatch: stopwatch, timeout: timeout)
     }
+    return frame
 }
 
 // MARK: - FrameRecorder

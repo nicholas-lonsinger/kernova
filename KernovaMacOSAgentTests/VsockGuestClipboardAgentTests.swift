@@ -1543,9 +1543,9 @@ struct VsockGuestClipboardAgentTests {
 
         // The host is told — its clipboard window may be the surface in view —
         // via a `clipboard.*` Error frame (not a request).
-        let frame = try await maybeNextFrame(from: hostChannel)
-        guard case .error(let error)? = frame?.payload else {
-            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+        let frame = try await nextFrame(from: hostChannel)
+        guard case .error(let error) = frame.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame.payload))")
             return
         }
         #expect(error.code == "clipboard.paste.disk.full")
@@ -1602,9 +1602,9 @@ struct VsockGuestClipboardAgentTests {
             declaredBytes: 1024)
         #expect(await pull.value == nil)
 
-        let frame = try await maybeNextFrame(from: hostChannel)
-        guard case .error(let error)? = frame?.payload else {
-            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+        let frame = try await nextFrame(from: hostChannel)
+        guard case .error(let error) = frame.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame.payload))")
             return
         }
         #expect(error.code == expected.rawValue)
@@ -1696,9 +1696,9 @@ struct VsockGuestClipboardAgentTests {
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 1 }
-        let first = try await maybeNextFrame(from: hostChannel)
-        guard case .error(let firstError)? = first?.payload else {
-            Issue.record("Expected an Error frame, got \(String(describing: first?.payload))")
+        let first = try await nextFrame(from: hostChannel)
+        guard case .error(let firstError) = first.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: first.payload))")
             return
         }
         #expect(firstError.code == "clipboard.paste.too.large")
@@ -1708,9 +1708,9 @@ struct VsockGuestClipboardAgentTests {
         clock.advance(seconds: await MainActor.run { ClipboardInboundOffers.refusalBurstWindow })
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 2 }
-        let second = try await maybeNextFrame(from: hostChannel)
-        guard case .error(let secondError)? = second?.payload else {
-            Issue.record("Expected an Error frame, got \(String(describing: second?.payload))")
+        let second = try await nextFrame(from: hostChannel)
+        guard case .error(let secondError) = second.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: second.payload))")
             return
         }
         #expect(secondError.code == "clipboard.paste.too.large")
