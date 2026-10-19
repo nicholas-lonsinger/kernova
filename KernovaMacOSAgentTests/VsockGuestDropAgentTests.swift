@@ -25,6 +25,10 @@ struct VsockGuestDropAgentTests {
         let revealed = AtomicBox<[URL]>()
         let reporter: ClipboardTransferReporter
         let stagingRoot = TestStagingRoot()
+        /// The reconnect loop's clock, which counts the sleeps between attempts.
+        let clientClock = SleepCountingEngineClock(wrapping: MonotonicEngineClock())
+        /// How many times the reconnect loop has asked for a socket.
+        let provided = AtomicInt()
 
         init(freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil) throws {
             root = TestScratchDirectory(prefix: "VsockGuestDropAgentTests").url
@@ -35,10 +39,10 @@ struct VsockGuestDropAgentTests {
             host = VsockChannel(fileDescriptor: hostFd)
             host.start()
 
-            let provided = AtomicInt()
+            let provided = self.provided
             let client = VsockGuestClient(
                 port: KernovaVsockPort.drop, label: "drop-test",
-                clock: MonotonicEngineClock(), retryInterval: 0.05
+                clock: clientClock, retryInterval: 0.05
             ) { _, _ in
                 provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
             }
@@ -469,9 +473,11 @@ struct VsockGuestDropAgentTests {
 
         harness.agent.start()
         harness.agent.applyPolicy(enabled: true)
-        // A host with no drop listener is never redialled, so no channel lands.
-        // Several retry intervals' worth of silence is the assertion.
-        try await MonotonicEngineClock().sleep(for: 0.2)
+        // A host with no drop listener is never redialled. Each sleep follows
+        // an iteration's connect-or-skip decision, so the second proves two
+        // iterations passed it up.
+        try await harness.clientClock.sleepRequested.wait { harness.clientClock.sleepCount >= 2 }
+        #expect(harness.provided.value == 0)
         #expect(harness.agent.liveChannelForTesting == nil)
 
         // The capability arriving is what starts the client.
@@ -489,7 +495,8 @@ struct VsockGuestDropAgentTests {
         harness.agent.applyPolicy(enabled: false)
 
         harness.agent.start()
-        try await MonotonicEngineClock().sleep(for: 0.2)
+        try await harness.clientClock.sleepRequested.wait { harness.clientClock.sleepCount >= 2 }
+        #expect(harness.provided.value == 0)
         #expect(harness.agent.liveChannelForTesting == nil)
 
         harness.agent.applyPolicy(enabled: true)

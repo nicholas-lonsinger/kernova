@@ -149,6 +149,11 @@ public final class ClipboardInboundOffers {
     /// re-check that decides whether to cache it, so a test can drive a newer
     /// offer or a teardown into that exact gap.
     var afterInboundPullForTesting: (@MainActor () async -> Void)?
+
+    /// Test seam: how many pulls ``resolve(generation:repIndex:servesFileURL:expectedUTI:)``
+    /// has handed a plan to, on the main actor every pull passes through before
+    /// it can dial.
+    private(set) var pullsStartedForTesting = 0
     #endif
 
     nonisolated private static let logger = KernovaLogger(
@@ -757,6 +762,9 @@ public final class ClipboardInboundOffers {
         }
         let transferID = self.transferID(generation: generation, repIndex: repIndex)
         syncPulls.withLock { _ = $0.insert(transferID) }
+        #if DEBUG
+        pullsStartedForTesting += 1
+        #endif
         return .ready(
             PullPlan(
                 generation: generation, repIndex: repIndex, transferID: transferID, uti: info.uti,
