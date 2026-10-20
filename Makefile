@@ -73,6 +73,7 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/arena-label.sh \
                  Tools/tests/check-config-decoding.sh \
                  Tools/tests/check-test-waits.sh \
+                 Tools/tests/check-exit-tests.sh \
                  Tools/tests/check-self-activation.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
@@ -249,7 +250,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, and KernovaCore's import allowlist
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, and KernovaCore's import allowlist
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -269,6 +270,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-test-plan-allowance.sh
 	@bash Tools/check-test-seams.sh
 	@bash Tools/check-test-waits.sh
+	@bash Tools/check-exit-tests.sh
 	@bash Tools/check-config-decoding.sh
 	@bash Tools/check-self-activation.sh
 	@bash Tools/check-build-settings-layering.sh
