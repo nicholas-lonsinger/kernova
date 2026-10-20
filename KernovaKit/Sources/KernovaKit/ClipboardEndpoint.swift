@@ -230,15 +230,13 @@ public final class ClipboardEndpoint {
 
     // MARK: - Lifecycle
 
-    /// Builds the engine and starts draining the channel; idempotent.
+    /// Builds the engine and starts draining the channel, once: a call after the
+    /// first, or after ``stop()``, does nothing.
     ///
     /// A clipboard connection retires the report the last one left standing:
     /// what it described is a transfer of a session that is over.
     public func start() {
-        guard !isConnected else { return }
-        connectedFlag.withLock { $0 = true }
-        if kind == .clipboard { reporter.clearFinished() }
-        session.start(
+        let started = session.start(
             handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
             onEnded: { [weak self] in
                 // Off the main actor and before anything hops to it: a pull
@@ -246,10 +244,17 @@ public final class ClipboardEndpoint {
                 self?.inbound?.endSession()
                 MainActorBridge.async { self?.channelDidEnd() }
             })
+        guard started else { return }
+        connectedFlag.withLock { $0 = true }
+        if kind == .clipboard { reporter.clearFinished() }
     }
 
-    /// Returns once the channel is done, whether it closed on its own or
-    /// ``stop()`` ended it.
+    /// Returns once the drain and its settling tail have run, whether the channel
+    /// closed on its own or ``stop()`` ended it.
+    ///
+    /// The delegate's ``ClipboardEndpointDelegate/endpointDidEnd(_:)`` is queued
+    /// to the main actor by then, not delivered: the tail never waits on the main
+    /// actor, which a paste parked inside a modal loop can be holding.
     public func waitUntilEnded() async {
         await session.waitUntilEnded()
     }
@@ -647,8 +652,8 @@ public final class ClipboardEndpoint {
         (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
 
-    /// The task draining the channel, empty before ``start()`` and after
-    /// ``stop()``.
+    /// The task draining the channel, held from ``start()`` on — empty only
+    /// before it.
     ///
     /// Its end reaches the delegate through a main-queue hop queued before the
     /// task returns, so a test drains the main queue after awaiting it.

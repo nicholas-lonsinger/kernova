@@ -82,21 +82,35 @@ public final class ClipboardControlSession {
     /// that connection. [M1]
     private let inboxHolder = Locked<ClipboardTransferInbox?>(nil)
     private var outboxStorage: ClipboardTransferOutbox?
-    private var consumeTask: Task<Void, Never>?
+
+    /// Where this session is in its one pass over its channel.
+    private enum Lifecycle: Sendable {
+        /// Before ``start()``.
+        case idle
+        /// Draining since ``start()``, or drained once the channel closed on its
+        /// own.
+        case started(consumeTask: Task<Void, Never>)
+        /// ``stop()`` ran, holding the drain it cancelled if one was ever armed,
+        /// so a wait begun after it still reaches the drain's end.
+        case stopped(consumeTask: Task<Void, Never>?)
+
+        var consumeTask: Task<Void, Never>? {
+            switch self {
+            case .idle: nil
+            case .started(let task): task
+            case .stopped(let task): task
+            }
+        }
+    }
+
+    /// Written only on the main actor, by `start()` and `stop()`; locked so
+    /// ``hasStopped`` reads it from the threads a data connection arrives on.
+    private let lifecycle = Locked(Lifecycle.idle)
 
     /// Latched before the pulls a teardown cancels are woken, so a paste fire
     /// that wakes cancelled can tell the end of its session from a supersession
     /// or a release, which raise their own explainer.
     private let endedFlag = Locked(false)
-
-    /// Latched by `stop()` alone, so a control frame queued to main before the
-    /// teardown is dropped rather than delivered.
-    ///
-    /// Distinct from `endedFlag`, which the channel closing also sets: a peer
-    /// that sent a frame and then closed — a `DropComplete`, a
-    /// `ClipboardRelease` — is still owed its delivery, while a local `stop()`
-    /// is this side deciding it is done listening.
-    private let stoppedFlag = Locked(false)
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardControlSession")
@@ -181,9 +195,17 @@ public final class ClipboardControlSession {
 
     /// Whether `stop()` has run — this side deciding it is done listening,
     /// which is what a queued control frame is dropped for.
-    nonisolated public var hasStopped: Bool { stoppedFlag.withLock { $0 } }
+    ///
+    /// Distinct from ``hasEnded``, which the channel closing also sets: a peer
+    /// that sent a frame and then closed — a `DropComplete`, a
+    /// `ClipboardRelease` — is still owed its delivery.
+    nonisolated public var hasStopped: Bool {
+        if case .stopped = lifecycle.withLock({ $0 }) { return true }
+        return false
+    }
 
-    /// Opens the transfer tables and starts draining the channel; idempotent.
+    /// Opens the transfer tables and starts draining the channel, once: a call
+    /// after the first, or after ``stop()``, does nothing and returns `false`.
     ///
     /// `handleControlFrame` receives every frame, on the main actor and in
     /// arrival order — including one this session has since stopped for, which
@@ -191,11 +213,12 @@ public final class ClipboardControlSession {
     /// actor the moment the channel is done, so a pull parked on the main
     /// thread is woken without waiting for a main-queue hop it is itself
     /// blocking.
+    @discardableResult
     public func start(
         handleControlFrame: @escaping @MainActor (Frame) -> Void,
         onEnded: @escaping @Sendable () -> Void = {}
-    ) {
-        guard consumeTask == nil else { return }
+    ) -> Bool {
+        guard case .idle = lifecycle.withLock({ $0 }) else { return false }
         let tag = connectionTag
         let label = self.label
         let sent = Self.sentDirectionWord(role: role)
@@ -229,7 +252,7 @@ public final class ClipboardControlSession {
         inboxHolder.withLock { $0 = inbox }
         let channel = self.channel
         let endedFlag = self.endedFlag
-        consumeTask = Task.detached {
+        let consumeTask = Task.detached {
             await Self.consume(
                 channel: channel, label: label, connectionTag: tag, subject: subject,
                 inbox: inbox, endedFlag: endedFlag, onEnded: onEnded,
@@ -242,27 +265,39 @@ public final class ClipboardControlSession {
                     MainActorBridge.async { handleControlFrame(frame) }
                 })
         }
+        lifecycle.withLock { $0 = .started(consumeTask: consumeTask) }
+        return true
     }
 
-    /// Returns once the channel is done, whether it closed on its own or `stop()`
-    /// ended it.
+    /// Returns once the drain and its settling tail have run, whether the channel
+    /// closed on its own or ``stop()`` ended it; at once if ``start()`` never
+    /// armed one.
+    ///
+    /// The tail's `onEnded` has run by then, but anything it queued to the main
+    /// actor is still queued, not delivered.
     public func waitUntilEnded() async {
-        await consumeTask?.value
+        await lifecycle.withLock { $0.consumeTask }?.value
     }
 
     #if DEBUG
-    /// The task draining the channel, empty before `start()` and after `stop()`.
-    var lifecycleTasksForTesting: [Task<Void, Never>] { [consumeTask].compactMap { $0 } }
+    /// The task draining the channel, held from `start()` on — empty only before
+    /// it.
+    var lifecycleTasksForTesting: [Task<Void, Never>] {
+        [lifecycle.withLock { $0.consumeTask }].compactMap { $0 }
+    }
     #endif
 
     /// Ends the connection: stops draining, wakes every transfer, and closes the
-    /// channel. Idempotent.
+    /// channel. Idempotent, and terminal: the session never starts afterwards.
     public func stop() {
-        consumeTask?.cancel()
-        consumeTask = nil
         // Marked before any wake, so a paste fire this cancels explains itself.
         endedFlag.withLock { $0 = true }
-        stoppedFlag.withLock { $0 = true }
+        let consumeTask = lifecycle.withLock { lifecycle in
+            let task = lifecycle.consumeTask
+            lifecycle = .stopped(consumeTask: task)
+            return task
+        }
+        consumeTask?.cancel()
         let inbox = inboxHolder.withLock { inbox in
             defer { inbox = nil }
             return inbox

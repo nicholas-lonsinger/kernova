@@ -24,7 +24,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// `true` while this service's accepted channel is live.
     ///
     /// Cleared by `stop()` and by the channel ending under it.
-    private(set) var isConnected: Bool = false
+    var isConnected: Bool { phase == .connected }
 
     var supportsBinaryRepresentations: Bool { true }
 
@@ -135,13 +135,17 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     @ObservationIgnored
     var onChannelLost: (@MainActor () -> Void)?
 
-    /// Latches the first settle, whichever reached it, so the teardown is
-    /// terminal rather than merely idempotent: `isConnected` alone would let a
-    /// `start()` after a settle reopen the endpoint over an already-closed
-    /// channel, whose immediate end reaches the owner as a channel loss it
-    /// never had a live connection for.
-    @ObservationIgnored
-    private var hasStopped = false
+    /// Where this service is in its one connection.
+    private enum Phase {
+        case idle
+        case connected
+        /// Settled, whichever of the owner and the channel's own end got here
+        /// first; nothing leaves it, so a reconnect is served by a fresh
+        /// instance.
+        case settled
+    }
+
+    private var phase = Phase.idle
 
     #if DEBUG
     var lifecycleTasksForTesting: [Task<Void, Never>] { endpoint.lifecycleTasksForTesting }
@@ -206,7 +210,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     // MARK: - Lifecycle
 
     func start() {
-        guard !isConnected, !hasStopped else { return }
+        guard phase == .idle else { return }
         // Earlier sessions' receive and drop roots may still be serving the
         // pasteboard's current write (a stopped session's materialized reps stay
         // servable, and a dropped file's URL is copied as-is), so they are
@@ -215,7 +219,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
             staging.reclaimSiblingRoots()
             dropStaging.reclaimSiblingRoots()
         }
-        isConnected = true
+        phase = .connected
         endpoint.start()
         Self.logger.log(
             .notice,
@@ -241,7 +245,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// button and text editor keep releasing files against a retained service,
     /// so a directory still referenced at the settle is reclaimable by now.
     func stop() {
-        guard !hasStopped else {
+        guard phase != .settled else {
             retireUnreferencedDropDirectories()
             return
         }
@@ -252,17 +256,16 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// or the channel simply ended.
     ///
     /// Idempotent and terminal: the consume loop's own settle and an owner's
-    /// `stop()` race by construction, the `hasStopped` latch lets the first one
-    /// through do the work, and it keeps a later `start()` from reopening.
-    /// `isConnected` is what a service settled before it ever connected skips
-    /// the notification and the log line on.
+    /// `stop()` race by construction, and only the first one through finds the
+    /// service unsettled. A service settled before it ever connected skips the
+    /// notification and the log line.
     private func settle(reason: VsockSettleReason) {
-        guard !hasStopped else { return }
-        hasStopped = true
+        guard phase != .settled else { return }
+        let wasConnected = phase == .connected
+        phase = .settled
         endpoint.stop()
         retireUnreferencedDropDirectories()
-        guard isConnected else { return }
-        isConnected = false
+        guard wasConnected else { return }
         // Only this service's own operations, never the VM's whole report: a
         // paste fire this teardown cut short still owes the VM its answer, and a
         // superseded service's later failure belongs to the VM either way.

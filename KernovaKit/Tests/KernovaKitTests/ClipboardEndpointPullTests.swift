@@ -352,11 +352,34 @@ struct ClipboardEndpointPullTests {
         defer { pair.tearDown() }
 
         pair.host.endpoint.stop()
+        // The consume tail queues the end notice to main before the drain's task
+        // returns, so once both have run the notice has had its chance to land.
         await pair.host.endpoint.waitUntilEnded()
+        await drainMainQueue()
 
         #expect(pair.host.endpoint.hasEnded)
         #expect(!pair.host.endpoint.isConnected)
         #expect(pair.host.recorder.endedCount == 0)
+    }
+
+    @Test("start() after the connection ended reopens nothing, however it ended")
+    func startAfterEndIsANoOp() async throws {
+        let pair = try EndpointPair()
+        defer { pair.tearDown() }
+        let hostTasks = pair.host.endpoint.lifecycleTasksForTesting
+        let guestTasks = pair.guest.endpoint.lifecycleTasksForTesting
+
+        // The host by its owner's stop(), the guest by its channel closing under
+        // it.
+        pair.host.endpoint.stop()
+        try await pair.guest.recorder.waitForEnd()
+        pair.host.endpoint.start()
+        pair.guest.endpoint.start()
+
+        #expect(!pair.host.endpoint.isConnected)
+        #expect(!pair.guest.endpoint.isConnected)
+        #expect(pair.host.endpoint.lifecycleTasksForTesting == hostTasks)
+        #expect(pair.guest.endpoint.lifecycleTasksForTesting == guestTasks)
     }
 
     @Test("a frame the peer sent before stop() never reaches the owner")

@@ -20,8 +20,9 @@ import KernovaLogging
 package final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting {
     // MARK: - Observable state
 
-    /// `true` between `start()` and `stop()`.
-    package private(set) var isConnected: Bool = false
+    /// `true` between `start()` and the settle — `stop()`, or the channel
+    /// ending under it.
+    package var isConnected: Bool { phase == .connected }
 
     // MARK: - Private state
 
@@ -73,12 +74,17 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     /// owner-requested `stop()`.
     @ObservationIgnored var onChannelLost: (@MainActor () -> Void)?
 
-    /// Latches the first settle, whichever reached it, so the teardown is
-    /// terminal rather than merely idempotent: `isConnected` alone would let a
-    /// `start()` after a settle reopen the endpoint over an already-closed
-    /// channel, whose immediate end reaches the owner as a channel loss it
-    /// never had a live connection for.
-    @ObservationIgnored private var hasStopped = false
+    /// Where this service is in its one connection.
+    private enum Phase {
+        case idle
+        case connected
+        /// Settled, whichever of the owner and the channel's own end got here
+        /// first; nothing leaves it, so a reconnect is served by a fresh
+        /// instance.
+        case settled
+    }
+
+    private var phase = Phase.idle
 
     #if DEBUG
     var lifecycleTasksForTesting: [Task<Void, Never>] { endpoint.lifecycleTasksForTesting }
@@ -118,8 +124,8 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     // MARK: - Lifecycle
 
     func start() {
-        guard !isConnected, !hasStopped else { return }
-        isConnected = true
+        guard phase == .idle else { return }
+        phase = .connected
         endpoint.start()
         Self.logger.log(
             .notice,
@@ -146,16 +152,15 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     /// or the channel simply ended.
     ///
     /// Idempotent and terminal: the consume loop's own settle and an owner's
-    /// `stop()` race by construction, the `hasStopped` latch lets the first one
-    /// through do the work, and it keeps a later `start()` from reopening.
-    /// `isConnected` is what a service settled before it ever connected skips
-    /// the notification and the log line on.
+    /// `stop()` race by construction, and only the first one through finds the
+    /// service unsettled. A service settled before it ever connected skips the
+    /// notification and the log line.
     private func settle(reason: VsockSettleReason) {
-        guard !hasStopped else { return }
-        hasStopped = true
+        guard phase != .settled else { return }
+        let wasConnected = phase == .connected
+        phase = .settled
         endpoint.stop()
-        guard isConnected else { return }
-        isConnected = false
+        guard wasConnected else { return }
         Self.logger.log(
             .notice,
             "Vsock drop service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"

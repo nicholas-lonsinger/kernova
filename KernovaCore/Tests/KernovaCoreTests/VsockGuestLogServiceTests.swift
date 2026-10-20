@@ -314,7 +314,7 @@ struct VsockGuestLogServiceTests {
         // Terminal, like the control service: a reconnect is served by a fresh
         // instance, so `start()` does not resume the closed channel.
         service.start()
-        #expect(service.lifecycleTasksForTesting.isEmpty)
+        #expect(service.lifecycleTasksForTesting == tasks)
 
         // Only the consume task emits, so once it has ended nothing can.
         for task in tasks { await task.value }
