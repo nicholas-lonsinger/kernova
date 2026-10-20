@@ -220,11 +220,11 @@ final class ClipboardTransferReceiver: Sendable {
             onAbort(abortInfo(stop(for: error)))
             return
         }
-        // The close precedes the terminal, matching the sender's ordering: the
-        // terminal is the one event an owner can sequence against, and between
-        // a cancellation's `shutdown(2)` and this `close(2)` macOS accepts and
-        // discards the peer's writes, so only "terminal fired" proves the peer
-        // can no longer stream into the void.
+        // The close precedes the terminal, matching the sender's ordering. What
+        // ends the stream for the peer is a cancellation's `shutdown(2)`, which
+        // delivers EOF at once; this `close(2)` only drops this process's
+        // reference, and a child mid-spawn holding a copy keeps the socket
+        // connected, accepting and discarding the peer's writes.
         let outcome = Result {
             try receive(
                 fd: fd, beganAt: beganAt, onProgress: onProgress, onActivity: onActivity)

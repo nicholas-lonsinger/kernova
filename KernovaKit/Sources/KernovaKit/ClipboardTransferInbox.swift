@@ -33,24 +33,9 @@ final class ClipboardTransferInbox: Sendable {
     private struct State: Sendable {
         var awaiters: [UInt64: Awaiter] = [:]
         var live: [UInt64: ClipboardTransferReceiver] = [:]
-        #if DEBUG
-        var receiverFinishedHook: (@Sendable (UInt64) -> Void)?
-        var finishedHook: (@Sendable (UInt64) -> Void)? { receiverFinishedHook }
-        #else
-        var finishedHook: (@Sendable (UInt64) -> Void)? { nil }
-        #endif
     }
 
     private let state = Locked(State())
-
-    #if DEBUG
-    /// Installs `hook`, fired after a live receiver's terminal has been
-    /// processed — its connection already closed — for a test sequencing a peer
-    /// against the teardown rather than against the awaiter's own resolution.
-    func setOnReceiverFinishedForTesting(_ hook: @escaping @Sendable (UInt64) -> Void) {
-        state.withLock { $0.receiverFinishedHook = hook }
-    }
-    #endif
 
     /// Creates an inbox for one peer.
     ///
@@ -219,12 +204,11 @@ final class ClipboardTransferInbox: Sendable {
 
     /// Delivers one transfer's terminal to its awaiter, exactly once.
     private func finish(_ transferID: UInt64, _ deliver: (Awaiter) -> Void) {
-        let (awaiter, finishedHook) = state.withLock { state in
+        let awaiter = state.withLock { state in
             state.live[transferID] = nil
-            return (state.awaiters.removeValue(forKey: transferID), state.finishedHook)
+            return state.awaiters.removeValue(forKey: transferID)
         }
         if let awaiter { deliver(awaiter) }
-        finishedHook?(transferID)
     }
 
     private func awaiter(_ transferID: UInt64) -> Awaiter? {
