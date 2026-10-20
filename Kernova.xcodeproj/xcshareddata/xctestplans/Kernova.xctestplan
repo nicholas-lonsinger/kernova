@@ -55,6 +55,14 @@
     {
       "parallelizable" : true,
       "target" : {
+        "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaKitExitTests",
+        "name" : "KernovaKitExitTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
         "containerPath" : "container:KernovaCore",
         "identifier" : "KernovaCoreTests",
         "name" : "KernovaCoreTests"

@@ -5,13 +5,10 @@ import KernovaTestSupport
 import OSLog
 import Testing
 
-/// Where `KernovaLogger.log(_:_:)` forwards: a logger's own sink, or else the
-/// process sink.
-///
-/// The process sink is bootstrapped once per process, so each test that
-/// bootstraps it runs as an exit test in a process of its own, and its sinks
-/// report by the code they exit with.
-@Suite("KernovaLogger's own sink and the process sink", .caseScoped)
+/// What `KernovaLogger.log(_:_:)` does in a process whose sink is never
+/// bootstrapped: forwards to a logger's own sink, or builds the message only
+/// when the unified log records it.
+@Suite("KernovaLogger's own sink", .caseScoped)
 struct KernovaLoggerSinkTests {
     private struct Record: Equatable {
         let level: KernovaLogLevel
@@ -96,39 +93,5 @@ struct KernovaLoggerSinkTests {
         logger.log(.debug, "value \(counted(), privacy: .public)")
 
         #expect(evaluations.withLock { $0 } == 1)
-    }
-
-    @Test("A second bootstrap of the process sink stops the process")
-    func secondBootstrapTraps() async {
-        await #expect(processExitsWith: .failure) {
-            KernovaLogger.bootstrapProcessSink { _, _, _, _ in }
-            KernovaLogger.bootstrapProcessSink { _, _, _, _ in }
-        }
-    }
-
-    @Test("A logger with no sink of its own forwards to the process sink")
-    func loggerWithoutASinkReachesTheProcessSink() async {
-        await #expect(processExitsWith: .exitCode(42)) {
-            KernovaLogger.bootstrapProcessSink { level, subsystem, category, segments in
-                let expected = [LogSegment(text: "to the process", isPrivate: false)]
-                let matches =
-                    level == .notice && subsystem == "app.kernova.tests" && category == "Process"
-                    && segments == expected
-                exit(matches ? 42 : 43)
-            }
-            let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Process")
-            logger.log(.notice, "to the process")
-        }
-    }
-
-    @Test("A logger's own sink takes precedence over the process sink")
-    func ownSinkTakesPrecedence() async {
-        await #expect(processExitsWith: .exitCode(7)) {
-            KernovaLogger.bootstrapProcessSink { _, _, _, _ in exit(42) }
-            let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Own") { _, _, _, _ in
-                exit(7)
-            }
-            logger.log(.notice, "to its own sink")
-        }
     }
 }

@@ -92,7 +92,7 @@ let package = Package(
         // The `kernova` tool's whole vocabulary: parsing, rendering, exit
         // codes, and the client that speaks to the app. It lives in this
         // package so its tests ride `KernovaKitTests` — which is already in
-        // Kernova.xctestplan — rather than needing a fourth test target.
+        // Kernova.xctestplan — rather than needing a test target of their own.
         .target(
             name: "KernovaCLICore",
             dependencies: [
@@ -114,6 +114,13 @@ let package = Package(
                 "KernovaKit", "KernovaAppRegistry", "KernovaCLICore", "KernovaTestSupport",
                 "KernovaLogging", "KernovaSynchronization",
             ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // Every exit test, and nothing else: a test target runs in a process
+        // of its own (Tools/check-exit-tests.sh).
+        .testTarget(
+            name: "KernovaKitExitTests",
+            dependencies: ["KernovaLogging", "KernovaTestSupport"],
             swiftSettings: sharedSwiftSettings
         ),
     ]
