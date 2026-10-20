@@ -8,18 +8,18 @@ import KernovaSynchronization
 /// a host's arrives as a `ClipboardRequest` on the control channel, and the
 /// connection follows. The fields are the same either way, so the owner logic
 /// that answers one is written once.
-public struct ClipboardPullRequest: Sendable {
+struct ClipboardPullRequest: Sendable {
     /// The offer generation being pulled from.
-    public let generation: UInt64
+    let generation: UInt64
     /// Names the transfer answering this pull.
-    public let transferID: UInt64
+    let transferID: UInt64
     /// The single representation being consumed.
-    public let uti: String
+    let uti: String
     /// The requester's payload ceiling, in the unit the offer advertised.
-    public let maxAcceptByteCount: UInt64
+    let maxAcceptByteCount: UInt64
 
     /// Describes one pull.
-    public init(generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64) {
+    init(generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64) {
         self.generation = generation
         self.transferID = transferID
         self.uti = uti
@@ -27,14 +27,14 @@ public struct ClipboardPullRequest: Sendable {
     }
 
     /// The pull a control-channel `ClipboardRequest` names.
-    public init(_ request: Kernova_V1_ClipboardRequest) {
+    init(_ request: Kernova_V1_ClipboardRequest) {
         self.init(
             generation: request.generation, transferID: request.transferID, uti: request.uti,
             maxAcceptByteCount: request.maxAcceptByteCount)
     }
 
     /// The pull a data connection's opening frame names.
-    public init(_ request: Kernova_V1_ClipboardTransferRequest) {
+    init(_ request: Kernova_V1_ClipboardTransferRequest) {
         self.init(
             generation: request.generation, transferID: request.transferID, uti: request.uti,
             maxAcceptByteCount: request.maxAcceptByteCount)
@@ -78,7 +78,7 @@ private final class UnreadableReps: Sendable {
 /// **supersedes** the one before it, while every drop is an independent job the
 /// user asked for separately.
 @MainActor
-public final class ClipboardOutboundOffers {
+final class ClipboardOutboundOffers {
     /// One offer this side has made and can still serve.
     private final class Entry {
         let generation: UInt64
@@ -135,7 +135,7 @@ public final class ClipboardOutboundOffers {
     ///
     /// Set after construction rather than taken at init: an owner that holds this
     /// as a stored property has no `self` to hand over while building it.
-    public var onActivity: @MainActor (ClipboardEndpoint.Activity) -> Void = { _ in }
+    var onActivity: @MainActor (ClipboardEndpoint.Activity) -> Void = { _ in }
 
     /// Called once per drop generation when that drop is over — its verdict in,
     /// its readout finished, and nothing left for the peer to ask for.
@@ -144,7 +144,7 @@ public final class ClipboardOutboundOffers {
     /// peer pulls them long after the drag is over, so this is the moment they
     /// stop being needed. Never raised for a clipboard offer, which the peer may
     /// paste from again.
-    public var onDropSettled: @MainActor (UInt64) -> Void = { _ in }
+    var onDropSettled: @MainActor (UInt64) -> Void = { _ in }
 
     private var entries: [UInt64: Entry] = [:]
 
@@ -171,7 +171,7 @@ public final class ClipboardOutboundOffers {
     /// `firstGeneration` continues a counter across connections: the guest agent
     /// outlives its channels, and a reconnected host must never be handed a
     /// generation the agent already used.
-    public init(
+    init(
         session: ClipboardControlSession,
         reporter: ClipboardTransferReporter,
         peerName: String,
@@ -193,13 +193,13 @@ public final class ClipboardOutboundOffers {
 
     /// The generation the next offer will carry, so a caller outliving this
     /// connection can seed the next one's counter.
-    public var nextGeneration: UInt64 { nextGenerationStorage }
+    var nextGeneration: UInt64 { nextGenerationStorage }
 
     /// The content of the clipboard offer the peer currently holds, or `nil`.
-    public var currentContent: ClipboardContent? { entries[currentGeneration]?.content }
+    var currentContent: ClipboardContent? { entries[currentGeneration]?.content }
 
     /// The content offered under `generation`, or `nil` once it is retired.
-    public func content(generation: UInt64) -> ClipboardContent? {
+    func content(generation: UInt64) -> ClipboardContent? {
         entries[generation]?.content
     }
 
@@ -219,7 +219,7 @@ public final class ClipboardOutboundOffers {
     /// fail once the peer asks, so the two stages an item can be lost at reach
     /// the user as one number.
     @discardableResult
-    public func offer(
+    func offer(
         _ content: ClipboardContent, skippedBeforeOffer: Int = 0
     ) -> ClipboardEndpoint.OfferOutcome {
         if kind == .clipboard, content.digest == lastOfferedDigestStorage { return .duplicate }
@@ -287,13 +287,13 @@ public final class ClipboardOutboundOffers {
 
     /// Forgets what was last offered, so re-announcing the same content counts as
     /// a fresh offer.
-    public func resetDedup() {
+    func resetDedup() {
         lastOfferedDigestStorage = nil
     }
 
     /// Latches `digest` as already announced, suppressing an offer of content the
     /// peer is itself the source of.
-    public func latchDedup(_ digest: Data) {
+    func latchDedup(_ digest: Data) {
         lastOfferedDigestStorage = digest
     }
 
@@ -306,7 +306,7 @@ public final class ClipboardOutboundOffers {
     /// too. Idempotent — the released offer is forgotten, so a later call sends
     /// nothing.
     @discardableResult
-    public func release() -> Bool {
+    func release() -> Bool {
         guard kind == .clipboard, let entry = entries[currentGeneration] else { return false }
         do {
             try session.sendRelease(generation: entry.generation)
@@ -338,7 +338,7 @@ public final class ClipboardOutboundOffers {
     /// accepted, or a dialler for the one it is about to open — and every exit
     /// path here disposes of it, so a refused pull never leaves a descriptor
     /// open or a peer parked.
-    public func handleRequest(_ request: ClipboardPullRequest, link: ClipboardTransferLink) {
+    func handleRequest(_ request: ClipboardPullRequest, link: ClipboardTransferLink) {
         // Ahead of every verdict: with no outbox nothing can answer, and the
         // link is this side's to close.
         guard let outbox = session.outbox else {
@@ -470,7 +470,7 @@ public final class ClipboardOutboundOffers {
     /// can no longer do is resume the wave the user just stopped, so later
     /// requests are refused stale. A drop is the gesture itself, so cancelling
     /// it retires the whole job.
-    public func cancel(generation: UInt64) {
+    func cancel(generation: UInt64) {
         guard let entry = entries[generation] else { return }
         switch kind {
         case .clipboard:
@@ -499,7 +499,7 @@ public final class ClipboardOutboundOffers {
     }
 
     /// Applies the peer's verdict on a drop.
-    public func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
+    func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
         guard let entry = entries[complete.generation] else { return }
         forget(entry)
         entry.live.withLock { $0 = 0 }
@@ -566,7 +566,7 @@ public final class ClipboardOutboundOffers {
     /// so it is owed an answer here; one already called off is not — the user
     /// knows. A clipboard offer's readout is abandoned rather than failed: the
     /// peer's paste, not this side, is what it was measuring.
-    public func endSession() {
+    func endSession() {
         if kind == .drop {
             for entry in entries.values {
                 onDropSettled(entry.generation)

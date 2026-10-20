@@ -24,13 +24,6 @@ struct MainMenuRebuildTests {
         let viewModel: VMLibraryViewModel
         let mainMenu: NSMenu
 
-        /// Validates `item` with the VM ``makeMenuInstance(in:guestOS:name:phase:mutate:)``
-        /// selected as the one the working window shows.
-        @MainActor
-        func validate(_ item: NSMenuItem) -> Bool {
-            controller.validate(item, workingInstance: viewModel.selectedInstance)
-        }
-
         /// Updates `menu` with the VM ``makeMenuInstance(in:guestOS:name:phase:mutate:)``
         /// selected as the one the working window shows.
         @MainActor

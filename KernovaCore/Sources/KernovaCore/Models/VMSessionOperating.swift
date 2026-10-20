@@ -45,7 +45,6 @@ package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, Vsoc
     // Configuration facts snapshotted at creation, so main-actor guards on
     // device presence stay synchronous.
     var hasVirtioSocketDevice: Bool { get }
-    var hasNetworkDevice: Bool { get }
     var hasUSBController: Bool { get }
 
     /// Forcefully terminates the VM.

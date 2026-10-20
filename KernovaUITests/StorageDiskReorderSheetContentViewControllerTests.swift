@@ -4,7 +4,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("StorageDiskReorderSheetContentViewController Tests", .caseScoped)

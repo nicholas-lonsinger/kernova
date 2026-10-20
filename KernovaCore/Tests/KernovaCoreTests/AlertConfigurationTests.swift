@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Covers `AlertConfiguration` — the buttons an alert offers and the roles
 /// that lay them out.

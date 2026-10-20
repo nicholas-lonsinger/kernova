@@ -2,7 +2,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Unit tests for `AppResidencyPolicy.launchPosture` — what a launch puts
 /// on screen, given what it asked for and the residency preference.

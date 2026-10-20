@@ -1,7 +1,5 @@
 import Foundation
 
-@testable import KernovaCore
-
 /// Records the URLs handed to a `SystemSettingsLink`, answering each attempt
 /// with the next queued result (and `false` once the queue is spent).
 @MainActor

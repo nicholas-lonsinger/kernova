@@ -2,7 +2,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 @Suite("UniqueName Tests", .caseScoped)
 struct UniqueNameTests {

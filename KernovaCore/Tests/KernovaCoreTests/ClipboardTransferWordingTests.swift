@@ -4,7 +4,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Unit tests for the one derivation of clipboard refusal copy — the clipboard
 /// window's banner, the status-item notice popover, and the dropdown's per-VM

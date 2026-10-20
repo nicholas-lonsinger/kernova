@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 import KernovaLogging
 
 /// How a live guest's state is written beside the bundle's files, over the

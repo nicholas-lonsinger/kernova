@@ -2,7 +2,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Unit tests for `AgentStatus.synthesize(...)` — the pure function that
 /// folds the upstream service value and persisted host context into the

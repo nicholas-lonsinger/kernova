@@ -3,7 +3,6 @@ import KernovaKit
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
-@testable import KernovaUI
 
 extension SidebarLayout.Context {
     /// A context naming networks by the app's own titling, over `networks`

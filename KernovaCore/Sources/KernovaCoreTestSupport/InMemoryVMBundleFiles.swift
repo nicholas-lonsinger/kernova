@@ -87,11 +87,6 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         state.withLock { $0.replaceErrors[relativePath] = error }
     }
 
-    func replaceError(for relativePath: String) -> (any Error)? {
-        if let target { return target.replaceError(for: relativePath) }
-        return state.withLock { $0.replaceErrors[relativePath] }
-    }
-
     /// Makes `relativePath` in the bundle at `url` read as present but
     /// unreadable, or readable again.
     func setUnreadable(_ isUnreadable: Bool, relativePath: String, at url: URL) {

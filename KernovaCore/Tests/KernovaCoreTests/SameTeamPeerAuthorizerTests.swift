@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// The rule that decides whether a connecting peer is one this build answers.
 ///

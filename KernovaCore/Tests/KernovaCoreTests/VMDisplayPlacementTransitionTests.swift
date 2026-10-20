@@ -2,7 +2,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Unit tests for `VMDisplayPlacement.placement(for:)` — the matrix
 /// that decides where each display transition leaves the VM, which preference

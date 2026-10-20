@@ -1,12 +1,9 @@
 import Foundation
-import KernovaKit
 import Synchronization
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
 #endif
-
-@testable import KernovaCore
 
 /// A wait a verb parks in until the task running it is cancelled.
 ///

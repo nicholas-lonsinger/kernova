@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Covers `AlertWindowScene.destination(about:)` — which window an alert goes
 /// to — over scenes built from named windows.
