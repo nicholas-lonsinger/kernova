@@ -3,7 +3,6 @@ import ServiceManagement
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Unit tests for `LoginItemService` — the `SMAppService.mainApp` wrapper.
 ///

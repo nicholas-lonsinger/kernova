@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// The one library-read await every automation front door shares.
 @Suite("Library readiness", .caseScoped)

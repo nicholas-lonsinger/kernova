@@ -4,7 +4,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// The feature-channel admission verdicts, judged where the listeners judge
 /// them: a channel is admitted only while a published control handshake exists,

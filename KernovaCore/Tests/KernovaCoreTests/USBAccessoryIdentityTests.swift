@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// What has to hold for a detached accessory to be recognised when macOS
 /// assigns it back: the key is built from what survives a re-enumeration, it

@@ -2,7 +2,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Covers `VMDisplayPlacement.fullscreenScreen(lastDisplayID:screens:libraryScreen:displayID:)`
 /// over screens named by their display ID.

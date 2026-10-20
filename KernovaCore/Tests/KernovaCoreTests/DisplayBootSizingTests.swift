@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 @Suite("DisplayBootSizing Tests", .caseScoped)
 struct DisplayBootSizingTests {

@@ -5,7 +5,6 @@ import Testing
 import UniformTypeIdentifiers
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 @Suite("ClipboardPreviewPolicy", .caseScoped)
 struct ClipboardPreviewPolicyTests {

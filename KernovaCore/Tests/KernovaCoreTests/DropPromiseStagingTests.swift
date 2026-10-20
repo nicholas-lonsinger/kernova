@@ -4,7 +4,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Unit tests for `DropPromiseStaging` — where a promise drag's files wait for
 /// the guest's pull, which can come long after the drag is over.

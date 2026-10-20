@@ -53,9 +53,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// multi-file offer promises one item per file).
     public var promisedTypes: [NSPasteboard.PasteboardType] { writer.promisedTypes }
 
-    /// The types each promised item offers, in item order.
-    public var promisedTypesByItem: [[NSPasteboard.PasteboardType]] { writer.promisedTypesByItem }
-
     /// How many times `prepareForNewContents(with:)` has run.
     public var prepareCount: Int { writer.prepareCount }
 

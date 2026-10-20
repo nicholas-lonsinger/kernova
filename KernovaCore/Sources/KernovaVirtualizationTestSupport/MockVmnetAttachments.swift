@@ -2,7 +2,6 @@ import Foundation
 import Synchronization
 import Virtualization
 
-@testable import KernovaCore
 @testable import KernovaVirtualization
 
 /// Records what its ``maker`` builds: a NAT attachment for every network, since

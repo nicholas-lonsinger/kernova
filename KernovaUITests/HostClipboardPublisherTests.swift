@@ -5,7 +5,6 @@ import Testing
 
 @testable import KernovaCore
 @testable import KernovaKit
-@testable import KernovaUI
 
 /// Exercises `HostClipboardPublisher.publish(from:)`'s cancellation contract:
 /// what a publish has done, and must not have done, when the task running it is

@@ -5,7 +5,6 @@ import Synchronization
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 @MainActor
 @Suite("VsockListener", .caseScoped)

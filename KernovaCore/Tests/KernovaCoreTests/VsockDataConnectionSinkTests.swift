@@ -4,7 +4,6 @@ import Synchronization
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// One data port's routing between the listener's accept thread and the service
 /// generation that currently owns its connections.

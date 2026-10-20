@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 @Suite("USB Accessory Info Tests", .caseScoped)
 struct USBAccessoryInfoTests {

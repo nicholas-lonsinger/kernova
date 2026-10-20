@@ -3,7 +3,6 @@ import KernovaKit
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
 @Suite("waitForChange Tests", .caseScoped)

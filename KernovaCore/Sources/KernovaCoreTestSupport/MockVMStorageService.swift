@@ -39,7 +39,6 @@ final class MockVMStorageService: VMStorageProviding {
         var publishBundleError: (any Error)?
         var discardStagedBundleError: (any Error)?
         var deleteVMBundleError: (any Error)?
-        var permanentlyDeleteVMBundleError: (any Error)?
         var listVMBundlesError: (any Error)?
         var afterPublish: (@MainActor () -> Void)?
         var publishHold: DispatchSemaphore?
@@ -85,10 +84,6 @@ final class MockVMStorageService: VMStorageProviding {
         files.setHostState(hostState, at: url)
     }
 
-    /// Drops every file the store holds for the bundle at `url`.
-    func removeBundle(at url: URL) {
-        files.removeBundle(at: url)
-    }
     private let scratch: TestScratchDirectory
     private var baseDirectory: URL { scratch.url }
 
@@ -150,10 +145,6 @@ final class MockVMStorageService: VMStorageProviding {
 
     func setDeleteVMBundleError(_ error: (any Error)?) {
         state.withLock { $0.deleteVMBundleError = error }
-    }
-
-    func setPermanentlyDeleteVMBundleError(_ error: (any Error)?) {
-        state.withLock { $0.permanentlyDeleteVMBundleError = error }
     }
 
     func setListVMBundlesError(_ error: (any Error)?) {
@@ -368,10 +359,7 @@ final class MockVMStorageService: VMStorageProviding {
     }
 
     func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
-        try state.withLock { state in
-            state.permanentlyDeleteVMBundleCallCount += 1
-            if let error = state.permanentlyDeleteVMBundleError { throw error }
-        }
+        state.withLock { $0.permanentlyDeleteVMBundleCallCount += 1 }
         files.removeBundle(at: bundleURL)
     }
 }

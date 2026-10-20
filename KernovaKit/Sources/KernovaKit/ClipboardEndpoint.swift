@@ -1,6 +1,5 @@
 import Foundation
 import KernovaLogging
-import KernovaSynchronization
 
 /// One clipboard-protocol connection — either end of either clipboard channel —
 /// as its owner sees it.

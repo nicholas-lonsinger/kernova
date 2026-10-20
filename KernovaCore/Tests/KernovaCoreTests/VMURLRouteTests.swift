@@ -4,7 +4,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// How a delivered URL reads: which route it names, which VM it addresses, and
 /// what a link Kernova cannot act on is refused for.

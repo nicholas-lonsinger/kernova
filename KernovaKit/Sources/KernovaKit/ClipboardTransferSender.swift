@@ -6,7 +6,7 @@ import KernovaSynchronization
 /// macOS guests only ever *initiate* vsock connections, so one side is handed a
 /// descriptor its listener accepted and the other dials for it — the single
 /// axis on which the two roles differ.
-public enum ClipboardTransferLink: Sendable {
+enum ClipboardTransferLink: Sendable {
     /// A descriptor a data listener accepted.
     case accepted(Int32)
     /// A dialler that connects to the peer's data port and returns the
@@ -19,7 +19,7 @@ public enum ClipboardTransferLink: Sendable {
     /// The exit for an owner that cannot answer at all — no transfer table to
     /// register with — where dropping the value would leak the descriptor its
     /// listener already opened.
-    public func abandon() {
+    func abandon() {
         guard case .accepted(let fd) = self else { return }
         ClipboardDataConnection.end(fd: fd)
     }

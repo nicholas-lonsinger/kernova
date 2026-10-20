@@ -5,7 +5,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// What a script reads when a verb refuses.
 @Suite("Command error as an Apple event error", .caseScoped)

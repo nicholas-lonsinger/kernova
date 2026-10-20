@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// The record of what the Spotlight index holds: what a later launch reads
 /// back out of `UserDefaults`.

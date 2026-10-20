@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 @Suite("LinuxImageFilename Tests", .caseScoped)
 struct LinuxImageFilenameTests {
