@@ -377,75 +377,41 @@ struct ClipboardTransferStreamTests {
         #expect(harness.collector.outboundMetrics.isEmpty)
     }
 
-    @Test("a receiver that gives up retires the pull quietly and stops the send")
-    func receiverCancelStopsTheSend() async throws {
-        let fm = FileManager.default
-        let harness = TransferHarness()
+    @Test("a receiver that gives up retires the pull quietly and ends its connection")
+    func transferCancelEndsItsLiveReceiver() async throws {
+        let harness = TransferHarness(socketTimeout: 2 * testWaitBackstop)
         defer { harness.tearDown() }
-
-        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
-        try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
-        let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
-        // Cancelled from the sender's own pre-write check, before any byte has
-        // left, then held per `cancelOnceThenHold` so the send provably stops
-        // rather than racing the receiver's teardown.
-        let inbox = harness.inbox
-        harness.pull(
-            transferID: transferID, generation: 11,
-            plan: .init(
-                uti: ClipboardArchive.directoryUTI, filename: "source",
-                extractsDirectoryNamed: "source", advertisedByteCount: estimate),
-            representation: .init(
-                directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
-            isCurrent: harness.cancelOnceThenHold { inbox.cancel(transferID: transferID) })
+        let far = try await openLiveReceiver(harness, transferID: transferID, generation: 11)
+        defer { ClipboardDataConnection.end(fd: far) }
+
+        harness.inbox.cancel(transferID: transferID)
+        try await awaitPeerEOF(far)
         try await settle(harness, transferID)
-        try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 
         let info = try abort(harness)
         #expect(info.code == .cancelled)
         #expect(info.isRetiring)
         #expect(harness.collector.abortCount == 1)
         #expect(harness.collector.representation(transferID) == nil)
-        // The peer's gesture, not a failure of ours: the send stops and reports
-        // nothing.
-        #expect(harness.collector.sendOutcome(transferID) == false)
-        #expect(harness.collector.outboundMetrics.isEmpty)
     }
 
     @Test("cancelling a generation reaches the receiver already streaming under it")
     func generationCancelStopsALiveReceiver() async throws {
-        let fm = FileManager.default
-        let harness = TransferHarness()
-        defer { harness.tearDown() }
-
         // The supersession path `ClipboardInboundOffers` takes when the peer
-        // offers again mid-paste: the awaiter is resolved either way, so the
-        // *send* stopping is what says the generation reached the live
-        // receiver rather than only the awaiter beside it. Cancelled and held
-        // exactly as `receiverCancelStopsTheSend` is, and for the same
-        // reasons.
-        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
-        try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
-        let estimate = ClipboardArchive.estimatedByteCount(at: source)
+        // offers again mid-paste.
+        let harness = TransferHarness(socketTimeout: 2 * testWaitBackstop)
+        defer { harness.tearDown() }
         let transferID = ClipboardTransferID.make(generation: 12, repIndex: 0, hostMinted: true)
-        let inbox = harness.inbox
-        harness.pull(
-            transferID: transferID, generation: 12,
-            plan: .init(
-                uti: ClipboardArchive.directoryUTI, filename: "source",
-                extractsDirectoryNamed: "source", advertisedByteCount: estimate),
-            representation: .init(
-                directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
-            isCurrent: harness.cancelOnceThenHold { inbox.cancel(generation: 12) })
+        let far = try await openLiveReceiver(harness, transferID: transferID, generation: 12)
+        defer { ClipboardDataConnection.end(fd: far) }
+
+        harness.inbox.cancel(generation: 12)
+        try await awaitPeerEOF(far)
         try await settle(harness, transferID)
-        try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 
         #expect(try abort(harness).code == .cancelled)
         #expect(harness.collector.representation(transferID) == nil)
-        #expect(harness.collector.sendOutcome(transferID) == false)
     }
 
     @Test("a send onto a connection the peer has closed fails and reports no timing")
@@ -1234,6 +1200,32 @@ struct ClipboardTransferStreamTests {
 
     /// The abort a transfer reported, waiting for it if the completion check
     /// resolved first.
+    /// Opens a pull whose receiver is live and parked awaiting the payload,
+    /// returning the peer's end.
+    ///
+    /// The peer replies and then sends nothing, so with the harness's socket
+    /// timeout above `testWaitBackstop` the receiver can release the connection
+    /// only through a cancellation — and an EOF on the returned end is that
+    /// release reaching the peer. The sender's write outcome cannot stand in for
+    /// it: a descriptor an exit test's child still holds mid-spawn keeps the
+    /// socket connected past the receiver's `close(2)`, and macOS accepts and
+    /// discards the writes.
+    private func openLiveReceiver(
+        _ harness: TransferHarness, transferID: UInt64, generation: UInt64
+    ) async throws -> Int32 {
+        harness.expect(
+            transferID: transferID, plan: .init(uti: "public.data", advertisedByteCount: 4096))
+        let (peers, delivered) = AsyncStream.makeStream(of: Int32.self)
+        harness.openPull(transferID: transferID, generation: generation) { far, request in
+            try? writeTransferReply(
+                fd: far, transferID: request.transferID, isArchive: false, isInline: true,
+                totalBytes: 4096)
+            delivered.yield(far)
+            delivered.finish()
+        }
+        return try await awaitFirst(peers)
+    }
+
     private func abortAfterSettling(_ harness: TransferHarness) async throws
         -> ClipboardStreamAbortInfo
     {
