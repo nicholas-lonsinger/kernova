@@ -82,21 +82,38 @@ public final class ClipboardControlSession {
     /// that connection. [M1]
     private let inboxHolder = Locked<ClipboardTransferInbox?>(nil)
     private var outboxStorage: ClipboardTransferOutbox?
-    private var consumeTask: Task<Void, Never>?
 
-    /// Latched before the pulls a teardown cancels are woken, so a paste fire
-    /// that wakes cancelled can tell the end of its session from a supersession
-    /// or a release, which raise their own explainer.
-    private let endedFlag = Locked(false)
+    /// ``State``, with the drain each case past ``State/idle`` holds — held for
+    /// the session's life, so a wait begun after the end still reaches the
+    /// drain's.
+    private enum Lifecycle: Sendable {
+        case idle
+        case live(consumeTask: Task<Void, Never>)
+        case ended(consumeTask: Task<Void, Never>)
+        /// `nil` when ``stop()`` came before any ``start()``.
+        case stopped(consumeTask: Task<Void, Never>?)
 
-    /// Latched by `stop()` alone, so a control frame queued to main before the
-    /// teardown is dropped rather than delivered.
-    ///
-    /// Distinct from `endedFlag`, which the channel closing also sets: a peer
-    /// that sent a frame and then closed — a `DropComplete`, a
-    /// `ClipboardRelease` — is still owed its delivery, while a local `stop()`
-    /// is this side deciding it is done listening.
-    private let stoppedFlag = Locked(false)
+        var state: State {
+            switch self {
+            case .idle: .idle
+            case .live: .live
+            case .ended: .ended
+            case .stopped: .stopped
+            }
+        }
+
+        var consumeTask: Task<Void, Never>? {
+            switch self {
+            case .idle: nil
+            case .live(let task), .ended(let task): task
+            case .stopped(let task): task
+            }
+        }
+    }
+
+    /// The main actor moves it out of `idle` and into `stopped`; the drain's
+    /// tail moves it from `live` to `ended`, off the main actor.
+    private let lifecycle = Locked(Lifecycle.idle)
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardControlSession")
@@ -172,18 +189,41 @@ public final class ClipboardControlSession {
 
     // MARK: - Lifecycle
 
+    /// Where a session is in its one pass over its channel; nothing returns to
+    /// an earlier case.
+    public enum State: Sendable, Equatable {
+        /// Before ``ClipboardControlSession/start(handleControlFrame:onEnded:)``.
+        case idle
+        /// Draining the channel.
+        case live
+        /// The channel closed under the session, from ``live``.
+        case ended
+        /// ``ClipboardControlSession/stop()`` ran — this side deciding it is
+        /// done listening — from any other case.
+        case stopped
+    }
+
+    /// `nonisolated` so a data connection or a paste-time fire reads it from
+    /// whichever thread it arrived on.
+    nonisolated public var state: State { lifecycle.withLock { $0.state } }
+
     /// Whether this connection is over, by `stop()` or by the channel closing
     /// under it.
     ///
-    /// `nonisolated` so a paste-time fire can read it from whichever thread the
-    /// pasteboard server fired on.
-    nonisolated public var hasEnded: Bool { endedFlag.withLock { $0 } }
+    /// Set before the pulls a teardown cancels are woken, so a paste fire that
+    /// wakes cancelled can tell the end of its session from a supersession or a
+    /// release, which raise their own explainer.
+    nonisolated public var hasEnded: Bool { [.ended, .stopped].contains(state) }
 
-    /// Whether `stop()` has run — this side deciding it is done listening,
-    /// which is what a queued control frame is dropped for.
-    nonisolated public var hasStopped: Bool { stoppedFlag.withLock { $0 } }
+    /// Whether `stop()` has run, which is what a queued control frame is dropped
+    /// for.
+    ///
+    /// Distinct from ``hasEnded``: a peer that sent a frame and then closed — a
+    /// `DropComplete`, a `ClipboardRelease` — is still owed its delivery.
+    nonisolated public var hasStopped: Bool { state == .stopped }
 
-    /// Opens the transfer tables and starts draining the channel; idempotent.
+    /// Opens the transfer tables and starts draining the channel, once: a call
+    /// after the first, or after ``stop()``, does nothing and returns `false`.
     ///
     /// `handleControlFrame` receives every frame, on the main actor and in
     /// arrival order — including one this session has since stopped for, which
@@ -191,11 +231,12 @@ public final class ClipboardControlSession {
     /// actor the moment the channel is done, so a pull parked on the main
     /// thread is woken without waiting for a main-queue hop it is itself
     /// blocking.
+    @discardableResult
     public func start(
         handleControlFrame: @escaping @MainActor (Frame) -> Void,
         onEnded: @escaping @Sendable () -> Void = {}
-    ) {
-        guard consumeTask == nil else { return }
+    ) -> Bool {
+        guard case .idle = lifecycle.withLock({ $0 }) else { return false }
         let tag = connectionTag
         let label = self.label
         let sent = Self.sentDirectionWord(role: role)
@@ -228,11 +269,11 @@ public final class ClipboardControlSession {
 
         inboxHolder.withLock { $0 = inbox }
         let channel = self.channel
-        let endedFlag = self.endedFlag
-        consumeTask = Task.detached {
+        let lifecycle = self.lifecycle
+        let drain: @Sendable () async -> Void = { [inbox] in
             await Self.consume(
                 channel: channel, label: label, connectionTag: tag, subject: subject,
-                inbox: inbox, endedFlag: endedFlag, onEnded: onEnded,
+                inbox: inbox, lifecycle: lifecycle, onEnded: onEnded,
                 onControlFrame: { frame in
                     // Fire-and-forget: the consume loop must never wait on the
                     // main actor — a paste's promise callback occupies it, and
@@ -242,27 +283,40 @@ public final class ClipboardControlSession {
                     MainActorBridge.async { handleControlFrame(frame) }
                 })
         }
+        // Armed under the lock the drain's tail takes to move the session to
+        // `ended`, so the tail cannot run ahead of the `live` it moves from.
+        lifecycle.withLock { $0 = .live(consumeTask: Task.detached(operation: drain)) }
+        return true
     }
 
-    /// Returns once the channel is done, whether it closed on its own or `stop()`
-    /// ended it.
+    /// Returns once the drain and its settling tail have run, whether the channel
+    /// closed on its own or ``stop()`` ended it; at once if ``start()`` never
+    /// armed one.
+    ///
+    /// The tail's `onEnded` has run by then, but anything it queued to the main
+    /// actor is still queued, not delivered.
     public func waitUntilEnded() async {
-        await consumeTask?.value
+        await lifecycle.withLock { $0.consumeTask }?.value
     }
 
     #if DEBUG
-    /// The task draining the channel, empty before `start()` and after `stop()`.
-    var lifecycleTasksForTesting: [Task<Void, Never>] { [consumeTask].compactMap { $0 } }
+    /// The task draining the channel, held from `start()` on — empty only before
+    /// it.
+    var lifecycleTasksForTesting: [Task<Void, Never>] {
+        [lifecycle.withLock { $0.consumeTask }].compactMap { $0 }
+    }
     #endif
 
     /// Ends the connection: stops draining, wakes every transfer, and closes the
-    /// channel. Idempotent.
+    /// channel. Idempotent, and terminal: the session never starts afterwards.
     public func stop() {
+        // Before any wake, so a paste fire this cancels explains itself.
+        let consumeTask = lifecycle.withLock { lifecycle in
+            let task = lifecycle.consumeTask
+            lifecycle = .stopped(consumeTask: task)
+            return task
+        }
         consumeTask?.cancel()
-        consumeTask = nil
-        // Marked before any wake, so a paste fire this cancels explains itself.
-        endedFlag.withLock { $0 = true }
-        stoppedFlag.withLock { $0 = true }
         let inbox = inboxHolder.withLock { inbox in
             defer { inbox = nil }
             return inbox
@@ -293,7 +347,7 @@ public final class ClipboardControlSession {
         connectionTag: ClipboardConnectionTag,
         subject: String,
         inbox: ClipboardTransferInbox?,
-        endedFlag: Locked<Bool>,
+        lifecycle: Locked<Lifecycle>,
         onEnded: @Sendable () -> Void,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
@@ -314,9 +368,12 @@ public final class ClipboardControlSession {
             )
         }
         // Channel closed — wake any parked pull so a materialize doesn't hang
-        // forever. Marked ended first, so a paste fire that wakes here can tell
-        // this teardown from a supersession and explain itself.
-        endedFlag.withLock { $0 = true }
+        // forever. Ended first, so a paste fire that wakes here can tell this
+        // teardown from a supersession and explain itself; a `stop()` that got
+        // here first keeps the session stopped.
+        lifecycle.withLock { phase in
+            if case .live(let task) = phase { phase = .ended(consumeTask: task) }
+        }
         inbox?.cancelAll()
         onEnded()
     }

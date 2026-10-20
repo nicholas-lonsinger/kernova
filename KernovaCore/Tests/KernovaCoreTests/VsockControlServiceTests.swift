@@ -68,7 +68,7 @@ struct VsockControlServiceTests {
         for _ in 0..<count {
             try await clock.parkedChanged.wait {
                 clock.parked.contains { $0.seconds == interval }
-                    || service.lifecycleTasksForTesting.isEmpty
+                    || service.lifecycleTasksForTesting.allSatisfy(\.isCancelled)
             }
             guard let sleeper = clock.parked.first(where: { $0.seconds == interval }) else { return }
             let requested = clock.requestedSeconds.filter { $0 == interval }.count
@@ -76,7 +76,7 @@ struct VsockControlServiceTests {
             clock.release(sleeper)
             try await clock.parkedChanged.wait {
                 clock.requestedSeconds.filter { $0 == interval }.count > requested
-                    || service.lifecycleTasksForTesting.isEmpty
+                    || service.lifecycleTasksForTesting.allSatisfy(\.isCancelled)
             }
         }
     }
@@ -464,7 +464,6 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
-        // Captured now: the teardown clears the handles.
         let lifecycleTasks = service.lifecycleTasksForTesting
 
         _ = try await nextFrame(from: guest)  // host hello
@@ -483,7 +482,6 @@ struct VsockControlServiceTests {
         for task in lifecycleTasks {
             await task.value
         }
-        #expect(service.lifecycleTasksForTesting.isEmpty)
         #expect(service.agentVersion == nil)
         #expect(service.agentStatus == .waiting)
         // The channel went with it: the teardown closes before clearing
@@ -543,12 +541,13 @@ struct VsockControlServiceTests {
 
         guest.close()
         try await waitForChange { !service.isConnected }
+        let lifecycleTasks = service.lifecycleTasksForTesting
 
         // A reconnect is served by a fresh instance built at accept time, so
         // restarting this one would only spin tasks against a dead socket.
         service.start()
         #expect(!service.isConnected)
-        #expect(service.lifecycleTasksForTesting.isEmpty)
+        #expect(service.lifecycleTasksForTesting == lifecycleTasks)
     }
 
     // MARK: - Wrong-port payloads

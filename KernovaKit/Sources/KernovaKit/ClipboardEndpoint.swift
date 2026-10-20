@@ -160,10 +160,8 @@ public final class ClipboardEndpoint {
     /// ``stop()`` or the channel's own end.
     ///
     /// `nonisolated` so the accept path can gate on it from the listener's
-    /// queue; written only on the main actor, at the lifecycle transitions.
-    nonisolated public var isConnected: Bool { connectedFlag.withLock { $0 } }
-
-    nonisolated private let connectedFlag = Locked(false)
+    /// queue.
+    nonisolated public var isConnected: Bool { session.state == .live }
 
     nonisolated private let session: ClipboardControlSession
     private let outbound: ClipboardOutboundOffers
@@ -230,15 +228,13 @@ public final class ClipboardEndpoint {
 
     // MARK: - Lifecycle
 
-    /// Builds the engine and starts draining the channel; idempotent.
+    /// Builds the engine and starts draining the channel, once: a call after the
+    /// first, or after ``stop()``, does nothing.
     ///
     /// A clipboard connection retires the report the last one left standing:
     /// what it described is a transfer of a session that is over.
     public func start() {
-        guard !isConnected else { return }
-        connectedFlag.withLock { $0 = true }
-        if kind == .clipboard { reporter.clearFinished() }
-        session.start(
+        let started = session.start(
             handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
             onEnded: { [weak self] in
                 // Off the main actor and before anything hops to it: a pull
@@ -246,10 +242,16 @@ public final class ClipboardEndpoint {
                 self?.inbound?.endSession()
                 MainActorBridge.async { self?.channelDidEnd() }
             })
+        guard started else { return }
+        if kind == .clipboard { reporter.clearFinished() }
     }
 
-    /// Returns once the channel is done, whether it closed on its own or
-    /// ``stop()`` ended it.
+    /// Returns once the drain and its settling tail have run, whether the channel
+    /// closed on its own or ``stop()`` ended it.
+    ///
+    /// Any ``ClipboardEndpointDelegate/endpointDidEnd(_:)`` still owed is queued
+    /// to the main actor by then, not yet delivered: the tail never waits on the
+    /// main actor, which a paste parked inside a modal loop can be holding.
     public func waitUntilEnded() async {
         await session.waitUntilEnded()
     }
@@ -265,16 +267,15 @@ public final class ClipboardEndpoint {
         session.stop()
         inbound?.endSession()
         outbound.endSession()
-        connectedFlag.withLock { $0 = false }
     }
 
-    /// Settles a connection the channel ended under, and tells the owner.
+    /// Tells the owner the channel ended under the connection.
     ///
-    /// Only the channel's own end reaches the delegate: ``stop()`` is the owner
-    /// deciding, and it needs no answer.
+    /// Only the channel's own end reaches the delegate: a ``stop()`` that landed
+    /// before this hop moved the session on to `stopped`, and it is the owner
+    /// deciding, which needs no answer.
     private func channelDidEnd() {
-        guard isConnected else { return }
-        connectedFlag.withLock { $0 = false }
+        guard session.state == .ended else { return }
         delegate?.endpointDidEnd(self)
     }
 
@@ -471,7 +472,7 @@ public final class ClipboardEndpoint {
     /// nothing parks a bounded number of workers however many connections it
     /// opens.
     nonisolated public func acceptDataConnection(fd: Int32) {
-        guard isConnected, !session.hasStopped else {
+        guard isConnected else {
             ClipboardDataConnection.end(fd: fd)
             return
         }
@@ -600,16 +601,18 @@ public final class ClipboardEndpoint {
     ///
     /// The owner is told, unlike after its own ``stop()``: the peer crossed the
     /// wires, so this is the connection ending under the owner rather than the
-    /// owner deciding, and the consume tail's own settle is already past the
-    /// point where it could say so.
+    /// owner deciding. The `stop()` here drops the end notice the consume tail
+    /// queues, so this delivers the one the owner is owed — also when the
+    /// channel had already ended, since its frames reach main ahead of that
+    /// notice.
     private func closeOnWrongPort() {
         Self.logger.log(
             .warning,
             "Unexpected payload on the \(self.channelWord, privacy: .public) channel for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — wrong port; closing the channel"
         )
-        let wasConnected = isConnected
+        let noticeOwed = [.live, .ended].contains(session.state)
         stop()
-        guard wasConnected else { return }
+        guard noticeOwed else { return }
         delegate?.endpointDidEnd(self)
     }
 
@@ -647,8 +650,8 @@ public final class ClipboardEndpoint {
         (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
 
-    /// The task draining the channel, empty before ``start()`` and after
-    /// ``stop()``.
+    /// The task draining the channel, held from ``start()`` on — empty only
+    /// before it.
     ///
     /// Its end reaches the delegate through a main-queue hop queued before the
     /// task returns, so a test drains the main queue after awaiting it.

@@ -30,25 +30,30 @@ struct VsockFeatureServiceSettleTests {
     // MARK: - Harness
 
     /// Builds `kind` over `channel`, with a label unique to this case so a
-    /// service keying staging on it cannot collide with a concurrent one.
+    /// service keying staging on it cannot collide with a concurrent one, and
+    /// how its readers learn whether it is connected — `nil` for the log
+    /// service, which has no such reading.
     private func makeService(_ kind: ServiceKind, channel: VsockChannel)
-        -> any VsockFeatureService
+        -> (any VsockFeatureService, isConnected: (@MainActor () -> Bool)?)
     {
         let label = "settle-\(kind)-\(UUID().uuidString)"
         switch kind {
         case .control:
-            return VsockControlService(
+            let service = VsockControlService(
                 channel: channel, label: label, hostVersion: AppBundleProducts.testing.hostVersion,
                 bundledAgentVersion: BundledGuestAgent.testing.version)
+            return (service, { service.isConnected })
         case .log:
-            return VsockGuestLogService(channel: channel, label: label)
+            return (VsockGuestLogService(channel: channel, label: label), nil)
         case .drop:
-            return VsockDropService(
+            let service = VsockDropService(
                 channel: channel, label: label, reporter: ClipboardTransferReporter())
+            return (service, { service.isConnected })
         case .clipboard:
-            return VsockClipboardService(
+            let service = VsockClipboardService(
                 channel: channel, label: label, reporter: ClipboardTransferReporter(),
                 stagingRoot: stagingRoot.root, stagingKey: label)
+            return (service, { service.isConnected })
         }
     }
 
@@ -56,17 +61,18 @@ struct VsockFeatureServiceSettleTests {
     /// the recorder counting the service's channel-lost notifications.
     private struct Fixture {
         let service: any VsockFeatureService
+        let isConnected: (@MainActor () -> Bool)?
         let peer: VsockChannel
         let lost: ChannelLostRecorder
     }
 
     private func makeFixture(_ kind: ServiceKind) throws -> Fixture {
         let (host, peer) = try makeStartedChannelPair()
-        let service = makeService(kind, channel: host)
+        let (service, isConnected) = makeService(kind, channel: host)
         let lost = ChannelLostRecorder()
         service.onChannelLost = { lost.record() }
         service.start()
-        return Fixture(service: service, peer: peer, lost: lost)
+        return Fixture(service: service, isConnected: isConnected, peer: peer, lost: lost)
     }
 
     /// Returns once nothing `tasks` started can still reach the owner: each task
@@ -127,7 +133,10 @@ struct VsockFeatureServiceSettleTests {
         // teardown the owner itself asked for.
         fixture.service.start()
 
-        #expect(fixture.service.lifecycleTasksForTesting.isEmpty)
+        // The same tasks the first start() armed, cancelled and still held: no
+        // second drain was armed.
+        #expect(fixture.service.lifecycleTasksForTesting == tasks)
+        #expect(fixture.isConnected?() != true)
         await settled(tasks)
         #expect(fixture.lost.count == 0)
     }

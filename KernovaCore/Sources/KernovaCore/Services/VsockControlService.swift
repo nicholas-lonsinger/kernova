@@ -144,18 +144,27 @@ package final class VsockControlService: VsockFeatureService {
     /// the owner, the watchdog, or the channel's own end settles it.
     private let admissionGate: VsockAdmissionGate?
 
-    private var consumeTask: Task<Void, Never>?
-    private var outboundHeartbeatTask: Task<Void, Never>?
-    private var livenessTask: Task<Void, Never>?
+    /// Where this service is in its one connection.
+    private enum Lifecycle {
+        /// Before `start()`.
+        case idle
+        /// Serving since `start()`: the consume, heartbeat and liveness tasks.
+        case running([Task<Void, Never>])
+        /// Settled — by the owner, the watchdog, or the channel's own end —
+        /// holding the tasks it cancelled, none if it never started.
+        case settled([Task<Void, Never>])
+    }
 
-    /// Guards the teardown against re-entry: the liveness watchdog, the consume
-    /// task and the owner can each reach `stop()`, and whichever arrives first
-    /// is the one that settles.
-    private var hasStopped = false
+    /// The liveness watchdog, the consume task and the owner can each reach
+    /// `stop(reason:)`; whichever finds it unsettled is the one that settles.
+    private var lifecycle = Lifecycle.idle
 
     #if DEBUG
     var lifecycleTasksForTesting: [Task<Void, Never>] {
-        [consumeTask, outboundHeartbeatTask, livenessTask].compactMap { $0 }
+        switch lifecycle {
+        case .idle: []
+        case .running(let tasks), .settled(let tasks): tasks
+        }
     }
 
     /// Fires after each inbound frame is handled — the seam a test needs to
@@ -228,13 +237,13 @@ package final class VsockControlService: VsockFeatureService {
     // MARK: - Lifecycle
 
     func start() {
-        guard consumeTask == nil, !hasStopped else { return }
+        guard case .idle = lifecycle else { return }
 
         sendHello()
 
         let channel = self.channel
         let label = self.label
-        consumeTask = Task { [weak self] in
+        let consumeTask = Task { [weak self] in
             await Self.consume(channel: channel, label: label) { @MainActor frame in
                 self?.handle(frame: frame)
             }
@@ -243,17 +252,19 @@ package final class VsockControlService: VsockFeatureService {
             self?.stop(reason: .channelLost)
         }
 
-        outboundHeartbeatTask = repeatingClockTask(
+        let outboundHeartbeatTask = repeatingClockTask(
             clock: clock, every: cadence.heartbeatInterval
         ) { [weak self] in
             await self?.sendHeartbeat()
         }
 
-        livenessTask = repeatingClockTask(
+        let livenessTask = repeatingClockTask(
             clock: clock, every: cadence.livenessTickInterval
         ) { [weak self] in
             await self?.checkLiveness()
         }
+
+        lifecycle = .running([consumeTask, outboundHeartbeatTask, livenessTask])
 
         Self.logger.log(.info, "Vsock control service started for '\(self.label, privacy: .public)'")
     }
@@ -273,17 +284,18 @@ package final class VsockControlService: VsockFeatureService {
     /// Safe to call from inside the tasks it cancels: `Task.cancel()` only sets
     /// the cancellation flag, so a caller running inside the liveness or consume
     /// task runs this method to completion and then unwinds at its own next
-    /// cancellation check. The `hasStopped` latch makes `onChannelLost` fire at
-    /// most once, and never after an owner teardown has already settled.
+    /// cancellation check. Only the first call finds the service unsettled, so
+    /// `onChannelLost` fires at most once, and never after an owner teardown has
+    /// already settled.
     private func stop(reason: VsockSettleReason) {
-        guard !hasStopped else { return }
-        hasStopped = true
-        consumeTask?.cancel()
-        consumeTask = nil
-        outboundHeartbeatTask?.cancel()
-        outboundHeartbeatTask = nil
-        livenessTask?.cancel()
-        livenessTask = nil
+        let tasks: [Task<Void, Never>]
+        switch lifecycle {
+        case .settled: return
+        case .idle: tasks = []
+        case .running(let running): tasks = running
+        }
+        lifecycle = .settled(tasks)
+        for task in tasks { task.cancel() }
         channel.close()
         isConnected = false
         agentVersion = nil
@@ -355,7 +367,7 @@ package final class VsockControlService: VsockFeatureService {
         // The timer bodies hop onto the main actor, so a tick cancelled by the
         // teardown can still land after it — and this one would send on a closed
         // channel and bump the nonce past a settle that reset everything else.
-        guard !hasStopped else { return }
+        guard case .running = lifecycle else { return }
         // A frozen guest drains nothing, and `VsockChannel.writeFramed` parks in
         // a blocking `write(2)` once the peer's receive buffer fills — here, on
         // the main actor. Send nothing while the guest is suspended.
@@ -382,7 +394,7 @@ package final class VsockControlService: VsockFeatureService {
     private func checkLiveness() {
         // The timer bodies hop onto the main actor, so a tick cancelled by the
         // teardown can still land after it — nothing may re-arm settled state.
-        guard !hasStopped else { return }
+        guard case .running = lifecycle else { return }
         // A live-paused guest is frozen, not silent: it cannot answer, so
         // host-side elapsed time says nothing about the agent's health. Hold
         // the deadline at now for as long as it stays frozen, so the guest is
