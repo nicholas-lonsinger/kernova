@@ -266,10 +266,11 @@ extension VMCommandCore {
     /// The revert to its baseline an Ephemeral Mode VM owes a power-off, as a
     /// follow-up; `nil` for every other VM.
     ///
-    /// Answered from ``VMActivity/onPoweredOff``, whose step drains it: a
-    /// restoration, it takes the VM before any other follow-up queued there
-    /// and before anything else can be decided against the VM. A failure
-    /// nobody waits on is reported.
+    /// Answered from ``VMActivity/onPoweredOff``, and from
+    /// ``VMActivity/onRunLockTaken`` for a session that ended without one,
+    /// whose steps drain it: a restoration, it takes the VM before any other
+    /// follow-up queued there and before anything else can be decided against
+    /// the VM. A failure nobody waits on is reported.
     func ephemeralBaselineRevert(for instance: VMInstance) -> VMFollowUp? {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return nil }
         return VMFollowUp(scope: .vm, rank: .restoration) { [weak self, weak instance] outcome in

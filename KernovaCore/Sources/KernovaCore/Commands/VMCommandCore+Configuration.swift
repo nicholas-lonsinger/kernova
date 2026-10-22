@@ -58,8 +58,10 @@ extension VMCommandCore {
     /// leaves its value where it is is taken in any state; a host-state key's
     /// gate is asked whether its value moves or not, so naming one is refused
     /// wherever that key is pinned, a snapshot capture among them.
-    /// `consent` supplies what the one assignment that asks for it needs —
-    /// turning automatic clipboard passthrough on.
+    /// `consent` supplies what the assignments that ask for it need — turning
+    /// automatic clipboard passthrough on, and returning a VM resting off the
+    /// Ephemeral baseline an assignment names to it, which runs once the write
+    /// lands.
     ///
     /// A gate that refuses names every assignment it refused. Each gate names
     /// an edit class (``VMConfigurationKey/editClasses(writing:for:)``); the
@@ -107,6 +109,8 @@ extension VMCommandCore {
             HostStateChange(
                 key: write.key, field: write.field, change: try write.field.change(write.value, context))
         }
+        let returnsToBaseline = try requireBaselineReturnConsent(
+            on: instance, applying: hostStateChanges, consent: consent)
         // The configuration's gates are judged on what `config.json` holds,
         // inside the write: the permit covers every key the VM takes now, and
         // one that moves a field outside it is refused there.
@@ -144,6 +148,7 @@ extension VMCommandCore {
                 "Changed \(moved.map(\.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
             )
         }
+        if returnsToBaseline { instance.activity.restoreIfOwed() }
         let written = instance.settings
         return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(written)) }
     }
@@ -296,6 +301,54 @@ extension VMCommandCore {
         else { return }
         throw CommandError.confirmationRequired(
             ClipboardPassthroughConsent.prompt(vmName: instance.name))
+    }
+
+    /// Refuses, without the user's consent, a change that turns Ephemeral Mode
+    /// on — or points it at another snapshot — while `instance` rests off that
+    /// baseline (``VMInstance/restsOff(_:)``), answering whether it does: such
+    /// a VM is returned to the baseline before anything else runs on it, so
+    /// the change discards what it holds now.
+    ///
+    /// A VM that is live, or parks a suspended session of its own, asks
+    /// nothing, and returns to the baseline at its next power-off.
+    private func requireBaselineReturnConsent(
+        on instance: VMInstance, applying changes: [HostStateChange], consent: Consent
+    ) throws -> Bool {
+        var candidate = instance.hostState
+        for change in changes { change.change(&candidate) }
+        guard candidate.ephemeralModeEnabled,
+            let id = candidate.ephemeralBaselineSnapshotID,
+            id != instance.ephemeralBaselineSnapshot?.id,
+            let baseline = instance.snapshotManifest.snapshot(id: id),
+            instance.restsOff(baseline)
+        else { return false }
+        guard consent.covers(.revertToSnapshot) else {
+            throw CommandError.confirmationRequired(
+                Self.baselineReturnPrompt(
+                    baseline, on: instance,
+                    turningOn: !instance.hostState.ephemeralModeEnabled))
+        }
+        return true
+    }
+
+    /// What turning Ephemeral Mode on with `baseline` — or, with `turningOn`
+    /// false, pointing it there — asks of a VM resting off it: the revert it
+    /// takes now, in the words a revert asks in.
+    package static func baselineReturnPrompt(
+        _ baseline: VMSnapshot, on instance: VMInstance, turningOn: Bool
+    ) -> ConfirmationPrompt {
+        let vm = "\u{201C}\(instance.name)\u{201D}"
+        let snapshot = "\u{201C}\(baseline.name)\u{201D}"
+        let cause = turningOn ? "Turning on Ephemeral Mode" : "Changing the baseline"
+        return ConfirmationPrompt(
+            kind: .revertToSnapshot,
+            title: turningOn
+                ? "Turn On Ephemeral Mode for \(vm)?"
+                : "Make \(snapshot) the Baseline of \(vm)?",
+            message: "\(cause) returns \(vm) to \(snapshot) now. "
+                + revertMessage(baseline, instance),
+            confirmTitle: turningOn ? "Turn On and Revert" : "Change and Revert",
+            dismissTitle: "Cancel")
     }
 
     /// The key `name` addresses, refusing a name the keyspace does not hold and

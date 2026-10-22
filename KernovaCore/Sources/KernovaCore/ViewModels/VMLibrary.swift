@@ -16,8 +16,8 @@ import KernovaLogging
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
 /// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
 /// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
-/// ``onPoweredOff`` and ``onSessionBecameAttachable`` — leave through their own
-/// closures.
+/// ``onPoweredOff``, ``onRunLockTaken`` and ``onSessionBecameAttachable`` —
+/// leave through their own closures.
 /// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
 /// wires them all.
 @MainActor
@@ -94,6 +94,11 @@ package final class VMLibrary: VMAdmissionPeers {
     /// Fires when a VM powers off, answering the follow-ups the power-off
     /// owes — the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> [VMFollowUp])?
+
+    /// Fires when this copy takes the run lock of a VM at rest, answering the
+    /// restorations its bundle shows it owes — the Ephemeral Mode baseline
+    /// revert a session that ended without one left owed.
+    @ObservationIgnored var onRunLockTaken: ((VMInstance) -> [VMFollowUp])?
 
     /// Fires when an arrival settles as no VM, in the same main-actor step as
     /// — and just before — its row leaves the library, so anything the hook
@@ -877,6 +882,11 @@ package final class VMLibrary: VMAdmissionPeers {
         instance.activity.onPoweredOff = { [weak self, weak instance] in
             guard let self, let instance else { return [] }
             return self.onPoweredOff?(instance) ?? []
+        }
+        // A session that ended without its power-off still owes that revert.
+        instance.activity.onRunLockTaken = { [weak self, weak instance] in
+            guard let self, let instance else { return [] }
+            return self.onRunLockTaken?(instance) ?? []
         }
         // The bundle a hold kept from every read is read again as it ends.
         instance.activity.onRunLockReleased = { [weak self, weak instance] in

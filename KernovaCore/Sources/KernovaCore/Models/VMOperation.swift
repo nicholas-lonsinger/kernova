@@ -397,6 +397,23 @@ package enum VMOperationKind: Sendable, Equatable {
             return false
         }
     }
+
+    /// Whether this operation, admitted at rest, carries the guest's files
+    /// forward as the bundle holds them — boots them, captures them, or copies
+    /// them out — rather than replacing them, discarding them, or leaving them
+    /// alone.
+    var carriesGuestFilesForward: Bool {
+        switch self {
+        case .bringUp(let bringUp):
+            bringUp.beginsSessionFromRest
+        case .capturingSnapshot, .copyingOut:
+            true
+        case .pausing, .resuming, .saving, .deletingSnapshot, .attachingUSB, .detachingUSB,
+            .reconcilingMedia, .forceStopping, .discardingSavedState, .deleting,
+            .creatingStorageDisk, .removingStorageDisk, .creatingRemovableMedia:
+            false
+        }
+    }
 }
 
 /// An operation that brings no guest up — the kinds ``VMActivity``'s generic

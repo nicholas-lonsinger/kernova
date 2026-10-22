@@ -475,7 +475,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let icon = NSImageView(
             image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: "")
         )
-        icon.contentTintColor = .systemOrange
+        icon.contentTintColor = Caution.color
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: text)

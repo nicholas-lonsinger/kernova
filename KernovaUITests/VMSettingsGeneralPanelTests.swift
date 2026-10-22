@@ -585,7 +585,9 @@ struct VMSettingsGeneralPanelTests {
 
     @Test("Turning the mode on defaults the baseline to the current snapshot")
     func ephemeralToggleDefaultsToCurrent() {
-        let (vc, instance) = makeEphemeralController(snapshotCount: 2, ephemeral: false)
+        // Stopped on cold snapshots, it rests on the baseline: nothing to confirm.
+        let (vc, instance) = makeEphemeralController(
+            snapshotCount: 2, ephemeral: false, kind: .cold)
         guard let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view) else {
             Issue.record("Expected an Ephemeral Mode switch")
             return
@@ -598,6 +600,19 @@ struct VMSettingsGeneralPanelTests {
         #expect(
             instance.hostState.ephemeralBaselineSnapshotID
                 == instance.snapshotManifest.currentID)
+    }
+
+    @Test(
+        "The toggle cautions that turning it on reverts the VM now exactly while it rests off the baseline",
+        arguments: [VMSnapshotKind.warm, .cold])
+    func ephemeralToggleCautionsWhileOffTheBaseline(kind: VMSnapshotKind) {
+        // Stopped with no suspend slot: off a warm baseline, on a cold one.
+        let (vc, instance) = makeEphemeralController(snapshotCount: 1, ephemeral: false, kind: kind)
+        let baseline = instance.snapshotManifest.snapshots[0]
+
+        #expect(
+            visibleLabel(EphemeralModeCopy.revertsNowCaption(baseline: baseline), in: vc.view)
+                == (kind == .warm))
     }
 
     @Test("Turning the mode off clears the baseline")
@@ -617,7 +632,8 @@ struct VMSettingsGeneralPanelTests {
 
     @Test("Choosing another snapshot moves the baseline")
     func ephemeralBaselineSelectionWritesConfig() {
-        let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
+        let (vc, instance) = makeEphemeralController(
+            snapshotCount: 3, ephemeral: true, kind: .cold)
         guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
             Issue.record("Expected a Baseline snapshot popup")
             return

@@ -304,7 +304,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                 addFullWidthBanner(
                     makeGroupedFormBanner(
                         symbolName: "exclamationmark.triangle.fill",
-                        tint: .systemYellow,
+                        tint: Caution.color,
                         message: message
                     ))
             }
@@ -406,7 +406,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             addFullWidthBanner(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
-                    tint: .systemYellow,
+                    tint: Caution.color,
                     message: subject.map { "\($0) is already downloaded." } ?? "A file is already at this location.",
                     trailingButtons: [useExisting, replace]
                 ))
@@ -439,7 +439,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             addFullWidthBanner(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
-                    tint: .systemYellow,
+                    tint: Caution.color,
                     message:
                         "The file already here is \(found.summary), not build \(expected). Using it installs \(found.summary).",
                     trailingButtons: [anyway, replace]
@@ -450,7 +450,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             addFullWidthBanner(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
-                    tint: .systemYellow,
+                    tint: Caution.color,
                     message: message,
                     trailingButtons: [replace]
                 ))

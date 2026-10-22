@@ -566,9 +566,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     ///
     /// Built per use rather than stored: the confirmation alert holds its
     /// `refresh` closure across the sheet.
-    private var passthroughSetting: ClipboardPassthroughSetting? {
+    private var passthroughWrite: ConsentedSettingWrite? {
         guard let viewModel else { return nil }
-        return ClipboardPassthroughSetting(
+        return ConsentedSettingWrite(
             instance: instance, viewModel: viewModel,
             refresh: { [weak self] in self?.updatePassthroughChrome() })
     }
@@ -576,7 +576,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Turning it off is immediate; turning it on confirms first, on this
     /// window.
     @objc private func passthroughToggled() {
-        passthroughSetting?.set(.passthrough(passthroughSwitch.state == .on), confirmingIn: view.window)
+        passthroughWrite?.write(
+            VMConfigurationKeyRegistry.clipboardPassthrough.assigning(passthroughSwitch.state == .on),
+            confirmingIn: view.window)
     }
 
     /// Pulls the representations the window renders richly, when it is visible.

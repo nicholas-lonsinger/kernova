@@ -31,7 +31,8 @@ struct VMLibraryViewModelEphemeralTests {
     /// captured, and answers the pair.
     private func seedVM(
         named name: String, ephemeral: Bool, storage: MockVMStorageService,
-        snapshots: MockVMBundleMachineFiles, baselineKind: VMSnapshotKind = .warm
+        snapshots: MockVMBundleMachineFiles, baselineKind: VMSnapshotKind = .warm,
+        offBaseline: Bool = false
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
             name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -49,6 +50,14 @@ struct VMLibraryViewModelEphemeralTests {
             hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
             storage.setHostState(hostState, at: bundleURL)
         }
+        // At its baseline as the load finds it, so the launch check owes
+        // nothing: a warm baseline's own saved state is the slot.
+        if baselineKind == .warm, !offBaseline {
+            let layout = VMBundleLayout(bundleURL: bundleURL)
+            try layout.writeCaptured(VMBundleLayout.saveFilePathForTesting, ofSnapshot: baseline.id)
+            try layout.installCaptured(
+                VMBundleLayout.saveFilePathForTesting, fromSnapshot: baseline.id)
+        }
         storage.files.setManifest(
             VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), at: bundleURL)
         // What each snapshot's own config.json holds, so a revert has something
@@ -65,9 +74,15 @@ struct VMLibraryViewModelEphemeralTests {
     /// `ephemeral` decides whether the first VM's mode is on; `phase` is where
     /// it rests once loaded. `secondVM` adds a second, always-ephemeral VM, for
     /// the cases that turn on the two being tracked apart.
+    ///
+    /// With `offBaseline`, the first VM's warm baseline is seeded without the
+    /// suspend slot a VM resting on it holds — what a session Kernova died
+    /// under leaves — and the VM is left where the load left it; `heldElsewhere`
+    /// has another copy of Kernova hold its bundle through the load.
     private func makeHarness(
         ephemeral: Bool = true, phase: VMLifecyclePhase = .running(sessionID: UUID()),
-        secondVM: Bool = false, baselineKind: VMSnapshotKind = .warm
+        secondVM: Bool = false, baselineKind: VMSnapshotKind = .warm,
+        offBaseline: Bool = false, heldElsewhere: Bool = false
     ) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
@@ -75,7 +90,8 @@ struct VMLibraryViewModelEphemeralTests {
 
         let first = try seedVM(
             named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots,
-            baselineKind: baselineKind)
+            baselineKind: baselineKind, offBaseline: offBaseline)
+        if heldElsewhere { storage.files.holdElsewhere(try storage.bundleURL(for: first.config)) }
         let second =
             secondVM
             ? try seedVM(named: "Sandbox", ephemeral: true, storage: storage, snapshots: snapshots)
@@ -106,18 +122,28 @@ struct VMLibraryViewModelEphemeralTests {
         await viewModel.loadVMs()
         let instance = try #require(
             viewModel.instances.first { $0.configuration.id == first.config.id })
-        instance.activity.placeForTesting(phase)
         // A suspension is a slot on disk, not a phase name: every predicate the
-        // discard paths read asks the file.
-        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
-        let other = second.flatMap { seeded in
-            viewModel.instances.first { $0.configuration.id == seeded.config.id }
+        // discard paths read asks the file. Any other phase holds none — a
+        // session that came up from the baseline's slot consumed it.
+        if !offBaseline { try Self.rest(instance, at: phase) }
+        let other = try second.flatMap { seeded in
+            try viewModel.instances.first { $0.configuration.id == seeded.config.id }.map {
+                try Self.rest($0, at: .stopped)
+                return $0
+            }
         }
 
         return Harness(
             viewModel: viewModel, storage: storage, virtualization: virtualization,
             snapshots: snapshots, instance: instance, baseline: first.baseline,
             later: first.later, other: other, otherBaseline: second?.baseline)
+    }
+
+    /// Places `instance` at `phase` with the suspend slot that phase holds.
+    private static func rest(_ instance: VMInstance, at phase: VMLifecyclePhase) throws {
+        try? FileManager.default.removeItem(at: instance.bundleLayout.saveFileURL)
+        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
+        instance.activity.placeForTesting(phase)
     }
 
     /// Awaits every revert a power-off started, if it started any.
@@ -350,7 +376,8 @@ struct VMLibraryViewModelEphemeralTests {
 
     @Test("Start from the app is refused, under its own title, while the baseline's settings can't be read")
     func startRefusedWhileTheBaselineIsUnreadable() async throws {
-        let harness = try await makeHarness(phase: .stopped)
+        // Stopped at a cold baseline: on it, so the start owes no revert first.
+        let harness = try await makeHarness(phase: .stopped, baselineKind: .cold)
         let instance = harness.instance
         let config = VMConfiguration(
             name: "Throwaway", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
@@ -373,6 +400,38 @@ struct VMLibraryViewModelEphemeralTests {
             config, id: harness.baseline.id, at: instance.bundleURL)
         await harness.viewModel.start(instance)
         try await waitForChange { instance.status == .running }
+    }
+
+    // MARK: - A session Kernova died under
+
+    @Test("A VM a session left off its baseline reverts as the library loads")
+    func loadRevertsAVMLeftOffItsBaseline() async throws {
+        let harness = try await makeHarness(offBaseline: true)
+
+        #expect(harness.instance.status == .restoring)
+        await settleEphemeralRevert(harness)
+
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+        #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
+        #expect(harness.instance.status == .suspended)
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
+    @Test("A VM another copy of Kernova holds is left as it stands at load")
+    func loadLeavesAVMAnotherCopyHolds() async throws {
+        let harness = try await makeHarness(offBaseline: true, heldElsewhere: true)
+
+        #expect(harness.instance.heldByAnotherCopy)
+        #expect(!harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+    }
+
+    @Test("A VM at its baseline reverts nothing as the library loads")
+    func loadLeavesAVMAtItsBaseline() async throws {
+        let harness = try await makeHarness(phase: .suspended)
+
+        #expect(!harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
     // MARK: - Suspend

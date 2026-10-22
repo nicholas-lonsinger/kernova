@@ -5236,10 +5236,12 @@ struct VMLibraryViewModelTests {
             startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
             lastFullscreenDisplayID: 4_280_803_137, agentInstallNudgeDismissed: true)
         sourceHostState.applyEphemeralMode(enabled: true, baseline: baseline)
+        // Stopped on a cold baseline is resting on it, so the copy owes no
+        // revert first.
         let instance = viewModel.library.registerFixture(
             name: "Original", hostState: sourceHostState,
             snapshots: VMSnapshotManifest(
-                snapshots: [VMSnapshot(id: baseline, name: "Baseline", macAddress: nil)],
+                snapshots: [VMSnapshot(id: baseline, name: "Baseline", kind: .cold, macAddress: nil)],
                 currentID: baseline))
         instance.activity.placeForTesting(.stopped)
 
@@ -5269,8 +5271,8 @@ struct VMLibraryViewModelTests {
         sourceHostState.applyEphemeralMode(enabled: true, baseline: baseline)
         let manifest = VMSnapshotManifest(
             snapshots: [
-                VMSnapshot(id: baseline, name: "Baseline", macAddress: nil),
-                VMSnapshot(id: later, name: "Later", macAddress: nil),
+                VMSnapshot(id: baseline, name: "Baseline", kind: .cold, macAddress: nil),
+                VMSnapshot(id: later, name: "Later", kind: .cold, macAddress: nil),
             ],
             currentID: later)
         let instance = viewModel.library.registerFixture(

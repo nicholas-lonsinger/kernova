@@ -93,6 +93,15 @@ package final class VMActivity {
     /// Ephemeral Mode VM's baseline revert.
     @ObservationIgnored var onPoweredOff: (@MainActor () -> [VMFollowUp])?
 
+    /// Fired when this copy has just taken the run lock of a VM at rest and
+    /// re-read its bundle — when no session of the VM is live in any copy —
+    /// answering the restorations what the bundle holds owes, which run before
+    /// anything is decided against the VM (``restoreIfOwed()``).
+    ///
+    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler answers the baseline
+    /// revert an Ephemeral Mode VM owes a session that ended without one.
+    @ObservationIgnored var onRunLockTaken: (@MainActor () -> [VMFollowUp])?
+
     /// Fired on the edge where this VM becomes something a device can be
     /// attached to — ``attachableSessionID`` going from `nil` to naming a
     /// session — so it fires once per session, answering the follow-ups the
@@ -122,6 +131,20 @@ package final class VMActivity {
     /// waits on, in arrival order — queued by the step that settles the VM
     /// after that session is gone.
     @ObservationIgnored private var sessionEndFollowUps: [(session: UUID, followUp: VMFollowUp)] = []
+
+    /// The outcome of the last restoration the drain admitted, which
+    /// ``restorationInFlight`` matches against the operation holding the VM.
+    @ObservationIgnored private weak var admittedRestoration: VMOutcome?
+
+    /// The outcome of the restoration holding the VM — a
+    /// ``VMFollowUp/Rank/restoration`` follow-up the drain admitted — or `nil`
+    /// while anything else holds it, or nothing does.
+    var restorationInFlight: VMOutcome? {
+        guard let admittedRestoration, phase.operation?.outcome === admittedRestoration else {
+            return nil
+        }
+        return admittedRestoration
+    }
 
     /// Queues `followUp` and, on a settled VM, drains it at once.
     ///
@@ -204,6 +227,7 @@ package final class VMActivity {
             }
             do {
                 try head.admit(head.outcome)
+                if head.rank == .restoration { admittedRestoration = head.outcome }
             } catch {
                 head.outcome.resolve(.failure(error))
             }
@@ -637,23 +661,27 @@ package final class VMActivity {
     }
 
     /// The one admission step every operation takes, in one synchronous step:
-    /// takes the run lock of a VM at rest and re-reads its bundle, decides
-    /// against what that read found, reserves what `kind` claims beyond this
-    /// VM, and commits — answering the context the committed operation's body
-    /// acts with.
+    /// takes the run lock of a VM at rest and re-reads its bundle — running
+    /// first, when `kind` carries the guest's files forward, the restorations
+    /// that read shows the VM owes — decides against what that left, reserves
+    /// what `kind` claims beyond this VM, and commits — answering the context
+    /// the committed operation's body acts with.
     ///
     /// The committed operation resolves `outcome`.
     ///
     /// Throws, committing nothing and letting go of a lock it took, when the
     /// request is refused — as ``VMAdmission/Refusal/heldByAnotherCopy`` when
-    /// another copy of Kernova holds the lock.
+    /// another copy of Kernova holds the lock, as busy with the restoration
+    /// that now holds the VM, and with what refused a restoration that could
+    /// not begin.
     private func admit(
         _ kind: VMOperationKind, origin: VMRequestOrigin,
         identity: VMIdentityOverride = .unavailable, outcome: VMOutcome
     ) throws -> VMOperationContext {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
-        let tookLock = try takeRunLock(on: owner)
+        let tookLock = try takeRunLock(
+            on: owner, runningOwedRestorations: kind.carriesGuestFilesForward)
         do {
             // The lock attempt just made is read rather than probed again: a
             // hold that ended since would admit a VM this copy does not hold.
@@ -670,13 +698,20 @@ package final class VMActivity {
 
     /// Takes the run lock of a VM at rest that holds none, then re-reads its
     /// bundle and where it rests — what another copy may have changed while
-    /// this one held nothing — answering whether it took one.
+    /// this one held nothing — answering whether the caller holds a lock it
+    /// took, which it lets go of when its request is refused.
     ///
     /// A lock another copy holds is recorded as ``VMRunLockHold/anotherCopy``,
     /// which the decision that follows refuses. A VM already holding the lock
     /// — an operation an ending's hook begins — keeps it and re-reads nothing:
     /// no other copy can have written its bundle since.
-    private func takeRunLock(on owner: VMInstance) throws -> Bool {
+    ///
+    /// With `runningOwedRestorations`, the restorations ``onRunLockTaken``
+    /// answers run next, under this lock: one admitted holds the VM and keeps
+    /// the lock, and one that could not begin throws what refused it.
+    private func takeRunLock(
+        on owner: VMInstance, runningOwedRestorations: Bool
+    ) throws -> Bool {
         guard phase.isAtRest, !hold.isThisCopy else { return false }
         guard let lock = try owner.bundle.lockRun() else {
             setHold(.anotherCopy)
@@ -685,12 +720,45 @@ package final class VMActivity {
         setHold(.thisCopy(lock))
         do {
             try owner.bundle.refresh()
+            reconcileRest()
+            if runningOwedRestorations { try runOwedRestorations() }
         } catch {
-            setHold(.none)
+            if phase.isAtRest { setHold(.none) }
             throw error
         }
-        reconcileRest()
-        return true
+        return phase.isAtRest
+    }
+
+    /// Queues and drains what ``onRunLockTaken`` answers, throwing what
+    /// refused the first one that could not begin.
+    private func runOwedRestorations() throws {
+        let owed = onRunLockTaken?() ?? []
+        guard !owed.isEmpty else { return }
+        enqueue(owed)
+        drain()
+        for restoration in owed {
+            if case .failure(let error)? = restoration.outcome.result { throw error }
+        }
+    }
+
+    /// Takes the run lock of a VM at rest that no copy holds and runs the
+    /// restorations its bundle shows it owes (``onRunLockTaken``), then lets
+    /// the lock go unless one of them now holds the VM — so a VM a session left
+    /// off its Ephemeral baseline is put back before anything asks for it.
+    ///
+    /// A VM another copy holds is left as it stands, and recorded held. A
+    /// restoration that could not begin reports itself, as every follow-up
+    /// nobody waits on does.
+    func restoreIfOwed() {
+        guard let owner else { return }
+        do {
+            if try takeRunLock(on: owner, runningOwedRestorations: true) { setHold(.none) }
+        } catch {
+            logger.log(
+                .warning,
+                "Could not check whether '\(self.name, privacy: .public)' owes a restoration: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     /// Lets go of the run lock once the VM rests or is removed — the other

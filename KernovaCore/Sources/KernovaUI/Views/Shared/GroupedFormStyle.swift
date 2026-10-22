@@ -625,6 +625,13 @@ final class GroupedFormStateNote: NSTextField {
         self.init(content: { isShown() ? text : nil })
     }
 
+    /// A note in the caution color, warning that a change discards something.
+    static func caution(_ content: @escaping @MainActor () -> String?) -> GroupedFormStateNote {
+        let note = GroupedFormStateNote(content: content)
+        note.textColor = Caution.color
+        return note
+    }
+
     func refresh() {
         guard let text = content() else {
             isHidden = true

@@ -350,6 +350,35 @@ struct VMBundleMachineFilesTests {
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
     }
 
+    /// What ``VMInstance/restsOff(_:)`` reads a bundle by: a real capture and
+    /// a real revert keep each file's size and modification date, and a
+    /// guest's write after the capture does not.
+    @Test("A revert leaves the bundle on an untouched copy of the snapshot, which a guest write then leaves")
+    func revertLeavesAnUntouchedCopy() throws {
+        let fixture = try makeFixture(additionalDiskID: UUID())
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        let snapshot = VMSnapshot(name: "Clean", kind: .warm, macAddress: nil)
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshot.id,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshot.id,
+            relativePaths: prepared.relativePaths)
+        try Data("captured memory".utf8).write(to: prepared.saveFileURL)
+        // The session after the capture: the guest writes, and suspends.
+        for path in prepared.relativePaths { try fixture.layout.writeAsGuest(path) }
+        try Data("own memory".utf8).write(to: fixture.layout.saveFileURL)
+        #expect(!fixture.layout.holdsUntouchedCopy(of: snapshot, comparing: prepared.relativePaths))
+
+        let plan = try store.planRestore(
+            bundleURL: fixture.bundleURL, snapshotID: snapshot.id, kind: .warm)
+        try restore(with: store, fixture, snapshotID: snapshot.id, plan: plan)
+
+        #expect(fixture.layout.holdsUntouchedCopy(of: snapshot, comparing: prepared.relativePaths))
+        try fixture.layout.writeAsGuest(fixture.layout.mainDiskPathForTesting)
+        #expect(!fixture.layout.holdsUntouchedCopy(of: snapshot, comparing: prepared.relativePaths))
+    }
+
     // MARK: - Cold snapshots
 
     @Test("A snapshot taken while stopped plans a restore without a saved state")

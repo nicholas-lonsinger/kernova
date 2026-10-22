@@ -49,6 +49,13 @@ package enum EphemeralModeCopy {
             : "Take a snapshot first to use as the baseline."
     }
 
+    /// The caution under the toggle while turning the mode on would revert
+    /// the virtual machine, resting off `baseline`, to it now.
+    package static func revertsNowCaption(baseline: VMSnapshot) -> String {
+        "Turning it on reverts the virtual machine to \u{201C}\(baseline.name)\u{201D} now, "
+            + "discarding its current state."
+    }
+
     /// The Take Snapshot sheet's note when its capture turns the mode on,
     /// naming where a `kind` baseline leaves the VM.
     package static func baselineSheetNote(for kind: VMSnapshotKind) -> String {

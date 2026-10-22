@@ -61,6 +61,13 @@ enum StatusColor {
     static let error = NSColor.systemRed
 }
 
+/// The color of a caution: the warning triangle a banner, glyph or inline
+/// note carries, and the text of a note warning that a change discards
+/// something.
+enum Caution {
+    static let color = NSColor.systemYellow
+}
+
 /// Shared text styles.
 enum Typography {
     /// Section and page headings — `.title2` at `.semibold`.

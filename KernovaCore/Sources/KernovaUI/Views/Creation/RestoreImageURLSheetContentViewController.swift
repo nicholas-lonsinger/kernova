@@ -266,7 +266,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
         setResult([
             makeGroupedFormBanner(
                 symbolName: "exclamationmark.triangle.fill",
-                tint: .systemYellow,
+                tint: Caution.color,
                 message: message
             )
         ])
@@ -288,7 +288,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
             rows.append(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
-                    tint: .systemYellow,
+                    tint: Caution.color,
                     message:
                         "The filename says macOS \(version), which is newer than this Mac. If that's right, the install will fail."
                 ))

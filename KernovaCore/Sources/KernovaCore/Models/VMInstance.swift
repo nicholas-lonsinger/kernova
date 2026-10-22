@@ -662,6 +662,43 @@ package final class VMInstance {
         return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
     }
 
+    /// `true` when this VM rests on files a guest wrote since `baseline` — the
+    /// state a revert to it would discard — rather than on that snapshot's own
+    /// copies or on a suspended session of its own.
+    ///
+    /// Read from the files alone, so it holds whatever ended the session: a
+    /// suspend slot that is not the baseline's copy is a session the VM parks,
+    /// and owes nothing; otherwise a warm baseline's slot missing, or any
+    /// guest-written file (``VMBundleItems/capturedRelativePaths(for:layout:)``)
+    /// differing from the baseline's copy, is off it
+    /// (``VMBundleLayout/holdsUntouchedCopy(of:comparing:)``).
+    package func restsOff(_ baseline: VMSnapshot) -> Bool {
+        guard activity.isAtRest else { return false }
+        let layout = bundleLayout
+        if layout.hasSaveFile, !layout.saveFileIsCopyOfSnapshot(id: baseline.id) { return false }
+        return !layout.holdsUntouchedCopy(
+            of: baseline,
+            comparing: VMBundleItems.capturedRelativePaths(for: configuration, layout: layout))
+    }
+
+    /// The snapshot turning Ephemeral Mode on would revert this VM to now: the
+    /// baseline the enable pins, while the VM rests off it — `nil` while the
+    /// mode is on, or turning it on discards nothing.
+    package var ephemeralEnableRevertsTo: VMSnapshot? {
+        guard !hostState.ephemeralModeEnabled,
+            let id = snapshotManifest.defaultEphemeralBaseline(
+                preferring: hostState.ephemeralBaselineSnapshotID),
+            let baseline = snapshotManifest.snapshot(id: id), restsOff(baseline)
+        else { return nil }
+        return baseline
+    }
+
+    /// ``restsOff(_:)`` for the snapshot Ephemeral Mode returns this VM to —
+    /// a session that ended without that revert, or a revert cut short.
+    var restsOffEphemeralBaseline: Bool {
+        ephemeralBaselineSnapshot.map(restsOff) ?? false
+    }
+
     /// What the stop verb does to the saved state this VM holds, `nil` when
     /// it holds none — the one answer the stop and every judgment of where it
     /// leaves the VM read.
