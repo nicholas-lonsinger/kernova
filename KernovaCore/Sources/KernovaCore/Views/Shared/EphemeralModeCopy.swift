@@ -57,7 +57,7 @@ package enum EphemeralModeCopy {
     }
 
     /// The caution beside the toggle while turning the mode on would pin
-    /// `baseline` — every case its confirmation asks about.
+    /// `baseline`.
     package static func enableCaution(baseline: VMSnapshot) -> String {
         "Once it\u{2019}s on, every shutdown returns the virtual machine to "
             + "\u{201C}\(baseline.name)\u{201D}, discarding everything changed since that "

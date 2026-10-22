@@ -741,3 +741,30 @@ extension VMMemorySize {
         VMMemorySize(mebibytes: mebibytes + VMMemorySize.gibibytes(gibibytes).mebibytes)
     }
 }
+
+extension VMLifecycleCoordinator {
+    /// ``launchTakeSnapshot(_:mode:snapshot:resolving:record:)`` awaited,
+    /// answering the snapshot that landed — for a test that drives a capture
+    /// to its end.
+    @MainActor
+    func takeSnapshot(
+        _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
+        record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
+    ) async throws -> VMSnapshot {
+        let outcome = VMOutcome()
+        let landed = LandedSnapshot()
+        try launchTakeSnapshot(instance, mode: mode, snapshot: snapshot, resolving: outcome) {
+            permit, captured in
+            try record(permit, captured)
+            landed.snapshot = captured
+        }
+        try await outcome.value()
+        return try #require(landed.snapshot)
+    }
+}
+
+/// The snapshot a capture listed, set inside the capture operation.
+@MainActor
+private final class LandedSnapshot {
+    var snapshot: VMSnapshot?
+}

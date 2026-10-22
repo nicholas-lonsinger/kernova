@@ -175,16 +175,9 @@ final class VMLifecycleCoordinator {
     /// The accessories the write ejects stay off, on both outcomes: the guest
     /// is going away, and a suspend that fails takes the session down with it,
     /// so there is no guest left to put anything back on.
-    ///
-    /// The session parks in the slot as it is, so the suspend settles it
-    /// (``VMHostState/hasUnsettledSession``) as its last write, once the slot is
-    /// complete.
     func save(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
         try await instance.activity.perform(.saving, origin: origin) { context in
-            let ending = try await virtualizationService.save(instance, context)
-            guard case .rest = ending else { return ending }
-            try context.permit.bundle.commitHostState { $0.hasUnsettledSession = false }
-            return ending
+            try await virtualizationService.save(instance, context)
         }
     }
 
@@ -203,21 +196,30 @@ final class VMLifecycleCoordinator {
     /// delay nothing bounds, and that arrival follows the attach to this VM.
     /// `record` that throws leaves nothing behind: unlisted files are files no
     /// surface can reach or remove, so the capture is undone.
-    func takeSnapshot(
+    ///
+    /// Admitted and committed before this returns, its end resolving
+    /// `outcome`; `record` is how the caller learns the snapshot that landed.
+    func launchTakeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
-        record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
-    ) async throws -> VMSnapshot {
-        try await instance.activity.captureSnapshot(mode) { context in
+        resolving outcome: VMOutcome,
+        record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
+    ) throws {
+        try instance.activity.launchCaptureSnapshot(mode, resolving: outcome) {
+            [virtualizationService] context in
             let ending = try await virtualizationService.takeSnapshot(
                 instance, context, snapshot: snapshot)
-            guard case .rest(let rest, let captured) = ending else { return ending }
-            do {
-                try record(context.operation.permit, captured)
-            } catch {
-                await context.operation.bundle.removeSnapshotDirectory(captured.id)
+            switch ending {
+            case .failed(let rest, let error):
                 return .failed(rest, error)
+            case .rest(let rest, let captured):
+                do {
+                    try record(context.operation.permit, captured)
+                } catch {
+                    await context.operation.bundle.removeSnapshotDirectory(captured.id)
+                    return .failed(rest, error)
+                }
+                return .rest(rest, ())
             }
-            return ending
         }
     }
 
@@ -231,10 +233,9 @@ final class VMLifecycleCoordinator {
     /// resume after them failed; a throw from it fails the revert.
     ///
     /// The VM's session is marked unsettled (``VMHostState/hasUnsettledSession``)
-    /// before the first file is replaced, and settled as the revert's last
-    /// write once every file has landed and no session resumed on them — so a
-    /// revert cut short is owed again, and one that fails to mark replaces
-    /// nothing.
+    /// before the first file is replaced, and recorded settled once every file
+    /// has landed — so a revert cut short is owed again, and one that fails to
+    /// mark replaces nothing.
     @discardableResult
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
@@ -252,7 +253,7 @@ final class VMLifecycleCoordinator {
             let ending = try await virtualizationService.revertToSnapshot(
                 instance, context,
                 commitConfiguration: { permit, plan in
-                    try permit.bundle.commitHostState { $0.hasUnsettledSession = true }
+                    try context.bringUp.operation.changingFiles()
                     try commitConfiguration(permit, plan)
                 })
             let rest: VMOperationRest
@@ -268,12 +269,7 @@ final class VMLifecycleCoordinator {
             }
             do {
                 try landed(context.bringUp.operation.permit)
-                // A session the revert resumed is unsettled from here on.
-                if !instance.hasLiveVirtualMachine {
-                    try context.bringUp.operation.permit.bundle.commitHostState {
-                        $0.hasUnsettledSession = false
-                    }
-                }
+                context.bringUp.operation.filesLanded()
             } catch {
                 return .failed(rest, error)
             }

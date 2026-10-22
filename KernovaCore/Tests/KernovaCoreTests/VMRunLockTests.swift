@@ -61,7 +61,9 @@ struct VMRunLockTests {
     /// Brings `instance` up live through a real bring-up.
     private func startLive(_ instance: VMInstance) async throws {
         try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
-            context.bringUp.bindSessionForTesting(UUID())
+            try await context.bringUp.operation.executingGuest {
+                context.bringUp.bindSessionForTesting(UUID())
+            }
             return .rest(.live(.running), ())
         }.value()
     }

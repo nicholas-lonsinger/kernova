@@ -230,6 +230,10 @@ package struct VMOperation: Sendable, Equatable {
     /// rather than being refused as busy.
     let restoresEphemeralBaseline: Bool
 
+    /// What the operation has done to its VM's session changes so far, which
+    /// its ending settles (``VMHostState/hasUnsettledSession``).
+    var sessionChanges: VMSessionChanges = .untouched
+
     init(
         kind: VMOperationKind, startedFrom: VMLifecyclePhase,
         sessionState: VMOperationSessionState, outcome: VMOutcome,
@@ -266,6 +270,37 @@ package struct VMOperation: Sendable, Equatable {
             return VMSessionEnd.poweredOff.rest.phase(slotOnDisk: slotOnDisk)
         case .live, .none:
             return startedFrom
+        }
+    }
+}
+
+/// What an operation has done to the changes a guest session makes to its
+/// VM's files, recorded as it happens — through ``VMOperationContext`` — and
+/// settled at the operation's ending, the one place that clears
+/// ``VMHostState/hasUnsettledSession``.
+enum VMSessionChanges: Sendable, Equatable {
+    /// Nothing: the ending leaves the marker as it stands.
+    case untouched
+    /// The marker is committed and the guest is about to execute; an ending
+    /// that never saw it execute retracts the mark, since nothing it marked
+    /// happened.
+    case guestStarting
+    /// The guest executed on the bundle's files, so its session's end is what
+    /// settles them.
+    case guestExecuted
+    /// A revert began replacing the bundle's files, which stay unsettled until
+    /// every one has landed.
+    case filesChanging
+    /// A revert's files all landed and no session resumed on them: settled.
+    case filesLanded
+    /// A complete suspend slot holds the session, which is kept: settled.
+    case parked
+
+    /// Whether the ending clears the marker.
+    var settles: Bool {
+        switch self {
+        case .guestStarting, .filesLanded, .parked: true
+        case .untouched, .guestExecuted, .filesChanging: false
         }
     }
 }

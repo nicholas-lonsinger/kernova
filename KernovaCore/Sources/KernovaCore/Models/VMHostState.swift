@@ -147,9 +147,6 @@ package struct VMHostState: Codable, Sendable, Equatable {
     mutating func arriveAsCopy() {
         startsAutomaticallyOnLaunch = false
         lastRunAt = nil
-        // A copy is taken whole or from a paused guest, as a suspend parks
-        // one: the copy keeps what it holds.
-        hasUnsettledSession = false
     }
 
     /// The host state a New Machine clone of a VM holding `source` starts

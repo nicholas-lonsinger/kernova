@@ -511,8 +511,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }
-        // Pointing the mode at a snapshot the VM rests off returns it there
-        // now, which confirms first.
+        // Every shutdown then discards what the VM holds, so this confirms
+        // first.
         ConsentedSettingWrite(
             instance: instance, viewModel: viewModel, refresh: { [weak self] in self?.refresh() }
         ).write(

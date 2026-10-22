@@ -35,11 +35,14 @@ enum VMInstanceFixture {
         let read = seed(
             name: name, guestOS: guestOS, hostState: Self.hostState(hostState, placedAt: phase),
             snapshots: snapshots, pairings: pairings, files: files, mutate: mutate)
-        return VMInstance(
+        let instance = VMInstance(
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
             hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil)
+        // A VM neither at rest nor removed holds its run lock.
+        if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
+        return instance
     }
 
     /// `hostState` as a VM placed at `phase` holds it: a phase holding a

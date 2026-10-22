@@ -499,8 +499,8 @@ extension VMSettingsViewController {
 
     /// A VM with no snapshot takes its baseline first: the enable opens the
     /// Take Snapshot sheet, and the mode turns on once that capture lands.
-    /// Otherwise the write confirms first when it returns the VM to its
-    /// baseline now.
+    /// Otherwise the write confirms first: every shutdown then discards what
+    /// the VM holds.
     private func setEphemeralMode(_ isOn: Bool) {
         guard isOn, viewModel.capabilities.ephemeralModeEnable(on: instance) == .capturingBaseline,
             viewModel.capabilities.isEphemeralModeEnableAvailable(on: instance)

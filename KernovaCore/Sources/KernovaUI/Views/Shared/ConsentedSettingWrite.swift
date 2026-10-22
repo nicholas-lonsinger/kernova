@@ -5,9 +5,9 @@ import KernovaLogging
 
 /// The one write path for a setting whose write the configuration verb may
 /// refuse without the user's consent — the clipboard flags, either of which
-/// can start passthrough running, and Ephemeral Mode, whose enable can return
-/// a VM resting off its baseline to it now — shared by every surface offering
-/// one of them.
+/// can start passthrough running, and Ephemeral Mode's switch and baseline,
+/// after which every shutdown discards what the VM holds — shared by every
+/// surface offering one of them.
 ///
 /// A refusal for consent raises its prompt as a sheet and, once confirmed,
 /// makes the same write with that consent given. A write that is refused,

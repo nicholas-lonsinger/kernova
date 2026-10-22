@@ -47,9 +47,15 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// asserted on ordering, not just on the final value.
     var configurationAtStart: VMConfiguration?
 
-    /// The host state as it stood when `start` was called — what a bring-up
-    /// commits before the guest can write anything.
+    /// The host state as it stood when the guest last began executing — what
+    /// a bring-up commits before the guest can write anything.
     private(set) var hostStateAtStart: VMHostState?
+    /// How many times a guest began executing: a boot, a restored session's
+    /// resume, a reverted session's resume.
+    private(set) var guestExecutionCount = 0
+    /// Whether the guest goes away while a suspend writes its state, as the
+    /// real one can: the session ends under the write.
+    var guestStopsDuringSave = false
 
     /// The status the bring-up running `start` was admitted from — what a
     /// caller that hands a VM off to a boot handed over.
@@ -114,15 +120,21 @@ final class MockVirtualizationService: VirtualizationProviding {
         lastStartBootIntoRecovery = derived == .recoveryBoot
         lastStartProvisioning = provisioning
         configurationAtStart = instance.configuration
-        hostStateAtStart = instance.hostState
         statusAtStart = instance.phase.operation?.startedFrom.status
         let route = startRoute ?? derived
         lastStartRoute = route
-        if derived == .restoredSavedState, let error = restoreError { throw error }
-        if let error = startErrors[instance.id] ?? startError { throw error }
-        // A restore consumes the slot it loaded, as the real one does.
+        // The boot's start, or the restored session's resume: the call VZ
+        // fails, or the one the guest first executes in.
+        try await context.bringUp.operation.executingGuest {
+            if derived == .restoredSavedState, let error = restoreError { throw error }
+            if let error = startErrors[instance.id] ?? startError { throw error }
+            hostStateAtStart = instance.hostState
+            guestExecutionCount += 1
+            context.bringUp.bindSessionForTesting(UUID())
+        }
+        // A restore consumes the slot it loaded once the guest executes on it,
+        // as the real one does.
         if route == .restoredSavedState { context.bringUp.operation.bundle.removeSaveFile() }
-        context.bringUp.bindSessionForTesting(UUID())
         return .rest(.live(.running), route)
     }
 
@@ -175,6 +187,15 @@ final class MockVirtualizationService: VirtualizationProviding {
         // The suspend slot is what makes the VM resumable, so the mock writes a
         // real one: every predicate a suspended VM is judged by reads the file.
         try VMInstanceFixture.writeSaveFile(for: instance)
+        if guestStopsDuringSave, let sessionID = context.sessionID {
+            instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
+        }
+        guard context.sessionEnd == nil else {
+            // As the real one does: the slot is however far the write got.
+            context.bundle.removeSaveFile()
+            return .rest(.afterSessionEnd, ())
+        }
+        context.parkedSession()
         context.endSession()
         return .rest(.atRest(.stopped), ())
     }
@@ -280,12 +301,18 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         guard context.resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
         // The restore of that saved state, inside the same operation.
-        if let error = resumeError {
+        do {
+            try await context.bringUp.operation.executingGuest {
+                if let error = resumeError { throw error }
+                hostStateAtStart = instance.hostState
+                guestExecutionCount += 1
+                context.bringUp.bindSessionForTesting(UUID())
+            }
+        } catch {
             return .failed(
                 .atRest(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
         context.bringUp.operation.bundle.removeSaveFile()
-        context.bringUp.bindSessionForTesting(UUID())
         return .rest(.live(.running), ())
     }
 }

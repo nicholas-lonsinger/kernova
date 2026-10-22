@@ -23,14 +23,15 @@ struct EphemeralSessionSettlementTests {
     /// as a bring-up or a suspend leaves it.
     private func makeVM(
         in harness: WiredCommandCore, baseline kind: VMSnapshotKind = .warm,
-        ephemeral: Bool = true, unsettled: Bool = false, phase: VMLifecyclePhase = .stopped
+        other otherKind: VMSnapshotKind = .cold, ephemeral: Bool = true, unsettled: Bool = false,
+        phase: VMLifecyclePhase = .stopped
     ) throws -> (instance: VMInstance, baseline: VMSnapshot, other: VMSnapshot) {
         // The newer of the two, so it is the one an enable pins.
         let baseline = VMSnapshot(
             name: "Clean", createdAt: Date(timeIntervalSince1970: 1_700_001_000), kind: kind,
             macAddress: nil)
         let other = VMSnapshot(
-            name: "Other", createdAt: Date(timeIntervalSince1970: 1_700_000_000), kind: .cold,
+            name: "Other", createdAt: Date(timeIntervalSince1970: 1_700_000_000), kind: otherKind,
             macAddress: nil)
         var hostState = ephemeral ? VMHostState.ephemeral(baseline: baseline.id) : VMHostState()
         hostState.hasUnsettledSession = unsettled
@@ -96,20 +97,69 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.hostState.hasUnsettledSession)
     }
 
-    @Test("A start whose mark cannot be written fails without starting the guest")
+    @Test("A resume whose mark cannot be written fails without the guest executing, keeping the slot")
     func failedMarkFailsTheBringUp() async throws {
         let virtualization = MockVirtualizationService()
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
-        let (instance, _, _) = try makeVM(in: harness, ephemeral: false)
+        let (instance, _, _) = try makeVM(in: harness, phase: .suspended)
         harness.storage.files.setReplaceError(
             CocoaError(.fileWriteNoPermission), for: VMBundleLayout.hostStateRelativePath)
 
         await #expect(throws: (any Error).self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+            try await harness.core.resume(.id(instance.id), consent: .none)
         }
 
-        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.guestExecutionCount == 0)
         #expect(!instance.hasLiveVirtualMachine)
+        #expect(instance.hasSaveFile)
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test(
+        "A resume whose restore fails keeps its parked session; neither the launch nor a resume reverts it"
+    )
+    func failedResumeKeepsTheParkedSession() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.restoreError = Probe()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, _, _) = try makeVM(in: harness, phase: .suspended)
+
+        await #expect(throws: (any Error).self) {
+            try await harness.core.resume(.id(instance.id), consent: .none)
+        }
+        #expect(instance.hasSaveFile)
+        #expect(!instance.hostState.hasUnsettledSession)
+
+        instance.activity.settleUnsettledSessionAtLaunch()
+        virtualization.restoreError = nil
+        try await harness.core.resume(.id(instance.id), consent: .none)
+
+        #expect(virtualization.revertCallCount == 0)
+        #expect(virtualization.lastStartRoute == .restoredSavedState)
+        #expect(instance.status == .running)
+    }
+
+    @Test(
+        "A start failing before the guest executes leaves it settled, so a revert to another snapshot holds"
+    )
+    func failedStartKeepsAnotherSnapshot() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, _, other) = try makeVM(in: harness)
+        try await harness.core.revertToSnapshot(
+            .id(instance.id), snapshot: other.id, consent: Consent([.revertToSnapshot]))
+
+        virtualization.startError = Probe()
+        await #expect(throws: (any Error).self) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        #expect(!instance.hostState.hasUnsettledSession)
+
+        virtualization.startError = nil
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [other.id])
+        #expect(virtualization.lastStartRoute == .coldBoot)
     }
 
     // MARK: - Settling
@@ -158,6 +208,42 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.phase == .stopped)
         #expect(!instance.hostState.hasUnsettledSession)
         #expect(virtualization.revertCallCount == 0)
+    }
+
+    @Test("A suspend whose session ends under the write is a session end, which reverts an Ephemeral VM")
+    func suspendLosingItsSessionReverts() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestStopsDuringSave = true
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
+
+        try await harness.core.suspend(.id(instance.id))
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A live revert to a warm snapshot whose resume fails leaves that snapshot to resume")
+    func failedResumeAfterARevertResumesThatSnapshot() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.resumeError = Probe()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, _, other) = try makeVM(
+            in: harness, other: .warm, phase: .running(sessionID: UUID()))
+
+        await #expect(throws: (any Error).self) {
+            try await harness.core.revertToSnapshot(
+                .id(instance.id), snapshot: other.id, consent: .all)
+        }
+        #expect(!instance.hostState.hasUnsettledSession)
+
+        virtualization.resumeError = nil
+        try await harness.core.resume(.id(instance.id), consent: .none)
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [other.id])
+        #expect(virtualization.lastStartRoute == .restoredSavedState)
+        #expect(instance.snapshotManifest.currentID == other.id)
     }
 
     @Test("A suspend parks the session, settling it, and nothing reverts")
@@ -319,13 +405,88 @@ struct EphemeralSessionSettlementTests {
         let virtualization = MockVirtualizationService()
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
         let (instance, baseline, _) = try makeVM(in: harness, unsettled: true)
+        // What the baseline captured differs from what the session left.
+        var captured = instance.configuration
+        captured.cpuCount = 1
+        harness.machineFiles.setCapturedConfiguration(captured, for: baseline.id)
 
-        let clone = try await harness.core.clone(
+        let summary = try await harness.core.clone(
             .id(instance.id), outcome: .exactCopy, waitForOutcome: true)
 
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
-        #expect(clone.id != instance.id)
-        #expect(harness.library.instances.contains { $0.id == clone.id })
+        let clone = try #require(harness.library.instances.first { $0.id == summary.id })
+        // The baseline's settings and its saved state, not the session's.
+        #expect(clone.configuration.cpuCount == 1)
+        #expect(clone.hasSaveFile)
+        #expect(!clone.hostState.hasUnsettledSession)
+    }
+
+    @Test("A live Exact Copy arrives settled")
+    func liveExactCopyArrivesSettled() async throws {
+        let harness = WiredCommandCore(preferences: preferences)
+        let (instance, _, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
+        #expect(instance.hostState.hasUnsettledSession)
+
+        let summary = try await harness.core.clone(
+            .id(instance.id), outcome: .exactCopy, waitForOutcome: true)
+
+        let clone = try #require(harness.library.instances.first { $0.id == summary.id })
+        #expect(!clone.hostState.hasUnsettledSession)
+        #expect(instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("An imported bundle keeps its unsettled session: an Ephemeral one reverts at its first start")
+    func importKeepsItsUnsettledSession() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let baseline = try importSource(in: harness, ephemeral: true)
+
+        _ = try await harness.core.importVM(from: baseline.source, waitForOutcome: true)
+        let imported = try #require(harness.library.instances.first)
+        #expect(imported.hostState.hasUnsettledSession)
+
+        try await harness.core.start(.id(imported.id), recovery: false, consent: .none)
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(imported.status == .running)
+    }
+
+    @Test("An imported bundle not in Ephemeral Mode is settled, reverting nothing")
+    func importOutOfEphemeralModeIsSettled() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let source = try importSource(in: harness, ephemeral: false)
+
+        _ = try await harness.core.importVM(from: source.source, waitForOutcome: true)
+        let imported = try #require(harness.library.instances.first)
+        imported.activity.settleUnsettledSessionAtLaunch()
+
+        #expect(!imported.hostState.hasUnsettledSession)
+        #expect(virtualization.revertCallCount == 0)
+    }
+
+    /// A bundle to import whose last session ended unsettled, holding a warm
+    /// snapshot — its Ephemeral baseline when `ephemeral` — answering it with
+    /// the bundle.
+    private func importSource(
+        in harness: WiredCommandCore, ephemeral: Bool
+    ) throws -> (source: URL, id: UUID) {
+        let (url, config) = try TestScratchDirectory.forCase(prefix: "Imports").importSource(
+            name: "Imported")
+        let snapshot = VMSnapshot(name: "Clean", kind: .warm, macAddress: nil)
+        let writer = VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess())
+        try writer.update(.snapshotManifest) { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
+        try writer.update(.hostState) {
+            if ephemeral { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
+            $0.hasUnsettledSession = true
+        }
+        let snapshotConfig = url.appendingPathComponent(
+            VMBundleLayout.snapshotConfigRelativePath(id: snapshot.id))
+        try FileManager.default.createDirectory(
+            at: snapshotConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try VMConfiguration.makeJSONEncoder().encode(config).write(to: snapshotConfig)
+        harness.machineFiles.setCapturedConfiguration(config, for: snapshot.id)
+        return (url, snapshot.id)
     }
 
     /// How the baseline revert a request meets in flight was started.
@@ -360,7 +521,9 @@ struct EphemeralSessionSettlementTests {
         await virtualization.waitUntilSuspended()
         #expect(instance.isHeldByRevert)
 
-        let asked = Task { @MainActor in
+        // Run to its first suspension in this turn, so what it queued is read
+        // before the revert can land.
+        let asked = Task.immediate { @MainActor in
             switch request {
             case .start:
                 try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
@@ -370,10 +533,15 @@ struct EphemeralSessionSettlementTests {
                 _ = try await harness.core.takeSnapshot(.id(instance.id), name: "After", notes: "")
             }
         }
+        // Waiting behind the revert: queued, and nothing run.
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        #expect(instance.isHeldByRevert)
+
         virtualization.resumeSuspended()
         try await stop?.value
         try await asked.value
 
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         switch request {
         case .start, .resume: #expect(instance.status == .running)
         case .takeSnapshot: #expect(instance.snapshotManifest.snapshots.count == 3)

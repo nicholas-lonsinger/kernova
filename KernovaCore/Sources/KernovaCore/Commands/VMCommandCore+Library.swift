@@ -440,6 +440,10 @@ extension VMCommandCore {
             case .exactCopy:
                 var carried = source.hostState
                 carried.arriveAsCopy()
+                // Settled whichever way the copy is taken: a live one parks a
+                // slot of the guest it paused, and one from rest copies a
+                // source its admission has already settled.
+                carried.hasUnsettledSession = false
                 hostState = carried
                 snapshotManifest = source.snapshotManifest
             }

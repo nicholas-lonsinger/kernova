@@ -91,8 +91,8 @@ package final class VMLibrary: VMAdmissionPeers {
     /// installer auto-eject.
     @ObservationIgnored var onAgentBecameCurrent: ((VMInstance) -> Void)?
 
-    /// Fires when an Ephemeral Mode VM's session is found to have ended with
-    /// its changes unsettled, answering the baseline revert that owes.
+    /// Fires when a VM's session is found to have ended with its changes
+    /// unsettled, answering the baseline revert an Ephemeral Mode VM owes.
     @ObservationIgnored var onUnsettledSession: ((VMInstance) -> [VMFollowUp])?
 
     /// Fires when an arrival settles as no VM, in the same main-actor step as
@@ -141,6 +141,8 @@ package final class VMLibrary: VMAdmissionPeers {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
             hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink)
+        // A VM neither at rest nor removed holds its run lock.
+        if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
         entries.append(.vm(instance))
         return instance
     }

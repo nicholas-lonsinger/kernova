@@ -145,10 +145,14 @@ package final class VirtualizationService {
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        let startOptions = MacOSGuestProvisioning.macOSStartOptions(
-            bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS,
-            provisioning: provisioning)
-        try await session.start(options: startOptions)
+        try await context.operation.executingGuest {
+            // Made here, so the options are sent to the session from the one
+            // region that holds them.
+            let startOptions = MacOSGuestProvisioning.macOSStartOptions(
+                bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS,
+                provisioning: provisioning)
+            try await session.start(options: startOptions)
+        }
     }
 
     /// Backoff before file-lock-contention cold-boot retry number `attempt`.
@@ -294,6 +298,7 @@ package final class VirtualizationService {
         // No sidecar metadata is needed beside the save file: removable media
         // carry stable UUIDs and storage disks stable virtio block identifiers
         // in `config`, and VZ matches both on restore.
+        context.parkedSession()
         context.endSession()
         logger.log(.notice, "Saved state for VM '\(instance.name, privacy: .public)'")
         return .rest(.atRest(.stopped), ())
@@ -658,7 +663,9 @@ package final class VirtualizationService {
         logger.log(.debug, "restoreFromSaveFile: attempting restore from save file")
         do {
             try await session.restoreMachineState(from: context.bundle.saveFileURL)
-            try await session.resume()
+            // The slot goes only once the guest executes on it, so a resume that
+            // fails — or a mark that does not land — leaves the session parked.
+            try await context.executingGuest { try await session.resume() }
             context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError
