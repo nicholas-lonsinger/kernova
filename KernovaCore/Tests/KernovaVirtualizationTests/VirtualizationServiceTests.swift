@@ -173,12 +173,28 @@ struct VirtualizationServiceTests {
 
         #expect(await session.restoredStateURLs == [original.saveFileURL])
         #expect(!movedLayout.hasSaveFile)
+        #expect(!holdsSpentSlot(movedLayout))
         #expect(original.hasSaveFile)
     }
 
     // MARK: - The unsettled-session marker on the production paths
 
     private struct Probe: Error {}
+
+    private func holdsSpentSlot(_ layout: VMBundleLayout) -> Bool {
+        FileManager.default.fileExists(atPath: layout.spentSaveFileURL.path(percentEncoded: false))
+    }
+
+    /// Makes `instance`'s bundle directory read-only, so no file in it can be
+    /// moved or removed; the returned closure puts its permissions back.
+    private static func lockBundleDirectory(of instance: VMInstance) throws -> () -> Void {
+        let bundlePath = instance.bundleURL.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: bundlePath)
+        return {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: bundlePath)
+        }
+    }
 
     /// What a session's marker read at some moment mid-operation.
     @MainActor
@@ -199,7 +215,7 @@ struct VirtualizationServiceTests {
         }.value()
     }
 
-    @Test("A restore marks its session unsettled before the guest resumes, and drops the slot after")
+    @Test("A restore marks its session unsettled and spends the slot before the guest resumes")
     func restoreMarksBeforeTheGuestResumes() async throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -208,7 +224,7 @@ struct VirtualizationServiceTests {
         await session.setBeforeResume {
             await MainActor.run {
                 record.atResume = instance.hostState.hasUnsettledSession
-                #expect(instance.hasSaveFile)
+                #expect(!instance.hasSaveFile)
             }
         }
 
@@ -217,6 +233,82 @@ struct VirtualizationServiceTests {
         #expect(record.atResume == true)
         #expect(instance.hostState.hasUnsettledSession)
         #expect(!instance.hasSaveFile)
+        #expect(!holdsSpentSlot(instance.bundleLayout))
+    }
+
+    @Test("A spend the file system refuses keeps the guest from executing")
+    func refusedSpendKeepsTheGuestFromExecuting() async throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let session = MockSnapshotSession(guestState: .paused)
+        let unlock = try Self.lockBundleDirectory(of: instance)
+        defer { unlock() }
+
+        await #expect(throws: (any Error).self) { try await restore(instance, over: session) }
+
+        #expect(!(await session.calls).contains("resume"))
+        #expect(instance.hasSaveFile)
+        #expect(!instance.hostState.hasUnsettledSession)
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("A restore whose bundle Finder moved away, unfollowed, runs no guest and leaves the slot with the bundle")
+    func restoreAfterAnUnfollowedMoveRunsNoGuest() async throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let bundleURL = instance.bundleURL
+        let moved = bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("Moved-\(UUID().uuidString).kernova", isDirectory: true)
+        let session = MockSnapshotSession(guestState: .paused)
+        // Once VZ has loaded the slot, with no rescan to follow the move.
+        await session.setAfterRestore {
+            try? FileManager.default.moveItem(at: bundleURL, to: moved)
+        }
+
+        let error = await #expect(throws: VirtualizationError.self) {
+            try await restore(instance, over: session)
+        }
+
+        guard case .restoreFailed(let underlying, _)? = error,
+            case VirtualizationError.noSaveFile = underlying
+        else {
+            Issue.record("refused with \(String(describing: error))")
+            return
+        }
+        #expect(!(await session.calls).contains("resume"))
+        #expect(VMBundleLayout(bundleURL: moved).hasSaveFile)
+    }
+
+    @Test("A session resumed from a slot rests stopped at its end even when the spent slot's removal is refused")
+    func refusedSpentSlotRemovalStillRestsStopped() async throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let session = MockSnapshotSession(guestState: .paused)
+        let unlock = UnlockBox()
+        defer { unlock.run() }
+        await session.setBeforeResume {
+            await MainActor.run { unlock.action = try? Self.lockBundleDirectory(of: instance) }
+        }
+
+        try await restore(instance, over: session)
+        unlock.run()
+        instance.handleSessionEvent(.guestDidStop)
+
+        #expect(instance.phase == .stopped)
+        #expect(!instance.hasSaveFile)
+        // Left for the launch pass.
+        #expect(holdsSpentSlot(instance.bundleLayout))
+    }
+
+    /// The permissions to put back once a test's `setBeforeResume` locked the
+    /// bundle directory.
+    @MainActor
+    private final class UnlockBox {
+        var action: (() -> Void)?
+        func run() {
+            action?()
+            action = nil
+        }
     }
 
     @Test("A restore VZ refuses fails before any mark, keeping the slot and the marker as they were")
@@ -244,6 +336,7 @@ struct VirtualizationServiceTests {
 
         #expect(!instance.hostState.hasUnsettledSession)
         #expect(instance.hasSaveFile)
+        #expect(!holdsSpentSlot(instance.bundleLayout))
     }
 
     @Test("A mark the guest never executed under is retracted to the value it replaced")

@@ -528,19 +528,29 @@ struct VMRunLockTests {
 
     // MARK: - Launch sweep
 
-    @Test("The launch sweep of revert staging skips a bundle another copy holds")
-    func stagingSweepSkipsABundleHeldElsewhere() {
+    @Test("The launch sweep of revert staging and spent suspend slots skips a bundle another copy holds")
+    func stagingSweepSkipsABundleHeldElsewhere() throws {
         let files = InMemoryVMBundleFiles()
         let store = MockVMBundleMachineFiles(files: files)
         let held = VMInstanceFixture.bundleURL(for: UUID())
         let free = VMInstanceFixture.bundleURL(for: UUID())
         files.holdElsewhere(held)
+        for bundleURL in [held, free] {
+            try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+            try Data("spent".utf8).write(to: VMBundleLayout(bundleURL: bundleURL).spentSaveFileURL)
+        }
 
-        VMBundle.Factory(machineFiles: store).reclaimRestoreStaging(
+        VMBundle.Factory(machineFiles: store).reclaimInterruptedWork(
             in: [held, free].map { VMBundleFiles(url: $0, access: files) })
 
         #expect(store.sweptStagingBundleURLs == [free])
         #expect(files.bundlesLockedByThisCopy.isEmpty)
+        func holdsSpentSlot(_ bundleURL: URL) -> Bool {
+            FileManager.default.fileExists(
+                atPath: VMBundleLayout(bundleURL: bundleURL).spentSaveFileURL.path(percentEncoded: false))
+        }
+        #expect(!holdsSpentSlot(free))
+        #expect(holdsSpentSlot(held))
     }
 
     // MARK: - Real directories

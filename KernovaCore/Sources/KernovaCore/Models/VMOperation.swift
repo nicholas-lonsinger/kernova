@@ -457,6 +457,15 @@ package enum VMOperationKind: Sendable, Equatable {
         return false
     }
 
+    /// Whether the guest this operation has execute resumes from the bundle's
+    /// suspend slot: the saved state's own, or the one a revert installed.
+    var resumesFromSaveFile: Bool {
+        switch self {
+        case .bringUp(.guestStart(.restoringSavedState)), .bringUp(.reverting(_, true)): true
+        default: false
+        }
+    }
+
     /// Whether this operation, admitted at rest, carries the guest's files
     /// forward as the bundle holds them — boots them, captures them, or copies
     /// them out — rather than replacing them, discarding them, or leaving them

@@ -660,6 +660,78 @@ struct VMBundleMachineFilesTests {
         #expect(!fixture.layout.hasSaveFile)
     }
 
+    @Test("Spending the suspend slot moves it to the spent path and answers true")
+    func spendSaveFileMovesTheSlot() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        try Data("slot".utf8).write(to: fixture.layout.saveFileURL)
+
+        #expect(try store.spendSaveFile(bundleURL: fixture.bundleURL))
+
+        #expect(!fixture.layout.hasSaveFile)
+        #expect(contents(of: fixture.layout.spentSaveFileURL) == "slot")
+    }
+
+    @Test("Spending answers false and touches nothing when the bundle holds no slot")
+    func spendSaveFileWithoutASlot() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+
+        #expect(try !store.spendSaveFile(bundleURL: fixture.bundleURL))
+
+        #expect(!fixture.layout.hasSaveFile)
+        #expect(contents(of: fixture.layout.spentSaveFileURL) == nil)
+    }
+
+    @Test("Spending replaces a spent slot already there")
+    func spendSaveFileReplacesAnEarlierSpentSlot() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        try Data("earlier".utf8).write(to: fixture.layout.spentSaveFileURL)
+        try Data("slot".utf8).write(to: fixture.layout.saveFileURL)
+
+        #expect(try store.spendSaveFile(bundleURL: fixture.bundleURL))
+
+        #expect(!fixture.layout.hasSaveFile)
+        #expect(contents(of: fixture.layout.spentSaveFileURL) == "slot")
+    }
+
+    @Test("Reinstating moves the spent slot back to the slot path")
+    func reinstateSpentSaveFileMovesItBack() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        try Data("slot".utf8).write(to: fixture.layout.saveFileURL)
+        _ = try store.spendSaveFile(bundleURL: fixture.bundleURL)
+
+        try store.reinstateSpentSaveFile(bundleURL: fixture.bundleURL)
+
+        #expect(contents(of: fixture.layout.saveFileURL) == "slot")
+        #expect(contents(of: fixture.layout.spentSaveFileURL) == nil)
+    }
+
+    @Test("Removing the spent slot deletes it, and a bundle holding none is a success")
+    func removeSpentSaveFileDeletesIt() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        try Data("spent".utf8).write(to: fixture.layout.spentSaveFileURL)
+
+        try store.removeSpentSaveFile(bundleURL: fixture.bundleURL)
+        #expect(contents(of: fixture.layout.spentSaveFileURL) == nil)
+
+        try store.removeSpentSaveFile(bundleURL: fixture.bundleURL)
+        #expect(contents(of: fixture.layout.spentSaveFileURL) == nil)
+    }
+
+    @Test("Reinstating into a bundle that is not at its URL throws without creating the bundle")
+    func reinstateSpentSaveFileCreatesNoBundle() {
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        let moved = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+        #expect(throws: (any Error).self) { try store.reinstateSpentSaveFile(bundleURL: moved) }
+
+        #expect(!FileManager.default.fileExists(atPath: moved.path(percentEncoded: false)))
+    }
+
     // MARK: - In-bundle disks
 
     @Test("An in-bundle disk is written at the path its id names, under the bundle")

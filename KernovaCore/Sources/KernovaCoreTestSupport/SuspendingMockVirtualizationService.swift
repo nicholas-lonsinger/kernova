@@ -122,7 +122,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
             if let error = startError { throw error }
             context.bringUp.bindSessionForTesting(UUID())
         }
-        if route == .restoredSavedState { context.bringUp.operation.bundle.removeSaveFile() }
         return .rest(.live(.running), route)
     }
 
@@ -155,7 +154,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
-        context.bundle.removeSaveFile()
         return .rest(.live(.running), ())
     }
 

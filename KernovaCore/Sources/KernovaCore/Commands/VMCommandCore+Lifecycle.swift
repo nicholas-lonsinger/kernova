@@ -884,15 +884,6 @@ extension VMCommandCore {
         // the button names that outcome rather than the deletion it isn't.
         let discardsSavedState = instance.holdsSuspendedSession
         let revertsInsteadOfTerminating = discardsSavedState && ephemeralBaseline != nil
-        // The file, not an inference from the phase: a live guest normally
-        // holds no slot, because a start that finds one restores it rather than
-        // booting over it and the restore consumes the file — but
-        // ``VMBundle/MachineFiles/removeSaveFile()`` reports a refusal by
-        // logging it, so a slot can outlive the restore that meant to spend it,
-        // and the VM does come back on it
-        // (``VMActivity/restingPhase(withoutSlot:)``).
-        let keepsSuspendedSession = instance.hasSaveFile
-        let suspendedSessionLost = Self.suspendedSessionLost
         let guestDataLost = "Any unsaved data inside the guest will be lost."
         let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
 
@@ -904,18 +895,11 @@ extension VMCommandCore {
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
         case (false, let baseline?):
-            // The power-off the termination causes rolls the disks back too, so
-            // a slot it would otherwise have left in place is replaced by the
-            // baseline's rather than resumed.
             message =
                 "\(terminated) It is ephemeral, so it returns to "
-                + "\u{201C}\(baseline.name)\u{201D}. "
-                + (keepsSuspendedSession ? suspendedSessionLost : guestDataLost)
+                + "\u{201C}\(baseline.name)\u{201D}. " + guestDataLost
         case (false, nil):
-            message =
-                keepsSuspendedSession
-                ? "\(terminated) Its saved state is kept, so it returns to being suspended."
-                : "\(terminated) \(guestDataLost)"
+            message = "\(terminated) \(guestDataLost)"
         }
 
         let confirmTitle: String

@@ -121,6 +121,18 @@ package protocol VMBundleMachineFileWorking: VMPlatformFileWriting {
     /// Removes the bundle's suspend slot; a bundle holding none is a success.
     func removeSaveFile(bundleURL: URL) throws
 
+    /// Moves the bundle's suspend slot to the spent path, replacing any file
+    /// already there, and answers `true`; answers `false`, touching nothing,
+    /// when no slot is at `bundleURL`. A move the file system refuses throws
+    /// and leaves the slot in place.
+    func spendSaveFile(bundleURL: URL) throws -> Bool
+
+    /// Moves the spent suspend slot back to the slot path.
+    func reinstateSpentSaveFile(bundleURL: URL) throws
+
+    /// Removes the spent suspend slot; a bundle holding none is a success.
+    func removeSpentSaveFile(bundleURL: URL) throws
+
     // MARK: In-bundle disks
 
     /// Writes a new disk image of `sizeInGB` at the in-bundle path `id` names,

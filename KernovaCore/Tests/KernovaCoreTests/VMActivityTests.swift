@@ -1066,13 +1066,6 @@ struct VMActivityTests {
             #expect(instance.activity.sessionContext == nil)
             #expect(recorder.settled == powerOffs, "\(phase) \(event)")
         }
-
-        // A slot that survived the session is what the VM comes back on.
-        let (suspending, recorder) = makeInstance(.running(sessionID: session))
-        try VMInstanceFixture.writeSaveFile(for: suspending)
-        suspending.activity.deliverSessionEvent(.guestDidStop, from: session)
-        #expect(suspending.phase == .suspended)
-        #expect(recorder.settled == 1)
     }
 
     @Test("A session end during an operation keeps the operation and marks its session ended")
