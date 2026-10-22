@@ -283,7 +283,10 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 # under a name hashed from its schemes in a Swift `Set`'s per-process order, a
 # new multi-gigabyte arena most runs; the GUI's arena, indexed while editing,
 # is no single build's index. The flags are Periphery 3.x's own plus
-# `-skipPackagePluginValidation`. Stdout carries Periphery's report alone —
+# `-skipPackagePluginValidation` and the compilation cache off: a compile the
+# cache serves writes no index unit, leaving the unit an earlier compile wrote
+# — after a revert, a cached scan reported 27 findings in code that no longer
+# existed (Xcode 27.1). Stdout carries Periphery's report alone —
 # .github/workflows/dead-code.yml greps it — so the builds write to stderr. The
 # built apps are unregistered from Launch Services on the way out, whatever
 # the outcome, so a scan's build never wins the version election.
@@ -303,7 +306,8 @@ locked-dead-code:
 			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
 			-skipPackagePluginValidation build-for-testing \
 			CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf \
-			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES >&2 || exit 1; \
+			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
+			COMPILATION_CACHE_ENABLE_CACHING=NO >&2 || exit 1; \
 	done; \
 	"$$periphery" scan --disable-update-check \
 		--index-store-path $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
