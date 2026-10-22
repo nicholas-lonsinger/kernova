@@ -118,7 +118,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
-        try await context.bringUp.operation.executingGuest {
+        try await context.bringUp.operation.executingGuest { _ in
             if let error = startError { throw error }
             context.bringUp.bindSessionForTesting(UUID())
         }

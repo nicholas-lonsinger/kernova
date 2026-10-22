@@ -49,7 +49,7 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         guestState = .paused
     }
 
-    func resumeIfPaused() async throws {
+    func resumeIfPaused(_ execution: borrowing VMGuestExecution) async throws {
         calls.append("resumeIfPaused")
         guard guestState == .paused else { return }
         guestState = .running
@@ -110,14 +110,39 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         afterRestore = work
     }
 
+    /// What the restore throws, standing in for a saved state VZ refuses.
+    private var restoreError: (any Error)?
+
+    func setRestoreError(_ error: any Error) {
+        restoreError = error
+    }
+
     func restoreMachineState(from url: URL) async throws {
         calls.append("restoreMachineState")
         restoredStateURLs.append(url)
+        if let restoreError { throw restoreError }
         await afterRestore?()
     }
 
-    func resume() async throws {
+    /// What a resume throws, standing in for a guest VZ will not resume.
+    private var resumeError: (any Error)?
+
+    func setResumeError(_ error: any Error) {
+        resumeError = error
+    }
+
+    /// Runs as a resume begins, before the guest executes — the seam a test
+    /// reads what the resume found committed through.
+    private var beforeResume: (@Sendable () async -> Void)?
+
+    func setBeforeResume(_ work: @escaping @Sendable () async -> Void) {
+        beforeResume = work
+    }
+
+    func resume(_ execution: borrowing VMGuestExecution) async throws {
         calls.append("resume")
+        await beforeResume?()
+        if let resumeError { throw resumeError }
         guestState = .running
     }
 }

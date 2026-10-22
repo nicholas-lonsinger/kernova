@@ -145,13 +145,13 @@ package final class VirtualizationService {
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        try await context.operation.executingGuest {
+        try await context.operation.executingGuest { execution in
             // Made here, so the options are sent to the session from the one
             // region that holds them.
             let startOptions = MacOSGuestProvisioning.macOSStartOptions(
                 bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS,
                 provisioning: provisioning)
-            try await session.start(options: startOptions)
+            try await session.start(options: startOptions, execution: execution)
         }
     }
 
@@ -231,7 +231,7 @@ package final class VirtualizationService {
     ) async throws -> VMOperationEnding<Void> {
         guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
         do {
-            try await session.resume()
+            try await session.resume(context.liveExecution())
         } catch {
             Self.logger.log(
                 .error,
@@ -570,6 +570,9 @@ package final class VirtualizationService {
         // where the VM rests — unless the revert goes back to being live at
         // the captured state, which only a warm snapshot captured.
         guard context.resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
+        // Landed before the resume marks the session it starts, so a resume
+        // that fails retracts to files that have landed.
+        context.bringUp.operation.filesLanded()
         do {
             try await restoreFromSaveFile(instance, context.bringUp)
         } catch {
@@ -665,7 +668,7 @@ package final class VirtualizationService {
             try await session.restoreMachineState(from: context.bundle.saveFileURL)
             // The slot goes only once the guest executes on it, so a resume that
             // fails — or a mark that does not land — leaves the session parked.
-            try await context.executingGuest { try await session.resume() }
+            try await context.executingGuest { execution in try await session.resume(execution) }
             context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError

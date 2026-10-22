@@ -82,8 +82,8 @@ package final class MacOSInstallService {
         try Task.checkCancellation()
 
         Self.logger.log(.info, "Running macOS installer...")
-        try await context.operation.executingGuest {
-            try await session.installMacOS(from: imageURL) { fraction in
+        try await context.operation.executingGuest { execution in
+            try await session.installMacOS(from: imageURL, execution: execution) { fraction in
                 Task { @MainActor in
                     progressHandler(fraction)
                 }

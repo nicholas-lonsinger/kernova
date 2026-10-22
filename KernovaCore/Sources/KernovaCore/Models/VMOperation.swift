@@ -283,8 +283,8 @@ enum VMSessionChanges: Sendable, Equatable {
     case untouched
     /// The marker is committed and the guest is about to execute; an ending
     /// that never saw it execute retracts the mark, since nothing it marked
-    /// happened.
-    case guestStarting
+    /// happened — back to the `prior` marker and the record `before` it.
+    indirect case guestStarting(prior: Bool, before: VMSessionChanges)
     /// The guest executed on the bundle's files, so its session's end is what
     /// settles them.
     case guestExecuted
@@ -296,11 +296,12 @@ enum VMSessionChanges: Sendable, Equatable {
     /// A complete suspend slot holds the session, which is kept: settled.
     case parked
 
-    /// Whether the ending clears the marker.
-    var settles: Bool {
+    /// The marker the ending writes, `nil` when it leaves it as it stands.
+    var markerAtEnding: Bool? {
         switch self {
-        case .guestStarting, .filesLanded, .parked: true
-        case .untouched, .guestExecuted, .filesChanging: false
+        case .guestStarting(let prior, let before): before.markerAtEnding ?? prior
+        case .filesLanded, .parked: false
+        case .untouched, .guestExecuted, .filesChanging: nil
         }
     }
 }

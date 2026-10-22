@@ -176,6 +176,151 @@ struct VirtualizationServiceTests {
         #expect(original.hasSaveFile)
     }
 
+    // MARK: - The unsettled-session marker on the production paths
+
+    private struct Probe: Error {}
+
+    /// What a session's marker read at some moment mid-operation.
+    @MainActor
+    private final class MarkerRecord {
+        var atResume: Bool?
+        var settlements = 0
+    }
+
+    /// Restores `instance` from its slot over `session` inside the bring-up the
+    /// VM admits, through the production restore.
+    private func restore(_ instance: VMInstance, over session: MockSnapshotSession) async throws {
+        try await instance.activity.launchStartGuest(.restoringSavedState) { context in
+            try await VirtualizationService.restoreSavedState(
+                instance, context.bringUp.operation, session: session,
+                isProtectedDataAvailable: { true })
+            context.bringUp.bindSessionForTesting(UUID())
+            return .rest(.live(.running), ())
+        }.value()
+    }
+
+    @Test("A restore marks its session unsettled before the guest resumes, and drops the slot after")
+    func restoreMarksBeforeTheGuestResumes() async throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let session = MockSnapshotSession(guestState: .paused)
+        let record = MarkerRecord()
+        await session.setBeforeResume {
+            await MainActor.run {
+                record.atResume = instance.hostState.hasUnsettledSession
+                #expect(instance.hasSaveFile)
+            }
+        }
+
+        try await restore(instance, over: session)
+
+        #expect(record.atResume == true)
+        #expect(instance.hostState.hasUnsettledSession)
+        #expect(!instance.hasSaveFile)
+    }
+
+    @Test("A restore VZ refuses fails before any mark, keeping the slot and the marker as they were")
+    func refusedRestoreLeavesTheMarkerAndSlot() async throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let session = MockSnapshotSession(guestState: .paused)
+        await session.setRestoreError(Probe())
+
+        await #expect(throws: (any Error).self) { try await restore(instance, over: session) }
+
+        #expect(!(await session.calls).contains("resume"))
+        #expect(!instance.hostState.hasUnsettledSession)
+        #expect(instance.hasSaveFile)
+    }
+
+    @Test("A resume that fails after the mark retracts it, keeping the slot")
+    func failedResumeRetractsTheMark() async throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let session = MockSnapshotSession(guestState: .paused)
+        await session.setResumeError(Probe())
+
+        await #expect(throws: (any Error).self) { try await restore(instance, over: session) }
+
+        #expect(!instance.hostState.hasUnsettledSession)
+        #expect(instance.hasSaveFile)
+    }
+
+    @Test("A mark the guest never executed under is retracted to the value it replaced")
+    func retractionRestoresThePriorMarker() async throws {
+        // Live, so its session is already marked.
+        let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: UUID()))
+        #expect(instance.hostState.hasUnsettledSession)
+
+        await #expect(throws: Probe.self) {
+            try await instance.activity.perform(.resuming) { context in
+                try await context.executingGuest { _ in throw Probe() }
+                return .rest(.asStarted, ())
+            }
+        }
+
+        #expect(instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A bring-up's own session takes no live execution until its guest has executed")
+    func liveExecutionWaitsForTheGuestToExecute() async throws {
+        let instance = VMInstanceFixture.make(phase: .stopped)
+        try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
+            context.bringUp.bindSessionForTesting(UUID())
+            #expect(throws: (any Error).self) { _ = try context.bringUp.operation.liveExecution() }
+            try await context.bringUp.operation.executingGuest { _ in }
+            _ = try context.bringUp.operation.liveExecution()
+            return .rest(.live(.running), ())
+        }.value()
+    }
+
+    @Test("A cold boot that fails before the guest executes leaves the marker as it was")
+    func failedColdBootLeavesTheMarker() async throws {
+        let instance = VMInstanceFixture.make(phase: .stopped)
+
+        // The bundle holds no real disk image, so the boot fails at the
+        // configuration build, ahead of the start.
+        await #expect(throws: (any Error).self) { try await start(instance) }
+
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A suspend that completes its slot parks the session, settling it with no session-end rule")
+    func completeSuspendParksTheSession() async throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        let record = MarkerRecord()
+        instance.activity.onUnsettledSession = {
+            record.settlements += 1
+            return []
+        }
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+
+        try await suspend(instance, over: session)
+
+        #expect(instance.phase == .suspended)
+        #expect(!instance.hostState.hasUnsettledSession)
+        #expect(record.settlements == 0)
+    }
+
+    @Test("A suspend whose guest goes away mid-write parks nothing: its session's end is settled by the rule")
+    func suspendLosingItsGuestParksNothing() async throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        let record = MarkerRecord()
+        instance.activity.onUnsettledSession = {
+            record.settlements += 1
+            return []
+        }
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setAfterSave {
+            await MainActor.run { instance.handleSessionEvent(.guestDidStop) }
+        }
+
+        try await suspend(instance, over: session)
+
+        #expect(instance.phase == .stopped)
+        #expect(record.settlements == 1)
+    }
+
     // MARK: - Warm capture over a session that goes away
 
     /// How an operation's session had ended at some moment mid-operation.
@@ -190,7 +335,7 @@ struct VirtualizationServiceTests {
     private func captureWarm(
         _ instance: VMInstance, snapshot: VMSnapshotCaptureRequest, session: MockSnapshotSession
     ) async throws -> VMSnapshot {
-        try await instance.activity.captureSnapshot(.live) { context in
+        try await instance.activity.launchedCapture(.live) { context in
             try await VirtualizationService.captureWarmSnapshot(
                 instance, context, snapshot: snapshot, session: session)
         }
@@ -364,7 +509,7 @@ struct VirtualizationServiceTests {
         _ instance: VMInstance, _ snapshot: VMSnapshotCaptureRequest
     ) async throws -> VMSnapshot {
         let mode = try #require(instance.snapshotCaptureMode)
-        return try await instance.activity.captureSnapshot(mode) { context in
+        return try await instance.activity.launchedCapture(mode) { context in
             try await service.takeSnapshot(instance, context, snapshot: snapshot)
         }
     }
@@ -628,7 +773,7 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.snapshotCaptureMode == nil)
 
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await fixture.instance.activity.captureSnapshot(.suspended) { context in
+            try await fixture.instance.activity.launchedCapture(.suspended) { context in
                 try await service.takeSnapshot(
                     fixture.instance, context,
                     snapshot: VMSnapshotCaptureRequest(name: "No slot"))

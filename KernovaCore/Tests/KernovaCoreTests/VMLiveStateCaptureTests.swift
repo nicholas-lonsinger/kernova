@@ -18,11 +18,13 @@ struct VMLiveStateCaptureTests {
         let session = MockSnapshotSession(guestState: .running)
         var stateWhileCapturing: MockSnapshotSession.GuestState?
 
-        try await VMLiveStateCapture.captureLiveState(
-            session: session, wasRunning: true,
-            saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-        ) {
-            stateWhileCapturing = await session.guestState
+        try await withLiveGuestExecution { execution in
+            try await VMLiveStateCapture.captureLiveState(
+                session: session, execution: execution, wasRunning: true,
+                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+            ) {
+                stateWhileCapturing = await session.guestState
+            }
         }
 
         #expect(stateWhileCapturing == .paused)
@@ -36,10 +38,12 @@ struct VMLiveStateCaptureTests {
         // here restarts the guest while the VM is reported as paused.
         let session = MockSnapshotSession(guestState: .paused)
 
-        try await VMLiveStateCapture.captureLiveState(
-            session: session, wasRunning: false,
-            saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-        ) {}
+        try await withLiveGuestExecution { execution in
+            try await VMLiveStateCapture.captureLiveState(
+                session: session, execution: execution, wasRunning: false,
+                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+            ) {}
+        }
 
         let finalState = await session.guestState
         let calls = await session.calls
@@ -54,10 +58,12 @@ struct VMLiveStateCaptureTests {
         var captured = false
 
         await #expect(throws: VMSnapshotError.self) {
-            try await VMLiveStateCapture.captureLiveState(
-                session: session, wasRunning: true,
-                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-            ) { captured = true }
+            try await withLiveGuestExecution { execution in
+                try await VMLiveStateCapture.captureLiveState(
+                    session: session, execution: execution, wasRunning: true,
+                    saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+                ) { captured = true }
+            }
         }
 
         #expect(!captured)
@@ -184,7 +190,7 @@ struct VMLiveStateCaptureTests {
         }
 
         await #expect(throws: VMSessionError.self) {
-            try await fixture.instance.activity.captureSnapshot(.live) { context in
+            try await fixture.instance.activity.launchedCapture(.live) { context in
                 try await VMLiveStateCapture.detachUSBAccessories(
                     owingReturns: context, session: session)
                 return .rest(.asStarted, ())

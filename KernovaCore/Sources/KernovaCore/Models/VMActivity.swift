@@ -433,16 +433,6 @@ package final class VMActivity {
         try await run(kind.operationKind, origin: origin, { $0 }, body)
     }
 
-    /// ``perform(_:origin:_:)`` for a snapshot capture, whose body learns the mode it
-    /// was admitted in from its context.
-    func captureSnapshot<T>(
-        _ mode: VMCaptureMode,
-        _ body: (borrowing VMCaptureContext) async throws -> VMOperationEnding<T>
-    ) async throws -> T {
-        try await run(
-            .capturingSnapshot(mode), { VMCaptureContext(operation: $0, mode: mode) }, body)
-    }
-
     /// ``perform(_:origin:_:)`` for the attach of the accessory `registryID`
     /// names, whose body passes it through under the reservation its
     /// admission wrote.
@@ -548,8 +538,8 @@ package final class VMActivity {
             }, body)
     }
 
-    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a snapshot capture in
-    /// `mode` — ``captureSnapshot(_:_:)`` in a task the operation owns.
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a snapshot capture,
+    /// whose body learns the mode it was admitted in from its context.
     @discardableResult
     func launchCaptureSnapshot(
         _ mode: VMCaptureMode, resolving outcome: VMOutcome,
@@ -756,27 +746,60 @@ package final class VMActivity {
         }
     }
 
-    /// Clears the marker of a session whose changes are kept as they stand,
-    /// logging a write that did not land — the marker then stays set, and the
-    /// next point that reads it settles the session again.
+    /// Clears the marker of a session whose changes are kept as they stand.
     private func settleUnsettledSession(as authority: VMEditPermit.Authority) {
+        settleMarker(false, as: authority)
+    }
+
+    /// Writes the marker an ending or a settlement leaves, logging a write
+    /// that did not land — the marker then stays as it was, and the next point
+    /// that reads it settles the session again.
+    private func settleMarker(_ unsettled: Bool, as authority: VMEditPermit.Authority) {
         do {
-            try writeUnsettledSession(false, as: authority)
+            try writeUnsettledSession(unsettled, as: authority)
         } catch {
             logger.log(
                 .error,
-                "Could not record the last session of '\(self.name, privacy: .public)' as settled: \(error.localizedDescription, privacy: .public)"
+                "Could not record how the last session of '\(self.name, privacy: .public)' settled: \(error.localizedDescription, privacy: .public)"
             )
         }
     }
 
-    /// Commits the marker for what the operation holding the VM is about to do
-    /// — the guest executing, or a revert replacing files — and records it as
-    /// the operation's `changes`; a write that fails records nothing.
-    fileprivate func markSessionUnsettled(_ changes: VMSessionChanges) throws {
-        guard case .operating(let operation) = phase else { throw VMAdmissionRefusal(refusal: .invalidState) }
+    /// Commits the marker before the guest executes, recording what it
+    /// replaced for an ending that never sees the guest execute to restore — a
+    /// retried attempt keeps what the first one replaced. A write that fails
+    /// records nothing.
+    fileprivate func markGuestStarting() throws {
+        guard case .operating(let operation) = phase, let owner else {
+            throw VMAdmissionRefusal(refusal: .invalidState)
+        }
+        let changes: VMSessionChanges
+        if case .guestStarting = operation.sessionChanges {
+            changes = operation.sessionChanges
+        } else {
+            changes = .guestStarting(
+                prior: owner.hostState.hasUnsettledSession, before: operation.sessionChanges)
+        }
         try writeUnsettledSession(true, as: .operation(operation.kind))
         recordSessionChanges(changes)
+    }
+
+    /// Commits the marker before a revert replaces its first file, and records
+    /// it; a write that fails records nothing.
+    fileprivate func markFilesChanging() throws {
+        guard case .operating(let operation) = phase else {
+            throw VMAdmissionRefusal(refusal: .invalidState)
+        }
+        try writeUnsettledSession(true, as: .operation(operation.kind))
+        recordSessionChanges(.filesChanging)
+    }
+
+    /// Whether the operation holding the VM holds a live session that
+    /// executes under its mark: one live when the operation took the VM, or
+    /// one this operation's own mark saw execute.
+    fileprivate var liveSessionExecutes: Bool {
+        guard let operation = phase.operation, operation.session != nil else { return false }
+        return operation.startedFrom.sessionID != nil || operation.sessionChanges == .guestExecuted
     }
 
     /// Records a revert's files landed over the files it was changing; a
@@ -1029,7 +1052,9 @@ package final class VMActivity {
         let resting = resolve(rest, for: operation)
         // The one place an operation settles what it did to the session's
         // changes, under its own authority.
-        if operation.sessionChanges.settles { settleUnsettledSession(as: .operation(operation.kind)) }
+        if let marker = operation.sessionChanges.markerAtEnding {
+            settleMarker(marker, as: .operation(operation.kind))
+        }
         if let session = operation.session, let stop = session.stopping {
             setPhase(
                 .operating(
@@ -1584,28 +1609,38 @@ package struct VMOperationContext: ~Copyable, Sendable {
     }
 
     /// Runs `execute` — the call that first has the guest execute: a boot's
-    /// start, a restored session's resume, an installer's run — with the
-    /// session's changes committed as unsettled just before it, and recorded
-    /// as executed once it returns.
+    /// start, a restored session's resume, an installer's run — handing it the
+    /// ``VMGuestExecution`` that call takes, minted only once the session's
+    /// changes are committed as unsettled, and recording the guest as executed
+    /// once it returns.
     ///
     /// A mark that cannot be written throws before `execute` runs, and a mark
-    /// `execute` threw after is retracted at the operation's ending — so a
-    /// bring-up that fails before the guest executes leaves the marker as it
-    /// found it.
+    /// `execute` threw after is retracted at the operation's ending, back to
+    /// the value it replaced — so a bring-up that fails before the guest
+    /// executes leaves the marker as it found it.
     @MainActor package func executingGuest<T>(
-        _ execute: @MainActor () async throws -> T
+        _ execute: @MainActor (borrowing VMGuestExecution) async throws -> T
     ) async throws -> T {
-        try activity.markSessionUnsettled(.guestStarting)
-        let value = try await execute()
+        try activity.markGuestStarting()
+        let value = try await execute(VMGuestExecution())
         activity.recordSessionChanges(.guestExecuted)
         return value
+    }
+
+    /// The ``VMGuestExecution`` a live session already executing under its
+    /// mark takes to execute again — a hot resume, or a capture handing a
+    /// guest it paused back — refused once that session is gone, or before a
+    /// bring-up's own guest has executed.
+    @MainActor package func liveExecution() throws -> VMGuestExecution {
+        guard activity.liveSessionExecutes else { throw VMAdmissionRefusal(refusal: .invalidState) }
+        return VMGuestExecution()
     }
 
     /// Commits the session's changes as unsettled before a revert replaces its
     /// first file, so a revert cut short is owed again; a write that fails
     /// throws, replacing nothing.
     @MainActor package func changingFiles() throws {
-        try activity.markSessionUnsettled(.filesChanging)
+        try activity.markFilesChanging()
     }
 
     /// Records that a revert's files have all landed, which settles the
@@ -1712,8 +1747,9 @@ package struct VMGuestStartContext: ~Copyable, Sendable {
 }
 
 /// The authority a capture's body acts with: a snapshot capture or a clone's
-/// copy admitted in `mode`, minted only by ``VMActivity/captureSnapshot(_:_:)``
-/// and ``VMActivity/launchCopyOut(_:_:)``.
+/// copy admitted in `mode`, minted only by
+/// ``VMActivity/launchCaptureSnapshot(_:resolving:_:)`` and
+/// ``VMActivity/launchCopyOut(_:resolving:_:)``.
 package struct VMCaptureContext: ~Copyable, Sendable {
     package let operation: VMOperationContext
     package let mode: VMCaptureMode
@@ -1755,6 +1791,19 @@ package struct VMRevertContext: ~Copyable, Sendable {
         self.snapshot = snapshot
         self.resumesAfter = resumesAfter
     }
+}
+
+/// What having a guest execute takes — a boot's start, a session's resume, an
+/// installer's run — so no path runs a guest whose session is not marked
+/// unsettled (``VMHostState/hasUnsettledSession``).
+///
+/// Minted only by ``VMOperationContext/executingGuest(_:)``, once the mark is
+/// committed, and by ``VMOperationContext/liveExecution()`` for a session
+/// already executing under one: the initializer is `fileprivate`, which
+/// `@testable import` does not open. Non-copyable and passed borrowed, so it
+/// cannot outlive the call it was minted for.
+package struct VMGuestExecution: ~Copyable, Sendable {
+    fileprivate init() {}
 }
 
 /// The authority one write to a VM's state files acts with, minted only by

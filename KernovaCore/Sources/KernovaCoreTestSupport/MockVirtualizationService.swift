@@ -123,10 +123,12 @@ final class MockVirtualizationService: VirtualizationProviding {
         statusAtStart = instance.phase.operation?.startedFrom.status
         let route = startRoute ?? derived
         lastStartRoute = route
+        // A restore reads the slot before anything is marked, as the real one
+        // does, so a restore that fails leaves the marker as it found it.
+        if derived == .restoredSavedState, let error = restoreError { throw error }
         // The boot's start, or the restored session's resume: the call VZ
         // fails, or the one the guest first executes in.
-        try await context.bringUp.operation.executingGuest {
-            if derived == .restoredSavedState, let error = restoreError { throw error }
+        try await context.bringUp.operation.executingGuest { _ in
             if let error = startErrors[instance.id] ?? startError { throw error }
             hostStateAtStart = instance.hostState
             guestExecutionCount += 1
@@ -300,9 +302,11 @@ final class MockVirtualizationService: VirtualizationProviding {
             context.bringUp.operation.bundle.removeSaveFile()
         }
         guard context.resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
-        // The restore of that saved state, inside the same operation.
+        // The restore of that saved state, inside the same operation, over
+        // files that have landed — as the real one records them.
+        context.bringUp.operation.filesLanded()
         do {
-            try await context.bringUp.operation.executingGuest {
+            try await context.bringUp.operation.executingGuest { _ in
                 if let error = resumeError { throw error }
                 hostStateAtStart = instance.hostState
                 guestExecutionCount += 1

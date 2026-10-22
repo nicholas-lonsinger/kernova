@@ -127,7 +127,7 @@ struct VMActivityTests {
         #expect(startRecorder.guestStart == .starting(recovery: false))
 
         let (capturing, captureRecorder) = makeInstance(.stopped)
-        try await capturing.activity.captureSnapshot(.stopped) { context in
+        try await capturing.activity.launchedCapture(.stopped) { context in
             captureRecorder.operation = capturing.phase.operation
             captureRecorder.captureMode = context.mode
             return .rest(.asStarted, ())

@@ -34,7 +34,8 @@ package enum VMLiveStateCapture {
             let prepared = try await prepare()
             try await detachUSBAccessories(owingReturns: capture, session: session)
             try await captureLiveState(
-                session: session, wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
+                session: session, execution: capture.operation.liveExecution(),
+                wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
             ) {
                 try await copy(prepared)
             }
@@ -136,8 +137,11 @@ package enum VMLiveStateCapture {
     /// which does not record who paused the guest: an unconditional call
     /// restarts a guest the user paused before asking for the snapshot, while
     /// the VM is reported as paused.
+    ///
+    /// `execution` is the live session's own (``VMOperationContext/liveExecution()``).
     package static func captureLiveState(
         session: any VMSnapshotSessionOperating,
+        execution: borrowing VMGuestExecution,
         wasRunning: Bool,
         saveFileURL: URL,
         captureDisks: () async throws -> Void
@@ -146,7 +150,7 @@ package enum VMLiveStateCapture {
         try await session.saveMachineState(to: saveFileURL)
         try await captureDisks()
         if wasRunning {
-            try await session.resumeIfPaused()
+            try await session.resumeIfPaused(execution)
         }
     }
 
@@ -161,7 +165,7 @@ package enum VMLiveStateCapture {
     ) async -> VMGuestRunState {
         guard wasRunning, context.sessionID != nil else { return .paused }
         do {
-            try await session.resumeIfPaused()
+            try await session.resumeIfPaused(context.liveExecution())
             return .running
         } catch {
             logger.log(

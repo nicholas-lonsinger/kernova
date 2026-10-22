@@ -768,3 +768,48 @@ extension VMLifecycleCoordinator {
 private final class LandedSnapshot {
     var snapshot: VMSnapshot?
 }
+
+extension VMActivity {
+    /// A snapshot capture in `mode` launched as production launches one
+    /// (``launchCaptureSnapshot(_:resolving:_:)``) and awaited, answering
+    /// what `body` captured.
+    @MainActor
+    func launchedCapture<T: Sendable>(
+        _ mode: VMCaptureMode,
+        _ body: @escaping @MainActor (borrowing VMCaptureContext) async throws -> VMOperationEnding<T>
+    ) async throws -> T {
+        let outcome = VMOutcome()
+        let landed = Landed<T>()
+        try launchCaptureSnapshot(mode, resolving: outcome) { context in
+            switch try await body(context) {
+            case .rest(let rest, let value):
+                landed.value = value
+                return .rest(rest, ())
+            case .failed(let rest, let error):
+                return .failed(rest, error)
+            }
+        }
+        try await outcome.value()
+        return try #require(landed.value)
+    }
+}
+
+/// What a launched operation's body answered, set inside the operation.
+@MainActor
+private final class Landed<T> {
+    var value: T?
+}
+
+/// Runs `body` with the ``VMGuestExecution`` of a running fixture VM's live
+/// session, inside an operation that holds it — for a test that drives a
+/// session's resume directly.
+@MainActor
+func withLiveGuestExecution(
+    _ body: @MainActor (borrowing VMGuestExecution) async throws -> Void
+) async throws {
+    let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+    try await instance.activity.perform(.pausing) { context in
+        try await body(context.liveExecution())
+        return .rest(.asStarted, ())
+    }
+}
