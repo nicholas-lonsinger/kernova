@@ -459,7 +459,7 @@ struct USBAccessoryCoordinatorTests {
     private func capture(
         _ instance: VMInstance, service: MockUSBAccessoryService, gate: GatedStep? = nil
     ) async throws {
-        try await instance.activity.captureSnapshot(.live) { context in
+        try await instance.activity.launchedCapture(.live) { context in
             try await VMLiveStateCapture.detachUSBAccessories(
                 owingReturns: context, session: MockSnapshotSession(guestState: .running))
             service.accessories.removeAll()

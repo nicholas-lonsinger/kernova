@@ -16,8 +16,8 @@ import KernovaLogging
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
 /// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
 /// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
-/// ``onPoweredOff`` and ``onSessionBecameAttachable`` — leave through their own
-/// closures.
+/// ``onUnsettledSession`` and ``onSessionBecameAttachable`` —
+/// leave through their own closures.
 /// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
 /// wires them all.
 @MainActor
@@ -91,9 +91,9 @@ package final class VMLibrary: VMAdmissionPeers {
     /// installer auto-eject.
     @ObservationIgnored var onAgentBecameCurrent: ((VMInstance) -> Void)?
 
-    /// Fires when a VM powers off, answering the follow-ups the power-off
-    /// owes — the Ephemeral Mode baseline revert.
-    @ObservationIgnored var onPoweredOff: ((VMInstance) -> [VMFollowUp])?
+    /// Fires when a VM's session is found to have ended with its changes
+    /// unsettled, answering the baseline revert an Ephemeral Mode VM owes.
+    @ObservationIgnored var onUnsettledSession: ((VMInstance) -> [VMFollowUp])?
 
     /// Fires when an arrival settles as no VM, in the same main-actor step as
     /// — and just before — its row leaves the library, so anything the hook
@@ -141,6 +141,8 @@ package final class VMLibrary: VMAdmissionPeers {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
             hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink)
+        // A VM neither at rest nor removed holds its run lock.
+        if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
         entries.append(.vm(instance))
         return instance
     }
@@ -873,10 +875,10 @@ package final class VMLibrary: VMAdmissionPeers {
             guard let self, let instance else { return }
             self.onAgentBecameCurrent?(instance)
         }
-        // An Ephemeral Mode VM goes back to its baseline on every power-off.
-        instance.activity.onPoweredOff = { [weak self, weak instance] in
+        // An Ephemeral Mode VM's session ends in the return to its baseline.
+        instance.activity.onUnsettledSession = { [weak self, weak instance] in
             guard let self, let instance else { return [] }
-            return self.onPoweredOff?(instance) ?? []
+            return self.onUnsettledSession?(instance) ?? []
         }
         // The bundle a hold kept from every read is read again as it ends.
         instance.activity.onRunLockReleased = { [weak self, weak instance] in

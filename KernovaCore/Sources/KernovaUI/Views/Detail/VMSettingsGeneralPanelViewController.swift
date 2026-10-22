@@ -116,6 +116,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private var ephemeralGroup: GroupedFormSubOptionGroup?
     /// Explains that a baseline needs a snapshot first, while the VM has none.
     private var ephemeralNoSnapshotsCaption: GroupedFormStateNote?
+    /// The caution under the toggle while turning it on pins a baseline.
+    private var ephemeralEnableCaution: GroupedFormCautionNote?
     /// Names the state a shutdown comes to rest in, which the selected
     /// baseline's kind decides, while a baseline resolves.
     private var ephemeralBaselineCaption: GroupedFormStateNote?
@@ -307,6 +309,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         })
         ephemeralNoSnapshotsCaption = noSnapshots
 
+        let enableCaution = GroupedFormCautionNote(content: { [weak self] in
+            self?.instance.ephemeralEnableBaseline.map(EphemeralModeCopy.enableCaution)
+        })
+        ephemeralEnableCaution = enableCaution
+
         // Reads the resolved baseline rather than the popup's selection, so the
         // caption is never the outgoing VM's while the menu is being rebuilt.
         let baselineCaption = GroupedFormStateNote(content: { [weak self] in
@@ -321,7 +328,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 makeGroupedFormCardRow(
                     "Ephemeral Mode", control: ephemeralSwitch,
                     info: EphemeralModeCopy.popoverParagraphs),
-                notes: [noSnapshots]),
+                notes: [noSnapshots, enableCaution]),
             subOption: GroupedFormNotedRow(
                 makeGroupedFormCardRow("Baseline snapshot", control: ephemeralBaselinePopUp),
                 notes: [baselineCaption]))
@@ -432,7 +439,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         autoStartWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard let message else { return }
         let banner = makeGroupedFormBanner(
-            symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
+            symbolName: "exclamationmark.triangle.fill", tint: Caution.color, message: message)
         addGroupedFormFullWidth(banner, to: autoStartWarningContainer)
     }
 
@@ -457,6 +464,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
             control: ephemeralBaselinePopUp)
         ephemeralNoSnapshotsCaption?.refresh()
+        ephemeralEnableCaution?.refresh()
         ephemeralGroup?.isSubOptionHidden = !enabled
 
         let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }
@@ -503,7 +511,13 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }
-        write(VMConfigurationKeyRegistry.ephemeralBaseline.assigning(id.uuidString))
+        // Every shutdown then discards what the VM holds, so this confirms
+        // first.
+        ConsentedSettingWrite(
+            instance: instance, viewModel: viewModel, refresh: { [weak self] in self?.refresh() }
+        ).write(
+            VMConfigurationKeyRegistry.ephemeralBaseline.assigning(id.uuidString),
+            confirmingIn: view.window)
     }
 
     // MARK: - Mirrored toggles

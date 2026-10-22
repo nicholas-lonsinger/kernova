@@ -6,12 +6,15 @@ import Foundation
 /// `pauseIfRunning`/`resumeIfPaused` answer VZ's own `state`, which carries no
 /// record of who paused the guest: a guest the user paused before asking for a
 /// snapshot is as resumable as one the capture paused itself.
+///
+/// What has the guest execute takes a ``VMGuestExecution``, so no path resumes
+/// a guest whose session is not marked unsettled.
 package protocol VMSnapshotSessionOperating: Sendable {
     func pauseIfRunning() async throws
-    func resumeIfPaused() async throws
+    func resumeIfPaused(_ execution: borrowing VMGuestExecution) async throws
     func saveMachineState(to url: URL) async throws
     func restoreMachineState(from url: URL) async throws
-    func resume() async throws
+    func resume(_ execution: borrowing VMGuestExecution) async throws
     /// Detaches the USB device carrying `uuid`. A save path calls it for every
     /// passthrough accessory before writing state — see
     /// ``VMLiveStateCapture/detachUSBAccessories(_:session:)``.

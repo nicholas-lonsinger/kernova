@@ -61,7 +61,9 @@ struct VMRunLockTests {
     /// Brings `instance` up live through a real bring-up.
     private func startLive(_ instance: VMInstance) async throws {
         try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
-            context.bringUp.bindSessionForTesting(UUID())
+            try await context.bringUp.operation.executingGuest { _ in
+                context.bringUp.bindSessionForTesting(UUID())
+            }
             return .rest(.live(.running), ())
         }.value()
     }
@@ -103,7 +105,7 @@ struct VMRunLockTests {
             }
         },
         Attempt(description: "capture", phase: .stopped) { instance, recorder in
-            try await instance.activity.captureSnapshot(.stopped) { _ in
+            try await instance.activity.launchedCapture(.stopped) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
             }
@@ -304,17 +306,17 @@ struct VMRunLockTests {
     // MARK: - Endings reuse the lock
 
     @Test("A power-off's Ephemeral revert follow-up is admitted under the lock the ending held")
-    func powerOffRevertReusesTheLock() async throws {
+    func sessionEndRevertReusesTheLock() async throws {
         let (instance, store) = makeInstance()
         let recorder = Recorder()
         let gate = GatedStep()
-        instance.activity.onPoweredOff = {
+        instance.activity.onUnsettledSession = {
             recorder.heldInHook = instance.activity.holdsRunLock
             recorder.phaseInHook = instance.phase
             let revert = VMFollowUp(scope: .vm, rank: .restoration) { outcome in
                 recorder.heldAtAdmission = instance.activity.holdsRunLock
                 try instance.activity.launchRevert(
-                    to: Self.baseline, resumesAfter: false, origin: .powerOffRevert,
+                    to: Self.baseline, resumesAfter: false, origin: .sessionEndRevert,
                     resolving: outcome
                 ) { _ in
                     try await gate.pass()

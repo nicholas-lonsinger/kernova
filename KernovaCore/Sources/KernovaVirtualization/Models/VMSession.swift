@@ -146,7 +146,12 @@ package actor VMSession: VMSessionOperating {
 
     // MARK: - Lifecycle
 
-    func start(options: sending VZVirtualMachineStartOptions?) async throws {
+    // periphery:ignore:parameters execution - a capability: its type admits the caller
+    /// Starts the guest, which `execution` admits only once its session is
+    /// marked unsettled.
+    func start(
+        options: sending VZVirtualMachineStartOptions?, execution: borrowing VMGuestExecution
+    ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             if let options {
                 vm.start(options: options) { error in
@@ -219,12 +224,13 @@ package actor VMSession: VMSessionOperating {
     /// Resumes only when the VM is paused — the counterpart of
     /// ``pauseIfRunning()``, answered and acted on in one hop so no state can
     /// move in between.
-    package func resumeIfPaused() async throws {
+    package func resumeIfPaused(_ execution: borrowing VMGuestExecution) async throws {
         guard vm.state == .paused else { return }
-        try await resume()
+        try await resume(execution)
     }
 
-    package func resume() async throws {
+    // periphery:ignore:parameters execution - a capability: its type admits the caller
+    package func resume(_ execution: borrowing VMGuestExecution) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.resume { result in
                 continuation.resume(with: result)
@@ -265,7 +271,11 @@ package actor VMSession: VMSessionOperating {
     /// `init(virtualMachine:restoringFromImageAt:)` and `install` to be called
     /// on the virtual machine's queue — this method is where Kernova satisfies
     /// that.
-    func installMacOS(from url: URL, onProgress: @escaping @Sendable (Double) -> Void) async throws {
+    // periphery:ignore:parameters execution - a capability: its type admits the caller
+    func installMacOS(
+        from url: URL, execution: borrowing VMGuestExecution,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws {
         let installer = VZMacOSInstaller(virtualMachine: vm, restoringFromImageAt: url)
 
         let observation = installer.progress.observe(\.fractionCompleted, options: [.new]) { progress, _ in

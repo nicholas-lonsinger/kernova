@@ -24,21 +24,33 @@ package struct VMHostState: Codable, Sendable, Equatable {
     /// install or an image download, which never begins unattended.
     package var startsAutomaticallyOnLaunch: Bool
 
-    /// When `true`, every power-off returns this VM to the snapshot named by
-    /// ``ephemeralBaselineSnapshotID`` — its disks and its ``VMConfiguration``
-    /// — discarding the session's guest changes and any setting edited since
-    /// the capture.
+    /// When `true`, the end of every session returns this VM to the snapshot
+    /// named by ``ephemeralBaselineSnapshotID`` — its disks and its
+    /// ``VMConfiguration`` — discarding the session's guest changes and any
+    /// setting edited since the capture.
     ///
-    /// Suspend is not a power-off: a suspended session survives, reverting at
-    /// its next shutdown. Read at power-off, so it is editable while the VM runs.
+    /// Suspend does not end a session: a suspended session survives, reverting
+    /// at its next shutdown. Read as a session ends, so it is editable while
+    /// the VM runs.
     package var ephemeralModeEnabled: Bool
 
-    /// The snapshot a power-off reverts to while ``ephemeralModeEnabled``;
+    /// The snapshot a session's end reverts to while ``ephemeralModeEnabled``;
     /// `nil` once the mode is turned off, which clears the choice.
     ///
     /// Set through ``applyEphemeralMode(enabled:baseline:)``, which holds that
     /// pairing.
     package var ephemeralBaselineSnapshotID: UUID?
+
+    /// `true` from the moment a guest session begins on this bundle — or a
+    /// revert begins replacing its files — until what becomes of that session's
+    /// changes is settled: the session ends and Ephemeral Mode's revert lands,
+    /// or it ends with the mode off, or a suspend parks it, or the revert's
+    /// files have all landed.
+    ///
+    /// Found set while no session is live in any copy, it says a session ended
+    /// with that still owed — Kernova died under it, or a revert was cut short.
+    /// A revert never restores this file, so the marker outlives one.
+    var hasUnsettledSession: Bool
 
     // MARK: - Presentation
 
@@ -69,6 +81,7 @@ package struct VMHostState: Codable, Sendable, Equatable {
         startsAutomaticallyOnLaunch: Bool = false,
         ephemeralModeEnabled: Bool = false,
         ephemeralBaselineSnapshotID: UUID? = nil,
+        hasUnsettledSession: Bool = false,
         displayPreference: VMDisplayPreference = .inline,
         lastFullscreenDisplayID: UInt32? = nil,
         agentInstallNudgeDismissed: Bool = false,
@@ -78,6 +91,7 @@ package struct VMHostState: Codable, Sendable, Equatable {
         self.startsAutomaticallyOnLaunch = startsAutomaticallyOnLaunch
         self.ephemeralModeEnabled = ephemeralModeEnabled
         self.ephemeralBaselineSnapshotID = ephemeralBaselineSnapshotID
+        self.hasUnsettledSession = hasUnsettledSession
         self.displayPreference = displayPreference
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
@@ -99,6 +113,9 @@ package struct VMHostState: Codable, Sendable, Equatable {
             in: decoder)
         self.ephemeralBaselineSnapshotID =
             try c.decodeIfPresent(UUID.self, forKey: .ephemeralBaselineSnapshotID)
+        self.hasUnsettledSession = try c.decode(
+            Bool.self, forKey: .hasUnsettledSession, default: defaults.hasUnsettledSession,
+            in: decoder)
         self.displayPreference = try c.decode(
             VMDisplayPreference.self, forKey: .displayPreference,
             default: defaults.displayPreference, in: decoder)

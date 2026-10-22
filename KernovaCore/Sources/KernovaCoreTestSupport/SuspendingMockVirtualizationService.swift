@@ -118,9 +118,11 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
-        if let error = startError { throw error }
+        try await context.bringUp.operation.executingGuest { _ in
+            if let error = startError { throw error }
+            context.bringUp.bindSessionForTesting(UUID())
+        }
         if route == .restoredSavedState { context.bringUp.operation.bundle.removeSaveFile() }
-        context.bringUp.bindSessionForTesting(UUID())
         return .rest(.live(.running), route)
     }
 
@@ -163,6 +165,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         // The slot is what makes the VM resumable, so a real one is written:
         // every predicate a suspended VM is judged by reads the file.
         try VMInstanceFixture.writeSaveFile(for: instance)
+        context.parkedSession()
         context.endSession()
         return .rest(.atRest(.stopped), ())
     }

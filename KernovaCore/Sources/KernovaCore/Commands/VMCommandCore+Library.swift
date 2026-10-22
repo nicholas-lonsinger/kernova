@@ -290,6 +290,50 @@ extension VMCommandCore {
         }
 
         let machineIdentifier = clonedConfig.guestOS == .macOS ? clonedConfig.machineIdentifierData : nil
+        let registered = clonedConfig
+        // What the clone's own state files start from — the source's host
+        // state and snapshot list, which a return to the Ephemeral baseline
+        // the copy may wait for leaves as they are.
+        let starting = CloneCopy(
+            of: instance.bundle, outcome: resolved, mode: .stopped,
+            machineIdentifier: machineIdentifier)
+        let copied = VMOutcome()
+        do {
+            try instance.activity.attemptWaitingOutRestorations(nil, resolving: copied) {
+                [weak self, weak instance] copied in
+                guard let self, let instance else { throw CancellationError() }
+                try self.launchCloneCopy(
+                    of: instance, outcome: resolved, machineIdentifier: machineIdentifier,
+                    registered: registered, into: staged, resolving: copied)
+            }
+        } catch {
+            throw failure(error, verb: .clone, on: instance)
+        }
+
+        let arrival = library.beginArrival(
+            kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged,
+            source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name),
+            starting: VMArrival.Starting(
+                hostState: starting.hostState, hasSnapshots: !starting.snapshotManifest.isEmpty)
+        ) { _ in
+            // The copy's failure is the clone's.
+            try await copied.value()
+        }
+        library.selectArrival(arrival.id)
+        return arrival
+    }
+
+    /// Holds `instance` for a clone's copy into `staged`, in the mode its
+    /// phase admits now, and lays down the clone's configuration over the one
+    /// the copy took — carrying the identity the clone was `registered` under —
+    /// resolving `outcome` once both are written.
+    ///
+    /// Decided from the source as it stands, so a copy that waited out the
+    /// source's return to its Ephemeral baseline copies what that left.
+    private func launchCloneCopy(
+        of instance: VMInstance, outcome resolved: CloneOutcome, machineIdentifier: Data?,
+        registered: VMConfiguration, into staged: VMStagedBundle, resolving outcome: VMOutcome
+    ) throws {
         let storage = storageService
         let virtualization = lifecycle.virtualizationService
         // The settled mode, as the catalog offers Clone in: an operation in
@@ -302,22 +346,15 @@ extension VMCommandCore {
         // milliseconds where a queued import copy can take minutes.
         let copy = CloneCopy(
             of: instance.bundle, outcome: resolved, mode: mode, machineIdentifier: machineIdentifier)
-        let copied: VMOutcome
-        do {
-            copied = try instance.activity.launchCopyOut(mode) { context in
-                let source = context.operation.bundle.url
-                guard context.mode == .live else {
-                    try await Task.detached {
-                        try Self.copyOut(
-                            copy, .settledAndGuestWritten, from: source, into: staged,
-                            storage: storage)
-                    }.value
-                    return .rest(.asStarted, ())
-                }
+        let config = Self.cloneConfiguration(registered, over: copy.configuration)
+        try instance.activity.launchCopyOut(mode, resolving: outcome) { context in
+            let source = context.operation.bundle.url
+            let ending: VMOperationEnding<Void>
+            if context.mode == .live {
                 // Only what the guest writes is copied inside the pause, so
                 // the freeze does not grow with the snapshots an Exact Copy
                 // carries.
-                let ending = try await virtualization.copyLive(
+                ending = try await virtualization.copyLive(
                     context.operation.instance, context,
                     savingStateTo: staged.layout.saveFileURL,
                     prepare: {
@@ -332,31 +369,41 @@ extension VMCommandCore {
                                 copy, .guestWritten, from: source, into: staged, storage: storage)
                         }.value
                     })
-                guard case .rest = ending, !copy.carriesSavedState else { return ending }
+                guard case .rest = ending else { return ending }
                 // A New Machine boots cold: the state saved with its disks does
                 // not restore under a new machine identifier.
+                if !copy.carriesSavedState {
+                    try await Task.detached {
+                        try FileManager.default.removeItem(at: staged.layout.saveFileURL)
+                    }.value
+                }
+            } else {
                 try await Task.detached {
-                    try FileManager.default.removeItem(at: staged.layout.saveFileURL)
+                    try Self.copyOut(
+                        copy, .settledAndGuestWritten, from: source, into: staged,
+                        storage: storage)
                 }.value
-                return ending
+                ending = .rest(.asStarted, ())
             }
-        } catch {
-            throw failure(error, verb: .clone, on: instance)
-        }
-
-        let config = clonedConfig
-        let arrival = library.beginArrival(
-            kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged,
-            source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name),
-            starting: VMArrival.Starting(
-                hostState: copy.hostState, hasSnapshots: !copy.snapshotManifest.isEmpty)
-        ) { staged in
-            // The copy's failure is the clone's.
-            try await copied.value()
             try await Task.detached { try staged.writeInitial(config) }.value
+            return ending
         }
-        library.selectArrival(arrival.id)
-        return arrival
+    }
+
+    /// The configuration a clone registered as `registered` is written with,
+    /// over `source` — what its copy took: the source's, carrying the clone's
+    /// own identity.
+    private static func cloneConfiguration(
+        _ registered: VMConfiguration, over source: VMConfiguration
+    ) -> VMConfiguration {
+        var config = source.clonedForNewInstance(existingNames: [])
+        config.id = registered.id
+        config.name = registered.name
+        config.createdAt = registered.createdAt
+        config.macAddress = registered.macAddress
+        config.machineIdentifierData = registered.machineIdentifierData
+        config.genericMachineIdentifierData = registered.genericMachineIdentifierData
+        return config
     }
 
     /// What a clone copies out of its source's bundle, read from the source's
@@ -393,6 +440,10 @@ extension VMCommandCore {
             case .exactCopy:
                 var carried = source.hostState
                 carried.arriveAsCopy()
+                // Settled whichever way the copy is taken: a live one parks a
+                // slot of the guest it paused, and one from rest copies a
+                // source its admission has already settled.
+                carried.hasUnsettledSession = false
                 hostState = carried
                 snapshotManifest = source.snapshotManifest
             }

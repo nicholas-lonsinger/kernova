@@ -165,8 +165,9 @@ extension VMLibrary {
     ) -> VMInstance {
         admitForTesting(
             VMInstanceFixture.seed(
-                name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
-                pairings: pairings, files: files, mutate: mutate),
+                name: name, guestOS: guestOS,
+                hostState: VMInstanceFixture.hostState(hostState, placedAt: phase),
+                snapshots: snapshots, pairings: pairings, files: files, mutate: mutate),
             phase: phase, preferences: preferences)
     }
 
@@ -190,8 +191,9 @@ extension VMLibrary {
             preconditionFailure("A fixture registers only with a library over MockVMStorageService")
         }
         let read = VMInstanceFixture.seed(
-            name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
-            pairings: pairings, files: files, mutate: mutate)
+            name: name, guestOS: guestOS,
+            hostState: VMInstanceFixture.hostState(hostState, placedAt: phase),
+            snapshots: snapshots, pairings: pairings, files: files, mutate: mutate)
         files.forward(to: storage.files)
         let instance = admitForTesting(read, phase: phase, preferences: preferences)
         wireHooks(for: instance)
@@ -737,5 +739,77 @@ extension VMMemorySize {
     /// This size grown by `gibibytes`.
     func adding(gibibytes: UInt32) -> VMMemorySize {
         VMMemorySize(mebibytes: mebibytes + VMMemorySize.gibibytes(gibibytes).mebibytes)
+    }
+}
+
+extension VMLifecycleCoordinator {
+    /// ``launchTakeSnapshot(_:mode:snapshot:resolving:record:)`` awaited,
+    /// answering the snapshot that landed — for a test that drives a capture
+    /// to its end.
+    @MainActor
+    func takeSnapshot(
+        _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
+        record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
+    ) async throws -> VMSnapshot {
+        let outcome = VMOutcome()
+        let landed = LandedSnapshot()
+        try launchTakeSnapshot(instance, mode: mode, snapshot: snapshot, resolving: outcome) {
+            permit, captured in
+            try record(permit, captured)
+            landed.snapshot = captured
+        }
+        try await outcome.value()
+        return try #require(landed.snapshot)
+    }
+}
+
+/// The snapshot a capture listed, set inside the capture operation.
+@MainActor
+private final class LandedSnapshot {
+    var snapshot: VMSnapshot?
+}
+
+extension VMActivity {
+    /// A snapshot capture in `mode` launched as production launches one
+    /// (``launchCaptureSnapshot(_:resolving:_:)``) and awaited, answering
+    /// what `body` captured.
+    @MainActor
+    func launchedCapture<T: Sendable>(
+        _ mode: VMCaptureMode,
+        _ body: @escaping @MainActor (borrowing VMCaptureContext) async throws -> VMOperationEnding<T>
+    ) async throws -> T {
+        let outcome = VMOutcome()
+        let landed = Landed<T>()
+        try launchCaptureSnapshot(mode, resolving: outcome) { context in
+            switch try await body(context) {
+            case .rest(let rest, let value):
+                landed.value = value
+                return .rest(rest, ())
+            case .failed(let rest, let error):
+                return .failed(rest, error)
+            }
+        }
+        try await outcome.value()
+        return try #require(landed.value)
+    }
+}
+
+/// What a launched operation's body answered, set inside the operation.
+@MainActor
+private final class Landed<T> {
+    var value: T?
+}
+
+/// Runs `body` with the ``VMGuestExecution`` of a running fixture VM's live
+/// session, inside an operation that holds it — for a test that drives a
+/// session's resume directly.
+@MainActor
+func withLiveGuestExecution(
+    _ body: @MainActor (borrowing VMGuestExecution) async throws -> Void
+) async throws {
+    let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+    try await instance.activity.perform(.pausing) { context in
+        try await body(context.liveExecution())
+        return .rest(.asStarted, ())
     }
 }

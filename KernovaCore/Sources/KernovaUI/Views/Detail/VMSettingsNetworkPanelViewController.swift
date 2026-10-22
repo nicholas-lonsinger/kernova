@@ -549,7 +549,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard let message else { return }
         let banner = makeGroupedFormBanner(
-            symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
+            symbolName: "exclamationmark.triangle.fill", tint: Caution.color, message: message)
         addGroupedFormFullWidth(banner, to: networkWarningContainer)
     }
 

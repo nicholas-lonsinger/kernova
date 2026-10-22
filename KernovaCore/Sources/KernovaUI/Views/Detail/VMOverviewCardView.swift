@@ -86,7 +86,7 @@ final class VMOverviewCardView: NSView {
         headerSummaryLabel.setContentCompressionResistancePriority(
             .defaultLow, for: .horizontal)
         headerSummaryLabel.isHidden = true
-        warningGlyph.contentTintColor = .systemYellow
+        warningGlyph.contentTintColor = Caution.color
         warningGlyph.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
         warningGlyph.setContentHuggingPriority(.required, for: .horizontal)
         warningGlyph.isHidden = true

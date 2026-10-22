@@ -31,7 +31,8 @@ struct VMLibraryViewModelEphemeralTests {
     /// captured, and answers the pair.
     private func seedVM(
         named name: String, ephemeral: Bool, storage: MockVMStorageService,
-        snapshots: MockVMBundleMachineFiles, baselineKind: VMSnapshotKind = .warm
+        snapshots: MockVMBundleMachineFiles, baselineKind: VMSnapshotKind = .warm,
+        unsettled: Bool = false
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
             name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -44,11 +45,9 @@ struct VMLibraryViewModelEphemeralTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try storage.bundleURL(for: config)
         storage.setConfiguration(config, at: bundleURL)
-        if ephemeral {
-            var hostState = VMHostState()
-            hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
-            storage.setHostState(hostState, at: bundleURL)
-        }
+        var hostState = VMHostState(hasUnsettledSession: unsettled)
+        if ephemeral { hostState.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+        storage.setHostState(hostState, at: bundleURL)
         storage.files.setManifest(
             VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), at: bundleURL)
         // What each snapshot's own config.json holds, so a revert has something
@@ -65,9 +64,15 @@ struct VMLibraryViewModelEphemeralTests {
     /// `ephemeral` decides whether the first VM's mode is on; `phase` is where
     /// it rests once loaded. `secondVM` adds a second, always-ephemeral VM, for
     /// the cases that turn on the two being tracked apart.
+    ///
+    /// With `unsettled`, the first VM's last session ended unsettled — what a
+    /// copy of Kernova dying under it leaves — and the VM is left where the
+    /// load left it; `heldElsewhere` has another copy hold its bundle through
+    /// the load.
     private func makeHarness(
         ephemeral: Bool = true, phase: VMLifecyclePhase = .running(sessionID: UUID()),
-        secondVM: Bool = false, baselineKind: VMSnapshotKind = .warm
+        secondVM: Bool = false, baselineKind: VMSnapshotKind = .warm,
+        unsettled: Bool = false, heldElsewhere: Bool = false
     ) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
@@ -75,7 +80,8 @@ struct VMLibraryViewModelEphemeralTests {
 
         let first = try seedVM(
             named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots,
-            baselineKind: baselineKind)
+            baselineKind: baselineKind, unsettled: unsettled)
+        if heldElsewhere { storage.files.holdElsewhere(try storage.bundleURL(for: first.config)) }
         let second =
             secondVM
             ? try seedVM(named: "Sandbox", ephemeral: true, storage: storage, snapshots: snapshots)
@@ -106,7 +112,7 @@ struct VMLibraryViewModelEphemeralTests {
         await viewModel.loadVMs()
         let instance = try #require(
             viewModel.instances.first { $0.configuration.id == first.config.id })
-        instance.activity.placeForTesting(phase)
+        if !unsettled { instance.activity.placeForTesting(phase) }
         // A suspension is a slot on disk, not a phase name: every predicate the
         // discard paths read asks the file.
         if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
@@ -220,8 +226,8 @@ struct VMLibraryViewModelEphemeralTests {
         // revert, and the wrapper sees the VM before the hook and right after
         // the step's drain admits what it answered.
         let observed = PowerOffObservation()
-        let revertOnPowerOff = instance.activity.onPoweredOff
-        instance.activity.onPoweredOff = {
+        let revertOnPowerOff = instance.activity.onUnsettledSession
+        instance.activity.onUnsettledSession = {
             observed.before = instance.phase
             observed.count += 1
             return (revertOnPowerOff?() ?? []).map { owed in
@@ -294,7 +300,7 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
-    @Test("A power-off takes back the settings edited since the baseline, and no host state")
+    @Test("A power-off takes back the settings edited since the baseline, and no host state but the session it settles")
     func revertKeepsTheHostState() async throws {
         let harness = try await makeHarness()
         let instance = harness.instance
@@ -309,7 +315,10 @@ struct VMLibraryViewModelEphemeralTests {
                 $0.agentInstallNudgeDismissed = true
                 $0.tags = [UUID()]
             })
-        let editedHostState = instance.hostState
+        // The revert settles the session it ends, and takes back no other
+        // host state.
+        var editedHostState = instance.hostState
+        editedHostState.hasUnsettledSession = false
 
         await harness.viewModel.stop(instance)
         await settleEphemeralRevert(harness)
@@ -373,6 +382,49 @@ struct VMLibraryViewModelEphemeralTests {
             config, id: harness.baseline.id, at: instance.bundleURL)
         await harness.viewModel.start(instance)
         try await waitForChange { instance.status == .running }
+    }
+
+    // MARK: - Launch
+
+    @Test("A VM whose last session ended unsettled reverts as the library loads, and the revert settles it")
+    func launchRevertsAnUnsettledSession() async throws {
+        let harness = try await makeHarness(unsettled: true)
+
+        #expect(harness.instance.status == .restoring)
+        await settleEphemeralRevert(harness)
+
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+        #expect(!harness.instance.hostState.hasUnsettledSession)
+        #expect(harness.instance.status == .suspended)
+        #expect(!harness.instance.activity.holdsRunLock)
+    }
+
+    @Test("A VM out of Ephemeral Mode whose last session ended unsettled is settled as it loads, reverting nothing")
+    func launchSettlesANonEphemeralSession() async throws {
+        let harness = try await makeHarness(ephemeral: false, unsettled: true)
+
+        #expect(!harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(!harness.instance.hostState.hasUnsettledSession)
+        #expect(!harness.instance.activity.holdsRunLock)
+    }
+
+    @Test("A VM another copy of Kernova holds is left as it stands at load")
+    func launchLeavesAVMAnotherCopyHolds() async throws {
+        let harness = try await makeHarness(unsettled: true, heldElsewhere: true)
+
+        #expect(harness.instance.heldByAnotherCopy)
+        #expect(!harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(harness.instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A VM whose last session was settled reverts nothing as the library loads")
+    func launchLeavesASettledVM() async throws {
+        let harness = try await makeHarness(phase: .stopped)
+
+        #expect(!harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
     // MARK: - Suspend

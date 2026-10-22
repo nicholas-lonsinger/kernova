@@ -196,21 +196,30 @@ final class VMLifecycleCoordinator {
     /// delay nothing bounds, and that arrival follows the attach to this VM.
     /// `record` that throws leaves nothing behind: unlisted files are files no
     /// surface can reach or remove, so the capture is undone.
-    func takeSnapshot(
+    ///
+    /// Admitted and committed before this returns, its end resolving
+    /// `outcome`; `record` is how the caller learns the snapshot that landed.
+    func launchTakeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
-        record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
-    ) async throws -> VMSnapshot {
-        try await instance.activity.captureSnapshot(mode) { context in
+        resolving outcome: VMOutcome,
+        record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
+    ) throws {
+        try instance.activity.launchCaptureSnapshot(mode, resolving: outcome) {
+            [virtualizationService] context in
             let ending = try await virtualizationService.takeSnapshot(
                 instance, context, snapshot: snapshot)
-            guard case .rest(let rest, let captured) = ending else { return ending }
-            do {
-                try record(context.operation.permit, captured)
-            } catch {
-                await context.operation.bundle.removeSnapshotDirectory(captured.id)
+            switch ending {
+            case .failed(let rest, let error):
                 return .failed(rest, error)
+            case .rest(let rest, let captured):
+                do {
+                    try record(context.operation.permit, captured)
+                } catch {
+                    await context.operation.bundle.removeSnapshotDirectory(captured.id)
+                    return .failed(rest, error)
+                }
+                return .rest(rest, ())
             }
-            return ending
         }
     }
 
@@ -222,6 +231,11 @@ final class VMLifecycleCoordinator {
     /// which resolves `outcome`. `landed` runs inside the operation, as its
     /// write, once the snapshot's files are in the bundle, including when the
     /// resume after them failed; a throw from it fails the revert.
+    ///
+    /// The VM's session is marked unsettled (``VMHostState/hasUnsettledSession``)
+    /// before the first file is replaced, and recorded settled once every file
+    /// has landed — so a revert cut short is owed again, and one that fails to
+    /// mark replaces nothing.
     @discardableResult
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
@@ -237,16 +251,27 @@ final class VMLifecycleCoordinator {
         ) {
             [virtualizationService] context in
             let ending = try await virtualizationService.revertToSnapshot(
-                instance, context, commitConfiguration: commitConfiguration)
+                instance, context,
+                commitConfiguration: { permit, plan in
+                    try context.bringUp.operation.changingFiles()
+                    try commitConfiguration(permit, plan)
+                })
+            let rest: VMOperationRest
             switch ending {
-            case .rest(let rest, _):
-                do { try landed(context.bringUp.operation.permit) } catch { return .failed(rest, error) }
-            case .failed(let rest, let error):
+            case .rest(let landedAt, _):
+                rest = landedAt
+            case .failed(let failedAt, let error):
                 // A resume that failed left the reverted files in place, so the
                 // VM's state does descend from this snapshot. Any other failure
-                // left nothing behind.
-                guard case VirtualizationError.revertResumeFailed = error else { break }
-                do { try landed(context.bringUp.operation.permit) } catch { return .failed(rest, error) }
+                // stopped short of every file landing.
+                guard case VirtualizationError.revertResumeFailed = error else { return ending }
+                rest = failedAt
+            }
+            do {
+                try landed(context.bringUp.operation.permit)
+                context.bringUp.operation.filesLanded()
+            } catch {
+                return .failed(rest, error)
             }
             return ending
         }

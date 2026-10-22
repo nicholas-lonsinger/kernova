@@ -209,7 +209,7 @@ struct VMSettingsSharingPanelTests {
         var confirmed = false
         var cancelled = false
         let prompt = ClipboardPassthroughConsent.prompt(vmName: "Alpha")
-        let alert = ClipboardPassthroughSetting.alert(
+        let alert = ConsentedSettingWrite.alert(
             prompt: prompt, onConfirm: { confirmed = true }, onCancel: { cancelled = true })
 
         #expect(alert.title == prompt.title)

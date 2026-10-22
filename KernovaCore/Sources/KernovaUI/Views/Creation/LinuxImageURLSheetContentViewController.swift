@@ -292,7 +292,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         setResult([
             makeGroupedFormBanner(
                 symbolName: "exclamationmark.triangle.fill",
-                tint: .systemYellow,
+                tint: Caution.color,
                 message: message
             )
         ])
@@ -315,7 +315,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
             rows.append(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
-                    tint: .systemYellow,
+                    tint: Caution.color,
                     message:
                         "This download won't be verified. Choose a host you trust."
                 ))

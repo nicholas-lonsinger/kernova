@@ -33,13 +33,26 @@ enum VMInstanceFixture {
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let read = seed(
-            name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
-            pairings: pairings, files: files, mutate: mutate)
-        return VMInstance(
+            name: name, guestOS: guestOS, hostState: Self.hostState(hostState, placedAt: phase),
+            snapshots: snapshots, pairings: pairings, files: files, mutate: mutate)
+        let instance = VMInstance(
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
             hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil)
+        // A VM neither at rest nor removed holds its run lock.
+        if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
+        return instance
+    }
+
+    /// `hostState` as a VM placed at `phase` holds it: a phase holding a
+    /// session is one a bring-up began, which left that session unsettled
+    /// (``VMHostState/hasUnsettledSession``).
+    static func hostState(_ hostState: VMHostState, placedAt phase: VMLifecyclePhase) -> VMHostState {
+        guard phase.sessionID != nil else { return hostState }
+        var placed = hostState
+        placed.hasUnsettledSession = true
+        return placed
     }
 
     /// A fresh configuration for a `guestOS` VM named `name`, with the

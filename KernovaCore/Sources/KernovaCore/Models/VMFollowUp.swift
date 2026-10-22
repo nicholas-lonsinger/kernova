@@ -1,7 +1,7 @@
 import Foundation
 
 /// Work nobody waits on that follows on one VM once the VM is free — the
-/// Ephemeral baseline revert after a power-off, a paired accessory's attach.
+/// Ephemeral baseline revert a session's end owes, a paired accessory's attach.
 ///
 /// Queued on the VM's ``VMActivity`` by ``VMActivity/follow(_:)``, or returned
 /// by a hook the activity fires inside a commit step, and admitted only by the

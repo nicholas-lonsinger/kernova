@@ -282,7 +282,7 @@ package struct VMCapabilityCatalog {
     /// holding the VM, or a rule that takes the VM stopped.
     package func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
-        case .admit, .join, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
+        case .admit, .join, .wait, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
             .refuse(.takesStoppedVM):
             true
         case .refuse, nil: false
@@ -498,7 +498,7 @@ package struct VMCapabilityCatalog {
                 }
                 if step == .stop, instance.isLivePaused { return .passedOverByState }
                 return .acts(step)
-            case .refuse(.invalidState), .refuse(.heldByAnotherCopy), .join, nil:
+            case .refuse(.invalidState), .refuse(.heldByAnotherCopy), .join, .wait, nil:
                 continue
             case .refuse(let reason):
                 refusal = refusal ?? reason
@@ -565,7 +565,7 @@ package struct VMCapabilityCatalog {
     ) -> Bool {
         guard let request = capability.request(on: instance) else { return false }
         switch instance.activity.decide(request, posture: .commit, after: discard) {
-        case .admit, .join: return true
+        case .admit, .join, .wait: return true
         case .refuse: return false
         }
     }
@@ -578,7 +578,7 @@ package struct VMCapabilityCatalog {
     /// during the bring-up it asks for joins it.
     package func accepts(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .commit) {
-        case .admit, .join: true
+        case .admit, .join, .wait: true
         case .refuse, nil: false
         }
     }

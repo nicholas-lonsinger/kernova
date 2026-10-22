@@ -135,9 +135,10 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     /// Swaps each staged file into the bundle, then removes the staging
     /// directory.
     ///
-    /// Each swap is a rename, so a file the bundle holds is never absent,
-    /// whatever interrupts the revert. A cold plan drops the bundle's own saved
-    /// state, so the VM comes back stopped on the captured disks.
+    /// Each swap is a rename, so a disk the bundle holds is never absent,
+    /// whatever interrupts the revert. The bundle's own saved state goes first,
+    /// so the VM comes back stopped on the captured disks from a cold plan, and
+    /// suspended on the snapshot's saved state from a warm one.
     package func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
@@ -146,14 +147,13 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         defer { try? manager.removeItem(at: staging) }
 
         do {
-            if plan.kind == .cold {
-                // First, and only once staging succeeded: a save file describing
-                // pre-revert RAM sitting over post-revert disks is the corruption
-                // the catch below exists to undo, so a cold revert never lets that
-                // pairing exist. An interruption after this point leaves a stopped
-                // VM on its pre-revert disks, which costs nothing.
-                try removeSaveFile(bundleURL: bundleURL)
-            }
+            // First, and only once staging succeeded: a save file describing
+            // pre-revert RAM sitting over post-revert disks is the corruption
+            // the catch below exists to undo, and a process that dies mid-swap
+            // runs no catch. An interruption after this point leaves a stopped
+            // VM with no saved state, and the unsettled session the revert
+            // marked (``VMHostState/hasUnsettledSession``) owes it again.
+            try removeSaveFile(bundleURL: bundleURL)
             for relativePath in plan.relativePaths {
                 try swapIntoPlace(
                     staged: staging.appendingPathComponent(relativePath),

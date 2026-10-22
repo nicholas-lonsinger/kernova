@@ -321,7 +321,7 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
 final class GroupedFormNotedRow: NSStackView {
     let wrappedRow: NSView
 
-    init(_ row: NSView, notes: [GroupedFormStateNote]) {
+    init(_ row: NSView, notes: [NSView]) {
         wrappedRow = row
         super.init(frame: .zero)
         orientation = .vertical
@@ -632,6 +632,40 @@ final class GroupedFormStateNote: NSTextField {
         }
         stringValue = text
         isHidden = false
+    }
+}
+
+/// A ``GroupedFormStateNote`` behind a caution triangle: a note warning that a
+/// change discards something, shown and hidden as its text is.
+@MainActor
+final class GroupedFormCautionNote: NSStackView {
+    private let note: GroupedFormStateNote
+
+    init(content: @escaping @MainActor () -> String?) {
+        note = GroupedFormStateNote(content: content)
+        super.init(frame: .zero)
+        let icon = NSImageView(
+            image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: "Caution"))
+        icon.contentTintColor = Caution.color
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        orientation = .horizontal
+        alignment = .firstBaseline
+        spacing = Spacing.small
+        translatesAutoresizingMaskIntoConstraints = false
+        addArrangedSubview(icon)
+        addArrangedSubview(note)
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormCautionNote does not support NSCoder")
+    }
+
+    func refresh() {
+        note.refresh()
+        isHidden = note.isHidden
     }
 }
 

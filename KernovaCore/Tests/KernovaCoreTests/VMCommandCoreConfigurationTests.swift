@@ -480,7 +480,7 @@ struct VMCommandCoreConfigurationTests {
                     value: String(before.hostState.agentInstallNudgeDismissed)),
                 ConfigurationEntry(key: "ephemeral.baseline", value: "Clean"),
             ],
-            consent: .none)
+            consent: Consent([.setEphemeralBaseline]))
 
         let after = instance.settings
         #expect(after.configuration.serialSocketRelayEnabled != before.configuration.serialSocketRelayEnabled)
@@ -767,7 +767,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "ephemeral", value: "on")],
-            consent: .none)
+            consent: Consent([.setEphemeralBaseline]))
 
         #expect(instance.hostState.ephemeralModeEnabled)
         #expect(instance.hostState.ephemeralBaselineSnapshotID == snapshot.id)

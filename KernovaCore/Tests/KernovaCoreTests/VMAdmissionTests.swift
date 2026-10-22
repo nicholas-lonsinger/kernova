@@ -78,11 +78,13 @@ struct VMAdmissionTests {
     /// invalid state, `R` removed, `U` unsupported by this build, `C` an
     /// identity conflict, `H` an accessory another attach holds, `T` refused
     /// by the app's termination, `O` refused as held by another copy, `S`
-    /// taken only by a stopped VM, `E` an Ephemeral baseline that can't be read.
+    /// taken only by a stopped VM, `E` an Ephemeral baseline that can't be read,
+    /// `W` waiting out a return to the Ephemeral baseline.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
         case .join: "J"
+        case .wait: "W"
         case .refuse(.busy(let kind)) where kind == held: "B"
         case .refuse(.busy): "?"
         case .refuse(.invalidState): "I"
@@ -359,14 +361,14 @@ struct VMAdmissionTests {
         (.terminationSave, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "TTTTTTR"),
         (.terminationSave, .operation(.deleting), "TTTTIIR"),
         (.terminationSave, .edit(.hotPlugMedia), "AAAITTR"),
-        (.powerOffRevert, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "AAAAAAR"),
-        (.powerOffRevert, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: true))), "AAAAAAR"),
-        (.powerOffRevert, .start(recovery: false), "TTTTIIR"),
-        (.powerOffRevert, .resume, "IIITITR"),
-        (.powerOffRevert, .operation(.saving), "IIIITTR"),
-        (.powerOffRevert, .operation(.capturingSnapshot(.stopped)), "TIIIIIR"),
-        (.powerOffRevert, .operation(.deletingSnapshot), "TTTTTTR"),
-        (.powerOffRevert, .operation(.discardingSavedState), "IIITIIR"),
+        (.sessionEndRevert, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "AAAAAAR"),
+        (.sessionEndRevert, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: true))), "AAAAAAR"),
+        (.sessionEndRevert, .start(recovery: false), "TTTTIIR"),
+        (.sessionEndRevert, .resume, "IIITITR"),
+        (.sessionEndRevert, .operation(.saving), "IIIITTR"),
+        (.sessionEndRevert, .operation(.capturingSnapshot(.stopped)), "TIIIIIR"),
+        (.sessionEndRevert, .operation(.deletingSnapshot), "TTTTTTR"),
+        (.sessionEndRevert, .operation(.discardingSavedState), "IIITIIR"),
         (.mediaEditReconcile, .operation(.reconcilingMedia), "IIIIAAR"),
         (.mediaEditReconcile, .start(recovery: false), "TTTTIIR"),
         (.mediaEditReconcile, .operation(.pausing), "IIIITIR"),
@@ -390,7 +392,7 @@ struct VMAdmissionTests {
     func exemptOriginWidensNothingElse(row: Int) {
         let (request, _) = Self.settledTable[row]
         let asNewWork = Self.settledCells(request, .plain, terminating: true)
-        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert, .mediaEditReconcile]
+        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaEditReconcile]
         where !origin.exempts(request) {
             #expect(
                 Self.settledCells(request, .plain, terminating: true, origin: origin) == asNewWork,
@@ -401,7 +403,7 @@ struct VMAdmissionTests {
     @Test("Outside the termination, an origin changes no decision", arguments: settledTable.indices)
     func originIsInertOutsideTheTermination(row: Int) {
         let (request, expected) = Self.settledTable[row]
-        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert, .mediaEditReconcile] {
+        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaEditReconcile] {
             #expect(Self.settledCells(request, .plain, origin: origin) == expected, "\(request) \(origin)")
         }
     }
@@ -494,6 +496,41 @@ struct VMAdmissionTests {
         #expect(VMAdmission.owesMediaReconcile(stoppingReconcile))
         #expect(
             !VMAdmission.owesMediaReconcile(.operating(.reconcilingMedia, from: Self.live)))
+    }
+
+    @Test("A request carrying the guest's files forward waits out a return to the Ephemeral baseline, and offers busy")
+    func filesForwardRequestsWaitOutABaselineRevert() {
+        let facts = Self.facts(slot: false, .plain)
+        let kind = VMOperationKind.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false))
+        let outcome = VMOutcome()
+        let restoring = VMLifecyclePhase.operating(
+            VMOperation(
+                kind: kind, startedFrom: .stopped, sessionState: .none, outcome: outcome,
+                restoresEphemeralBaseline: true))
+        let reverting = VMLifecyclePhase.operating(
+            VMOperation(kind: kind, startedFrom: .stopped, sessionState: .none, outcome: outcome))
+        let forward: [VMAdmission.Request] = [
+            .start(recovery: false), .resume, .operation(.capturingSnapshot(.stopped)),
+            .operation(.copyingOut(.stopped)),
+        ]
+        for request in forward {
+            #expect(
+                VMAdmission.decide(request, posture: .commit, phase: restoring, facts: facts)
+                    == .wait(outcome), "\(request)")
+            // Offered, nothing waits: a surface dims what an operation holds.
+            #expect(
+                VMAdmission.decide(request, posture: .offer, phase: restoring, facts: facts)
+                    != .wait(outcome), "\(request)")
+            // A revert to any other snapshot holds the VM as busy.
+            #expect(
+                VMAdmission.decide(request, posture: .commit, phase: reverting, facts: facts)
+                    != .wait(outcome), "\(request)")
+        }
+        // What leaves the guest's files alone is busy, as it is with any revert.
+        #expect(
+            VMAdmission.decide(
+                .operation(.deletingSnapshot), posture: .commit, phase: restoring, facts: facts)
+                == .refuse(.busy(kind)))
     }
 
     // MARK: - Held kinds × requests

@@ -225,6 +225,27 @@ package struct VMOperation: Sendable, Equatable {
     /// What a caller joining the operation awaits.
     let outcome: VMOutcome
 
+    /// Whether this is a revert to the VM's Ephemeral baseline, however it was
+    /// asked for — what a request carrying the guest's files forward waits out
+    /// rather than being refused as busy.
+    let restoresEphemeralBaseline: Bool
+
+    /// What the operation has done to its VM's session changes so far, which
+    /// its ending settles (``VMHostState/hasUnsettledSession``).
+    var sessionChanges: VMSessionChanges = .untouched
+
+    init(
+        kind: VMOperationKind, startedFrom: VMLifecyclePhase,
+        sessionState: VMOperationSessionState, outcome: VMOutcome,
+        restoresEphemeralBaseline: Bool = false
+    ) {
+        self.kind = kind
+        self.startedFrom = startedFrom
+        self.sessionState = sessionState
+        self.outcome = outcome
+        self.restoresEphemeralBaseline = restoresEphemeralBaseline
+    }
+
     /// The session the operation holds, or `nil` while it has none — before a
     /// bring-up creates one, or once the session ended mid-operation.
     var session: VMOperationSession? {
@@ -249,6 +270,38 @@ package struct VMOperation: Sendable, Equatable {
             return VMSessionEnd.poweredOff.rest.phase(slotOnDisk: slotOnDisk)
         case .live, .none:
             return startedFrom
+        }
+    }
+}
+
+/// What an operation has done to the changes a guest session makes to its
+/// VM's files, recorded as it happens — through ``VMOperationContext`` — and
+/// settled at the operation's ending, the one place that clears
+/// ``VMHostState/hasUnsettledSession``.
+enum VMSessionChanges: Sendable, Equatable {
+    /// Nothing: the ending leaves the marker as it stands.
+    case untouched
+    /// The marker is committed and the guest is about to execute; an ending
+    /// that never saw it execute retracts the mark, since nothing it marked
+    /// happened — back to the `prior` marker and the record `before` it.
+    indirect case guestStarting(prior: Bool, before: VMSessionChanges)
+    /// The guest executed on the bundle's files, so its session's end is what
+    /// settles them.
+    case guestExecuted
+    /// A revert began replacing the bundle's files, which stay unsettled until
+    /// every one has landed.
+    case filesChanging
+    /// A revert's files all landed and no session resumed on them: settled.
+    case filesLanded
+    /// A complete suspend slot holds the session, which is kept: settled.
+    case parked
+
+    /// The marker the ending writes, `nil` when it leaves it as it stands.
+    var markerAtEnding: Bool? {
+        switch self {
+        case .guestStarting(let prior, let before): before.markerAtEnding ?? prior
+        case .filesLanded, .parked: false
+        case .untouched, .guestExecuted, .filesChanging: nil
         }
     }
 }
@@ -397,6 +450,29 @@ package enum VMOperationKind: Sendable, Equatable {
             return false
         }
     }
+
+    /// Whether this operation is a revert to a snapshot.
+    var isRevert: Bool {
+        if case .bringUp(.reverting) = self { return true }
+        return false
+    }
+
+    /// Whether this operation, admitted at rest, carries the guest's files
+    /// forward as the bundle holds them — boots them, captures them, or copies
+    /// them out — rather than replacing them, discarding them, or leaving them
+    /// alone.
+    var carriesGuestFilesForward: Bool {
+        switch self {
+        case .bringUp(let bringUp):
+            bringUp.beginsSessionFromRest
+        case .capturingSnapshot, .copyingOut:
+            true
+        case .pausing, .resuming, .saving, .deletingSnapshot, .attachingUSB, .detachingUSB,
+            .reconcilingMedia, .forceStopping, .discardingSavedState, .deleting,
+            .creatingStorageDisk, .removingStorageDisk, .creatingRemovableMedia:
+            false
+        }
+    }
 }
 
 /// An operation that brings no guest up — the kinds ``VMActivity``'s generic
@@ -512,7 +588,7 @@ package enum VMBringUpKind: Sendable, Equatable {
     }
 
     /// Whether this bring-up begins a guest session on a VM at rest — a
-    /// session whose power-off returns an Ephemeral Mode VM to its baseline.
+    /// session whose end returns an Ephemeral Mode VM to its baseline.
     var beginsSessionFromRest: Bool {
         switch self {
         case .guestStart, .settingUp: true
@@ -583,6 +659,11 @@ package struct VMEditClasses: OptionSet, Sendable, Hashable {
     /// restores across (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
     /// so admission keeps it open beside one.
     static let removableMediaRemoval = VMEditClasses(rawValue: 1 << 11)
+    /// The unsettled-session marker (``VMHostState/hasUnsettledSession``),
+    /// which no edit writes: only the operation beginning or settling a
+    /// session, and the activity settling a session's end
+    /// (``VMEditPermit/Authority/settlement``).
+    static let sessionSettlement = VMEditClasses(rawValue: 1 << 12)
 
     static let all: VMEditClasses = [
         .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,

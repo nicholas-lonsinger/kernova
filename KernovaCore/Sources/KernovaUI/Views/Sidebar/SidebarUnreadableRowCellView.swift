@@ -83,7 +83,7 @@ final class SidebarUnreadableRowCellView: NSTableCellView {
     /// ``applySymbols()`` bakes it — re-made at each appearance change.
     static func warningSymbol(description: String) -> NSImage {
         symbol(
-            "exclamationmark.triangle.fill", pointSize: 13, color: .systemYellow,
+            "exclamationmark.triangle.fill", pointSize: 13, color: Caution.color,
             description: description)
     }
 

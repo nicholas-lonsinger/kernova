@@ -177,6 +177,9 @@ extension VMHostState {
         },
         .field("tags", \.tags, .hostPresentation),
         .field("lastRunAt", \.lastRunAt, .observations),
+        // Only the operation beginning or settling a session moves it, and the
+        // activity settling a session's end.
+        .field("hasUnsettledSession", \.hasUnsettledSession, .sessionSettlement),
     ])
 }
 

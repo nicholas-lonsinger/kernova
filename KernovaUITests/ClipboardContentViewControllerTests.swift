@@ -815,7 +815,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
 
 /// Verifies the footer's passthrough switch, the window's second surface for a
 /// setting the VM's settings pane also offers: both go through
-/// `ClipboardPassthroughSetting`, so turning it on confirms first and a
+/// `ConsentedSettingWrite`, so turning it on confirms first and a
 /// cancelled or unconfirmable enable writes nothing and puts the switch back.
 @Suite("ClipboardContentViewController passthrough switch", .caseScoped)
 @MainActor

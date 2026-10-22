@@ -493,56 +493,54 @@ extension VMSettingsViewController {
     /// The one write path for the auto-start flag, whichever surface's switch
     /// asked for it.
     private func setAutoStart(_ isOn: Bool) {
-        writeMirrored(VMConfigurationKeyRegistry.autoStart.assigning(isOn))
+        consentedWrite.write(
+            VMConfigurationKeyRegistry.autoStart.assigning(isOn), confirmingIn: view.window)
     }
 
     /// A VM with no snapshot takes its baseline first: the enable opens the
     /// Take Snapshot sheet, and the mode turns on once that capture lands.
+    /// Otherwise the write confirms first: every shutdown then discards what
+    /// the VM holds.
     private func setEphemeralMode(_ isOn: Bool) {
         guard isOn, viewModel.capabilities.ephemeralModeEnable(on: instance) == .capturingBaseline,
             viewModel.capabilities.isEphemeralModeEnableAvailable(on: instance)
         else {
-            writeMirrored(VMConfigurationKeyRegistry.ephemeral.assigning(isOn))
+            consentedWrite.write(
+                VMConfigurationKeyRegistry.ephemeral.assigning(isOn), confirmingIn: view.window)
             return
         }
         viewModel.requestTakeSnapshot(instance, for: .ephemeralBaseline)
         apply()
     }
 
-    /// Writes a setting that renders on more than one surface, re-rendering all
-    /// of them when it did not land so no control is left showing a value the
-    /// model does not hold.
-    private func writeMirrored(_ assignment: ConfigurationEntry) {
-        guard case .applied = viewModel.setConfiguration([assignment], on: instance) else {
-            apply()
-            return
-        }
-    }
-
-    /// Sharing carries passthrough, so this goes through passthrough's own write
-    /// path: turning it on over a passthrough flag already set starts the guest
-    /// reading this Mac's clipboard, and confirms first.
+    /// Sharing carries passthrough, so this confirms as passthrough does:
+    /// turning it on over a passthrough flag already set starts the guest
+    /// reading this Mac's clipboard.
     private func setClipboardSharing(_ isOn: Bool) {
-        passthroughSetting.set(.sharing(isOn), confirmingIn: view.window)
+        consentedWrite.write(
+            VMConfigurationKeyRegistry.clipboardSharing.assigning(isOn), confirmingIn: view.window)
     }
 
     private func setDropFiles(_ isOn: Bool) {
-        writeMirrored(VMConfigurationKeyRegistry.dropFiles.assigning(isOn))
+        consentedWrite.write(
+            VMConfigurationKeyRegistry.dropFiles.assigning(isOn), confirmingIn: view.window)
     }
 
-    /// The clipboard flags' shared write path, which every surface offering
-    /// either toggle goes through — this pane's Sharing rows and the clipboard
-    /// window's footer switch.
+    /// The write path of every setting that renders on more than one surface,
+    /// which re-renders all of them when a write did not land and confirms
+    /// first when the write asks for consent.
     ///
     /// Built per use so the confirmation alert never holds this controller.
-    private var passthroughSetting: ClipboardPassthroughSetting {
-        ClipboardPassthroughSetting(
+    private var consentedWrite: ConsentedSettingWrite {
+        ConsentedSettingWrite(
             instance: instance, viewModel: viewModel,
             refresh: { [weak self] in self?.apply() })
     }
 
     private func setClipboardPassthrough(_ isOn: Bool) {
-        passthroughSetting.set(.passthrough(isOn), confirmingIn: view.window)
+        consentedWrite.write(
+            VMConfigurationKeyRegistry.clipboardPassthrough.assigning(isOn),
+            confirmingIn: view.window)
     }
 
     private func appDidBecomeActive() {

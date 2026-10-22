@@ -71,10 +71,57 @@ extension VMCommandCore {
     /// The capture itself, listed in the manifest inside the same capture
     /// operation, answering the snapshot that landed; `alsoRecord` writes
     /// beside that listing under the same permit.
+    ///
+    /// A capture that meets its VM returning to the Ephemeral baseline waits it
+    /// out (``VMActivity/attemptWaitingOutRestorations(_:resolving:_:)``) and
+    /// is decided afresh once it lands, so it never captures what the return
+    /// was to discard.
     private func captureSnapshot(
         _ instance: VMInstance, name: String, notes: String,
-        alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
+        alsoRecord: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
     ) async throws -> VMSnapshot {
+        let landed = CapturedSnapshot()
+        let outcome = VMOutcome()
+        do {
+            try instance.activity.attemptWaitingOutRestorations(nil, resolving: outcome) {
+                [weak self, weak instance] outcome in
+                guard let self, let instance else { throw CancellationError() }
+                try self.launchCapture(
+                    instance, name: name, notes: notes, resolving: outcome
+                ) { permit, captured in
+                    landed.snapshot = captured
+                    alsoRecord(permit, captured)
+                }
+            }
+            try await outcome.value()
+        } catch let refused as CommandError {
+            throw refused
+        } catch {
+            logger.log(
+                .error,
+                "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw failure(error, verb: .takeSnapshot, on: instance)
+        }
+        guard let snapshot = landed.snapshot else {
+            throw CommandError.failed(verb: .takeSnapshot, error: CancellationError())
+        }
+        return snapshot
+    }
+
+    /// The snapshot a capture listed, set inside the capture operation.
+    @MainActor
+    private final class CapturedSnapshot {
+        var snapshot: VMSnapshot?
+    }
+
+    /// Launches ``captureSnapshot(_:name:notes:alsoRecord:)``'s capture,
+    /// decided against the VM as it stands, resolving `outcome`; `alsoRecord`
+    /// runs once the snapshot is listed.
+    private func launchCapture(
+        _ instance: VMInstance, name: String, notes: String, resolving outcome: VMOutcome,
+        alsoRecord: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void
+    ) throws {
         // Stamped at confirm time, not when the caller decided: the VM can
         // start, stop, or suspend in between.
         guard
@@ -91,18 +138,12 @@ extension VMCommandCore {
         let snapshot = VMSnapshotCaptureRequest(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
-        do {
-            return try await lifecycle.takeSnapshot(instance, mode: mode, snapshot: snapshot) {
-                permit, captured in
-                try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
-                alsoRecord(permit, captured)
-            }
-        } catch {
-            logger.log(
-                .error,
-                "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            throw failure(error, verb: .takeSnapshot, on: instance)
+        try lifecycle.launchTakeSnapshot(
+            instance, mode: mode, snapshot: snapshot, resolving: outcome
+        ) { [weak self] permit, captured in
+            guard let self else { throw CancellationError() }
+            try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
+            alsoRecord(permit, captured)
         }
     }
 
@@ -263,12 +304,13 @@ extension VMCommandCore {
 
     // MARK: - Ephemeral Mode
 
-    /// The revert to its baseline an Ephemeral Mode VM owes a power-off, as a
-    /// follow-up; `nil` for every other VM.
+    /// The revert to its baseline an Ephemeral Mode VM owes a session that
+    /// ended, as a follow-up; `nil` for every other VM.
     ///
-    /// Answered from ``VMActivity/onPoweredOff``, whose step drains it: a
-    /// restoration, it takes the VM before any other follow-up queued there
-    /// and before anything else can be decided against the VM. A failure
+    /// Answered from ``VMActivity/onUnsettledSession``, whose steps drain it:
+    /// a restoration, it takes the VM before any other follow-up queued there
+    /// and before anything else can be decided against the VM, and its landing
+    /// settles the session (``VMHostState/hasUnsettledSession``). A failure
     /// nobody waits on is reported.
     func ephemeralBaselineRevert(for instance: VMInstance) -> VMFollowUp? {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return nil }
@@ -279,7 +321,7 @@ extension VMCommandCore {
                 "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
             )
             try self.launchRevert(
-                instance, to: baseline, origin: .powerOffRevert, resolving: outcome)
+                instance, to: baseline, origin: .sessionEndRevert, resolving: outcome)
         }
         .reportingFailure { [weak self] error in
             guard let self else { return }

@@ -58,8 +58,9 @@ extension VMCommandCore {
     /// leaves its value where it is is taken in any state; a host-state key's
     /// gate is asked whether its value moves or not, so naming one is refused
     /// wherever that key is pinned, a snapshot capture among them.
-    /// `consent` supplies what the one assignment that asks for it needs —
-    /// turning automatic clipboard passthrough on.
+    /// `consent` supplies what the assignments that ask for it need — turning
+    /// automatic clipboard passthrough on, and pinning the Ephemeral baseline
+    /// every shutdown returns the VM to.
     ///
     /// A gate that refuses names every assignment it refused. Each gate names
     /// an edit class (``VMConfigurationKey/editClasses(writing:for:)``); the
@@ -107,6 +108,8 @@ extension VMCommandCore {
             HostStateChange(
                 key: write.key, field: write.field, change: try write.field.change(write.value, context))
         }
+        try requireEphemeralBaselineConsent(
+            on: instance, applying: hostStateChanges, consent: consent)
         // The configuration's gates are judged on what `config.json` holds,
         // inside the write: the permit covers every key the VM takes now, and
         // one that moves a field outside it is refused there.
@@ -296,6 +299,42 @@ extension VMCommandCore {
         else { return }
         throw CommandError.confirmationRequired(
             ClipboardPassthroughConsent.prompt(vmName: instance.name))
+    }
+
+    /// Refuses, without the user's consent, a change that turns Ephemeral Mode
+    /// on or points it at another snapshot, in whatever state the VM is: from
+    /// then on every shutdown discards what the VM holds.
+    private func requireEphemeralBaselineConsent(
+        on instance: VMInstance, applying changes: [HostStateChange], consent: Consent
+    ) throws {
+        var candidate = instance.hostState
+        for change in changes { change.change(&candidate) }
+        guard candidate.ephemeralModeEnabled,
+            let id = candidate.ephemeralBaselineSnapshotID,
+            id != instance.ephemeralBaselineSnapshot?.id,
+            let baseline = instance.snapshotManifest.snapshot(id: id),
+            !consent.covers(.setEphemeralBaseline)
+        else { return }
+        throw CommandError.confirmationRequired(
+            Self.ephemeralBaselinePrompt(
+                baseline, on: instance, turningOn: instance.ephemeralBaselineSnapshot == nil))
+    }
+
+    /// What turning Ephemeral Mode on with `baseline` — or, with `turningOn`
+    /// false, pointing it there — asks first.
+    package static func ephemeralBaselinePrompt(
+        _ baseline: VMSnapshot, on instance: VMInstance, turningOn: Bool
+    ) -> ConfirmationPrompt {
+        let vm = "\u{201C}\(instance.name)\u{201D}"
+        let snapshot = "\u{201C}\(baseline.name)\u{201D}"
+        return ConfirmationPrompt(
+            kind: .setEphemeralBaseline,
+            title: turningOn
+                ? "Turn On Ephemeral Mode for \(vm)?"
+                : "Make \(snapshot) the Baseline of \(vm)?",
+            message: EphemeralModeCopy.shutdownDiscards(vm: vm, baseline: snapshot),
+            confirmTitle: turningOn ? "Turn On" : "Change Baseline",
+            dismissTitle: "Cancel")
     }
 
     /// The key `name` addresses, refusing a name the keyspace does not hold and

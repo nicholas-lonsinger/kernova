@@ -22,7 +22,8 @@ struct VMActivityTests {
     /// mutable locals.
     @MainActor
     private final class Recorder {
-        var poweredOff = 0
+        /// How many session ends were settled.
+        var settled = 0
         var sent = 0
         var terminations = 0
         var phase: VMLifecyclePhase?
@@ -45,8 +46,8 @@ struct VMActivityTests {
     ) -> (VMInstance, Recorder) {
         let instance = VMInstanceFixture.make(guestOS: guestOS, phase: phase, mutate: mutate)
         let recorder = Recorder()
-        instance.activity.onPoweredOff = {
-            recorder.poweredOff += 1
+        instance.activity.onUnsettledSession = {
+            recorder.settled += 1
             return []
         }
         return (instance, recorder)
@@ -64,10 +65,10 @@ struct VMActivityTests {
             phase: phase,
             snapshots: VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
         let recorder = Recorder()
-        // Wiring installs the library's own power-off hook; the recorder's
+        // Wiring installs the library's own settling hook; the recorder's
         // stands in for it here.
-        instance.activity.onPoweredOff = {
-            recorder.poweredOff += 1
+        instance.activity.onUnsettledSession = {
+            recorder.settled += 1
             return []
         }
         return (instance, recorder, library)
@@ -126,7 +127,7 @@ struct VMActivityTests {
         #expect(startRecorder.guestStart == .starting(recovery: false))
 
         let (capturing, captureRecorder) = makeInstance(.stopped)
-        try await capturing.activity.captureSnapshot(.stopped) { context in
+        try await capturing.activity.launchedCapture(.stopped) { context in
             captureRecorder.operation = capturing.phase.operation
             captureRecorder.captureMode = context.mode
             return .rest(.asStarted, ())
@@ -213,20 +214,21 @@ struct VMActivityTests {
 
         #expect(recorder.sessionEnd == .stoppedWithError(message: Probe().localizedDescription))
         #expect(instance.phase == .failed(message: Probe().localizedDescription))
-        // An error is not a power-off.
-        #expect(recorder.poweredOff == 0)
+        // An error ends the session as a power-off does.
+        #expect(recorder.settled == 1)
 
         let (poweringOff, powerOffs) = makeInstance(.running(sessionID: session))
         try await poweringOff.activity.perform(.pausing) { _ in
             poweringOff.activity.deliverSessionEvent(.guestDidStop, from: session)
-            // Held until the body ends: the hook fires at the ending commit.
+            // Held until the body ends: the session is settled at the ending
+            // commit.
             powerOffs.phase = poweringOff.phase
-            #expect(powerOffs.poweredOff == 0)
+            #expect(powerOffs.settled == 0)
             return .rest(.live(.paused), ())
         }
         #expect(powerOffs.phase?.operation?.kind == .pausing)
         #expect(poweringOff.phase == .stopped)
-        #expect(powerOffs.poweredOff == 1)
+        #expect(powerOffs.settled == 1)
     }
 
     @Test("performNow commits and ends in one step, and refuses what the phase does not admit")
@@ -984,7 +986,7 @@ struct VMActivityTests {
         let revert = followUp(
             "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
             on: instance, rank: .restoration, gate: revertGate, order: order)
-        instance.activity.onPoweredOff = { [revert] in [revert] }
+        instance.activity.onUnsettledSession = { [revert] in [revert] }
         let detachGate = GatedStep()
         let detach = try launchGated(.detachingUSB(deviceID: UUID()), on: instance, gate: detachGate)
         try await detachGate.waitUntilEntered()
@@ -1048,8 +1050,8 @@ struct VMActivityTests {
         let cases: [(VMLifecyclePhase, VMSessionEvent, VMLifecyclePhase, Int)] = [
             (.running(sessionID: session), .guestDidStop, .stopped, 1),
             (.livePaused(sessionID: session), .guestDidStop, .stopped, 1),
-            (.running(sessionID: session), .didStopWithError(Probe()), .failed(message: message), 0),
-            (.livePaused(sessionID: session), .didStopWithError(Probe()), .failed(message: message), 0),
+            (.running(sessionID: session), .didStopWithError(Probe()), .failed(message: message), 1),
+            (.livePaused(sessionID: session), .didStopWithError(Probe()), .failed(message: message), 1),
         ]
         for (phase, event, rest, powerOffs) in cases {
             let (instance, recorder) = makeInstance(phase)
@@ -1062,7 +1064,7 @@ struct VMActivityTests {
             instance.activity.deliverSessionEvent(event, from: session)
             #expect(instance.phase == rest, "\(phase) \(event)")
             #expect(instance.activity.sessionContext == nil)
-            #expect(recorder.poweredOff == powerOffs, "\(phase) \(event)")
+            #expect(recorder.settled == powerOffs, "\(phase) \(event)")
         }
 
         // A slot that survived the session is what the VM comes back on.
@@ -1070,7 +1072,7 @@ struct VMActivityTests {
         try VMInstanceFixture.writeSaveFile(for: suspending)
         suspending.activity.deliverSessionEvent(.guestDidStop, from: session)
         #expect(suspending.phase == .suspended)
-        #expect(recorder.poweredOff == 1)
+        #expect(recorder.settled == 1)
     }
 
     @Test("A session end during an operation keeps the operation and marks its session ended")
@@ -1098,13 +1100,13 @@ struct VMActivityTests {
             #expect(operation.startedFrom == .running(sessionID: session))
             #expect(!instance.hasLiveVirtualMachine)
             #expect(instance.activity.sessionContext == nil)
-            #expect(recorder.poweredOff == 0)
+            #expect(recorder.settled == 0)
 
             gate.release()
             try await outcome.value()
             let rest: VMLifecyclePhase = end == .poweredOff ? .stopped : .failed(message: message)
             #expect(instance.phase == rest)
-            #expect(recorder.poweredOff == (end == .poweredOff ? 1 : 0))
+            #expect(recorder.settled == 1)
         }
     }
 
@@ -1122,7 +1124,7 @@ struct VMActivityTests {
         #expect(recorder.terminations == 1)
         #expect(recorder.operation?.kind == .forceStopping)
         #expect(instance.phase == .stopped)
-        #expect(recorder.poweredOff == 1)
+        #expect(recorder.settled == 1)
 
         // Nothing live to stop.
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
@@ -1158,7 +1160,7 @@ struct VMActivityTests {
 
         #expect(recorder.terminations == 1)
         #expect(instance.phase == .stopped)
-        #expect(recorder.poweredOff == 1)
+        #expect(recorder.settled == 1)
     }
 
     @Test("A Force Stop of a settled VM whose termination fails ends back where it started, for every caller")
@@ -1183,7 +1185,7 @@ struct VMActivityTests {
         await #expect(throws: Probe.self) { try await second.value }
         #expect(recorder.terminations == 0)
         #expect(instance.phase == .running(sessionID: session))
-        #expect(recorder.poweredOff == 0)
+        #expect(recorder.settled == 0)
     }
 
     /// One operation of every kind that holds a live session, admitted from
@@ -1228,12 +1230,12 @@ struct VMActivityTests {
             #expect(operation.outcome === outcome, "\(kind)")
             #expect(operation.session == nil, "\(kind)")
             #expect(operation.sessionEnd == .poweredOff, "\(kind)")
-            #expect(recorder.poweredOff == 0, "\(kind)")
+            #expect(recorder.settled == 0, "\(kind)")
 
             gate.release()
             try await outcome.value()
             #expect(instance.phase == .stopped, "\(kind)")
-            #expect(recorder.poweredOff == 1, "\(kind)")
+            #expect(recorder.settled == 1, "\(kind)")
             withExtendedLifetime(library) {}
         }
     }
@@ -1282,14 +1284,14 @@ struct VMActivityTests {
                         continue
                     }
                 }
-                #expect(recorder.poweredOff == 0, "\(kind)")
+                #expect(recorder.settled == 0, "\(kind)")
 
                 terminate.release()
                 try await first.value
                 try await second.value
                 #expect(recorder.terminations == 1, "\(kind)")
                 #expect(instance.phase == (slot ? .suspended : .stopped), "\(kind)")
-                #expect(recorder.poweredOff == 1, "\(kind)")
+                #expect(recorder.settled == 1, "\(kind)")
                 withExtendedLifetime(library) {}
             }
         }
@@ -1330,7 +1332,7 @@ struct VMActivityTests {
                 try await outcome.value()
             }
             #expect(instance.phase == .running(sessionID: session), "\(handsOver)")
-            #expect(recorder.poweredOff == 0)
+            #expect(recorder.settled == 0)
             withExtendedLifetime(library) {}
         }
     }
