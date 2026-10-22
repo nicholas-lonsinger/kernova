@@ -1,3 +1,5 @@
+import Foundation
+
 @testable import KernovaCore
 
 /// Scripted stand-in for `NetworkDeviceControlling`, so coordinator tests drive
@@ -13,15 +15,27 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
     var refusedPlans: [NetworkAttachmentPlan] = []
     private(set) var appliedPlans: [NetworkAttachmentPlan] = []
     private(set) var detachCount = 0
+    /// The session view a vmnet plan joins its network through, refusing the
+    /// plan while that network is not materialized — as the real handle does.
+    let vmnetNetworks: VmnetSessionNetworks
 
-    init(plan: NetworkAttachmentPlan? = nil) {
+    init(
+        plan: NetworkAttachmentPlan? = nil,
+        vmnetNetworks: VmnetSessionNetworks = VmnetNetworkService.scripted().sessionNetworks(ownedBy: UUID())
+    ) {
         self.plan = plan
+        self.vmnetNetworks = vmnetNetworks
     }
 
     var currentPlan: NetworkAttachmentPlan? { plan }
 
     func apply(_ plan: NetworkAttachmentPlan) -> Bool {
         guard !refusedPlans.contains(plan) else { return false }
+        if let selection = plan.vmnetSelection,
+            vmnetNetworks.joinedNetworkIfMaterialized(for: selection) == nil
+        {
+            return false
+        }
         appliedPlans.append(plan)
         self.plan = plan
         return true

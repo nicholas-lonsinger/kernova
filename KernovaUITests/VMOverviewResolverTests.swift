@@ -277,7 +277,7 @@ struct VMOverviewResolverTests {
     @Test("The address is the observer's answer for a running VM, and displaying it creates no network")
     func addressComesFromTheObserver() async {
         let vmnet = ScriptedVmnetNetworks()
-        vmnet.materialize(.common(.nat), on: "192.168.64.0")
+        vmnet.join(.common(.nat), on: "192.168.64.0")
         let model = makeSettingsViewModel(
             preferences: preferences, vmnetNetworks: vmnet.service,
             arpTable: ScriptedARPTable([

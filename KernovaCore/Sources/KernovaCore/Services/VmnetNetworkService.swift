@@ -146,10 +146,11 @@ package protocol VmnetNetworkOperating: Sendable {
 /// ref starts it again
 /// (docs/research/2026-09-18-vmnet-dhcp-reservations-lapse-on-network-stop.md).
 /// Every other network is created only through a ``VmnetSessionNetworks``
-/// view, which makes the view's VM one of its members until that VM joins
-/// another network or its last view goes. The service lets go of the network
-/// with its last member — so it is held while any member's session is on it
-/// (an in-guest reboot stops and restarts it,
+/// view and lives while something claims it: a member — a VM whose view
+/// joined it, until that VM joins another network or its last view goes — or
+/// a materialization's ``VmnetNetworkHold``. The service lets go of the
+/// network with its last claim — so it is held while any member's session is
+/// on it (an in-guest reboot stops and restarts it,
 /// docs/research/2026-09-22-vmnet-network-run-and-forwarding-rules.md) and
 /// outlives all of them — and the app's reference to it is released with the
 /// last holder of its ``VmnetNetworkHandle``.
@@ -172,12 +173,21 @@ package final class VmnetNetworkService: Sendable {
 
     private typealias Released = [(VmnetNetworkID, VmnetNetworkHandle)]
 
+    /// What keeps a materialized network other than a common one in the map.
+    fileprivate enum Claim: Hashable {
+        /// The VM with this identifier, whose view joined the network.
+        case member(UUID)
+        /// The ``VmnetNetworkHold`` with this identity, for a materialization
+        /// the VM `owner`'s view ran.
+        case hold(ObjectIdentifier, owner: UUID)
+    }
+
     private struct State {
         /// Every materialized network, present exactly for the ones that exist.
         var networks: [VmnetNetworkID: MaterializedNetwork] = [:]
-        /// The VMs whose views joined each materialized network other than a
-        /// common one, present exactly for those networks and never empty.
-        var members: [VmnetNetworkID: Set<UUID>] = [:]
+        /// What claims each materialized network other than a common one,
+        /// present exactly for those networks and never empty.
+        var claims: [VmnetNetworkID: Set<Claim>] = [:]
         /// The network each VM's views last joined. A VM has one network device,
         /// so joining another takes it off this one.
         var joined: [UUID: VmnetNetworkID] = [:]
@@ -185,24 +195,26 @@ package final class VmnetNetworkService: Sendable {
         /// with at least one.
         var openViews: [UUID: Int] = [:]
 
-        /// Records `member` as on `id` and off the network it was on before,
-        /// answering that network when `member` was its last member.
-        mutating func join(_ id: VmnetNetworkID, member: UUID) -> Released {
-            let previous = joined.updateValue(id, forKey: member)
-            if id.scope != .common { members[id, default: []].insert(member) }
-            guard let previous, previous != id else { return [] }
-            return leave(previous, member: member)
+        /// Records `claim` on `id`. A member's claim takes it off the network
+        /// it was on before, answering that network when it held its last
+        /// claim.
+        mutating func claim(_ id: VmnetNetworkID, by claim: Claim) -> Released {
+            if id.scope != .common { claims[id, default: []].insert(claim) }
+            guard case .member(let member) = claim,
+                let previous = joined.updateValue(id, forKey: member), previous != id
+            else { return [] }
+            return release(claim, from: previous)
         }
 
-        /// Takes `member` off `id`, answering `id` once it has no member left —
+        /// Takes `claim` off `id`, answering `id` once nothing claims it —
         /// removed from the map, for the caller to let go of outside the lock.
-        mutating func leave(_ id: VmnetNetworkID, member: UUID) -> Released {
-            guard var holders = members[id], holders.remove(member) != nil else { return [] }
+        mutating func release(_ claim: Claim, from id: VmnetNetworkID) -> Released {
+            guard var holders = claims[id], holders.remove(claim) != nil else { return [] }
             guard holders.isEmpty else {
-                members[id] = holders
+                claims[id] = holders
                 return []
             }
-            members[id] = nil
+            claims[id] = nil
             guard let network = networks.removeValue(forKey: id) else { return [] }
             return [(id, network.handle)]
         }
@@ -220,23 +232,24 @@ package final class VmnetNetworkService: Sendable {
         self.operations = operations
     }
 
-    /// `id`'s network, materializing it on first use, with `member` joined to
-    /// it. Blocks for the vmnet XPC round-trip — never call on the main actor.
+    /// `id`'s network, materializing it on first use, with `claim` recorded on
+    /// it: a member joins it, a hold keeps it without moving any VM. Blocks
+    /// for the vmnet XPC round-trip — never call on the main actor.
     ///
-    /// File-private: a network is joined only through a view opened for
-    /// `member`, which keeps the member's view count above zero for the whole
-    /// call.
-    fileprivate func network(for id: VmnetNetworkID, member: UUID) throws -> VmnetNetworkHandle {
-        if let handle = cachedHandle(for: id, member: member) { return handle }
+    /// File-private: a member joins only through a view opened for it, which
+    /// keeps its view count above zero for the whole call, and a hold claims
+    /// only through ``hold(_:for:)``.
+    fileprivate func network(for id: VmnetNetworkID, claim: Claim) throws -> VmnetNetworkHandle {
+        if let handle = cachedHandle(for: id, claim: claim) { return handle }
         materializeLock.lock()
         defer { materializeLock.unlock() }
-        if let handle = cachedHandle(for: id, member: member) { return handle }
+        if let handle = cachedHandle(for: id, claim: claim) { return handle }
         let (handle, subnet) = try operations.createNetwork(id.kind)
         let left = state.withLock { state in
             state.networks[id] = MaterializedNetwork(handle: handle, subnet: subnet)
-            return state.join(id, member: member)
+            return state.claim(id, by: claim)
         }
-        logLetGo(of: left, lastHeldBy: member)
+        logLetGo(of: left, lastClaim: claim)
         switch id.scope {
         case .common:
             break
@@ -254,23 +267,45 @@ package final class VmnetNetworkService: Sendable {
         return handle
     }
 
-    /// `id`'s handle when it is materialized, with `member` joined to it.
-    fileprivate func cachedHandle(for id: VmnetNetworkID, member: UUID) -> VmnetNetworkHandle? {
+    /// `id`'s handle when it is materialized, with `claim` recorded on it.
+    fileprivate func cachedHandle(for id: VmnetNetworkID, claim: Claim) -> VmnetNetworkHandle? {
         let (handle, left) = state.withLock { state -> (VmnetNetworkHandle?, Released) in
             guard let handle = state.networks[id]?.handle else { return (nil, []) }
-            return (handle, state.join(id, member: member))
+            return (handle, state.claim(id, by: claim))
         }
-        logLetGo(of: left, lastHeldBy: member)
+        logLetGo(of: left, lastClaim: claim)
         return handle
     }
 
+    /// A hold on `id`'s network for a materialization `owner`'s view runs,
+    /// materializing it first when it is not. Blocks for the vmnet XPC
+    /// round-trip — never call on the main actor. Throws when the network
+    /// cannot be materialized, leaving nothing claimed.
+    fileprivate func hold(_ id: VmnetNetworkID, for owner: UUID) throws -> VmnetNetworkHold {
+        let hold = VmnetNetworkHold(service: self, id: id, owner: owner)
+        _ = try network(for: id, claim: .hold(ObjectIdentifier(hold), owner: owner))
+        return hold
+    }
+
+    /// Takes `claim` off `id`, letting go of the network when it was the
+    /// last; a no-op for a claim never recorded.
+    fileprivate func release(_ claim: Claim, from id: VmnetNetworkID) {
+        let released = state.withLock { $0.release(claim, from: id) }
+        logLetGo(of: released, lastClaim: claim)
+    }
+
     /// Logs each of `released`, which the service let go of with its last
-    /// member, `member`.
-    private func logLetGo(of released: Released, lastHeldBy member: UUID) {
+    /// claim, `claim`.
+    private func logLetGo(of released: Released, lastClaim claim: Claim) {
+        let holder =
+            switch claim {
+            case .member(let member): "member, VM \(member.uuidString)"
+            case .hold(_, let owner): "hold, VM \(owner.uuidString)'s"
+            }
         for (id, _) in released {
             Self.logger.log(
                 .notice,
-                "Let go of the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network with its last member, VM \(member.uuidString, privacy: .public)"
+                "Let go of the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network with its last \(holder, privacy: .public)"
             )
         }
     }
@@ -284,7 +319,7 @@ package final class VmnetNetworkService: Sendable {
     }
 
     /// Closes one of `owner`'s views. With its last, `owner` leaves the
-    /// network it was on, which is released when `owner` was its last member.
+    /// network it was on, which is released when that was its last claim.
     fileprivate func closeView(for owner: UUID) {
         let released: Released = state.withLock { state in
             let remaining = (state.openViews[owner] ?? 0) - 1
@@ -294,16 +329,36 @@ package final class VmnetNetworkService: Sendable {
             }
             state.openViews[owner] = nil
             guard let current = state.joined.removeValue(forKey: owner) else { return [] }
-            return state.leave(current, member: owner)
+            return state.release(.member(owner), from: current)
         }
-        logLetGo(of: released, lastHeldBy: owner)
+        logLetGo(of: released, lastClaim: .member(owner))
+    }
+}
+
+/// Keeps the network a materialization brought up in the service's map
+/// without making any VM its member. Dropping it lets go of the network unless
+/// something else still claims it.
+final class VmnetNetworkHold: Sendable {
+    private let service: VmnetNetworkService
+    private let id: VmnetNetworkID
+    /// The VM whose view's materialization this hold serves.
+    private let owner: UUID
+
+    fileprivate init(service: VmnetNetworkService, id: VmnetNetworkID, owner: UUID) {
+        self.service = service
+        self.id = id
+        self.owner = owner
+    }
+
+    deinit {
+        service.release(.hold(ObjectIdentifier(self), owner: owner), from: id)
     }
 }
 
 extension VmnetNetworkService {
     /// The view one session of the VM `owner` attaches through. A network
     /// other than a common one exists only while a view opened for a VM that
-    /// joined it lives.
+    /// joined it lives, or a materialization's hold on it does.
     package func sessionNetworks(ownedBy owner: UUID) -> VmnetSessionNetworks {
         VmnetSessionNetworks(service: self, owner: owner)
     }
@@ -328,7 +383,7 @@ extension VmnetNetworkSelection {
 
 /// One VM session's view of the app-managed networks: the common ones, the
 /// VM's own, and the named ones it joins, each of the latter two existing only
-/// while a view of one of its members is open.
+/// while a view of one of its members is open or a materialization holds it.
 ///
 /// The session context holds it for the session's whole life, and anything
 /// still materializing through it holds it until that finishes.
@@ -363,30 +418,31 @@ package final class VmnetSessionNetworks: Sendable {
     /// XPC round-trip — never call on the main actor; config assembly runs
     /// off-main. Throws when the network cannot be materialized.
     package func joinedNetwork(for network: VmnetNetworkSelection) throws -> VmnetNetworkHandle {
-        try service.network(for: id(network), member: owner)
+        try service.network(for: id(network), claim: .member(owner))
     }
 
     /// The non-blocking variant for the main-actor live-attach path: the
     /// network, joined, when it is already materialized, `nil` otherwise.
     package func joinedNetworkIfMaterialized(for network: VmnetNetworkSelection) -> VmnetNetworkHandle? {
-        service.cachedHandle(for: id(network), member: owner)
+        service.cachedHandle(for: id(network), claim: .member(owner))
     }
 
     // A nonisolated async method runs off the caller's actor, so the blocking
-    // vmnet round-trip inside `network(for:member:)` never lands on the main
-    // thread.
-    /// Materializes `network` off the caller's actor. `true` on success (or
-    /// when already materialized); failures are logged here.
-    func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool {
+    // vmnet round-trip inside `hold(_:for:)` never lands on the main thread.
+    /// Materializes `network` off the caller's actor without joining it,
+    /// answering a hold that keeps it materialized — `nil` when it cannot be,
+    /// with the failure logged here. This view's VM stays on the network it
+    /// was on; a join through ``joinedNetworkIfMaterialized(for:)`` made while
+    /// the hold lives finds the network without another create.
+    func materializeNetwork(for network: VmnetNetworkSelection) async -> VmnetNetworkHold? {
         do {
-            _ = try service.network(for: id(network), member: owner)
-            return true
+            return try service.hold(id(network), for: owner)
         } catch {
             Self.logger.log(
                 .error,
                 "Could not materialize the \(network.logDescription, privacy: .public) network: \(error.localizedDescription, privacy: .public)"
             )
-            return false
+            return nil
         }
     }
 

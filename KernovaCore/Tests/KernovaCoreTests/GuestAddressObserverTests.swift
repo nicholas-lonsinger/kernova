@@ -23,8 +23,8 @@ struct GuestAddressObserverTests {
     /// Networks whose common NAT and Host Only ones stand on known subnets.
     private static func subnetted() -> ScriptedVmnetNetworks {
         let vmnet = ScriptedVmnetNetworks()
-        vmnet.materialize(.common(.nat), on: "192.168.64.0")
-        vmnet.materialize(.common(.hostOnly), on: "192.168.128.0")
+        vmnet.join(.common(.nat), on: "192.168.64.0")
+        vmnet.join(.common(.hostOnly), on: "192.168.128.0")
         return vmnet
     }
 
@@ -141,7 +141,7 @@ struct GuestAddressObserverTests {
         let common = vm(.nat)
         let isolated = vm(.nat, isolated: true)
         let vmnet = Self.subnetted()
-        vmnet.materialize(.own(.nat), on: "192.168.65.0", owner: isolated.configuration.id)
+        vmnet.join(.own(.nat), on: "192.168.65.0", owner: isolated.configuration.id)
         let observer = makeObserver(
             ScriptedARPTable([Self.entry("192.168.64.5"), Self.entry("192.168.65.27")]), vmnet: vmnet)
         roster.instances = [common, isolated]

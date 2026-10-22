@@ -30,8 +30,8 @@ struct VMSettingsNetworkPanelTests {
     /// over `arpTable` as the host's table.
     private func makeAddressedViewModel(_ arpTable: ScriptedARPTable) -> VMLibraryViewModel {
         let vmnet = ScriptedVmnetNetworks()
-        vmnet.materialize(.common(.nat), on: "192.168.64.0")
-        vmnet.materialize(.common(.hostOnly), on: "192.168.128.0")
+        vmnet.join(.common(.nat), on: "192.168.64.0")
+        vmnet.join(.common(.hostOnly), on: "192.168.128.0")
         return makeViewModel(vmnetNetworks: vmnet.service, arpTable: arpTable)
     }
 

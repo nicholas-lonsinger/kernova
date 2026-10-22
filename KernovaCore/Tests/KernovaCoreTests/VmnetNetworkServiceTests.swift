@@ -121,18 +121,60 @@ struct VmnetNetworkServiceTests {
         #expect(operations.createdKinds == [.nat, .nat])
     }
 
-    @Test("materializeNetwork reports whether the network exists afterwards")
+    @Test("materializeNetwork answers a hold exactly when the network exists afterwards")
     func materializeReportsTheOutcome() async {
         let operations = MockVmnetNetworkOperator()
         operations.setCreateNetworkError(TestFailure("daemon unavailable"))
         let service = VmnetNetworkService(operations: operations)
         let view = service.sessionNetworks(ownedBy: vmA)
 
-        #expect(await view.materializeNetwork(for: .common(.hostOnly)) == false)
+        #expect(await view.materializeNetwork(for: .common(.hostOnly)) == nil)
         operations.setCreateNetworkError(nil)
-        #expect(await view.materializeNetwork(for: .common(.hostOnly)))
-        #expect(await view.materializeNetwork(for: .common(.hostOnly)))
+        #expect(await view.materializeNetwork(for: .common(.hostOnly)) != nil)
+        #expect(await view.materializeNetwork(for: .common(.hostOnly)) != nil)
         #expect(operations.createdKinds == [.hostOnly, .hostOnly])
+    }
+
+    @Test("A materialization's hold leaves the VM on the network it joined, and the held network goes with the hold")
+    func aHoldMovesNoMembership() async throws {
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations)
+        let view = service.sessionNetworks(ownedBy: vmA)
+        let lab = UUID()
+        let own = VmnetNetworkID(kind: .nat, scope: .vm(vmA))
+        let named = VmnetNetworkID(kind: .hostOnly, scope: .named(lab))
+        _ = try view.joinedNetwork(for: .own(.nat))
+
+        var hold = await view.materializeNetwork(for: .named(lab, .hostOnly))
+        #expect(hold != nil)
+        #expect(service.ipv4Subnet(for: own) != nil)
+        #expect(service.ipv4Subnet(for: named) != nil)
+        #expect(operations.releasedNetworks.isEmpty)
+
+        hold = nil
+        #expect(service.ipv4Subnet(for: named) == nil)
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(service.ipv4Subnet(for: own) != nil)
+    }
+
+    @Test("The apply that joins a held network keeps it after the hold goes")
+    func aJoinOutlivesTheHold() async throws {
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations)
+        let view = service.sessionNetworks(ownedBy: vmA)
+        let bench = UUID()
+        let named = VmnetNetworkID(kind: .nat, scope: .named(bench))
+        let ownNetwork = try view.joinedNetwork(for: .own(.nat)).network
+
+        var hold = await view.materializeNetwork(for: .named(bench, .nat))
+        #expect(hold != nil)
+        #expect(view.joinedNetworkIfMaterialized(for: .named(bench, .nat)) != nil)
+        #expect(operations.createdKinds == [.nat, .nat])
+        #expect(operations.releasedNetworks == [ownNetwork])
+
+        hold = nil
+        #expect(service.ipv4Subnet(for: named) != nil)
+        #expect(operations.releasedNetworks == [ownNetwork])
     }
 
     @Test("The non-blocking join answers only once the network exists")

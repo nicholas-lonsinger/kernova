@@ -3,6 +3,10 @@ import KernovaKit
 import Synchronization
 import Testing
 
+#if SWIFT_PACKAGE
+import KernovaTestSupport
+#endif
+
 @testable import KernovaCore
 
 /// Scripted stand-in for `VmnetNetworkOperating`, so service tests run
@@ -18,6 +22,7 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
     private struct State {
         var subnet = IPv4Subnet.scripted("192.168.213.0")
         var createNetworkError: (any Error)?
+        var createHold: DispatchSemaphore?
         var createdKinds: [VmnetNetworkKind] = []
         var released: [UInt] = []
     }
@@ -49,6 +54,15 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
         state.withLock { $0.createNetworkError = error }
     }
 
+    /// Holds every later create on its own thread, after it records its kind,
+    /// until `hold` is signalled; ``createEntered`` fires as the hold begins.
+    /// An error set while held is the one the create throws.
+    func setCreateHold(_ hold: DispatchSemaphore?) {
+        state.withLock { $0.createHold = hold }
+    }
+
+    let createEntered = AsyncGate()
+
     /// Every kind a create was asked for, in call order.
     var createdKinds: [VmnetNetworkKind] { state.withLock { $0.createdKinds } }
 
@@ -60,8 +74,15 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
     func createNetwork(_ kind: VmnetNetworkKind) throws -> (
         handle: VmnetNetworkHandle, subnet: IPv4Subnet
     ) {
-        let subnet = try state.withLock { state in
+        let createHold = state.withLock { state in
             state.createdKinds.append(kind)
+            return state.createHold
+        }
+        if let createHold {
+            createEntered.notify()
+            createHold.wait()
+        }
+        let subnet = try state.withLock { state in
             if let error = state.createNetworkError { throw error }
             return state.subnet
         }
@@ -85,27 +106,27 @@ extension VmnetNetworkService {
 final class ScriptedVmnetNetworks {
     let operations = MockVmnetNetworkOperator()
     let service: VmnetNetworkService
-    /// The views `materialize(_:on:owner:)` opened. A network other than a
-    /// common one exists only while a view of one of its members lives.
+    /// The views `join(_:on:owner:)` opened, which keep the networks they
+    /// joined.
     private var heldViews: [VmnetSessionNetworks] = []
 
     init() {
         service = VmnetNetworkService(operations: operations)
     }
 
-    /// Materializes `network` on the /24 at `subnet`, joined by `owner`
+    /// Joins `owner` to `network`, materialized on the /24 at `subnet`,
     /// through a view this fixture keeps open.
-    func materialize(_ network: VmnetNetworkSelection, on subnet: String, owner: UUID = UUID()) {
+    func join(_ network: VmnetNetworkSelection, on subnet: String, owner: UUID = UUID()) {
         let view = service.sessionNetworks(ownedBy: owner)
-        materialize(network, on: subnet, through: view)
+        join(network, on: subnet, through: view)
         heldViews.append(view)
     }
 
-    /// Materializes `network` through `view`, on the /24 at `subnet` when
-    /// given. A VM is on one network at a time, so this takes `view`'s VM off
-    /// the network it joined before — releasing it when the VM was its last
-    /// member.
-    func materialize(
+    /// Joins `view`'s VM to `network`, materialized on the /24 at `subnet`
+    /// when given and not yet materialized. A VM is on one network at a time,
+    /// so this takes `view`'s VM off the network it joined before — releasing
+    /// it when that was its last claim.
+    func join(
         _ network: VmnetNetworkSelection, on subnet: String? = nil, through view: VmnetSessionNetworks
     ) {
         if let subnet { operations.setSubnet(.scripted(subnet)) }
