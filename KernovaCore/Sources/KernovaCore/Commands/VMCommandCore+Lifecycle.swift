@@ -86,72 +86,31 @@ extension VMCommandCore {
     /// the account question
     /// (``CommandError/guestAccountPasswordRequired(_:)``), launching nothing.
     ///
-    /// A restoration holding the VM — the Ephemeral baseline revert a
-    /// power-off owes, or the one this start's own admission found owed — is
-    /// waited out rather than refused as busy: the start is decided afresh
-    /// once the VM is back on its baseline, and fails with what failed the
-    /// restoration otherwise, so it never boots what the restoration was to
-    /// discard.
+    /// A start that meets its VM returning to the Ephemeral baseline — a revert
+    /// holding it, or one this start's own admission found owed — waits it out
+    /// (``VMActivity/attemptWaitingOutRestorations(_:resolving:_:)``) and is
+    /// decided afresh once the revert lands; one that fails fails the start,
+    /// which never boots what the revert was to discard.
     @discardableResult
     func startNow(
         _ instance: VMInstance, recovery: Bool = false, policy: StartPolicy,
         resolving outcome: VMOutcome = VMOutcome()
     ) throws -> VMOutcome {
-        do {
-            return try decideAndLaunchStart(
-                instance, recovery: recovery, policy: policy, resolving: outcome)
-        } catch let refused as VMAdmissionRefusal {
-            guard case .busy = refused.refusal,
-                let restoration = instance.activity.restorationInFlight
-            else { throw refused }
-            logger.log(
-                .notice,
-                "Starting '\(instance.name, privacy: .public)' once the restoration holding it lands")
-            instance.activity.follow(
-                startFollowing(
-                    restoration, on: instance, recovery: recovery, policy: policy,
-                    resolving: outcome))
-            return outcome
-        }
-    }
-
-    /// The start ``startNow(_:recovery:policy:resolving:)`` owes once
-    /// `restoration`, the restoration holding `instance`, ends: decided afresh
-    /// if it landed, and failed naming it otherwise. Resolves `outcome`, which
-    /// the start's own caller awaits.
-    private func startFollowing(
-        _ restoration: VMOutcome, on instance: VMInstance, recovery: Bool, policy: StartPolicy,
-        resolving outcome: VMOutcome
-    ) -> VMFollowUp {
-        VMFollowUp(
-            scope: .vm, rank: .ordinary, request: .start(recovery: recovery), outcome: outcome
+        try instance.activity.attemptWaitingOutRestorations(
+            .start(recovery: recovery), resolving: outcome
         ) { [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
-            if case .failure(let error)? = restoration.result {
-                throw Self.restorationRefusedStart(error, on: instance)
-            }
-            try self.startNow(instance, recovery: recovery, policy: policy, resolving: outcome)
+            try self.decideAndLaunchStart(
+                instance, recovery: recovery, policy: policy, resolving: outcome)
         }
-    }
-
-    /// What a start waiting on a restoration fails with when the restoration
-    /// failed with `error`.
-    private static func restorationRefusedStart(
-        _ error: any Error, on instance: VMInstance
-    ) -> CommandError {
-        let baseline = instance.ephemeralBaselineSnapshot.map { " \u{201C}\($0.name)\u{201D}" } ?? ""
-        return CommandError.operationFailed(
-            verb: .start,
-            message:
-                "\u{201C}\(instance.name)\u{201D} was not started: returning it to its Ephemeral "
-                + "baseline\(baseline) failed. \(error.localizedDescription)")
+        return outcome
     }
 
     /// ``startNow(_:recovery:policy:resolving:)`` up to the decision and the
     /// launch it leads to.
     private func decideAndLaunchStart(
         _ instance: VMInstance, recovery: Bool, policy: StartPolicy, resolving outcome: VMOutcome
-    ) throws -> VMOutcome {
+    ) throws {
         switch instance.activity.decide(
             .start(recovery: recovery), posture: .commit, identity: policy.identity)
         {
@@ -167,7 +126,9 @@ extension VMCommandCore {
             logJoin(instance)
             readyDisplay?(instance, policy.presence)
             running.forward(to: outcome)
-            return outcome
+            return
+        case .wait(let restoration):
+            throw VMAwaitsRestoration(restoration: restoration)
         case .admit:
             break
         }
@@ -199,7 +160,6 @@ extension VMCommandCore {
             // `displayBootSurface` measures, and readying is what opens it.
             readyDisplay?(instance, policy.presence)
         }
-        return outcome
     }
 
     /// A start someone asked for that nobody waits on, as a follow-up on
@@ -915,7 +875,7 @@ extension VMCommandCore {
     /// The refusal a force stop raises, worded for what it actually discards.
     package static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
-        // of here ends in a power-off, and `onPoweredOff` runs the baseline
+        // of here ends the session, whose settling runs the baseline
         // revert for a termination exactly as it does for a guest that shut
         // itself down (``ephemeralBaselineRevert(for:)``).
         let ephemeralBaseline = instance.ephemeralBaselineSnapshot
@@ -1028,11 +988,25 @@ extension VMCommandCore {
     }
 
     /// ``resume(_:policy:)`` up to the launch: the bring-up admitted, or
-    /// joined, before this returns, its end resolving `outcome`.
+    /// joined, before this returns, its end resolving `outcome` — or, as a
+    /// start does, waiting out its VM's return to the Ephemeral baseline.
     @discardableResult
     func launchResume(
         _ instance: VMInstance, policy: StartPolicy, resolving outcome: VMOutcome = VMOutcome()
     ) throws -> VMOutcome {
+        try instance.activity.attemptWaitingOutRestorations(.resume, resolving: outcome) {
+            [weak self, weak instance] outcome in
+            guard let self, let instance else { throw CancellationError() }
+            try self.decideAndLaunchResume(instance, policy: policy, resolving: outcome)
+        }
+        return outcome
+    }
+
+    /// ``launchResume(_:policy:resolving:)`` up to the decision and the
+    /// launch it leads to.
+    private func decideAndLaunchResume(
+        _ instance: VMInstance, policy: StartPolicy, resolving outcome: VMOutcome
+    ) throws {
         let decision = instance.activity.decide(.resume, posture: .commit, identity: policy.identity)
         switch decision {
         case .refuse(let reason):
@@ -1041,13 +1015,15 @@ extension VMCommandCore {
             logJoin(instance)
             readyDisplay?(instance, policy.presence)
             running.forward(to: outcome)
-            return outcome
+            return
+        case .wait(let restoration):
+            throw VMAwaitsRestoration(restoration: restoration)
         case .admit:
             break
         }
         // A restore readies the display as every start does.
         if VMAdmission.resumeWork(phase: instance.phase) == .hot { readyDisplay?(instance, policy.presence) }
-        return try launchResumeOrRestore(instance, policy: policy, resolving: outcome)
+        try launchResumeOrRestore(instance, policy: policy, resolving: outcome)
     }
 
     /// Launches the Resume `instance`'s state names, resolving `outcome`: the
@@ -1093,7 +1069,7 @@ extension VMCommandCore {
     ///
     /// The boot is a start owed to the end of the session being shut down
     /// (``VMActivity/follow(_:whenSessionEnds:)``): the step that rests the VM
-    /// queues it, behind the baseline revert an Ephemeral VM's power-off owes,
+    /// queues it, behind the baseline revert an Ephemeral VM's session end owes,
     /// so nothing else can be decided against the VM in between and nothing
     /// here waits for the VM to come free. Where the VM lands decides what the
     /// start performs: a power-off normally lands it stopped, but an Ephemeral

@@ -109,10 +109,10 @@ struct EphemeralModeInstanceTests {
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         let gate = GatedStep()
         var revert: VMFollowUp?
-        instance.onPoweredOff = {
+        instance.activity.onUnsettledSession = {
             let owed = VMFollowUp(scope: .vm, rank: .restoration) { outcome in
                 try instance.activity.launchRevert(
-                    to: baseline, resumesAfter: false, origin: .powerOffRevert, resolving: outcome
+                    to: baseline, resumesAfter: false, origin: .sessionEndRevert, resolving: outcome
                 ) { _ in
                     try await gate.pass()
                     return .rest(.asStarted, ())
@@ -124,13 +124,14 @@ struct EphemeralModeInstanceTests {
 
         instance.handleSessionEvent(.guestDidStop)
 
-        // No turn has passed: the revert holds the VM, so a Start is refused.
+        // No turn has passed: the revert holds the VM, so a Start waits it out.
         #expect(
             instance.phase.operation?.kind
                 == .bringUp(.reverting(snapshotID: baseline.id, resumesAfter: false)))
+        let owed = try #require(revert)
         #expect(
             instance.activity.decide(.start(recovery: false), posture: .commit)
-                == .refuse(.busy(.bringUp(.reverting(snapshotID: baseline.id, resumesAfter: false)))))
+                == .wait(owed.outcome))
         gate.release()
         try await #require(revert).outcome.value()
         #expect(instance.phase == .stopped)

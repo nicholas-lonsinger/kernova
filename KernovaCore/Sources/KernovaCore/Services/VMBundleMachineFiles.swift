@@ -151,8 +151,8 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
             // pre-revert RAM sitting over post-revert disks is the corruption
             // the catch below exists to undo, and a process that dies mid-swap
             // runs no catch. An interruption after this point leaves a stopped
-            // VM with no saved state, which an Ephemeral Mode VM reads as owing
-            // its revert (``VMInstance/restsOff(_:)``).
+            // VM with no saved state, and the unsettled session the revert
+            // marked (``VMHostState/hasUnsettledSession``) owes it again.
             try removeSaveFile(bundleURL: bundleURL)
             for relativePath in plan.relativePaths {
                 try swapIntoPlace(

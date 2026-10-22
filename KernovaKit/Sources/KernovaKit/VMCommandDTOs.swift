@@ -419,6 +419,10 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case removeAttachment
     /// Letting the guest read whatever is copied on the host, continuously.
     case enableClipboardPassthrough
+    /// Making a snapshot the one every shutdown of a VM returns it to —
+    /// turning Ephemeral Mode on, or changing its baseline — so each session's
+    /// changes, and what the VM holds now, are discarded at shutdown.
+    case setEphemeralBaseline
     /// Starting a VM while another one with the same machine identity is
     /// active.
     case startBesideSharedMachineIdentity

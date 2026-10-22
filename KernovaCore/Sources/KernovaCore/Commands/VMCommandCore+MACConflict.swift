@@ -223,7 +223,7 @@ extension VMCommandCore {
     ) -> Bool {
         let request: VMAdmission.Request = verb == .resume ? .resume : .start(recovery: false)
         switch instance.activity.decide(request, posture: .commit, after: discard) {
-        case .admit, .join: return true
+        case .admit, .join, .wait: return true
         case .refuse: return false
         }
     }

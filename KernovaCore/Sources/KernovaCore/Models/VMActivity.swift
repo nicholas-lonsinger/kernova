@@ -84,23 +84,13 @@ package final class VMActivity {
 
     // MARK: - Hooks
 
-    /// Fired when a power-off has rested the VM — immediately for a settled
-    /// VM, and at the ending of the operation that held it otherwise —
-    /// answering the follow-ups the power-off owes, which the same step
-    /// drains.
+    /// Fired when an Ephemeral Mode VM at rest is found with a session's
+    /// changes unsettled (``VMHostState/hasUnsettledSession``) while no session
+    /// of it is live in any copy, answering the baseline revert that owes,
+    /// whose landing clears the marker (``settlement(restoring:)``).
     ///
-    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler answers an
-    /// Ephemeral Mode VM's baseline revert.
-    @ObservationIgnored var onPoweredOff: (@MainActor () -> [VMFollowUp])?
-
-    /// Fired when this copy has just taken the run lock of a VM at rest and
-    /// re-read its bundle — when no session of the VM is live in any copy —
-    /// answering the restorations what the bundle holds owes, which run before
-    /// anything is decided against the VM (``restoreIfOwed()``).
-    ///
-    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler answers the baseline
-    /// revert an Ephemeral Mode VM owes a session that ended without one.
-    @ObservationIgnored var onRunLockTaken: (@MainActor () -> [VMFollowUp])?
+    /// Wired by `VMLibrary.wireHooks(for:)`.
+    @ObservationIgnored var onUnsettledSession: (@MainActor () -> [VMFollowUp])?
 
     /// Fired on the edge where this VM becomes something a device can be
     /// attached to — ``attachableSessionID`` going from `nil` to naming a
@@ -131,20 +121,6 @@ package final class VMActivity {
     /// waits on, in arrival order — queued by the step that settles the VM
     /// after that session is gone.
     @ObservationIgnored private var sessionEndFollowUps: [(session: UUID, followUp: VMFollowUp)] = []
-
-    /// The outcome of the last restoration the drain admitted, which
-    /// ``restorationInFlight`` matches against the operation holding the VM.
-    @ObservationIgnored private weak var admittedRestoration: VMOutcome?
-
-    /// The outcome of the restoration holding the VM — a
-    /// ``VMFollowUp/Rank/restoration`` follow-up the drain admitted — or `nil`
-    /// while anything else holds it, or nothing does.
-    var restorationInFlight: VMOutcome? {
-        guard let admittedRestoration, phase.operation?.outcome === admittedRestoration else {
-            return nil
-        }
-        return admittedRestoration
-    }
 
     /// Queues `followUp` and, on a settled VM, drains it at once.
     ///
@@ -227,7 +203,6 @@ package final class VMActivity {
             }
             do {
                 try head.admit(head.outcome)
-                if head.rank == .restoration { admittedRestoration = head.outcome }
             } catch {
                 head.outcome.resolve(.failure(error))
             }
@@ -421,6 +396,8 @@ package final class VMActivity {
             return owner
         case .join:
             throw VMAdmissionRefusal(refusal: phase.operation.map { .busy($0.kind) } ?? .invalidState)
+        case .wait(let restoration):
+            throw VMAwaitsRestoration(restoration: restoration)
         case .refuse(let reason):
             throw VMAdmissionRefusal(refusal: reason)
         }
@@ -575,11 +552,11 @@ package final class VMActivity {
     /// captures with it as a snapshot capture does.
     @discardableResult
     func launchCopyOut(
-        _ mode: VMCaptureMode,
+        _ mode: VMCaptureMode, resolving outcome: VMOutcome = VMOutcome(),
         _ body: @escaping @MainActor (borrowing VMCaptureContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
-            .copyingOut(mode), outcome: VMOutcome(), whenEnded: nil,
+            .copyingOut(mode), outcome: outcome, whenEnded: nil,
             { VMCaptureContext(operation: $0, mode: mode) }, body)
     }
 
@@ -656,40 +633,44 @@ package final class VMActivity {
         if sessionContext != nil { releaseSession() }
         setPhase(.removed)
         outcome.resolve(.success(()))
-        settled(poweredOff: false)
+        settled(poweredOff: false, sessionEnded: false)
         return value
     }
 
     /// The one admission step every operation takes, in one synchronous step:
-    /// takes the run lock of a VM at rest and re-reads its bundle — running
-    /// first, when `kind` carries the guest's files forward, the restorations
-    /// that read shows the VM owes — decides against what that left, reserves
-    /// what `kind` claims beyond this VM, and commits — answering the context
-    /// the committed operation's body acts with.
+    /// takes the run lock of a VM at rest and re-reads its bundle, settles a
+    /// session found to have ended unsettled (``settlement(restoring:)``) —
+    /// queueing the baseline revert it owes when `kind` carries the guest's
+    /// files forward — decides against what that left, reserves what `kind`
+    /// claims beyond this VM, marks the session a bring-up begins unsettled,
+    /// and commits — answering the context the committed operation's body acts
+    /// with.
     ///
     /// The committed operation resolves `outcome`.
     ///
-    /// Throws, committing nothing and letting go of a lock it took, when the
-    /// request is refused — as ``VMAdmission/Refusal/heldByAnotherCopy`` when
-    /// another copy of Kernova holds the lock, as busy with the restoration
-    /// that now holds the VM, and with what refused a restoration that could
-    /// not begin.
+    /// Throws, committing nothing and letting go of a lock it took unless a
+    /// restoration now holds the VM, when the request is refused — as
+    /// ``VMAdmission/Refusal/heldByAnotherCopy`` when another copy of Kernova
+    /// holds the lock, with what refused a restoration that could not begin,
+    /// and as ``VMAwaitsRestoration`` when the request waits out the
+    /// restoration holding the VM.
     private func admit(
         _ kind: VMOperationKind, origin: VMRequestOrigin,
         identity: VMIdentityOverride = .unavailable, outcome: VMOutcome
     ) throws -> VMOperationContext {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
-        let tookLock = try takeRunLock(
-            on: owner, runningOwedRestorations: kind.carriesGuestFilesForward)
+        let tookLock = try takeRunLock(on: owner)
         do {
+            try runSettlement(restoring: kind.carriesGuestFilesForward)
             // The lock attempt just made is read rather than probed again: a
             // hold that ended since would admit a VM this copy does not hold.
             try requireAdmitted(
                 request, origin: origin, identity: identity, probingOtherCopies: false)
             try reserve(for: kind, on: owner)
+            try markSessionUnsettled(beganBy: kind, on: owner)
         } catch {
-            if tookLock { setHold(.none) }
+            if tookLock, phase.isAtRest { setHold(.none) }
             throw error
         }
         commitOperation(kind, outcome: outcome)
@@ -698,20 +679,13 @@ package final class VMActivity {
 
     /// Takes the run lock of a VM at rest that holds none, then re-reads its
     /// bundle and where it rests — what another copy may have changed while
-    /// this one held nothing — answering whether the caller holds a lock it
-    /// took, which it lets go of when its request is refused.
+    /// this one held nothing — answering whether it took one.
     ///
     /// A lock another copy holds is recorded as ``VMRunLockHold/anotherCopy``,
     /// which the decision that follows refuses. A VM already holding the lock
     /// — an operation an ending's hook begins — keeps it and re-reads nothing:
     /// no other copy can have written its bundle since.
-    ///
-    /// With `runningOwedRestorations`, the restorations ``onRunLockTaken``
-    /// answers run next, under this lock: one admitted holds the VM and keeps
-    /// the lock, and one that could not begin throws what refused it.
-    private func takeRunLock(
-        on owner: VMInstance, runningOwedRestorations: Bool
-    ) throws -> Bool {
+    private func takeRunLock(on owner: VMInstance) throws -> Bool {
         guard phase.isAtRest, !hold.isThisCopy else { return false }
         guard let lock = try owner.bundle.lockRun() else {
             setHold(.anotherCopy)
@@ -720,19 +694,51 @@ package final class VMActivity {
         setHold(.thisCopy(lock))
         do {
             try owner.bundle.refresh()
-            reconcileRest()
-            if runningOwedRestorations { try runOwedRestorations() }
         } catch {
-            if phase.isAtRest { setHold(.none) }
+            setHold(.none)
             throw error
         }
-        return phase.isAtRest
+        reconcileRest()
+        return true
     }
 
-    /// Queues and drains what ``onRunLockTaken`` answers, throwing what
-    /// refused the first one that could not begin.
-    private func runOwedRestorations() throws {
-        let owed = onRunLockTaken?() ?? []
+    // MARK: - Settling Sessions
+
+    /// Commits, before the guest can write anything, that the session `kind`
+    /// begins is unsettled — the hard precondition of every bring-up that
+    /// begins one, so a write that fails refuses the bring-up.
+    private func markSessionUnsettled(beganBy kind: VMOperationKind, on owner: VMInstance) throws {
+        guard case .bringUp(let bringUp) = kind, bringUp.beginsSessionFromRest else { return }
+        try VMEditPermit(instance: owner, authority: .operation(kind)).bundle.commitHostState {
+            $0.hasUnsettledSession = true
+        }
+    }
+
+    /// The one rule for a session's changes left unsettled
+    /// (``VMHostState/hasUnsettledSession``) on a VM at rest that no other copy
+    /// holds — read where this copy holds the run lock, so no session of it is
+    /// live in any copy: an Ephemeral Mode VM owes
+    /// the baseline revert ``onUnsettledSession`` answers, whose landing clears
+    /// the marker; any other VM's marker is cleared here.
+    ///
+    /// Answers the revert owed, unqueued — none unless `restoring`, which
+    /// leaves an Ephemeral VM's marker for the next point that restores.
+    private func settlement(restoring: Bool) -> [VMFollowUp] {
+        guard let owner, phase.isAtRest, !hold.isAnotherCopy, owner.hostState.hasUnsettledSession
+        else { return [] }
+        guard restoring else {
+            if owner.ephemeralBaselineSnapshot == nil { settleUnsettledSession(of: owner) }
+            return []
+        }
+        let owed = onUnsettledSession?() ?? []
+        if owed.isEmpty { settleUnsettledSession(of: owner) }
+        return owed
+    }
+
+    /// Queues and drains what ``settlement(restoring:)`` answers, throwing
+    /// what refused a revert that could not begin.
+    private func runSettlement(restoring: Bool) throws {
+        let owed = settlement(restoring: restoring)
         guard !owed.isEmpty else { return }
         enqueue(owed)
         drain()
@@ -741,24 +747,91 @@ package final class VMActivity {
         }
     }
 
-    /// Takes the run lock of a VM at rest that no copy holds and runs the
-    /// restorations its bundle shows it owes (``onRunLockTaken``), then lets
-    /// the lock go unless one of them now holds the VM — so a VM a session left
-    /// off its Ephemeral baseline is put back before anything asks for it.
+    /// Clears the marker of a session whose changes are kept as they stand.
+    private func settleUnsettledSession(of owner: VMInstance) {
+        do {
+            try VMEditPermit(instance: owner, authority: .settlement).bundle.commitHostState {
+                $0.hasUnsettledSession = false
+            }
+        } catch {
+            logger.log(
+                .error,
+                "Could not record the last session of '\(self.name, privacy: .public)' as settled: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Takes the run lock of a VM at rest that no copy holds and settles a
+    /// session it finds ended unsettled — running the baseline revert an
+    /// Ephemeral VM owes — then lets the lock go unless that revert now holds
+    /// the VM: the launch pass, so a session Kernova died under is settled
+    /// before anything asks for the VM.
     ///
     /// A VM another copy holds is left as it stands, and recorded held. A
-    /// restoration that could not begin reports itself, as every follow-up
-    /// nobody waits on does.
-    func restoreIfOwed() {
+    /// revert that could not begin reports itself, as every follow-up nobody
+    /// waits on does.
+    func settleUnsettledSessionAtLaunch() {
         guard let owner else { return }
         do {
-            if try takeRunLock(on: owner, runningOwedRestorations: true) { setHold(.none) }
+            guard try takeRunLock(on: owner) else { return }
+            defer { if phase.isAtRest { setHold(.none) } }
+            try runSettlement(restoring: true)
         } catch {
             logger.log(
                 .warning,
-                "Could not check whether '\(self.name, privacy: .public)' owes a restoration: \(error.localizedDescription, privacy: .public)"
+                "Could not settle the last session of '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    // MARK: - Waiting Out Restorations
+
+    /// Runs `attempt`, resolving `outcome`; when it meets a baseline revert it
+    /// waits out (``VMAwaitsRestoration``), queues it behind that revert as a
+    /// follow-up making `request` — run again in the step the revert ends if
+    /// it landed, and failing with ``VMRestorationFailed`` otherwise.
+    ///
+    /// For a request decided and launched in one synchronous step, so the
+    /// attempt run again is decided afresh before anything else can be.
+    func attemptWaitingOutRestorations(
+        _ request: VMAdmission.Request?, resolving outcome: VMOutcome,
+        _ attempt: @escaping @MainActor (VMOutcome) throws -> Void
+    ) throws {
+        do {
+            try attempt(outcome)
+        } catch let waiting as VMAwaitsRestoration {
+            logger.log(
+                .notice,
+                "A request on '\(self.name, privacy: .public)' waits for its return to the Ephemeral baseline"
+            )
+            follow(
+                VMFollowUp(scope: .vm, rank: .ordinary, request: request, outcome: outcome) {
+                    [weak self] outcome in
+                    guard let self else { throw CancellationError() }
+                    try self.requireLanded(waiting.restoration)
+                    try self.attemptWaitingOutRestorations(request, resolving: outcome, attempt)
+                })
+        }
+    }
+
+    /// ``attemptWaitingOutRestorations(_:resolving:_:)`` for a request whose
+    /// caller awaits it inline: awaits the revert and runs `attempt` again.
+    func waitingOutRestorations<T>(_ attempt: @MainActor () async throws -> T) async throws -> T {
+        while true {
+            do {
+                return try await attempt()
+            } catch let waiting as VMAwaitsRestoration {
+                _ = await waiting.restoration.ended()
+                try requireLanded(waiting.restoration)
+            }
+        }
+    }
+
+    /// Throws ``VMRestorationFailed`` unless `restoration` landed.
+    private func requireLanded(_ restoration: VMOutcome) throws {
+        guard case .failure(let error)? = restoration.result else { return }
+        throw VMRestorationFailed(
+            vmName: name, baselineName: owner?.ephemeralBaselineSnapshot?.name, underlying: error)
     }
 
     /// Lets go of the run lock once the VM rests or is removed — the other
@@ -877,10 +950,15 @@ package final class VMActivity {
             case .livePaused(let id): .live(VMOperationSession(id: id, guest: .paused, stopping: stop))
             default: .none
             }
+        var restoresEphemeralBaseline = false
+        if case .bringUp(.reverting(let snapshotID, _)) = kind {
+            restoresEphemeralBaseline = owner?.ephemeralBaselineSnapshot?.id == snapshotID
+        }
         setPhase(
             .operating(
                 VMOperation(
-                    kind: kind, startedFrom: phase, sessionState: sessionState, outcome: outcome)))
+                    kind: kind, startedFrom: phase, sessionState: sessionState, outcome: outcome,
+                    restoresEphemeralBaseline: restoresEphemeralBaseline)))
     }
 
     /// The operation holding the VM, which ends here, when `outcome` is its
@@ -901,7 +979,7 @@ package final class VMActivity {
     /// settled phase.
     ///
     /// Resolves the outcome for every joined caller, then ends in
-    /// ``settled(poweredOff:)``. An operation that ends on a session a Force
+    /// ``settled(poweredOff:sessionEnded:)``. An operation that ends on a session a Force
     /// Stop is terminating hands the VM to ``VMOperationKind/forceStopping``
     /// instead, which rests it once that session ends — and the follow-ups
     /// `whenEnded` answers wait for that.
@@ -945,22 +1023,26 @@ package final class VMActivity {
         if case .running = resting { owner?.operationDidSettleRunning(operation.kind) }
         enqueue(whenEnded?(result.map { _ in () }) ?? [])
         outcome.resolve(result.map { _ in () })
-        settled(poweredOff: operation.sessionEnd == .poweredOff || rest == .poweredOff)
+        // A revert's own end settles nothing: what it leaves is settled by its
+        // landing, or retried at the next request, so a failing one cannot
+        // queue itself again.
+        settled(
+            poweredOff: operation.sessionEnd == .poweredOff || rest == .poweredOff,
+            sessionEnded: (operation.sessionEnd != nil || rest == .poweredOff)
+                && !operation.kind.isRevert)
         return result
     }
 
     /// The tail of every step that settles the VM — out of an operation or a
-    /// session, or into removal: fires ``onPoweredOff`` when the guest powered
-    /// off, queues what the sessions that ended owe
-    /// (``follow(_:whenSessionEnds:)``), drains the follow-ups, then lets go
-    /// of the run lock unless the VM no longer rests — so an operation the
-    /// drain admitted, the Ephemeral revert among them, runs under the lock
-    /// the ending held.
-    private func settled(poweredOff: Bool) {
-        if poweredOff {
-            owner?.guestDidPowerOff()
-            enqueue(onPoweredOff?() ?? [])
-        }
+    /// session, or into removal: settles a session that ended
+    /// (``settlement(restoring:)``) when `sessionEnded`, queues what the
+    /// sessions that ended owe (``follow(_:whenSessionEnds:)``) behind the
+    /// revert that may owe, drains the follow-ups, then lets go of the run lock
+    /// unless the VM no longer rests — so an operation the drain admitted, the
+    /// Ephemeral revert among them, runs under the lock the ending held.
+    private func settled(poweredOff: Bool, sessionEnded: Bool) {
+        if poweredOff { owner?.guestDidPowerOff() }
+        if sessionEnded { enqueue(settlement(restoring: true)) }
         enqueue(takeSessionEndFollowUps())
         drain()
         releaseRunLockIfAtRest()
@@ -1027,6 +1109,9 @@ package final class VMActivity {
             return try await outcome.value()
         case .refuse(let reason):
             throw VMAdmissionRefusal(refusal: reason)
+        case .wait:
+            // Only a request carrying the guest's files forward waits.
+            throw VMAdmissionRefusal(refusal: .invalidState)
         case .admit:
             // Admitted only on a settled live VM, or on the live session of an
             // operation that tolerates the stop.
@@ -1083,7 +1168,7 @@ package final class VMActivity {
     func remove() throws {
         try requireAdmitted(.evict)
         setPhase(.removed)
-        settled(poweredOff: false)
+        settled(poweredOff: false, sessionEnded: false)
     }
 
     /// Re-derives where a VM at rest rests from its bundle as it stands
@@ -1103,7 +1188,21 @@ package final class VMActivity {
     /// tests only, and the one way a test places a phase. Only an operation's
     /// own ending may move the VM out of it, so a test awaits the outcome of an
     /// operation whose body is running before placing a phase.
+    ///
+    /// A phase holding a session is left as the bring-up that began it leaves
+    /// one: its changes unsettled (``VMHostState/hasUnsettledSession``).
     func placeForTesting(_ phase: VMLifecyclePhase) {
+        // A bundle another copy holds refuses the mark, as it refuses that
+        // copy's every write.
+        if phase.sessionID != nil, let owner, !hold.isAnotherCopy {
+            do {
+                try VMEditPermit(instance: owner, authority: .settlement).bundle.commitHostState {
+                    $0.hasUnsettledSession = true
+                }
+            } catch {
+                preconditionFailure("A placed session could not be marked unsettled: \(error)")
+            }
+        }
         setPhase(phase)
         drain()
     }
@@ -1179,7 +1278,7 @@ package final class VMActivity {
             guard id == sessionID else { return }
             releaseSession()
             setPhase(restingPhase(withoutSlot: end.rest))
-            settled(poweredOff: end == .poweredOff)
+            settled(poweredOff: end == .poweredOff, sessionEnded: true)
         case .operating(let operation):
             guard let ended = endOperationSession(sessionID, end) else { return }
             if operation.kind == .forceStopping {
@@ -1576,7 +1675,8 @@ package struct VMRevertContext: ~Copyable, Sendable {
 
 /// The authority one write to a VM's state files acts with, minted only by
 /// admission: by ``VMActivity/edit(_:_:)`` for the edit classes it admitted,
-/// and on every ``VMOperationContext`` for the operation's own writes.
+/// on every ``VMOperationContext`` for the operation's own writes, and by the
+/// activity for its own settling of a session's end.
 ///
 /// Non-copyable and passed borrowed, so it cannot be stored or outlive the
 /// admission that minted it.
@@ -1589,6 +1689,9 @@ package struct VMEditPermit: ~Copyable, Sendable {
         /// writes whole: while it holds the VM, nothing else is admitted but
         /// the edits its kind declares.
         case operation(VMOperationKind)
+        /// The activity settling a session that ended, at rest and under the
+        /// run lock: it writes the unsettled-session marker alone.
+        case settlement
 
         /// Whether this authority may write a field any one of `classes`
         /// writes (``VMStateFieldClasses``).
@@ -1596,6 +1699,7 @@ package struct VMEditPermit: ~Copyable, Sendable {
             switch self {
             case .edit(let admitted): !admitted.isDisjoint(with: classes)
             case .operation: true
+            case .settlement: classes == .sessionSettlement
             }
         }
     }
@@ -1658,8 +1762,8 @@ package enum VMOperationRest: Sendable, Equatable {
     case asStarted
     /// Where the operation's session ending rests the VM.
     case afterSessionEnd
-    /// Powered off: stopped, or suspended on a slot that survived, with
-    /// ``VMActivity/onPoweredOff`` fired after the commit.
+    /// Powered off: stopped, or suspended on a slot that survived, with the
+    /// session's end settled after the commit.
     case poweredOff
 }
 

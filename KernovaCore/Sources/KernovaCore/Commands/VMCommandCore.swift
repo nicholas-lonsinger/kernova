@@ -207,18 +207,11 @@ package final class VMCommandCore {
         self.preferences = preferences
         self.clock = clock
 
-        // An Ephemeral Mode VM goes back to its baseline on every power-off,
-        // however it got there — so the handler belongs with the revert verb
-        // rather than with whichever surface asked for the stop.
-        library.onPoweredOff = { [weak self] instance in
+        // An Ephemeral Mode VM goes back to its baseline at the end of every
+        // session, however it ended — so the handler belongs with the revert
+        // verb rather than with whichever surface asked for the stop.
+        library.onUnsettledSession = { [weak self] instance in
             self?.ephemeralBaselineRevert(for: instance).map { [$0] } ?? []
-        }
-        // A session that ended without reaching that power-off — Kernova died
-        // under it — still owes the revert, which its files show once this
-        // copy holds the VM.
-        library.onRunLockTaken = { [weak self] instance in
-            guard instance.restsOffEphemeralBaseline else { return [] }
-            return self?.ephemeralBaselineRevert(for: instance).map { [$0] } ?? []
         }
         // The installer disk comes out the moment the agent it carries
         // handshakes as current, whichever surface asked for the mount — so the

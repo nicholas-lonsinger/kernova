@@ -28,6 +28,10 @@ package enum VMAdmission {
         /// The request asks for what the operation holding the VM is already
         /// producing; await its outcome.
         case join(VMOutcome)
+        /// The request carries the guest's files forward and the operation
+        /// holding the VM returns it to its Ephemeral baseline first; await
+        /// that outcome, then decide the request afresh.
+        case wait(VMOutcome)
         case refuse(Refusal)
     }
 
@@ -60,7 +64,7 @@ package enum VMAdmission {
         /// surface reads it as applicable.
         case heldByAnotherCopy
         /// The bring-up would begin a session that Ephemeral Mode undoes at
-        /// power-off by reverting to its baseline, and the last read of the
+        /// its end by reverting to its baseline, and the last read of the
         /// bundle could not read that baseline's settings — so the revert
         /// would fail, leaving the session's changes on the disks.
         case ephemeralBaselineUnreadable
@@ -492,6 +496,11 @@ package enum VMAdmission {
         if posture == .commit, joins(request, operation) {
             return .join(operation.outcome)
         }
+        if posture == .commit, operation.restoresEphemeralBaseline,
+            operationKind(for: request, phase: basis, facts: facts)?.carriesGuestFilesForward == true
+        {
+            return .wait(operation.outcome)
+        }
         switch request {
         case .cancel(let family):
             if holder.belongs(to: family) { return .admit }
@@ -522,7 +531,7 @@ package enum VMAdmission {
         settledFacts.identityConflict = nil
         settledFacts.ephemeralBaselineUnreadable = false
         switch decideSettled(request, posture: posture, phase: basis, facts: settledFacts) {
-        case .admit, .join:
+        case .admit, .join, .wait:
             return .refuse(.busy(holder))
         case .refuse(let refusal):
             return .refuse(refusal)
@@ -604,10 +613,10 @@ package enum VMRequestOrigin: Sendable, Equatable {
     case newWork
     /// The save pass's suspend of a VM settled live.
     case terminationSave
-    /// The baseline revert an Ephemeral Mode VM owes each power-off, which a
-    /// quit waits out rather than refuses — so a guest that powers off during
-    /// one never rests on the disks the mode discards.
-    case powerOffRevert
+    /// The baseline revert an Ephemeral Mode VM owes each session that ends,
+    /// which a quit waits out rather than refuses — so a guest that powers off
+    /// during one never rests on the disks the mode discards.
+    case sessionEndRevert
     /// The reconcile a removable-media edit admitted before the termination
     /// owes a live session, which a quit waits out rather than refuses — so
     /// the save that follows never pins a device list the configuration has
@@ -621,7 +630,7 @@ package enum VMRequestOrigin: Sendable, Equatable {
             return false
         case .terminationSave:
             return request == .operation(.saving)
-        case .powerOffRevert:
+        case .sessionEndRevert:
             guard case .operation(.bringUp(.reverting)) = request else { return false }
             return true
         case .mediaEditReconcile:
@@ -646,6 +655,28 @@ package enum VMAffordance: Sendable, Equatable {
 /// A request ``VMActivity`` refused, and why.
 struct VMAdmissionRefusal: Error, Equatable {
     let refusal: VMAdmission.Refusal
+}
+
+/// A request that carries the guest's files forward met the VM returning to
+/// its Ephemeral baseline (``VMAdmission/Decision/wait(_:)``): it is decided
+/// afresh once `restoration` lands
+/// (``VMActivity/attemptWaitingOutRestorations(_:resolving:_:)``).
+struct VMAwaitsRestoration: Error {
+    let restoration: VMOutcome
+}
+
+/// A request that waited for its VM's return to the Ephemeral baseline, which
+/// failed — so the request did not run on what the return was to discard.
+struct VMRestorationFailed: LocalizedError {
+    let vmName: String
+    let baselineName: String?
+    let underlying: any Error
+
+    var errorDescription: String? {
+        let baseline = baselineName.map { " \u{201C}\($0)\u{201D}" } ?? ""
+        return "\u{201C}\(vmName)\u{201D} could not be returned to its Ephemeral baseline"
+            + "\(baseline), so nothing ran on it. \(underlying.localizedDescription)"
+    }
 }
 
 /// What a VM's library contributes to its admission facts, and the other VMs

@@ -49,11 +49,19 @@ package enum EphemeralModeCopy {
             : "Take a snapshot first to use as the baseline."
     }
 
-    /// The caution under the toggle while turning the mode on would revert
-    /// the virtual machine, resting off `baseline`, to it now.
-    package static func revertsNowCaption(baseline: VMSnapshot) -> String {
-        "Turning it on reverts the virtual machine to \u{201C}\(baseline.name)\u{201D} now, "
-            + "discarding its current state."
+    /// What pinning `baseline` as `vm`'s baseline does, in the words the
+    /// confirmation asks with — both already quoted.
+    package static func shutdownDiscards(vm: String, baseline: String) -> String {
+        "Every shutdown returns \(vm) to \(baseline), discarding everything changed since "
+            + "that snapshot \u{2014} including what\u{2019}s on it now."
+    }
+
+    /// The caution beside the toggle while turning the mode on would pin
+    /// `baseline` — every case its confirmation asks about.
+    package static func enableCaution(baseline: VMSnapshot) -> String {
+        "Once it\u{2019}s on, every shutdown returns the virtual machine to "
+            + "\u{201C}\(baseline.name)\u{201D}, discarding everything changed since that "
+            + "snapshot \u{2014} including what\u{2019}s on it now."
     }
 
     /// The Take Snapshot sheet's note when its capture turns the mode on,

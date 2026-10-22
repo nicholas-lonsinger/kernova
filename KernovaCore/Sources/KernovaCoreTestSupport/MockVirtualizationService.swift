@@ -47,6 +47,10 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// asserted on ordering, not just on the final value.
     var configurationAtStart: VMConfiguration?
 
+    /// The host state as it stood when `start` was called — what a bring-up
+    /// commits before the guest can write anything.
+    private(set) var hostStateAtStart: VMHostState?
+
     /// The status the bring-up running `start` was admitted from — what a
     /// caller that hands a VM off to a boot handed over.
     var statusAtStart: VMStatus?
@@ -93,6 +97,11 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     /// Snapshots passed to `revertToSnapshot`, in call order.
     private(set) var revertedSnapshots: [VMSnapshot] = []
+    /// How many reverts reached the mock, failed ones included.
+    private(set) var revertCallCount = 0
+    /// The host state as it stood when the last revert began installing its
+    /// files — what a revert commits before its first swap.
+    private(set) var hostStateAtInstall: VMHostState?
 
     // MARK: - VirtualizationProviding
 
@@ -105,6 +114,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         lastStartBootIntoRecovery = derived == .recoveryBoot
         lastStartProvisioning = provisioning
         configurationAtStart = instance.configuration
+        hostStateAtStart = instance.hostState
         statusAtStart = instance.phase.operation?.startedFrom.status
         let route = startRoute ?? derived
         lastStartRoute = route
@@ -235,6 +245,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
+        revertCallCount += 1
         let plan: VMSnapshotRestorePlan
         do {
             plan = try await context.bringUp.operation.bundle.planRestore(
@@ -253,6 +264,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                 await context.bringUp.operation.bundle.discardRestoreStaging()
                 throw error
             }
+            hostStateAtInstall = instance.hostState
             try await context.bringUp.operation.bundle.installRestore(plan)
         } catch {
             return .failed(.atRest(.stopped), error)

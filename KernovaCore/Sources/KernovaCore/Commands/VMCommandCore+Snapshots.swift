@@ -71,9 +71,28 @@ extension VMCommandCore {
     /// The capture itself, listed in the manifest inside the same capture
     /// operation, answering the snapshot that landed; `alsoRecord` writes
     /// beside that listing under the same permit.
+    ///
+    /// A capture that meets its VM returning to the Ephemeral baseline waits it
+    /// out and is decided afresh once it lands, so it never captures what the
+    /// return was to discard.
     private func captureSnapshot(
         _ instance: VMInstance, name: String, notes: String,
         alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
+    ) async throws -> VMSnapshot {
+        do {
+            return try await instance.activity.waitingOutRestorations {
+                try await captureSnapshotNow(instance, name: name, notes: notes, alsoRecord: alsoRecord)
+            }
+        } catch let failed as VMRestorationFailed {
+            throw failure(failed, verb: .takeSnapshot, on: instance)
+        }
+    }
+
+    /// ``captureSnapshot(_:name:notes:alsoRecord:)`` decided against the VM as
+    /// it stands.
+    private func captureSnapshotNow(
+        _ instance: VMInstance, name: String, notes: String,
+        alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void
     ) async throws -> VMSnapshot {
         // Stamped at confirm time, not when the caller decided: the VM can
         // start, stop, or suspend in between.
@@ -97,6 +116,8 @@ extension VMCommandCore {
                 try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
                 alsoRecord(permit, captured)
             }
+        } catch let waiting as VMAwaitsRestoration {
+            throw waiting
         } catch {
             logger.log(
                 .error,
@@ -263,14 +284,14 @@ extension VMCommandCore {
 
     // MARK: - Ephemeral Mode
 
-    /// The revert to its baseline an Ephemeral Mode VM owes a power-off, as a
-    /// follow-up; `nil` for every other VM.
+    /// The revert to its baseline an Ephemeral Mode VM owes a session that
+    /// ended, as a follow-up; `nil` for every other VM.
     ///
-    /// Answered from ``VMActivity/onPoweredOff``, and from
-    /// ``VMActivity/onRunLockTaken`` for a session that ended without one,
-    /// whose steps drain it: a restoration, it takes the VM before any other
-    /// follow-up queued there and before anything else can be decided against
-    /// the VM. A failure nobody waits on is reported.
+    /// Answered from ``VMActivity/onUnsettledSession``, whose steps drain it:
+    /// a restoration, it takes the VM before any other follow-up queued there
+    /// and before anything else can be decided against the VM, and its landing
+    /// settles the session (``VMHostState/hasUnsettledSession``). A failure
+    /// nobody waits on is reported.
     func ephemeralBaselineRevert(for instance: VMInstance) -> VMFollowUp? {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return nil }
         return VMFollowUp(scope: .vm, rank: .restoration) { [weak self, weak instance] outcome in
@@ -280,7 +301,7 @@ extension VMCommandCore {
                 "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
             )
             try self.launchRevert(
-                instance, to: baseline, origin: .powerOffRevert, resolving: outcome)
+                instance, to: baseline, origin: .sessionEndRevert, resolving: outcome)
         }
         .reportingFailure { [weak self] error in
             guard let self else { return }

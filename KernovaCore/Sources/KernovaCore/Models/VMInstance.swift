@@ -489,11 +489,6 @@ package final class VMInstance {
     package var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
     package var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
-    var onPoweredOff: (@MainActor () -> [VMFollowUp])? {
-        get { activity.onPoweredOff }
-        set { activity.onPoweredOff = newValue }
-    }
-
     var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])? {
         get { activity.onSessionBecameAttachable }
         set { activity.onSessionBecameAttachable = newValue }
@@ -622,11 +617,12 @@ package final class VMInstance {
 
     // MARK: - Ephemeral Mode
 
-    /// The snapshot a power-off returns this VM to, or `nil` when Ephemeral
-    /// Mode is off or names a snapshot the manifest no longer lists.
+    /// The snapshot the end of a session returns this VM to, or `nil` when
+    /// Ephemeral Mode is off or names a snapshot the manifest no longer lists.
     ///
     /// The one read every ephemeral path gates on, so a mode left on with a
-    /// baseline that has gone reverts nothing rather than failing at power-off.
+    /// baseline that has gone reverts nothing rather than failing as a session
+    /// ends.
     package var ephemeralBaselineSnapshot: VMSnapshot? {
         guard hostState.ephemeralModeEnabled,
             let id = hostState.ephemeralBaselineSnapshotID
@@ -635,9 +631,9 @@ package final class VMInstance {
     }
 
     /// Whether the last read of the bundle refused the `config.json` of the
-    /// snapshot a power-off returns this VM to — a revert to it fails before
-    /// it changes anything, so a power-off would leave the session's changes
-    /// on the disks.
+    /// snapshot the end of a session returns this VM to — a revert to it fails
+    /// before it changes anything, so the session's changes would stay on the
+    /// disks.
     var ephemeralBaselineIsUnreadable: Bool {
         guard let baseline = ephemeralBaselineSnapshot else { return false }
         return unreadableFiles.contains { $0.snapshotID == baseline.id }
@@ -662,41 +658,15 @@ package final class VMInstance {
         return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
     }
 
-    /// `true` when this VM rests on files a guest wrote since `baseline` — the
-    /// state a revert to it would discard — rather than on that snapshot's own
-    /// copies or on a suspended session of its own.
-    ///
-    /// Read from the files alone, so it holds whatever ended the session: a
-    /// suspend slot that is not the baseline's copy is a session the VM parks,
-    /// and owes nothing; otherwise a warm baseline's slot missing, or any
-    /// guest-written file (``VMBundleItems/capturedRelativePaths(for:layout:)``)
-    /// differing from the baseline's copy, is off it
-    /// (``VMBundleLayout/holdsUntouchedCopy(of:comparing:)``).
-    package func restsOff(_ baseline: VMSnapshot) -> Bool {
-        guard activity.isAtRest else { return false }
-        let layout = bundleLayout
-        if layout.hasSaveFile, !layout.saveFileIsCopyOfSnapshot(id: baseline.id) { return false }
-        return !layout.holdsUntouchedCopy(
-            of: baseline,
-            comparing: VMBundleItems.capturedRelativePaths(for: configuration, layout: layout))
-    }
-
-    /// The snapshot turning Ephemeral Mode on would revert this VM to now: the
-    /// baseline the enable pins, while the VM rests off it — `nil` while the
-    /// mode is on, or turning it on discards nothing.
-    package var ephemeralEnableRevertsTo: VMSnapshot? {
+    /// The snapshot turning Ephemeral Mode on pins as the baseline — the
+    /// answer the `ephemeral` key writes — `nil` while the mode is on, or
+    /// with no snapshot to pin.
+    package var ephemeralEnableBaseline: VMSnapshot? {
         guard !hostState.ephemeralModeEnabled,
             let id = snapshotManifest.defaultEphemeralBaseline(
-                preferring: hostState.ephemeralBaselineSnapshotID),
-            let baseline = snapshotManifest.snapshot(id: id), restsOff(baseline)
+                preferring: hostState.ephemeralBaselineSnapshotID)
         else { return nil }
-        return baseline
-    }
-
-    /// ``restsOff(_:)`` for the snapshot Ephemeral Mode returns this VM to —
-    /// a session that ended without that revert, or a revert cut short.
-    var restsOffEphemeralBaseline: Bool {
-        ephemeralBaselineSnapshot.map(restsOff) ?? false
+        return snapshotManifest.snapshot(id: id)
     }
 
     /// What the stop verb does to the saved state this VM holds, `nil` when
@@ -774,8 +744,8 @@ package final class VMInstance {
         if afterRunning { recordLastRun(at: Date()) }
     }
 
-    /// Called by ``activity`` once a power-off has rested the VM, before
-    /// ``VMActivity/onPoweredOff`` fires.
+    /// Called by ``activity`` once a power-off has rested the VM, before the
+    /// session's end is settled.
     func guestDidPowerOff() {
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.

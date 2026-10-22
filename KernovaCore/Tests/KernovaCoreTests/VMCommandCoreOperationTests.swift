@@ -287,8 +287,8 @@ struct VMCommandCoreOperationTests {
         // entered synchronously from the hook, so no other request, the
         // restart's own boot included, can be decided in between.
         let core = harness.core
-        let poweredOff = instance.activity.onPoweredOff
-        instance.activity.onPoweredOff = {
+        let poweredOff = instance.activity.onUnsettledSession
+        instance.activity.onUnsettledSession = {
             let owed = poweredOff?() ?? []
             deletion.task = Task.immediate { @MainActor in
                 try await core.delete(

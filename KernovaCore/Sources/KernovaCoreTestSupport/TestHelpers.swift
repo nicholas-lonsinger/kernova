@@ -165,8 +165,9 @@ extension VMLibrary {
     ) -> VMInstance {
         admitForTesting(
             VMInstanceFixture.seed(
-                name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
-                pairings: pairings, files: files, mutate: mutate),
+                name: name, guestOS: guestOS,
+                hostState: VMInstanceFixture.hostState(hostState, placedAt: phase),
+                snapshots: snapshots, pairings: pairings, files: files, mutate: mutate),
             phase: phase, preferences: preferences)
     }
 
@@ -190,8 +191,9 @@ extension VMLibrary {
             preconditionFailure("A fixture registers only with a library over MockVMStorageService")
         }
         let read = VMInstanceFixture.seed(
-            name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
-            pairings: pairings, files: files, mutate: mutate)
+            name: name, guestOS: guestOS,
+            hostState: VMInstanceFixture.hostState(hostState, placedAt: phase),
+            snapshots: snapshots, pairings: pairings, files: files, mutate: mutate)
         files.forward(to: storage.files)
         let instance = admitForTesting(read, phase: phase, preferences: preferences)
         wireHooks(for: instance)

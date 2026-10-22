@@ -583,18 +583,31 @@ struct VMSettingsGeneralPanelTests {
         }
     }
 
-    @Test("Turning the mode on defaults the baseline to the current snapshot")
-    func ephemeralToggleDefaultsToCurrent() {
-        // Stopped on cold snapshots, it rests on the baseline: nothing to confirm.
+    @Test("Turning the mode on asks first, and confirmed defaults the baseline to the current snapshot")
+    func ephemeralToggleDefaultsToCurrent() throws {
+        let viewModel = makeViewModel()
         let (vc, instance) = makeEphemeralController(
-            snapshotCount: 2, ephemeral: false, kind: .cold)
-        guard let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view) else {
-            Issue.record("Expected an Ephemeral Mode switch")
-            return
-        }
+            snapshots: (0..<2).map { makeSnapshot(index: $0, kind: .warm) }, ephemeral: false,
+            viewModel: viewModel)
+        let window = showTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let toggle = try #require(firstSwitch(action: "ephemeralModeToggled", in: vc.view))
 
         toggle.state = .on
         toggle.sendAction(toggle.action, to: toggle.target)
+
+        // The verb refused for want of consent, so nothing landed; the sheet
+        // asks in the words that refusal carried.
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        let current = try #require(instance.snapshotManifest.snapshots.first)
+        let prompt = VMCommandCore.ephemeralBaselinePrompt(current, on: instance, turningOn: true)
+        let sheet = try #require(window.attachedSheet)
+        #expect(findLabel(withText: prompt.title, in: try #require(sheet.contentView)) != nil)
+
+        // The confirmation's write.
+        ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
+            VMConfigurationKeyRegistry.ephemeral.assigning(true), confirmingIn: nil,
+            consent: Consent([.setEphemeralBaseline]))
 
         #expect(instance.hostState.ephemeralModeEnabled)
         #expect(
@@ -602,17 +615,15 @@ struct VMSettingsGeneralPanelTests {
                 == instance.snapshotManifest.currentID)
     }
 
-    @Test(
-        "The toggle cautions that turning it on reverts the VM now exactly while it rests off the baseline",
-        arguments: [VMSnapshotKind.warm, .cold])
-    func ephemeralToggleCautionsWhileOffTheBaseline(kind: VMSnapshotKind) {
-        // Stopped with no suspend slot: off a warm baseline, on a cold one.
-        let (vc, instance) = makeEphemeralController(snapshotCount: 1, ephemeral: false, kind: kind)
-        let baseline = instance.snapshotManifest.snapshots[0]
+    @Test("The toggle cautions what turning it on does while it would pin a baseline")
+    func ephemeralToggleCautions() {
+        let (off, offInstance) = makeEphemeralController(snapshotCount: 1, ephemeral: false)
+        let baseline = offInstance.snapshotManifest.snapshots[0]
+        #expect(visibleLabel(EphemeralModeCopy.enableCaution(baseline: baseline), in: off.view))
 
-        #expect(
-            visibleLabel(EphemeralModeCopy.revertsNowCaption(baseline: baseline), in: vc.view)
-                == (kind == .warm))
+        let (on, onInstance) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
+        let pinned = onInstance.snapshotManifest.snapshots[0]
+        #expect(!visibleLabel(EphemeralModeCopy.enableCaution(baseline: pinned), in: on.view))
     }
 
     @Test("Turning the mode off clears the baseline")
@@ -630,19 +641,29 @@ struct VMSettingsGeneralPanelTests {
         #expect(instance.hostState.ephemeralBaselineSnapshotID == nil)
     }
 
-    @Test("Choosing another snapshot moves the baseline")
-    func ephemeralBaselineSelectionWritesConfig() {
+    @Test("Choosing another snapshot asks first, and confirmed moves the baseline")
+    func ephemeralBaselineSelectionWritesConfig() throws {
+        let viewModel = makeViewModel()
         let (vc, instance) = makeEphemeralController(
-            snapshotCount: 3, ephemeral: true, kind: .cold)
-        guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
-            Issue.record("Expected a Baseline snapshot popup")
-            return
-        }
+            snapshots: (0..<3).map { makeSnapshot(index: $0, kind: .warm) }, ephemeral: true,
+            viewModel: viewModel)
+        let window = showTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
         // Rows render newest first, so the first item is not the Current one.
-        let newest = popUp.itemArray[0].representedObject as? UUID
+        let newest = try #require(popUp.itemArray[0].representedObject as? UUID)
+        let pinned = instance.hostState.ephemeralBaselineSnapshotID
 
         popUp.select(popUp.itemArray[0])
         popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == pinned)
+        #expect(window.attachedSheet != nil)
+
+        // The confirmation's write.
+        ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
+            VMConfigurationKeyRegistry.ephemeralBaseline.assigning(newest.uuidString),
+            confirmingIn: nil, consent: Consent([.setEphemeralBaseline]))
 
         #expect(instance.hostState.ephemeralBaselineSnapshotID == newest)
         #expect(instance.hostState.ephemeralModeEnabled)
@@ -731,15 +752,18 @@ struct VMSettingsGeneralPanelTests {
     /// different kind moves the caption with it.
     @Test("Choosing a cold baseline swaps the caption")
     func ephemeralBaselineCaptionFollowsTheSelection() throws {
-        let (vc, _) = makeEphemeralController(
+        let viewModel = makeViewModel()
+        let (vc, instance) = makeEphemeralController(
             snapshots: [
                 makeSnapshot(index: 0, kind: .warm), makeSnapshot(index: 1, kind: .cold),
-            ], ephemeral: true)
+            ], ephemeral: true, viewModel: viewModel)
         let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
 
-        // Newest first, so item 0 is the cold one.
-        popUp.select(popUp.itemArray[0])
-        popUp.sendAction(popUp.action, to: popUp.target)
+        // Newest first, so item 0 is the cold one; the move is confirmed.
+        let cold = try #require(popUp.itemArray[0].representedObject as? UUID)
+        ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
+            VMConfigurationKeyRegistry.ephemeralBaseline.assigning(cold.uuidString),
+            confirmingIn: nil, consent: Consent([.setEphemeralBaseline]))
         // The written configuration re-enters `apply()` through the model's own
         // observation in the app; here the render is asked for directly.
         vc.viewDidAppear()

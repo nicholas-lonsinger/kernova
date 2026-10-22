@@ -231,20 +231,20 @@ extension VMLibrary {
 
     /// Turns a scan into the live library: membership, order, and selection —
     /// answering the VMs it adopted that the scan read marked to start
-    /// automatically — and returns each Ephemeral Mode VM it adopted that
-    /// rests off its baseline to it (``VMActivity/restoreIfOwed()``).
+    /// automatically — and settles each session it finds ended unsettled
+    /// (``VMActivity/settleUnsettledSessionAtLaunch()``).
     private func apply(_ scan: LibraryScan) -> Set<UUID> {
         var marked: Set<UUID> = []
-        var ephemeral: [VMInstance] = []
+        var unsettled: [VMInstance] = []
         for scanned in scan.bundles {
             guard case .adopted(let instance) = adopt(scanned) else { continue }
             instance.activity.recordOtherCopyHold(heldElsewhere: scan.heldElsewhere.contains(scanned.url))
             if scanned.read.hostState.startsAutomaticallyOnLaunch { marked.insert(instance.id) }
-            if instance.ephemeralBaselineSnapshot != nil { ephemeral.append(instance) }
+            if scanned.read.hostState.hasUnsettledSession { unsettled.append(instance) }
         }
-        // A session a copy of Kernova died under never reached the revert its
-        // power-off owed, and taking the lock is what shows no copy runs it now.
-        for instance in ephemeral { instance.activity.restoreIfOwed() }
+        // A session a copy of Kernova died under was never settled, and taking
+        // the lock is what shows no copy runs it now.
+        for instance in unsettled { instance.activity.settleUnsettledSessionAtLaunch() }
         admitUnreadable(scan.unreadable)
         for bundle in scan.unreadable {
             recordUnreadable([bundle.file], under: bundle.url)

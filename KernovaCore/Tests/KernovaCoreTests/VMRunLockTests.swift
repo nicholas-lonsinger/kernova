@@ -304,17 +304,17 @@ struct VMRunLockTests {
     // MARK: - Endings reuse the lock
 
     @Test("A power-off's Ephemeral revert follow-up is admitted under the lock the ending held")
-    func powerOffRevertReusesTheLock() async throws {
+    func sessionEndRevertReusesTheLock() async throws {
         let (instance, store) = makeInstance()
         let recorder = Recorder()
         let gate = GatedStep()
-        instance.activity.onPoweredOff = {
+        instance.activity.onUnsettledSession = {
             recorder.heldInHook = instance.activity.holdsRunLock
             recorder.phaseInHook = instance.phase
             let revert = VMFollowUp(scope: .vm, rank: .restoration) { outcome in
                 recorder.heldAtAdmission = instance.activity.holdsRunLock
                 try instance.activity.launchRevert(
-                    to: Self.baseline, resumesAfter: false, origin: .powerOffRevert,
+                    to: Self.baseline, resumesAfter: false, origin: .sessionEndRevert,
                     resolving: outcome
                 ) { _ in
                     try await gate.pass()

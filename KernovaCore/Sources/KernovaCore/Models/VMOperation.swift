@@ -225,6 +225,23 @@ package struct VMOperation: Sendable, Equatable {
     /// What a caller joining the operation awaits.
     let outcome: VMOutcome
 
+    /// Whether this is a revert to the VM's Ephemeral baseline, however it was
+    /// asked for — what a request carrying the guest's files forward waits out
+    /// rather than being refused as busy.
+    let restoresEphemeralBaseline: Bool
+
+    init(
+        kind: VMOperationKind, startedFrom: VMLifecyclePhase,
+        sessionState: VMOperationSessionState, outcome: VMOutcome,
+        restoresEphemeralBaseline: Bool = false
+    ) {
+        self.kind = kind
+        self.startedFrom = startedFrom
+        self.sessionState = sessionState
+        self.outcome = outcome
+        self.restoresEphemeralBaseline = restoresEphemeralBaseline
+    }
+
     /// The session the operation holds, or `nil` while it has none — before a
     /// bring-up creates one, or once the session ended mid-operation.
     var session: VMOperationSession? {
@@ -398,6 +415,12 @@ package enum VMOperationKind: Sendable, Equatable {
         }
     }
 
+    /// Whether this operation is a revert to a snapshot.
+    var isRevert: Bool {
+        if case .bringUp(.reverting) = self { return true }
+        return false
+    }
+
     /// Whether this operation, admitted at rest, carries the guest's files
     /// forward as the bundle holds them — boots them, captures them, or copies
     /// them out — rather than replacing them, discarding them, or leaving them
@@ -529,7 +552,7 @@ package enum VMBringUpKind: Sendable, Equatable {
     }
 
     /// Whether this bring-up begins a guest session on a VM at rest — a
-    /// session whose power-off returns an Ephemeral Mode VM to its baseline.
+    /// session whose end returns an Ephemeral Mode VM to its baseline.
     var beginsSessionFromRest: Bool {
         switch self {
         case .guestStart, .settingUp: true
@@ -600,6 +623,11 @@ package struct VMEditClasses: OptionSet, Sendable, Hashable {
     /// restores across (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
     /// so admission keeps it open beside one.
     static let removableMediaRemoval = VMEditClasses(rawValue: 1 << 11)
+    /// The unsettled-session marker (``VMHostState/hasUnsettledSession``),
+    /// which no edit writes: only the operation beginning or settling a
+    /// session, and the activity settling a session's end
+    /// (``VMEditPermit/Authority/settlement``).
+    static let sessionSettlement = VMEditClasses(rawValue: 1 << 12)
 
     static let all: VMEditClasses = [
         .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,

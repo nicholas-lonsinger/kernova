@@ -155,48 +155,18 @@ package struct VMBundleLayout: Sendable {
     /// the time it was written. Size and modification date together identify the
     /// clone, at the cost of two `stat` calls and no reading of either file.
     func saveFileIsCopyOfSnapshot(id: UUID) -> Bool {
-        Self.isCopy(saveFileURL, of: snapshotLayout(id: id).saveFileURL) ?? false
-    }
-
-    /// Whether the bundle rests on an untouched copy of `snapshot`: its suspend
-    /// slot is the snapshot's saved state — or, for a cold snapshot, there is
-    /// none — and each of `relativePaths` the bundle and the snapshot both hold
-    /// is the copy a revert installed or the capture took.
-    ///
-    /// Identified as ``saveFileIsCopyOfSnapshot(id:)`` identifies the slot: a
-    /// guest writing a file stamps it with a new modification date. A path only
-    /// one side holds is not compared, so a disk added or removed since the
-    /// capture decides nothing.
-    func holdsUntouchedCopy(of snapshot: VMSnapshot, comparing relativePaths: [String]) -> Bool {
-        let slotIsTheSnapshots =
-            switch snapshot.kind {
-            case .warm: saveFileIsCopyOfSnapshot(id: snapshot.id)
-            case .cold: !hasSaveFile
-            }
-        guard slotIsTheSnapshots else { return false }
-        let captured = snapshotLayout(id: snapshot.id)
-        return relativePaths.allSatisfy { path in
-            Self.isCopy(
-                bundleURL.appendingPathComponent(path),
-                of: captured.bundleURL.appendingPathComponent(path)) ?? true
-        }
-    }
-
-    /// Whether the file at `url` is a copy of the one at `original` by size and
-    /// modification date, `nil` when either is not there.
-    private static func isCopy(_ url: URL, of original: URL) -> Bool? {
-        guard let mine = stamp(at: url), let theirs = stamp(at: original) else { return nil }
-        return mine == theirs
-    }
-
-    private static func stamp(at url: URL) -> (size: NSNumber, modified: Date)? {
+        let manager = FileManager.default
         guard
-            let attributes = try? FileManager.default.attributesOfItem(
-                atPath: url.path(percentEncoded: false)),
-            let size = attributes[.size] as? NSNumber,
-            let modified = attributes[.modificationDate] as? Date
-        else { return nil }
-        return (size, modified)
+            let mine = try? manager.attributesOfItem(
+                atPath: saveFileURL.path(percentEncoded: false)),
+            let captured = try? manager.attributesOfItem(
+                atPath: snapshotLayout(id: id).saveFileURL.path(percentEncoded: false)),
+            let mySize = mine[.size] as? NSNumber,
+            let capturedSize = captured[.size] as? NSNumber,
+            let myDate = mine[.modificationDate] as? Date,
+            let capturedDate = captured[.modificationDate] as? Date
+        else { return false }
+        return mySize == capturedSize && myDate == capturedDate
     }
 
     /// Absolute URL backing a disk: bundle-relative `path`s resolve against

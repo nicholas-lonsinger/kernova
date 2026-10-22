@@ -62,8 +62,7 @@ enum StatusColor {
 }
 
 /// The color of a caution: the warning triangle a banner, glyph or inline
-/// note carries, and the text of a note warning that a change discards
-/// something.
+/// note carries.
 enum Caution {
     static let color = NSColor.systemYellow
 }

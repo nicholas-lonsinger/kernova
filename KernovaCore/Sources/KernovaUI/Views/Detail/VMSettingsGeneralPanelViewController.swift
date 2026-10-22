@@ -116,8 +116,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private var ephemeralGroup: GroupedFormSubOptionGroup?
     /// Explains that a baseline needs a snapshot first, while the VM has none.
     private var ephemeralNoSnapshotsCaption: GroupedFormStateNote?
-    /// The caution under the toggle while turning it on reverts the VM now.
-    private var ephemeralRevertsNowCaption: GroupedFormStateNote?
+    /// The caution under the toggle while turning it on pins a baseline.
+    private var ephemeralEnableCaution: GroupedFormCautionNote?
     /// Names the state a shutdown comes to rest in, which the selected
     /// baseline's kind decides, while a baseline resolves.
     private var ephemeralBaselineCaption: GroupedFormStateNote?
@@ -309,10 +309,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         })
         ephemeralNoSnapshotsCaption = noSnapshots
 
-        let revertsNow = GroupedFormStateNote.caution({ [weak self] in
-            self?.instance.ephemeralEnableRevertsTo.map(EphemeralModeCopy.revertsNowCaption)
+        let enableCaution = GroupedFormCautionNote(content: { [weak self] in
+            self?.instance.ephemeralEnableBaseline.map(EphemeralModeCopy.enableCaution)
         })
-        ephemeralRevertsNowCaption = revertsNow
+        ephemeralEnableCaution = enableCaution
 
         // Reads the resolved baseline rather than the popup's selection, so the
         // caption is never the outgoing VM's while the menu is being rebuilt.
@@ -328,7 +328,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 makeGroupedFormCardRow(
                     "Ephemeral Mode", control: ephemeralSwitch,
                     info: EphemeralModeCopy.popoverParagraphs),
-                notes: [noSnapshots, revertsNow]),
+                notes: [noSnapshots, enableCaution]),
             subOption: GroupedFormNotedRow(
                 makeGroupedFormCardRow("Baseline snapshot", control: ephemeralBaselinePopUp),
                 notes: [baselineCaption]))
@@ -464,7 +464,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
             control: ephemeralBaselinePopUp)
         ephemeralNoSnapshotsCaption?.refresh()
-        ephemeralRevertsNowCaption?.refresh()
+        ephemeralEnableCaution?.refresh()
         ephemeralGroup?.isSubOptionHidden = !enabled
 
         let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }
