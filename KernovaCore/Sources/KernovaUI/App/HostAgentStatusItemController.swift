@@ -108,11 +108,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             waitingAlerts: heldAlerts.otherAlertCount(listing: isListed))
     }
 
-    /// When each VM's last presented refusal was raised.
-    ///
-    /// One refusal is presented once. A repeat of the same kind is a new notice,
-    /// since a finish's `date` is its identity.
-    private var lastPresentedNoticeDates: [UUID: Date] = [:]
+    /// Which surface presents each VM's refusal.
+    private var noticeLedger = ClipboardNoticeLedger()
 
     /// How long a clipboard notice stays up unattended.
     private static let clipboardNoticeDuration: Duration = .seconds(6)
@@ -216,27 +213,25 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Clipboard notice
 
-    /// Presents each VM's newly raised refusal, if the status item can carry a
-    /// popover right now.
+    /// Presents each VM's newly raised refusal where ``ClipboardNoticeLedger``
+    /// routes it.
     ///
-    /// A dropdown on screen carries the refusal's line instead — except the
-    /// one the readout opened, closing as the readout ends, which takes the
-    /// line with it; the notice waits for that close. Otherwise a notice that
-    /// can't be shown is dropped rather than deferred: the dropdown's own line
-    /// is the fallback, and a refusal replayed later would interrupt for
-    /// something the user has moved past. A refusal the *guest* user's gesture
-    /// produced is not presented here at all — the guest's own dropdown
-    /// reveals it over there.
+    /// A notice the status item can't carry is dropped rather than deferred:
+    /// the dropdown's own line is the fallback, and a refusal replayed later
+    /// would interrupt for something the user has moved past. A refusal the
+    /// *guest* user's gesture produced is not presented here at all — the
+    /// guest's own dropdown reveals it over there.
     private func presentPendingNotices() {
+        let dropdown: ClipboardNoticeLedger.Dropdown =
+            !isMenuOpen ? .closed : transferProgressPresenter.isClosingDropdown ? .closing : .open
         for instance in viewModel.instances {
             guard case .finished(let finish) = instance.clipboardTransferReport,
                 finish.failure != nil, finish.gesture.isMadeHere,
-                lastPresentedNoticeDates[instance.instanceID] != finish.date,
                 let wording = ClipboardTransferWording.wording(
-                    for: finish, vmName: instance.name)
+                    for: finish, vmName: instance.name),
+                noticeLedger.route(finish.date, for: instance.instanceID, dropdown: dropdown)
+                    == .notice
             else { continue }
-            if isMenuOpen, transferProgressPresenter.isClosingDropdown { continue }
-            lastPresentedNoticeDates[instance.instanceID] = finish.date
             let instanceID = instance.instanceID
             let content = ClipboardNoticeViewController(wording: wording) { [weak self] in
                 guard let self else { return }
