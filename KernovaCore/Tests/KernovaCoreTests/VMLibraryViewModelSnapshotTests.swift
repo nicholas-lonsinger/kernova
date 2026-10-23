@@ -139,23 +139,28 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.viewModel.instances.first?.snapshotManifest.currentID == snapshot.id)
     }
 
-    @Test("Launch reclaims the staging directory an interrupted revert left, and a load alone does not")
-    func launchSweepsRevertStaging() async throws {
+    @Test("Launch reclaims what an interrupted revert or resume left, and a load alone does not")
+    func launchSweepsInterruptedWork() async throws {
         let harness = makeHarness()
         let config = VMConfiguration(
             name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let bundleURL = try harness.storage.bundleURL(for: config)
         harness.storage.setConfiguration(config, at: bundleURL)
+        let spentSlot = VMBundleLayout(bundleURL: bundleURL).spentSaveFileURL
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try Data("spent".utf8).write(to: spentSlot)
 
         await harness.viewModel.loadVMs()
         #expect(harness.snapshots.sweptStagingBundleURLs.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: spentSlot.path(percentEncoded: false)))
 
         await harness.viewModel.startLibrary()
         // Otherwise the reclaim waits on the next revert of this same VM, which
         // may never come — and its clones own their blocks outright once the
         // snapshot they were cloned from is discarded.
         #expect(harness.snapshots.sweptStagingBundleURLs == [bundleURL])
+        #expect(!FileManager.default.fileExists(atPath: spentSlot.path(percentEncoded: false)))
     }
 
     // MARK: - Take

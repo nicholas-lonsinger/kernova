@@ -175,21 +175,27 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         }
     }
 
-    /// Moves a staged clone onto `destination`, replacing whatever is there.
+    /// Moves a staged clone onto `destination`, replacing whatever is there and
+    /// creating the directory it goes in.
+    private func swapIntoPlace(staged: URL, destination: URL) throws {
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try move(staged, replacing: destination)
+    }
+
+    /// Renames `source` onto `destination`, replacing whatever is there.
     ///
     /// `replaceItemAt` rather than a remove followed by a copy: it renames the
     /// replacement in, so `destination` resolves to the old file or the new one
-    /// and never to nothing.
-    private func swapIntoPlace(staged: URL, destination: URL) throws {
+    /// and never to nothing. Creates no directory, so a move into a bundle that
+    /// is not there fails rather than inventing one.
+    private func move(_ source: URL, replacing destination: URL) throws {
         let manager = FileManager.default
-        try manager.createDirectory(
-            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: destination.path(percentEncoded: false)) {
-            _ = try manager.replaceItemAt(destination, withItemAt: staged)
+            _ = try manager.replaceItemAt(destination, withItemAt: source)
         } else {
-            // `replaceItemAt` needs an original to replace — a disk the VM lost
-            // since the capture has none.
-            try manager.moveItem(at: staged, to: destination)
+            // `replaceItemAt` needs an original to replace.
+            try manager.moveItem(at: source, to: destination)
         }
     }
 
@@ -247,6 +253,28 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         {
             // A stopped VM holds no suspend slot, which is the common case.
         }
+    }
+
+    package func spendSaveFile(bundleURL: URL) throws -> Bool {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        guard FileManager.default.fileExists(atPath: layout.saveFileURL.path(percentEncoded: false))
+        else { return false }
+        try move(layout.saveFileURL, replacing: layout.spentSaveFileURL)
+        return true
+    }
+
+    package func reinstateSpentSaveFile(bundleURL: URL) throws {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        try move(layout.spentSaveFileURL, replacing: layout.saveFileURL)
+    }
+
+    package func removeSpentSaveFile(bundleURL: URL) throws {
+        do {
+            try FileManager.default.removeItem(
+                at: VMBundleLayout(bundleURL: bundleURL).spentSaveFileURL)
+        } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
+        {}
     }
 
     // MARK: - Firmware and platform

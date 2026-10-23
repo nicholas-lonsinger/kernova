@@ -239,7 +239,6 @@ package final class VirtualizationService {
             )
             throw error
         }
-        context.bundle.removeSaveFile()
         Self.logger.log(.notice, "Resumed VM '\(instance.name, privacy: .public)'")
         return .rest(.live(.running), ())
     }
@@ -654,10 +653,11 @@ package final class VirtualizationService {
             isProtectedDataAvailable: isProtectedDataAvailable)
     }
 
-    /// Loads the bundle's suspend slot into `session`, resumes the guest, and
-    /// drops the slot, over the VZ operations it needs rather than a concrete
-    /// session — like ``save(_:_:session:)``, so the slot it reads and the one
-    /// it drops are reachable without a real `VZVirtualMachine`.
+    /// Loads the bundle's suspend slot into `session` and resumes the guest,
+    /// whose execution spends the slot (``VMOperationContext/executingGuest(_:)``),
+    /// over the VZ operations it needs rather than a concrete session — like
+    /// ``save(_:_:session:)``, so tests reach it without a real
+    /// `VZVirtualMachine`.
     static func restoreSavedState(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
         session: any VMSnapshotSessionOperating,
@@ -666,10 +666,7 @@ package final class VirtualizationService {
         logger.log(.debug, "restoreFromSaveFile: attempting restore from save file")
         do {
             try await session.restoreMachineState(from: context.bundle.saveFileURL)
-            // The slot goes only once the guest executes on it, so a resume that
-            // fails — or a mark that does not land — leaves the session parked.
             try await context.executingGuest { execution in try await session.resume(execution) }
-            context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError
             let hostLocked = !isProtectedDataAvailable()

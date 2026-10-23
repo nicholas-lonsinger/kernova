@@ -134,9 +134,6 @@ final class MockVirtualizationService: VirtualizationProviding {
             guestExecutionCount += 1
             context.bringUp.bindSessionForTesting(UUID())
         }
-        // A restore consumes the slot it loaded once the guest executes on it,
-        // as the real one does.
-        if route == .restoredSavedState { context.bringUp.operation.bundle.removeSaveFile() }
         return .rest(.live(.running), route)
     }
 
@@ -169,7 +166,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<Void> {
         resumeCallCount += 1
         if let error = resumeError { throw error }
-        context.bundle.removeSaveFile()
         return .rest(.live(.running), ())
     }
 
@@ -316,7 +312,6 @@ final class MockVirtualizationService: VirtualizationProviding {
             return .failed(
                 .atRest(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
-        context.bringUp.operation.bundle.removeSaveFile()
         return .rest(.live(.running), ())
     }
 }

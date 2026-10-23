@@ -258,6 +258,18 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         try real.removeSaveFile(bundleURL: bundleURL)
     }
 
+    func spendSaveFile(bundleURL: URL) throws -> Bool {
+        try real.spendSaveFile(bundleURL: bundleURL)
+    }
+
+    func reinstateSpentSaveFile(bundleURL: URL) throws {
+        try real.reinstateSpentSaveFile(bundleURL: bundleURL)
+    }
+
+    func removeSpentSaveFile(bundleURL: URL) throws {
+        try real.removeSpentSaveFile(bundleURL: bundleURL)
+    }
+
     func ensureEFIVariableStore(bundleURL: URL) throws {
         try real.ensureEFIVariableStore(bundleURL: bundleURL)
     }

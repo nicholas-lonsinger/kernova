@@ -19,7 +19,7 @@ extension VMLibrary {
     @discardableResult
     func startLibrary() async -> Set<UUID> {
         storageService.reclaimStagedBundles()
-        await reclaimRestoreStaging()
+        await reclaimInterruptedWork()
         let marked = await loadVMs()
         startDirectoryWatcher()
         return marked
@@ -75,14 +75,17 @@ extension VMLibrary {
         recordUnreadable(instance.bundle.rereadUnreadableFiles(), under: instance.bundleURL)
     }
 
-    /// Removes the restore staging directory an interrupted revert left in any
-    /// listed bundle another copy of Kernova does not hold.
+    /// Removes what an interrupted revert or resume left — a revert's staging
+    /// directory and a spent suspend slot — in any listed bundle another copy
+    /// of Kernova does not hold.
     ///
     /// Finished before the load, so no VM of this run exists yet and no revert
-    /// of its own can be staging there. A bundle that arrives later, or that
-    /// another copy held, keeps what it holds until its next revert, whose
-    /// staging discards it first.
-    private func reclaimRestoreStaging() async {
+    /// or resume of its own can be working there. A bundle that arrives later,
+    /// or that another copy held, keeps what it holds until a later launch
+    /// reclaims it — or, sooner, its next revert stages over the staging
+    /// directory, or its next resume from a saved state spends over the spent
+    /// slot.
+    private func reclaimInterruptedWork() async {
         let storage = storageService
         let bundleFactory = bundleFactory
         await Task.detached(priority: .userInitiated) { [logger] in
@@ -94,11 +97,11 @@ extension VMLibrary {
                 // it to the user.
                 logger.log(
                     .warning,
-                    "Could not list the VM bundles to reclaim revert staging: \(error.localizedDescription, privacy: .public)"
+                    "Could not list the VM bundles to reclaim revert staging and spent suspend slots: \(error.localizedDescription, privacy: .public)"
                 )
                 return
             }
-            bundleFactory.reclaimRestoreStaging(
+            bundleFactory.reclaimInterruptedWork(
                 in: bundles.map { VMBundleFiles(url: $0, access: storage.bundleFiles) })
         }.value
     }

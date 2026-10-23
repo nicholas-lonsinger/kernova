@@ -125,17 +125,16 @@ struct VMInstanceTests {
 
     // MARK: - The session ending
 
-    @Test("A session's end releases the whole session context and rests on the slot that survived it")
-    func sessionEndReleasesTheContext() throws {
+    @Test("A session's end releases the whole session context")
+    func sessionEndReleasesTheContext() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         let context = instance.beginSessionContextForTesting()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
-        try VMInstanceFixture.writeSaveFile(for: instance)
 
         instance.handleSessionEvent(.guestDidStop)
 
-        #expect(instance.phase == .suspended)
+        #expect(instance.phase == .stopped)
         #expect(instance.liveSessionID == nil)
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
@@ -238,22 +237,6 @@ struct VMInstanceTests {
         }
     }
 
-    /// VZ consumes the slot only once a restore has resumed, so a guest that
-    /// died still has the session on disk — and a VM holding one is resumable,
-    /// not stuck, whatever ended the session.
-    @Test("A guest that dies over a kept slot rests the VM back on its saved state")
-    func didStopWithErrorOverAKeptSlotRestsSuspended() throws {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        instance.handleSessionEvent(.didStopWithError(NSError(domain: "test", code: 1)))
-
-        #expect(instance.phase == .suspended)
-        #expect(instance.hasSaveFile)
-        // No banner: the VM is one the user can bring back up.
-        #expect(instance.errorMessage == nil)
-    }
-
     @Test("A guest that dies with no slot to come back on rests at the failure")
     func didStopWithErrorWithoutASlotRestsFailed() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
@@ -268,21 +251,6 @@ struct VMInstanceTests {
         #expect(instance.status == .error)
         #expect(instance.errorMessage == "The guest panicked.")
         #expect(instance.sessionContext == nil)
-    }
-
-    @Test("A power-off rests the VM on a slot that survived it, and stopped otherwise")
-    func powerOffReadsTheBundle() throws {
-        let holding = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        try VMInstanceFixture.writeSaveFile(for: holding)
-
-        holding.handleSessionEvent(.guestDidStop)
-
-        #expect(holding.phase == .suspended)
-        #expect(holding.hasSaveFile)
-
-        let emptied = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        emptied.handleSessionEvent(.guestDidStop)
-        #expect(emptied.phase == .stopped)
     }
 
     @Test("A VM answers admission as it will stand once its saved state is discarded")

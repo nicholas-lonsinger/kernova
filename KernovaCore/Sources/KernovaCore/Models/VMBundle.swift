@@ -89,14 +89,16 @@ package final class VMBundle {
             VMBundle(read, machineFiles: machineFiles, configurationPolicy: configurationPolicy)
         }
 
-        /// Removes the restore staging directory an interrupted revert left in
-        /// each of `bundles`, holding the bundle's run lock while it does, and
-        /// skips a bundle whose lock another copy of Kernova holds — a revert
-        /// of that copy's may be staging there.
+        /// Removes what an interrupted revert or resume left in each of
+        /// `bundles` — a revert's staging directory and a spent suspend slot —
+        /// holding the bundle's run lock while it does, and skips a bundle
+        /// whose lock another copy of Kernova holds, which keeps both: that
+        /// copy may be staging a revert there, or resuming from its spent slot.
         ///
         /// Blocks on the filesystem. Only for bundles no ``VMBundle`` of this
-        /// run holds yet, so no revert of this copy's can be staging there.
-        func reclaimRestoreStaging(in bundles: [VMBundleFiles]) {
+        /// run holds yet, so no revert or resume of this copy's can be working
+        /// there.
+        func reclaimInterruptedWork(in bundles: [VMBundleFiles]) {
             for bundle in bundles {
                 let bundleURL = bundle.url
                 let holder: (any VMBundleLockHolder)?
@@ -105,19 +107,27 @@ package final class VMBundle {
                 } catch {
                     VMBundle.logger.log(
                         .warning,
-                        "Could not lock '\(bundleURL.lastPathComponent, privacy: .public)' to reclaim its revert staging: \(error.localizedDescription, privacy: .public)"
+                        "Could not lock '\(bundleURL.lastPathComponent, privacy: .public)' to reclaim its revert staging and spent suspend slot: \(error.localizedDescription, privacy: .public)"
                     )
                     continue
                 }
                 guard let holder else {
                     VMBundle.logger.log(
                         .notice,
-                        "Left the revert staging of '\(bundleURL.lastPathComponent, privacy: .public)' in place: another copy of Kernova holds it"
+                        "Left the revert staging and spent suspend slot of '\(bundleURL.lastPathComponent, privacy: .public)' in place: another copy of Kernova holds it"
                     )
                     continue
                 }
                 withExtendedLifetime(holder) {
                     machineFiles.sweepRestoreStaging(bundleURL: bundleURL)
+                    do {
+                        try machineFiles.removeSpentSaveFile(bundleURL: bundleURL)
+                    } catch {
+                        VMBundle.logger.log(
+                            .warning,
+                            "Failed to remove the spent suspend slot in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
                 }
             }
         }
@@ -423,6 +433,25 @@ extension VMBundle {
             bundle.removeSaveFileLoggingRefusal()
         }
 
+        /// Moves the suspend slot to the spent path, answering whether the
+        /// bundle held one (``VMBundleMachineFileWorking/spendSaveFile(bundleURL:)``).
+        func spendSaveFile() throws -> Bool {
+            try bundle.spendSaveFile()
+        }
+
+        /// Moves the spent suspend slot back to the slot path. A move the file
+        /// system turned down loses the suspended session and logs it; the
+        /// launch pass reclaims the spent file.
+        func reinstateSpentSaveFile() {
+            bundle.reinstateSpentSaveFileLoggingRefusal()
+        }
+
+        /// Removes the spent suspend slot. A removal the file system turned
+        /// down leaves it for the launch pass and logs it.
+        func removeSpentSaveFile() {
+            bundle.removeSpentSaveFileLoggingRefusal()
+        }
+
         // MARK: Snapshots
 
         /// Creates snapshot `id`'s directory holding `configuration`, answering
@@ -539,6 +568,32 @@ extension VMBundle {
             try await fileWorker.createInternalDisk(
                 bundleURL: url, id: id, sizeInGB: sizeInGB, diskImages: diskImages)
         }.value
+    }
+
+    fileprivate func spendSaveFile() throws -> Bool {
+        try fileWorker.spendSaveFile(bundleURL: url)
+    }
+
+    fileprivate func reinstateSpentSaveFileLoggingRefusal() {
+        do {
+            try fileWorker.reinstateSpentSaveFile(bundleURL: url)
+        } catch {
+            Self.logger.log(
+                .error,
+                "Failed to put back the suspend slot of '\(self.configuration.name, privacy: .public)', losing its suspended session: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    fileprivate func removeSpentSaveFileLoggingRefusal() {
+        do {
+            try fileWorker.removeSpentSaveFile(bundleURL: url)
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to remove the spent suspend slot of '\(self.configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     fileprivate func removeSaveFileLoggingRefusal() {

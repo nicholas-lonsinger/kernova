@@ -1618,12 +1618,29 @@ package struct VMOperationContext: ~Copyable, Sendable {
     /// `execute` threw after is retracted at the operation's ending, back to
     /// the value it replaced — so a bring-up that fails before the guest
     /// executes leaves the marker as it found it.
+    ///
+    /// The guest executes only on a bundle holding no suspend slot: the slot is
+    /// set aside before `execute` runs — a spend that cannot be made throws
+    /// first, as does a resume from the slot that finds none to spend — put
+    /// back when `execute` throws, and removed once it returns.
     @MainActor package func executingGuest<T>(
         _ execute: @MainActor (borrowing VMGuestExecution) async throws -> T
     ) async throws -> T {
         try activity.markGuestStarting()
-        let value = try await execute(VMGuestExecution())
+        let spent = try bundle.spendSaveFile()
+        // A resume that finds no slot to spend has lost track of the one it
+        // loaded: a bundle Finder moved before the library followed it took the
+        // slot along, where it would outlive the guest run past it.
+        guard spent || !kind.resumesFromSaveFile else { throw VirtualizationError.noSaveFile }
+        let value: T
+        do {
+            value = try await execute(VMGuestExecution())
+        } catch {
+            if spent { bundle.reinstateSpentSaveFile() }
+            throw error
+        }
         activity.recordSessionChanges(.guestExecuted)
+        if spent { bundle.removeSpentSaveFile() }
         return value
     }
 
@@ -1795,7 +1812,8 @@ package struct VMRevertContext: ~Copyable, Sendable {
 
 /// What having a guest execute takes — a boot's start, a session's resume, an
 /// installer's run — so no path runs a guest whose session is not marked
-/// unsettled (``VMHostState/hasUnsettledSession``).
+/// unsettled (``VMHostState/hasUnsettledSession``), or on a bundle whose
+/// suspend slot is still in place.
 ///
 /// Minted only by ``VMOperationContext/executingGuest(_:)``, once the mark is
 /// committed, and by ``VMOperationContext/liveExecution()`` for a session

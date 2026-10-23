@@ -77,6 +77,14 @@ package struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent(Self.saveFileRelativePath)
     }
 
+    /// Where a resume moves the suspend slot before its guest executes; a file
+    /// found here is never restored.
+    static let spentSaveFileRelativePath = ".SpentSaveFile.vzvmsave"
+
+    var spentSaveFileURL: URL {
+        bundleURL.appendingPathComponent(Self.spentSaveFileRelativePath)
+    }
+
     var serialLogURL: URL {
         bundleURL.appendingPathComponent("serial.log")
     }
