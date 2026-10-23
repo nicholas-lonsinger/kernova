@@ -126,7 +126,8 @@ struct VsockDropServiceDragOutTests {
         private let hostStagingRoot = TestStagingRoot()
         private let guestStaging: ClipboardFileStaging
 
-        init(parksPulls: Bool = false) throws {
+        /// `progressIdleGap` is the host readout's idle gap.
+        init(parksPulls: Bool = false, progressIdleGap: TimeInterval = 0) throws {
             let (hostFd, guestFd) = try makeRawSocketPair()
             hostChannel = VsockChannel(fileDescriptor: hostFd)
             guestChannel = VsockChannel(fileDescriptor: guestFd)
@@ -135,7 +136,7 @@ struct VsockDropServiceDragOutTests {
             let service = VsockDropService(
                 channel: hostChannel, label: "Drag VM", reporter: reports.reporter,
                 stagingRoot: hostStagingRoot.root, stagingKey: "drag-vm",
-                progressRevealDelay: 0, progressIdleGap: 0, clock: clock)
+                progressRevealDelay: 0, progressIdleGap: progressIdleGap, clock: clock)
             self.service = service
             guestStaging = ClipboardFileStaging(label: "guest", root: TestStagingRoot().root)
             let parked = self.parked
@@ -1065,7 +1066,7 @@ struct VsockDropServiceDragOutTests {
                 == "beta")
         // Every item written: nothing will pull from the drag again.
         try await harness.waitForComplete(take.generation)
-        // One readout for the take, which its own idle gap completes.
+        // One readout for the take, completed with its last write.
         try await harness.reports.changed.wait {
             harness.reports.reports.contains { report in
                 guard case .finished(let finish) = report else { return false }
@@ -1073,6 +1074,31 @@ struct VsockDropServiceDragOutTests {
             }
         }
         #expect(harness.reports.refusals.isEmpty)
+    }
+
+    @Test("the readout completes as the last item lands, not after its idle gap")
+    func readoutCompletesWithTheTake() async throws {
+        // A gap no test outlasts: a finish seen at all came from the take's end.
+        let harness = try Harness(progressIdleGap: 3600)
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([
+            try makeFile(named: "a.txt", contents: "a"), try makeFile(named: "b.txt", contents: "b"),
+        ])
+        let destination = try makeDestination()
+        let finished = {
+            harness.reports.reports.contains { report in
+                guard case .finished(let finish) = report else { return false }
+                return finish.gesture == .dragOut && finish.failure == nil
+            }
+        }
+
+        #expect(await harness.write(take, item: 0, to: destination.appendingPathComponent("a.txt")) == .landed)
+        // One item still owed: the readout waits for the destination's next ask.
+        #expect(!finished())
+
+        #expect(await harness.write(take, item: 1, to: destination.appendingPathComponent("b.txt")) == .landed)
+        try await harness.reports.changed.wait { finished() }
+        try await harness.waitForComplete(take.generation)
     }
 
     @Test("the readout's Cancel fails the write in flight as cancelled and completes the drag")

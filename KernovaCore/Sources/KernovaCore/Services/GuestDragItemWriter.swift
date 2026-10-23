@@ -200,7 +200,13 @@ final class GuestDragItemWriter {
         switch ending {
         case .landed:
             written.insert(index)
-            readout?.finishWhenIdle()
+            if written.count == items.count, writesInFlight == 0 {
+                // Every item landed: the take is over, so the readout ends with
+                // it rather than waiting out a gap for a destination's next ask.
+                readout?.finish(.completed)
+            } else {
+                readout?.finishWhenIdle()
+            }
             return nil
         case .failed(let ended):
             fault = ended
