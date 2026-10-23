@@ -251,14 +251,11 @@ final class GuestDragCatcher {
         send(.failed(failure.code, message: failure.message), for: current.claim.generation)
     }
 
-    /// The file URLs of the take the catcher holds, stood down or not.
-    var takenFileURLs: [URL]? { take?.claim.fileURLs }
-
-    /// The taken drag is over the surface and answered copy, so it can drop
-    /// there.
-    var holdsDragOnSurface: Bool {
-        guard let take, !take.caught, !take.refused else { return false }
-        return take.showing?.entered == true
+    /// The taken drag's file URLs while the surface is up for it, neither
+    /// refused nor caught — whether or not the drag has entered it.
+    var shownFileURLs: [URL]? {
+        guard let take, take.showing != nil, !take.caught, !take.refused else { return nil }
+        return take.claim.fileURLs
     }
 
     /// The drag left the surface before ending.

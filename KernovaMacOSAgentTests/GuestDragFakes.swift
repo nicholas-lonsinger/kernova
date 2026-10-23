@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import UniformTypeIdentifiers
 
 /// The guest's event stream and drag pasteboard, driven by hand: a test
 /// presses and releases the button, fires the press timer, and decides when
@@ -308,35 +309,18 @@ final class FakeDraggingInfo: NSObject, @MainActor NSDraggingInfo {
     func resetSpringLoading() {}
 }
 
-/// The guest's thumbnailer, answering when a test says.
+/// The guest's type icons: a fresh image of the icon size for each type
+/// asked, every one recorded. It is handed a type and nothing else, so a
+/// drag image drawn from it read no file.
 @MainActor
-final class FakeGuestDragThumbnails: GuestDragThumbnails {
-    private struct Request {
-        let url: URL
-        let size: NSSize
-        let completion: @MainActor (NSImage) -> Void
-        var cancelled = false
-    }
+final class FakeGuestDragTypeIcons {
+    private(set) var asked: [UTType] = []
+    private(set) var images: [NSImage] = []
 
-    private var requests: [Request] = []
-
-    /// Each request's file and size, in order.
-    var asked: [URL] { requests.map(\.url) }
-    var sizes: [NSSize] { requests.map(\.size) }
-    /// How many requests were cancelled.
-    var cancelCount: Int { requests.filter(\.cancelled).count }
-
-    func thumbnail(
-        of url: URL, fitting size: NSSize, then completion: @escaping @MainActor (NSImage) -> Void
-    ) -> GuestDragCancel {
-        let index = requests.count
-        requests.append(Request(url: url, size: size, completion: completion))
-        return { [weak self] in self?.requests[index].cancelled = true }
-    }
-
-    /// Hands `image` to the latest request, unless it was cancelled.
-    func deliver(_ image: NSImage) {
-        guard let request = requests.last, !request.cancelled else { return }
-        request.completion(image)
+    func icon(for type: UTType) -> NSImage {
+        asked.append(type)
+        let image = NSImage(size: NSSize(width: 128, height: 128))
+        images.append(image)
+        return image
     }
 }
