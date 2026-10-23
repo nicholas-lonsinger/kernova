@@ -180,8 +180,9 @@ public enum ClipboardPasteboardReader {
     /// `stat(2)` and a folder's estimate walks its whole tree — so the caller
     /// runs it off the main actor. A directory,
     /// including an OS package such as `.app`/`.rtfd`, becomes a `.directory`
-    /// source representation carrying a stat-walk estimate; no archive is built
-    /// until the peer requests the rep. A folder is checked at its root only:
+    /// source representation carrying `sizeOf`'s estimate, or `0` when
+    /// `sizeOf` is `nil` and nothing inside the folder is read; no archive is
+    /// built until the peer requests the rep. A folder is checked at its root only:
     /// AppleArchive's directory encoder has no per-entry skip, so an entry
     /// inside one that cannot be read fails that folder's own transfer, which
     /// the batch then leaves out the way it leaves out any other unreadable
@@ -194,11 +195,10 @@ public enum ClipboardPasteboardReader {
     ///
     /// `unresolved` is what the snapshot stage already dropped for having no
     /// file left on disk, folded into the same count so one report covers every
-    /// item the gesture lost on either side of the hop. `sizeOf` is injected so
-    /// a test can size a folder without building one.
+    /// item the gesture lost on either side of the hop.
     nonisolated public static func resolve(
         filesAt urls: [URL], unresolved: Int = 0,
-        sizeOf: @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) }
+        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
     ) -> FileIntake {
         var representations: [ClipboardContent.Representation] = []
         var skipped = unresolved
@@ -217,7 +217,7 @@ public enum ClipboardPasteboardReader {
             if values.isDirectory == true {
                 representations.append(
                     ClipboardContent.Representation(
-                        directorySourceURL: source, estimatedByteCount: sizeOf(source),
+                        directorySourceURL: source, estimatedByteCount: sizeOf?(source) ?? 0,
                         filename: filename,
                         uti: values.contentType?.identifier ?? ClipboardArchive.directoryUTI))
             } else if let type = values.contentType, let size = values.fileSize {

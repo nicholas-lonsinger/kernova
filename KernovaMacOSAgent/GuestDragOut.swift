@@ -15,16 +15,26 @@ import KernovaKit
 /// `DragCatcher` stands the catcher down and the host drives the guest drag
 /// to the user's own drop.
 ///
+/// An offer lists no folder's contents — a drag that never leaves the display
+/// reads nothing inside the folders it carries — so the folders' sizes go to
+/// the host in `DragSizes` once it takes the drag, measured off the main actor
+/// while the catcher's steps run.
+///
 /// Created with its connection and stopped with it. The watcher runs only while
 /// ``setWatching(_:)`` says so; a take that arrives while it does not is
 /// refused like any other stale take.
 @MainActor
 final class GuestDragOut {
+    private let peer: any GuestDragOutPeer
+    private let input: any GuestDragInput
     private let watcher: GuestDragWatcher
     private let catcher: GuestDragCatcher
 
     init(peer: any GuestDragOutPeer, system: GuestDragOutSystem) {
-        watcher = GuestDragWatcher(input: system.makeInput(), peer: peer)
+        let input = system.makeInput()
+        self.peer = peer
+        self.input = input
+        watcher = GuestDragWatcher(input: input, peer: peer)
         catcher = GuestDragCatcher(peer: peer, makeSurface: system.makeCatcherSurface)
         watcher.onPressEnded = { [weak catcher] press in catcher?.pressEnded(press) }
     }
@@ -39,6 +49,7 @@ final class GuestDragOut {
         switch watcher.claim(generation: generation) {
         case .success(let claim):
             catcher.arm(claim)
+            sendFolderSizes(of: generation)
         case .failure(let refusal):
             catcher.refuse(generation: generation, code: .dragTakeStale, message: refusal.message)
         }
@@ -48,6 +59,17 @@ final class GuestDragOut {
     /// VM's display (`shown`), or came back over it.
     func setCatcherShown(_ shown: Bool, generation: UInt64) {
         catcher.setShown(shown, generation: generation)
+    }
+
+    /// Measures the folders of the drag the host took under `generation` and
+    /// sends their sizes, unless the host is done with it by then.
+    private func sendFolderSizes(of generation: UInt64) {
+        guard let folders = peer.outboundContent(generation: generation)?.directorySources,
+            !folders.isEmpty
+        else { return }
+        input.measureFolders(folders) { [weak self] sizes in
+            _ = self?.peer.sendDragSizes(generation: generation, folderByteCounts: sizes)
+        }
     }
 
     /// The host is done with the drag under `generation`; the endpoint has
@@ -84,6 +106,14 @@ protocol GuestDragOutPeer: AnyObject {
 
     /// Reports one step of handing the drag under `generation` to the host.
     func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep)
+
+    /// What the drag under `generation` offered, or `nil` once it is retired.
+    func outboundContent(generation: UInt64) -> ClipboardContent?
+
+    /// Records and sends the measured sizes of the folders in the drag under
+    /// `generation`, keyed by index; `false` when it is retired or the send
+    /// failed.
+    func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Bool
 }
 
 extension ClipboardEndpoint: GuestDragOutPeer {}
@@ -118,10 +148,16 @@ protocol GuestDragInput: AnyObject {
     func holdActivity(reason: String) -> GuestDragCancel
 
     /// Resolves `urls` into representations off the main actor — a stat each,
-    /// and a walk of every folder — and hands the result back on it.
+    /// reading nothing inside a folder, whose estimate is `0` — and hands the
+    /// result back on it.
     func resolveFiles(
         _ urls: [URL],
         then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)
+
+    /// Measures each of `folders`, keyed by index, off the main actor — a walk
+    /// of its whole tree — and hands the sizes back on it under the same keys.
+    func measureFolders(
+        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void)
 }
 
 /// The on-screen window that receives the guest's drag once the host has taken

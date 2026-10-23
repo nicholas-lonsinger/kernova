@@ -253,6 +253,29 @@ public struct ClipboardContent: Equatable, Sendable {
             representations: representations, isConcealed: concealed, precomputedDigest: digest)
     }
 
+    /// Each producer-side source directory's folder, keyed by its index.
+    public var directorySources: [Int: URL] {
+        var sources: [Int: URL] = [:]
+        for (index, representation) in representations.enumerated() {
+            if let url = representation.directorySourceURL { sources[index] = url }
+        }
+        return sources
+    }
+
+    /// Returns a copy whose source directories at the indices in `estimates`
+    /// carry those estimates, every other representation unchanged.
+    public func withDirectoryEstimates(_ estimates: [Int: Int]) -> ClipboardContent {
+        let updated = representations.indices.map { index -> Representation in
+            let representation = representations[index]
+            guard let estimate = estimates[index], let url = representation.directorySourceURL
+            else { return representation }
+            return Representation(
+                directorySourceURL: url, estimatedByteCount: estimate,
+                filename: representation.filename, uti: representation.uti)
+        }
+        return ClipboardContent(representations: updated, isConcealed: isConcealed)
+    }
+
     /// Content holding a single UTF-8 plain-text representation.
     ///
     /// The empty string normalizes to `.empty`: "empty text" and "no content" are

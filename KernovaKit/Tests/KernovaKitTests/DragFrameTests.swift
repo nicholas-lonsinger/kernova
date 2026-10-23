@@ -93,6 +93,18 @@ struct DragFrameTests {
         }
     }
 
+    @Test("folder sizes round-trip their generation and every folder's size by index")
+    func sizesRoundTrip() throws {
+        let decoded = try roundTrip(.dragSizes(generation: 8, folderByteCounts: [1: 4_096, 3: 0]))
+        #expect(decoded.protocolVersion == 1)
+        guard case .dragSizes(let sizes) = decoded.payload else {
+            Issue.record("Expected a drag sizes payload")
+            return
+        }
+        #expect(sizes.generation == 8)
+        #expect(sizes.folderByteCounts == [1: 4_096, 3: 0])
+    }
+
     @Test("a stage this build does not define reads as a failure, never as a step to act on")
     func unknownStageIsAFailure() {
         var unspecified = Kernova_V1_DragHandOff()
@@ -121,14 +133,17 @@ struct DragFrameTests {
         handOff.dragHandOff = Kernova_V1_DragHandOff()
         var catcher = Frame()
         catcher.dragCatcher = Kernova_V1_DragCatcher()
+        var sizes = Frame()
+        sizes.dragSizes = Kernova_V1_DragSizes()
 
-        // Fields 43–48 with wire type 2 encode as the tag byte pairs below.
+        // Fields 43–49 with wire type 2 encode as the tag byte pairs below.
         #expect(Array(try offer.serializedData()).prefix(2) == [0xDA, 0x02])
         #expect(Array(try complete.serializedData()).prefix(2) == [0xE2, 0x02])
         #expect(Array(try release.serializedData()).prefix(2) == [0xEA, 0x02])
         #expect(Array(try take.serializedData()).prefix(2) == [0xF2, 0x02])
         #expect(Array(try handOff.serializedData()).prefix(2) == [0xFA, 0x02])
         #expect(Array(try catcher.serializedData()).prefix(2) == [0x82, 0x03])
+        #expect(Array(try sizes.serializedData()).prefix(2) == [0x8A, 0x03])
     }
 
     @Test("every drag frame on the control channel classifies as wrong port")
@@ -137,6 +152,7 @@ struct DragFrameTests {
             .dragOffer(generation: 1, reps: []), .dragComplete(generation: 1),
             .dragRelease(generation: 1), .dragTake(generation: 1),
             .dragHandOff(generation: 1, step: .armed), .dragCatcher(generation: 1, shown: true),
+            .dragSizes(generation: 1, folderByteCounts: [:]),
         ]
         for frame in frames {
             #expect(ControlChannelInbound.classify(frame) == .wrongPort)

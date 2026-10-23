@@ -18,6 +18,14 @@ final class SystemGuestDragInput: GuestDragInput {
 
     let dragPasteboard: any ClipboardReadPasteboard = NSPasteboard(name: .drag)
 
+    /// Sizes one folder by walking its tree — the only read of a folder's
+    /// contents a drag makes before the host pulls it.
+    private let measureFolder: @Sendable (URL) -> Int
+
+    init(measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) }) {
+        self.measureFolder = measureFolder
+    }
+
     var isPrimaryButtonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
 
     func observePrimaryPresses(
@@ -58,8 +66,18 @@ final class SystemGuestDragInput: GuestDragInput {
         then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let intake = ClipboardPasteboardReader.resolve(filesAt: urls)
+            let intake = ClipboardPasteboardReader.resolve(filesAt: urls, sizeOf: nil)
             MainActorBridge.async { completion(intake) }
+        }
+    }
+
+    func measureFolders(
+        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
+    ) {
+        let measureFolder = measureFolder
+        DispatchQueue.global(qos: .userInitiated).async {
+            let sizes = folders.mapValues(measureFolder)
+            MainActorBridge.async { completion(sizes) }
         }
     }
 }

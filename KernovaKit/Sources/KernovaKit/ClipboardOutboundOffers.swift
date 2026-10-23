@@ -83,7 +83,9 @@ final class ClipboardOutboundOffers {
     /// One offer this side has made and can still serve.
     private final class Entry {
         let generation: UInt64
-        let content: ClipboardContent
+        /// What the offer serves; a drag's folders take their measured sizes
+        /// after the offer went out (``sendFolderSizes(generation:byteCounts:)``).
+        var content: ClipboardContent
         /// The generation the offer is still wanted at, read from each
         /// transfer's own queue; zeroed once it is not, which aborts its
         /// transfers.
@@ -357,6 +359,35 @@ final class ClipboardOutboundOffers {
         Self.logger.log(
             .notice,
             "Withdrew offer gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        return true
+    }
+
+    /// Records `byteCounts` — the measured sizes of the offer's source
+    /// directories, keyed by index — as their estimates and tells the peer,
+    /// reporting whether the offer was still live and the sizes went out.
+    ///
+    /// For a drag out, whose offer lists no folder's contents. An index that
+    /// names no source directory is dropped. The estimates are recorded before
+    /// the send, so a pull the sizes unblock is served against them.
+    @discardableResult
+    func sendFolderSizes(generation: UInt64, byteCounts: [Int: Int]) -> Bool {
+        guard let entry = entries[generation] else { return false }
+        let sources = entry.content.directorySources
+        let folders = byteCounts.filter { sources[$0.key] != nil }
+        entry.content = entry.content.withDirectoryEstimates(folders)
+        do {
+            try session.sendDragSizes(generation: generation, folderByteCounts: folders)
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to send the folder sizes of gen=\(generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        Self.logger.log(
+            .notice,
+            "Sent the sizes of \(folders.count, privacy: .public) folder(s) to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(folders.values.reduce(0, &+), privacy: .public) bytes)"
         )
         return true
     }

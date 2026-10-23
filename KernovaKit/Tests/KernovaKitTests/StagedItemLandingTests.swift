@@ -152,7 +152,7 @@ struct ClipboardDraggedItemTests {
                 == expected)
     }
 
-    @Test("an item carries its index, its size, and its kind as declared")
+    @Test("an item carries its index and its kind as declared")
     func carriesTheDeclaredFacts() {
         let item = ClipboardDraggedItem(
             repIndex: 2,
@@ -162,7 +162,6 @@ struct ClipboardDraggedItemTests {
             ).wire)
 
         #expect(item.repIndex == 2)
-        #expect(item.byteCount == 77)
         #expect(item.isDirectory)
         #expect(item.filename == "Tree")
         #expect(item.type.identifier == "public.folder")

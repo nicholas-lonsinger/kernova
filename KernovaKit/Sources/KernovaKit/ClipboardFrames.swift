@@ -156,4 +156,18 @@ extension Frame {
         }
         return frame
     }
+
+    /// A `DragSizes` carrying the measured size of each folder in the guest
+    /// drag under `generation`, keyed by the folder's index in its offer.
+    public static func dragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.dragSizes = Kernova_V1_DragSizes.with {
+            $0.generation = generation
+            for (repIndex, byteCount) in folderByteCounts {
+                $0.folderByteCounts[UInt32(clamping: repIndex)] = UInt64(clamping: byteCount)
+            }
+        }
+        return frame
+    }
 }

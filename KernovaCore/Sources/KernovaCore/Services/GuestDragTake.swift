@@ -910,7 +910,7 @@ package final class GuestDragTake: GuestDragTaking {
         if let readout, readout.isLive { return readout }
         let operation = ClipboardTransferOperation(
             gesture: .dragOut, direction: .inbound, peerName: peerName,
-            expectedBytes: items.reduce(UInt64(0)) { $0 &+ $1.byteCount },
+            expectedBytes: endpoint.inboundByteCount(generation: generation),
             expectedItems: items.count,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
             onCancelRequested: { [weak self] in

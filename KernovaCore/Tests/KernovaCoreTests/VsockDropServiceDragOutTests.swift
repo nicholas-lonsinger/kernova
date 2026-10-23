@@ -144,10 +144,10 @@ struct VsockDropServiceDragOutTests {
             guestStaging.sweep()
         }
 
-        /// Offers `urls` from the guest as one drag and waits for the host to
-        /// hold it.
+        /// Offers `urls` from the guest as one drag, reading nothing inside a
+        /// folder as the agent does, and waits for the host to hold it.
         func offer(_ urls: [URL]) async throws -> ClipboardInboundDrag {
-            let intake = ClipboardPasteboardReader.resolve(filesAt: urls)
+            let intake = ClipboardPasteboardReader.resolve(filesAt: urls, sizeOf: nil)
             let outcome = guest.offer(ClipboardContent(representations: intake.representations))
             guard case .sent(let generation) = outcome else {
                 throw TestFailure("The guest's drag was not offered: \(outcome)")
@@ -165,10 +165,16 @@ struct VsockDropServiceDragOutTests {
         }
 
         /// Offers `urls` and takes the drag, waiting for the guest to hear
-        /// `DragTake`.
+        /// `DragTake`, then sends its folders' sizes as the agent does.
         func offerAndTake(_ urls: [URL]) async throws -> GuestDragTake {
             let take = try take(try await offer(urls))
             try await guestRecorder.wait { self.guestRecorder.takes.contains(take.generation) }
+            let folders = guest.outboundContent(generation: take.generation)?.directorySources ?? [:]
+            if !folders.isEmpty {
+                guest.sendDragSizes(
+                    generation: take.generation,
+                    folderByteCounts: folders.mapValues { ClipboardArchive.estimatedByteCount(at: $0) })
+            }
             return take
         }
 
@@ -322,7 +328,6 @@ struct VsockDropServiceDragOutTests {
         let drag = try await harness.offer([file])
 
         #expect(drag.items.map(\.filename) == ["notes.txt"])
-        #expect(drag.items.map(\.byteCount) == [5])
         #expect(drag.items.allSatisfy { !$0.isDirectory })
     }
 

@@ -180,6 +180,38 @@ struct VsockGuestDropAgentDragOutTests {
         #expect(harness.surface.isShown)
     }
 
+    @Test("a folder is offered at no size, and a DragTake sends its measured size after armed")
+    func aFolderIsSizedOnlyOnceTaken() async throws {
+        let harness = try Harness(scratch: scratch.url, capabilities: Self.both)
+        defer { harness.tearDown() }
+        try await harness.start()
+        try await harness.input.changed.wait { harness.input.isObservingPresses }
+        let tree = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("Tree", isDirectory: true)
+        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+        try Data("alpha".utf8).write(to: tree.appendingPathComponent("a.txt"))
+        try Data("beta".utf8).write(to: tree.appendingPathComponent("b.txt"))
+        harness.drag([tree])
+        let offer = try await harness.awaitDragOffer()
+        let info = try #require(offer.repInfo.first)
+        #expect(info.isDirectory)
+        #expect(info.byteCount == 0)
+
+        try harness.host.send(.dragTake(generation: offer.generation))
+        guard case .dragHandOff(let handOff) = try await nextFrame(from: harness.host).payload,
+            ClipboardDragHandOffStep(handOff) == .armed
+        else { throw TestFailure("Expected ARMED first") }
+        try await harness.input.changed.wait { !harness.input.pendingMeasureFolders.isEmpty }
+        harness.input.deliverMeasures()
+
+        let frame = try await nextFrame(from: harness.host)
+        guard case .dragSizes(let sizes) = frame.payload else {
+            throw TestFailure("Expected a DragSizes, got \(String(describing: frame.payload))")
+        }
+        #expect(sizes.generation == offer.generation)
+        #expect(sizes.folderByteCounts == [0: 9])
+    }
+
     @Test("a host that does not take drags out gets no watcher until it says it does")
     func theWatcherNeedsTheHostCapability() async throws {
         let harness = try Harness(

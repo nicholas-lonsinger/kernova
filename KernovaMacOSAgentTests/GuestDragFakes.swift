@@ -5,14 +5,15 @@ import KernovaTestSupport
 
 /// The guest's event stream and drag pasteboard, driven by hand: a test
 /// presses and releases the button, fires the press timer, and decides when
-/// each off-main resolve comes back.
+/// each off-main resolve and folder measure comes back.
 @MainActor
 final class FakeGuestDragInput: GuestDragInput {
     let pasteboard = FakeReadPasteboard()
     var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
     var isPrimaryButtonHeld = false
 
-    /// Fires on every registration, cancellation and queued resolve.
+    /// Fires on every registration, cancellation, and queued resolve or
+    /// measure.
     nonisolated let changed = AsyncGate()
 
     /// Hands each resolve back on the next main-queue turn instead of holding
@@ -26,6 +27,7 @@ final class FakeGuestDragInput: GuestDragInput {
     private(set) var resolveCount = 0
     private var pendingResolves:
         [(urls: [URL], completion: @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)] = []
+    private var pendingMeasures: [(folders: [Int: URL], completion: @MainActor @Sendable ([Int: Int]) -> Void)] = []
 
     /// How many connections have built a drag-out on this input.
     private(set) var connectionCount = 0
@@ -33,6 +35,8 @@ final class FakeGuestDragInput: GuestDragInput {
     var isObservingPresses: Bool { pressHandler != nil }
     var isTicking: Bool { tick != nil }
     var pendingResolveCount: Int { pendingResolves.count }
+    /// The folders of each measure queued and not yet delivered, in order.
+    var pendingMeasureFolders: [[Int: URL]] { pendingMeasures.map(\.folders) }
 
     // MARK: Driving it
 
@@ -69,8 +73,25 @@ final class FakeGuestDragInput: GuestDragInput {
         let pending = pendingResolves
         pendingResolves.removeAll()
         for resolve in pending {
-            resolve.completion(intake ?? ClipboardPasteboardReader.resolve(filesAt: resolve.urls))
+            resolve.completion(intake ?? Self.offerResolve(resolve.urls))
         }
+    }
+
+    /// Hands back every queued measure, each folder at `size` — or walked for
+    /// real when `size` is `nil`.
+    func deliverMeasures(size: Int? = nil) {
+        let pending = pendingMeasures
+        pendingMeasures.removeAll()
+        for measure in pending {
+            measure.completion(
+                measure.folders.mapValues { size ?? ClipboardArchive.estimatedByteCount(at: $0) })
+        }
+    }
+
+    /// The resolve the live input runs for an offer, which reads nothing inside
+    /// a folder.
+    private nonisolated static func offerResolve(_ urls: [URL]) -> ClipboardPasteboardReader.FileIntake {
+        ClipboardPasteboardReader.resolve(filesAt: urls, sizeOf: nil)
     }
 
     // MARK: GuestDragInput
@@ -105,10 +126,17 @@ final class FakeGuestDragInput: GuestDragInput {
     ) {
         resolveCount += 1
         if resolvesOnItsOwn {
-            MainActorBridge.async { completion(ClipboardPasteboardReader.resolve(filesAt: urls)) }
+            MainActorBridge.async { completion(Self.offerResolve(urls)) }
         } else {
             pendingResolves.append((urls, completion))
         }
+        changed.notify()
+    }
+
+    func measureFolders(
+        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
+    ) {
+        pendingMeasures.append((folders, completion))
         changed.notify()
     }
 }
@@ -142,10 +170,13 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         case offered(generation: UInt64, filenames: [String])
         case withdrew(generation: UInt64)
         case handOff(generation: UInt64, step: ClipboardDragHandOffStep)
+        case sized(generation: UInt64, folderByteCounts: [Int: Int])
     }
 
     private(set) var events: [Event] = []
     private var nextGeneration: UInt64 = 1
+    /// What each offer carried, until it is withdrawn.
+    private var contents: [UInt64: ClipboardContent] = [:]
 
     /// Every hand-off step reported, in order.
     var handOffs: [Event] {
@@ -159,16 +190,29 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         nextGeneration += 1
         events.append(
             .offered(generation: generation, filenames: content.representations.map(\.filename)))
+        contents[generation] = content
         return .sent(generation: generation)
     }
 
     func withdraw(generation: UInt64) -> Bool {
         events.append(.withdrew(generation: generation))
+        contents[generation] = nil
         return true
     }
 
     func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {
         events.append(.handOff(generation: generation, step: step))
+    }
+
+    func outboundContent(generation: UInt64) -> ClipboardContent? {
+        contents[generation]
+    }
+
+    func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Bool {
+        guard let content = contents[generation] else { return false }
+        contents[generation] = content.withDirectoryEstimates(folderByteCounts)
+        events.append(.sized(generation: generation, folderByteCounts: folderByteCounts))
+        return true
     }
 }
 

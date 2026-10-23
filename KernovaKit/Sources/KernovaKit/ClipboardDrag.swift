@@ -59,8 +59,6 @@ public struct ClipboardDraggedItem: Equatable, Sendable {
     public let type: UTType
     /// Whether the item is a folder (or package), which arrives as its tree.
     public let isDirectory: Bool
-    /// The guest's declared size — an estimate for a folder.
-    public let byteCount: UInt64
 
     /// The item the guest declared at `repIndex`, made safe.
     public init(repIndex: Int, declared info: Kernova_V1_ClipboardRepresentationInfo) {
@@ -68,7 +66,6 @@ public struct ClipboardDraggedItem: Equatable, Sendable {
         self.filename = Self.safeFilename(info.filename, isDirectory: info.isDirectory)
         self.type = Self.usableType(info.uti, isDirectory: info.isDirectory)
         self.isDirectory = info.isDirectory
-        self.byteCount = info.byteCount
     }
 
     /// `filename` reduced to one safe path component, with a generic name for

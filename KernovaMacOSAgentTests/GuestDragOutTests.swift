@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -325,6 +326,75 @@ struct GuestDragOutTests {
         #expect(!rig.input.isHoldingActivity)
         #expect(!rig.input.isObservingPresses)
         #expect(!rig.input.isTicking)
+    }
+
+    // MARK: - Folder sizes
+
+    private func folder(_ name: String, files: [String: String]) throws -> URL {
+        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        for (file, contents) in files {
+            try Data(contents.utf8).write(to: url.appendingPathComponent(file))
+        }
+        return url
+    }
+
+    @Test("the live input offers a folder without reading inside it, and measures it only when asked")
+    func theLiveOfferReadsNoFolder() async throws {
+        let tree = try folder("Tree", files: ["a.txt": "alpha", "b.txt": "beta"])
+        let measured = Locked<[URL]>([])
+        let input = SystemGuestDragInput(measureFolder: { url in
+            measured.withLock { $0.append(url) }
+            return 1_234
+        })
+
+        let intake = await withCheckedContinuation { continuation in
+            input.resolveFiles([tree]) { continuation.resume(returning: $0) }
+        }
+
+        let representation = try #require(intake.representations.first)
+        #expect(representation.isDirectory)
+        #expect(representation.byteCount == 0)
+        #expect(measured.withLock { $0 }.isEmpty)
+
+        let sizes = await withCheckedContinuation { continuation in
+            input.measureFolders([0: tree]) { continuation.resume(returning: $0) }
+        }
+        #expect(sizes == [0: 1_234])
+        #expect(measured.withLock { $0 } == [tree])
+    }
+
+    @Test("a drag carrying a folder measures it once the take is accepted, and sends its size after armed")
+    func folderSizesFollowTheTake() throws {
+        let rig = Rig()
+        let tree = try folder("Tree", files: ["a.txt": "alpha"])
+        rig.pressAndDrag([fileItem(try file("loose.txt")), fileItem(tree)])
+        #expect(rig.input.pendingMeasureFolders.isEmpty)
+
+        rig.dragOut.take(generation: 1)
+
+        #expect(rig.input.pendingMeasureFolders.map { $0.keys.sorted() } == [[1]])
+        rig.input.deliverMeasures(size: 4_096)
+        #expect(
+            rig.peer.events.suffix(2) == [
+                .handOff(generation: 1, step: .armed),
+                .sized(generation: 1, folderByteCounts: [1: 4_096]),
+            ])
+        #expect(rig.peer.outboundContent(generation: 1)?.representations[1].byteCount == 4_096)
+    }
+
+    @Test("a refused take, or a drag of files alone, measures nothing")
+    func nothingIsMeasuredWithoutAFolderTaken() throws {
+        let rig = Rig()
+        rig.pressAndDrag([fileItem(try folder("Tree", files: ["a.txt": "alpha"]))])
+        rig.dragOut.take(generation: 2)
+        #expect(rig.input.pendingMeasureFolders.isEmpty)
+
+        let filesOnly = Rig()
+        filesOnly.pressAndDrag([fileItem(try file("loose.txt"))])
+        filesOnly.dragOut.take(generation: 1)
+        #expect(filesOnly.input.pendingMeasureFolders.isEmpty)
     }
 
     // MARK: - Validating a take

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 import UniformTypeIdentifiers
@@ -254,8 +255,9 @@ struct ClipboardEndpointDragTests {
         #expect(drag.items.first?.type.identifier == "public.folder")
 
         let operation = pair.host.makeOperation(gesture: .dragOut, direction: .inbound)
-        let outcome = await pair.host.startPull(generation: 1, repIndex: 0, operation: operation)
-            .value
+        let pull = pair.host.startPull(generation: 1, repIndex: 0, operation: operation)
+        #expect(pair.guest.endpoint.sendDragSizes(generation: 1, folderByteCounts: [0: 9]))
+        let outcome = await pull.value
         guard case .delivered(let representation) = outcome else {
             Issue.record("The folder was not delivered: \(outcome)")
             return
@@ -263,6 +265,176 @@ struct ClipboardEndpointDragTests {
         let tree = try #require(representation.fileURL)
         #expect(try Data(contentsOf: tree.appendingPathComponent("a.txt")) == Data("alpha".utf8))
         #expect(try Data(contentsOf: tree.appendingPathComponent("b.txt")) == Data("beta".utf8))
+    }
+
+    // MARK: - Folder sizes
+
+    /// Counts the pulls on an endpoint that have started waiting for a
+    /// folder's size.
+    private final class SizeWaits: Sendable {
+        let gate = AsyncGate()
+        private let count = Locked(0)
+
+        var started: Int { count.withLock { $0 } }
+
+        @MainActor
+        init(on endpoint: ClipboardEndpoint) {
+            endpoint.onInboundSizeWaitForTesting { [count, gate] in
+                count.withLock { $0 += 1 }
+                gate.notify()
+            }
+        }
+
+        func wait(for started: Int) async throws {
+            try await gate.wait { self.started == started }
+        }
+    }
+
+    private func isCancelled(_ outcome: LazyPullOutcome) -> Bool {
+        if case .cancelled = outcome { return true }
+        return false
+    }
+
+    private static let folder = RepInfo(
+        uti: "public.folder", byteCount: 7, filename: "Tree", isInline: false, isDirectory: true)
+    private static let file = RepInfo(
+        uti: "public.data", byteCount: 8, filename: "a.bin", isInline: false)
+
+    @Test("a folder's pull waits for its size, a file of the same drag's does not, and the size counts once it arrives")
+    func aFolderPullWaitsForItsSize() async throws {
+        let harness = try RawPeerHarness(role: .host, kind: .drop)
+        defer { harness.tearDown() }
+        let waits = SizeWaits(on: harness.endpoint)
+        try harness.send(.dragOffer(generation: 1, reps: [Self.folder.wire, Self.file.wire]))
+        try await harness.side.recorder.waitForDrag()
+        // The offer's figure for a folder is not a size anyone measured.
+        #expect(harness.endpoint.inboundByteCount(generation: 1) == 8)
+
+        let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
+        let folderPull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
+        try await waits.wait(for: 1)
+        let filePull = harness.side.startPull(generation: 1, repIndex: 1, operation: operation)
+        try await harness.waitForRequest(generation: 1, repIndex: 1)
+        let folderID = harness.transferID(generation: 1, repIndex: 0)
+        #expect(!harness.recorder.requests.contains { $0.transferID == folderID })
+
+        try harness.send(.dragSizes(generation: 1, folderByteCounts: [0: 64]))
+
+        try await harness.waitForRequest(generation: 1, repIndex: 0)
+        #expect(harness.endpoint.inboundByteCount(generation: 1) == 72)
+        #expect(waits.started == 1)
+        harness.endpoint.completeDrag(generation: 1)
+        _ = await folderPull.value
+        _ = await filePull.value
+    }
+
+    @Test("a folder's free-space pre-flight is held to the size the guest measured")
+    func theMeasuredSizeIsWhatThePreflightReads() async throws {
+        let harness = try RawPeerHarness(
+            role: .host, kind: .drop,
+            freeSpaceProvider: { _ in Int64(ClipboardStreamTuning.freeSpaceMargin) + 1_000 })
+        defer { harness.tearDown() }
+        let waits = SizeWaits(on: harness.endpoint)
+        try harness.send(.dragOffer(generation: 1, reps: [Self.folder.wire]))
+        try await harness.side.recorder.waitForDrag()
+
+        let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
+        let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
+        try await waits.wait(for: 1)
+        try harness.send(.dragSizes(generation: 1, folderByteCounts: [0: 1_000_000]))
+
+        guard case .aborted(let info) = await pull.value else {
+            Issue.record("Expected the pull to fail its pre-flight")
+            return
+        }
+        #expect(info.code == .diskFull)
+        #expect(info.neededBytes == 1_000_000)
+        #expect(harness.recorder.requests.isEmpty)
+    }
+
+    @Test("completing a drag wakes a pull waiting for its folder's size, cancelled and unasked")
+    func completingWakesASizeWait() async throws {
+        let harness = try RawPeerHarness(role: .host, kind: .drop)
+        defer { harness.tearDown() }
+        let waits = SizeWaits(on: harness.endpoint)
+        try harness.send(.dragOffer(generation: 1, reps: [Self.folder.wire]))
+        try await harness.side.recorder.waitForDrag()
+        let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
+        let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
+        try await waits.wait(for: 1)
+
+        harness.endpoint.completeDrag(generation: 1)
+
+        #expect(isCancelled(await pull.value))
+        #expect(harness.recorder.requests.isEmpty)
+    }
+
+    @Test("the channel ending wakes a pull waiting for its folder's size, and it is never asked for")
+    func channelEndWakesASizeWait() async throws {
+        let harness = try RawPeerHarness(role: .host, kind: .drop)
+        defer { harness.tearDown() }
+        let waits = SizeWaits(on: harness.endpoint)
+        try harness.send(.dragOffer(generation: 1, reps: [Self.folder.wire]))
+        try await harness.side.recorder.waitForDrag()
+        let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
+        let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
+        try await waits.wait(for: 1)
+
+        harness.peer.close()
+
+        #expect(isCancelled(await pull.value))
+        #expect(harness.recorder.requests.isEmpty)
+    }
+
+    @Test("a folder the sizes leave out is never pulled, while the sized one is")
+    func anUnsizedFolderIsRefused() async throws {
+        let harness = try RawPeerHarness(role: .host, kind: .drop)
+        defer { harness.tearDown() }
+        var second = Self.folder
+        second.filename = "Other"
+        let waits = SizeWaits(on: harness.endpoint)
+        try harness.send(.dragOffer(generation: 1, reps: [Self.folder.wire, second.wire]))
+        try await harness.side.recorder.waitForDrag()
+        let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
+        let unsized = harness.side.startPull(generation: 1, repIndex: 1, operation: operation)
+        try await waits.wait(for: 1)
+
+        try harness.send(.dragSizes(generation: 1, folderByteCounts: [0: 5]))
+
+        #expect(isCancelled(await unsized.value))
+        #expect(harness.endpoint.inboundByteCount(generation: 1) == 5)
+        let sized = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
+        try await harness.waitForRequest(generation: 1, repIndex: 0)
+        let unsizedID = harness.transferID(generation: 1, repIndex: 1)
+        #expect(!harness.recorder.requests.contains { $0.transferID == unsizedID })
+        harness.endpoint.completeDrag(generation: 1)
+        _ = await sized.value
+    }
+
+    @Test("the guest records the sizes it sends, only for folders, and sends none for a drag the host is done with")
+    func theGuestSendsFolderSizes() async throws {
+        let harness = try RawPeerHarness(role: .guest, kind: .drop)
+        defer { harness.tearDown() }
+        let folder = try makeDirectoryRepresentation(named: "Tree", files: ["a.txt": Data("alpha".utf8)])
+        harness.endpoint.offer(
+            ClipboardContent(representations: [try dragged("one.bin", Data("one".utf8)), folder.representation]))
+
+        #expect(harness.endpoint.sendDragSizes(generation: 1, folderByteCounts: [0: 99, 1: 9]))
+
+        try await harness.recorder.waitForFrames {
+            harness.recorder.frames.contains { if case .dragSizes = $0.payload { true } else { false } }
+        }
+        let sent = harness.recorder.frames.compactMap { frame -> Kernova_V1_DragSizes? in
+            if case .dragSizes(let sizes) = frame.payload { return sizes }
+            return nil
+        }
+        #expect(sent.map(\.generation) == [1])
+        #expect(sent.first?.folderByteCounts == [1: 9])
+        #expect(harness.endpoint.outboundContent(generation: 1)?.representations.map(\.byteCount) == [3, 9])
+
+        try harness.send(.dragComplete(generation: 1))
+        try await harness.side.recorder.wait { harness.side.recorder.completedDrags == [1] }
+        #expect(!harness.endpoint.sendDragSizes(generation: 1, folderByteCounts: [1: 10]))
     }
 
     // MARK: - Retiring a drag
@@ -473,6 +645,7 @@ struct ClipboardEndpointDragTests {
         defer { harness.tearDown() }
 
         harness.endpoint.sendDragHandOff(generation: 1, step: .targeted)
+        #expect(!harness.endpoint.sendDragSizes(generation: 1, folderByteCounts: [0: 1]))
         harness.endpoint.sendDragTake(generation: 1)
 
         // The take is the only frame a host sends of the two.
@@ -522,6 +695,7 @@ struct ClipboardEndpointDragTests {
             WrongWay("DragOffer", at: .guest, .dragOffer(generation: 1, reps: [])),
             WrongWay("DragRelease", at: .guest, .dragRelease(generation: 1)),
             WrongWay("DragHandOff", at: .guest, .dragHandOff(generation: 1, step: .targeted)),
+            WrongWay("DragSizes", at: .guest, .dragSizes(generation: 1, folderByteCounts: [0: 1])),
         ])
     func wrongWayClosesTheChannel(_ wrongWay: WrongWay) async throws {
         let harness = try RawPeerHarness(role: wrongWay.role, kind: .drop)

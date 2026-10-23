@@ -1,5 +1,6 @@
 import Foundation
 import KernovaLogging
+import KernovaSynchronization
 
 /// One clipboard-protocol connection — either end of either clipboard channel —
 /// as its owner sees it.
@@ -389,6 +390,13 @@ public final class ClipboardEndpoint {
         inbound.pasteBudget(generation: generation)
     }
 
+    /// The sum of every size `generation` declares as this side knows it now —
+    /// a drag's folders count only once their sizes have arrived — or `0` when
+    /// it names no live offer.
+    public func inboundByteCount(generation: UInt64) -> UInt64 {
+        inbound.byteCount(generation: generation)
+    }
+
     /// The pasteboard items to promise for `generation`, or `nil` when it names
     /// no live offer.
     public func promisePlan(generation: UInt64) -> ClipboardPasteboardItemPlan? {
@@ -493,6 +501,16 @@ public final class ClipboardEndpoint {
     ) {
         guard role == .guest, kind == .drop else { return }
         session.sendDragHandOff(generation: generation, step: step)
+    }
+
+    /// Records the measured sizes of the folders in the drag offered under
+    /// `generation` — keyed by each folder's index in the offer — and sends
+    /// them in a `DragSizes`, reporting whether the drag was still live and
+    /// the sizes went out. Guest drop channel only.
+    @discardableResult
+    public func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Bool {
+        guard role == .guest, kind == .drop else { return false }
+        return outbound.sendFolderSizes(generation: generation, byteCounts: folderByteCounts)
     }
 
     // MARK: - Data connections
@@ -641,6 +659,9 @@ public final class ClipboardEndpoint {
             delegate?.endpoint(
                 self, didReceiveDragHandOff: ClipboardDragHandOffStep(handOff),
                 generation: handOff.generation)
+        case .dragSizes(let sizes):
+            guard kind == .drop, role == .host else { return closeOnWrongPort() }
+            inbound.handleDragSizes(sizes)
         case .error(let error):
             inbound.handlePeerError(error)
         case .hello, .heartbeat, .policyUpdate, .logRecord:
@@ -693,6 +714,12 @@ public final class ClipboardEndpoint {
     var afterInboundPullForTesting: (@MainActor () async -> Void)? {
         get { inbound.afterInboundPullForTesting }
         set { inbound.afterInboundPullForTesting = newValue }
+    }
+
+    /// Test seam: called each time an inbound pull starts waiting for a
+    /// folder's size, on the pulling thread.
+    public func onInboundSizeWaitForTesting(_ body: (@Sendable () -> Void)?) {
+        inbound.sizeWaitBeganForTesting.withLock { $0 = body }
     }
 
     /// Test seam: how many inbound pulls this connection has started.

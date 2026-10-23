@@ -72,6 +72,7 @@ message Frame {
     DragTake drag_take = 46;
     DragHandOff drag_hand_off = 47;
     DragCatcher drag_catcher = 48;
+    DragSizes drag_sizes = 49;
 
     // 50..59: the clipboard data connection. One guest-initiated vsock
     // connection per transfer carries these two frames as its header, then the
@@ -465,7 +466,9 @@ message DropRelease {
 // (`DragTake`) once the pointer leaves the VM display, and pulls each item it
 // needs with a `ClipboardRequest` on this channel, which the guest answers
 // over the drop data port. Every representation carries a non-empty
-// `filename`; `is_inline` is ignored.
+// `filename`; `is_inline` is ignored, and so is a folder's `byte_count`: the
+// guest lists no folder's contents to offer a drag, and sends the folders'
+// sizes in `DragSizes` once the host takes it.
 message DragOffer {
   // Per-connection counter, starting at 1, scoped to the guest. Several drags
   // can be live at once: a taken drag stays pullable while a new one starts.
@@ -532,4 +535,15 @@ message DragHandOff {
 
   // Human-readable detail for logs. Never rendered in host UI.
   string message = 4;
+}
+
+// Guest->host: the sizes of the folders in the drag for `generation`, measured
+// once the guest accepted the host's `DragTake`. The host pulls none of the
+// drag's folders until this arrives; its files carry their sizes in the offer.
+message DragSizes {
+  uint64 generation = 1;
+
+  // Each folder's measured tree size — the sum of its regular files — keyed
+  // by the folder's index in the offer.
+  map<uint32, uint64> folder_byte_counts = 2;
 }

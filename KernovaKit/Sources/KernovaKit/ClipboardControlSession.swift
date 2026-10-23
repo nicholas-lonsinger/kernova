@@ -443,4 +443,10 @@ public final class ClipboardControlSession {
     nonisolated public func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {
         try? channel.send(.dragHandOff(generation: generation, step: step))
     }
+
+    /// Tells the host the measured sizes of the folders in the drag for
+    /// `generation`.
+    nonisolated public func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) throws {
+        try channel.send(.dragSizes(generation: generation, folderByteCounts: folderByteCounts))
+    }
 }
