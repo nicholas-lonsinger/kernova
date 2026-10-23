@@ -125,6 +125,15 @@ private final class CatcherView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
+    // Takes the first click too: the agent is never the active app, and a
+    // click that reaches this view is the one sign left that the surface
+    // outlived its drag.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        catcher?.surfaceClicked()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         fill.setFill()
         dirtyRect.fill()

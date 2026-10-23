@@ -7,11 +7,13 @@ import KernovaKit
 /// the catcher that ends the guest's drag once the host takes it over.
 ///
 /// The host takes a drag over with `DragTake` once the pointer leaves the VM
-/// display with the button held, and may inject a button release into the
-/// guest only after the catcher reports `targeted` — an injected release is a
-/// real drop under the guest pointer, so every step before that one either
+/// display with the button held, and may inject a button release onto the
+/// catcher only after it reports `targeted` — an injected release is a real
+/// drop under the guest pointer, so every step before that one either
 /// succeeds or reports `failed`, and the host then hands the press back to the
-/// guest untouched.
+/// guest untouched. While the host's drag session is back over the VM display,
+/// `DragCatcher` stands the catcher down and the host drives the guest drag
+/// to the user's own drop.
 ///
 /// Created with its connection and stopped with it. The watcher runs only while
 /// ``setWatching(_:)`` says so; a take that arrives while it does not is
@@ -40,6 +42,12 @@ final class GuestDragOut {
         case .failure(let refusal):
             catcher.refuse(generation: generation, code: .dragTakeStale, message: refusal.message)
         }
+    }
+
+    /// The host's Mac session carrying the drag under `generation` left this
+    /// VM's display (`shown`), or came back over it.
+    func setCatcherShown(_ shown: Bool, generation: UInt64) {
+        catcher.setShown(shown, generation: generation)
     }
 
     /// The host is done with the drag under `generation`; the endpoint has

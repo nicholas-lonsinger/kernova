@@ -460,6 +460,12 @@ extension VsockGuestDropAgent: ClipboardEndpointDelegate {
         dragOut?.take(generation: generation)
     }
 
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragCatcher shown: Bool, generation: UInt64
+    ) {
+        dragOut?.setCatcherShown(shown, generation: generation)
+    }
+
     func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {
         dragOut?.complete(generation: generation)
     }

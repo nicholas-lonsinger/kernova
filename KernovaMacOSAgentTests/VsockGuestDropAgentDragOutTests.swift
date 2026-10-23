@@ -156,6 +156,30 @@ struct VsockGuestDropAgentDragOutTests {
         try await harness.surface.changed.wait { !harness.surface.isShown }
     }
 
+    @Test("a DragCatcher stands the catcher down and shows it again, which reports armed")
+    func catcherFramesOverTheWire() async throws {
+        let harness = try Harness(scratch: scratch.url, capabilities: Self.both)
+        defer { harness.tearDown() }
+        try await harness.start()
+        try await harness.input.changed.wait { harness.input.isObservingPresses }
+        harness.drag([try file("taken.bin", Data("taken".utf8))])
+        let offer = try await harness.awaitDragOffer()
+        try harness.host.send(.dragTake(generation: offer.generation))
+        _ = try await nextFrame(from: harness.host)
+
+        try harness.host.send(.dragCatcher(generation: offer.generation, shown: false))
+        try await harness.surface.changed.wait { !harness.surface.isShown }
+        try harness.host.send(.dragCatcher(generation: offer.generation, shown: true))
+
+        let frame = try await nextFrame(from: harness.host)
+        guard case .dragHandOff(let handOff) = frame.payload else {
+            throw TestFailure("Expected a DragHandOff, got \(String(describing: frame.payload))")
+        }
+        #expect(handOff.generation == offer.generation)
+        #expect(ClipboardDragHandOffStep(handOff) == .armed)
+        #expect(harness.surface.isShown)
+    }
+
     @Test("a host that does not take drags out gets no watcher until it says it does")
     func theWatcherNeedsTheHostCapability() async throws {
         let harness = try Harness(

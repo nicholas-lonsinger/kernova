@@ -9,9 +9,10 @@ import KernovaLogging
 ///
 /// The steps go `armed` (the surface is up), `targeted` (the guest's drag
 /// manager entered it with the taken drag, answered copy), then `caught` (the
-/// drag ended on it). The host releases the guest's button only after
-/// `targeted`, so anything else arriving before then — the wrong items, a
-/// source that forbids a copy — is answered with no operation and `failed`.
+/// drag ended on it). The host releases the guest's button onto the surface
+/// only after `targeted`, so anything else arriving before then — the wrong
+/// items, a source that forbids a copy — is answered with no operation and
+/// `failed`.
 ///
 /// Once `targeted` is out the host may already have released the button, and
 /// that release is a real drop under the guest pointer, so a refusal after
@@ -23,11 +24,17 @@ import KernovaLogging
 /// then means the host gave the press back without releasing, and the user's
 /// drag goes on in the guest.
 ///
+/// While the host's Mac session is over this VM's display, the host stands the
+/// surface down and moves the guest pointer itself, so the drag can drop
+/// inside the guest; the take stays, and the host shows the surface again —
+/// a fresh `armed`, then `targeted` — when the session leaves.
+///
 /// The surface covers the screen and takes mouse events, so while it is up the
 /// guest cannot be clicked: every path that shows it ends at ``finish(failing:)``
 /// — the drag concluding or ending, a failure before `targeted`, the host
-/// completing the drag, the connection ending, or the press ending while the
-/// drag is off the surface.
+/// completing the drag, the connection ending, the press ending while the drag
+/// is off the surface, or a click reaching the surface, which no drag in
+/// flight lets happen.
 @MainActor
 final class GuestDragCatcher {
     nonisolated private static let logger = KernovaLogger(
@@ -54,6 +61,9 @@ final class GuestDragCatcher {
         var refused = false
         /// The drag ended on the surface; its items stay pullable.
         var caught = false
+        /// The surface is up for the take; `false` while the host's Mac
+        /// session is over this VM's display.
+        var shown = true
     }
 
     private let peer: any GuestDragOutPeer
@@ -108,10 +118,49 @@ final class GuestDragCatcher {
     /// The host is done with `generation`; only a take this side refused
     /// after `targeted` keeps the surface up, for the drop it must refuse.
     func complete(generation: UInt64) {
-        guard let current = take, current.claim.generation == generation, !current.refused else {
+        guard let current = take, current.claim.generation == generation,
+            !(current.refused && current.shown)
+        else { return }
+        finish(failing: nil)
+    }
+
+    /// The host's Mac session carrying `generation` left this VM's display
+    /// (`shown`) or came back over it: shows the surface again and reports it
+    /// armed, or stands it down, keeping the take either way.
+    ///
+    /// A take this side already failed stays down, and a take it no longer
+    /// holds is refused as stale.
+    func setShown(_ shown: Bool, generation: UInt64) {
+        guard let current = take, current.claim.generation == generation else {
+            if shown {
+                refuse(generation: generation, code: .dragTakeStale, message: "The catcher holds no such take")
+            }
             return
         }
-        finish(failing: nil)
+        guard shown else {
+            take?.shown = false
+            take?.entered = false
+            take?.targeted = false
+            surface?.hide()
+            Self.logger.log(.notice, "Catcher stood down (gen=\(generation, privacy: .public))")
+            return
+        }
+        guard !current.shown, !current.refused, let surface else { return }
+        guard surface.show() else {
+            finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
+            return
+        }
+        take?.shown = true
+        send(.armed, for: generation)
+        Self.logger.log(.notice, "Catcher armed again (gen=\(generation, privacy: .public))")
+    }
+
+    /// A click reached the surface, so no drag is in flight to catch: the
+    /// guest's drag manager holds the mouse while one is, and the press
+    /// monitor never hears a click on this app's own window.
+    func surfaceClicked() {
+        guard take != nil else { return }
+        finish(failing: (.dragTakeFailed, "A click reached the catcher, so no drag is in flight"))
     }
 
     /// The connection ended; nothing is left to report to.

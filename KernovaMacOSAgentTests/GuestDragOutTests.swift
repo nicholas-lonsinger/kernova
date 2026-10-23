@@ -678,24 +678,142 @@ struct GuestDragOutTests {
         #expect(!rig.surface.isShown)
     }
 
-    @Test("a newer take replaces a live one that never caught, failing the older")
-    func aNewerTakeReplacesTheOlder() throws {
+    @Test("a click on a catcher that outlived its drag takes it down and fails the take")
+    func aClickTakesAStrandedCatcherDown() throws {
         let urls = [try file("one.txt")]
         let rig = takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         // Entered, so its press ending leaves it waiting for the drop.
         _ = catcher.draggingEntered(caught(urls))
         rig.releaseAndTick()
-        rig.pressAndDrag([fileItem(try file("two.txt"))])
-
-        rig.dragOut.take(generation: 2)
-
         #expect(rig.surface.isShown)
-        let last = Array(rig.peer.handOffs.suffix(2))
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = last.first else {
-            Issue.record("Expected the older take to fail, got \(rig.peer.handOffs)")
+
+        catcher.surfaceClicked()
+
+        #expect(!rig.surface.isShown)
+        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected the take to fail, got \(rig.peer.handOffs)")
             return
         }
-        #expect(last.last == .handOff(generation: 2, step: .armed))
+        // The next press's take arms as the first did.
+        rig.pressAndDrag([fileItem(try file("two.txt"))])
+        rig.dragOut.take(generation: 2)
+        #expect(rig.surface.isShown)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 2, step: .armed))
+    }
+
+    @Test("a click on a catcher that refused after targeted takes it down without a second failure")
+    func aClickTakesARefusingCatcherDown() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        _ = catcher.draggingUpdated(caught(urls, mask: [.move]))
+        let reported = rig.peer.handOffs.count
+
+        catcher.surfaceClicked()
+
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.handOffs.count == reported)
+    }
+
+    // MARK: - The host's session over this VM's display
+
+    @Test("standing down hides the surface and keeps the take; showing it again arms and re-targets")
+    func standDownAndShowAgain() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        #expect(catcher.draggingEntered(caught(urls)) == .copy)
+
+        rig.dragOut.setCatcherShown(false, generation: 1)
+
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.handOffs.count == 2)
+
+        rig.dragOut.setCatcherShown(true, generation: 1)
+
+        #expect(rig.surface.isShown)
+        #expect(catcher.draggingEntered(caught(urls)) == .copy)
+        #expect(catcher.performDragOperation())
+        #expect(
+            rig.peer.handOffs == [
+                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
+                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
+                .handOff(generation: 1, step: .caught),
+            ])
+    }
+
+    @Test("a drag dropped inside the guest while stood down ends the take with its press")
+    func aDropInsideTheGuestEndsTheTake() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        rig.dragOut.setCatcherShown(false, generation: 1)
+
+        // The host's release lands on a guest target; the press ends.
+        rig.releaseAndTick()
+
+        #expect(!rig.surface.isShown)
+        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected the take to end, got \(rig.peer.handOffs)")
+            return
+        }
+        rig.dragOut.setCatcherShown(true, generation: 1)
+        #expect(!rig.surface.isShown)
+    }
+
+    @Test("showing the catcher of a take this side no longer holds refuses it as stale")
+    func showingAnUnknownTakeIsStale() throws {
+        let rig = takenRig([try file("one.txt")])
+        rig.dragOut.complete(generation: 1)
+
+        rig.dragOut.setCatcherShown(false, generation: 1)
+        #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
+        rig.dragOut.setCatcherShown(true, generation: 1)
+
+        guard case .handOff(1, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a stale refusal, got \(rig.peer.handOffs)")
+            return
+        }
+        #expect(!rig.surface.isShown)
+    }
+
+    @Test("a take refused after targeted stands down, stays down, and the host's completion ends it")
+    func aRefusedTakeStaysDown() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        _ = catcher.draggingUpdated(caught(urls, mask: [.move]))
+        let reported = rig.peer.handOffs.count
+
+        rig.dragOut.setCatcherShown(false, generation: 1)
+        rig.dragOut.setCatcherShown(true, generation: 1)
+
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.handOffs.count == reported)
+        rig.dragOut.complete(generation: 1)
+        // Nothing is left armed: a newer press's take arms afresh.
+        rig.releaseAndTick()
+        rig.pressAndDrag([fileItem(try file("two.txt"))])
+        rig.dragOut.take(generation: 2)
+        #expect(rig.peer.handOffs.count == reported + 1)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 2, step: .armed))
+    }
+
+    @Test("no screen when the catcher is shown again fails the take")
+    func noScreenOnShowingAgainFails() throws {
+        let rig = takenRig([try file("one.txt")])
+        rig.dragOut.setCatcherShown(false, generation: 1)
+        rig.surface.hasScreen = false
+
+        rig.dragOut.setCatcherShown(true, generation: 1)
+
+        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a failure, got \(rig.peer.handOffs)")
+            return
+        }
     }
 }
