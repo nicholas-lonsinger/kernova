@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaLogging
+import QuickLookThumbnailing
 
 // The live guest's halves of the drag-out seams: its event stream and drag
 // pasteboard for the watcher, and the window the catcher puts up.
@@ -82,6 +83,46 @@ final class SystemGuestDragInput: GuestDragInput {
     }
 }
 
+/// A file's QuickLook thumbnail, made off the main thread.
+@MainActor
+protocol GuestDragThumbnails {
+    /// Asks for `url`'s thumbnail to fit `size`; `completion` runs on the main
+    /// actor only if one is made, and never after the returned cancel runs.
+    func thumbnail(
+        of url: URL, fitting size: NSSize, then completion: @escaping @MainActor (NSImage) -> Void
+    ) -> GuestDragCancel
+}
+
+/// The guest's QuickLook thumbnailer.
+@MainActor
+struct SystemGuestDragThumbnails: GuestDragThumbnails {
+    func thumbnail(
+        of url: URL, fitting size: NSSize, then completion: @escaping @MainActor (NSImage) -> Void
+    ) -> GuestDragCancel {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url, size: size, scale: NSScreen.main?.backingScaleFactor ?? 2,
+            representationTypes: .thumbnail)
+        let cancellation = Cancellation()
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+            guard let image = representation?.cgImage else { return }
+            MainActorBridge.async {
+                guard !cancellation.isCancelled else { return }
+                completion(NSImage(cgImage: image, size: .zero))
+            }
+        }
+        return {
+            cancellation.isCancelled = true
+            QLThumbnailGenerator.shared.cancel(request)
+        }
+    }
+
+    /// Whether the caller cancelled, read where the thumbnail is delivered.
+    @MainActor
+    private final class Cancellation {
+        var isCancelled = false
+    }
+}
+
 /// The catcher's window: borderless, never activating the agent, above every
 /// app window on all spaces, and covering the screen under the pointer.
 @MainActor
@@ -92,7 +133,10 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
 
     private let panel: NSPanel
 
-    init(catcher: GuestDragCatcher) {
+    private let content: CatcherView
+
+    init(catcher: GuestDragCatcher, thumbnails: any GuestDragThumbnails = SystemGuestDragThumbnails()) {
+        content = CatcherView(catcher: catcher, thumbnails: thumbnails, fillAlpha: Self.fillAlpha)
         panel = NSPanel(
             contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
             defer: true)
@@ -104,7 +148,7 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
         panel.ignoresMouseEvents = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.contentView = CatcherView(catcher: catcher, fillAlpha: Self.fillAlpha)
+        panel.contentView = content
     }
 
     #if DEBUG
@@ -119,6 +163,7 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
                 ?? NSScreen.main
         else { return false }
         panel.setFrame(screen.frame, display: true)
+        content.prepareThumbnail()
         // The agent is never the active app, so only this brings it front.
         panel.orderFrontRegardless()
         return true
@@ -126,6 +171,7 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
 
     func hide() {
         panel.orderOut(nil)
+        content.surfaceHidden()
     }
 }
 
@@ -133,11 +179,19 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
 /// callback to the catcher, and the HUD's owner.
 private final class CatcherView: NSView {
     private weak var catcher: GuestDragCatcher?
+    private let thumbnails: any GuestDragThumbnails
     private let fill: NSColor
     private let hud = CatcherHUD()
 
-    init(catcher: GuestDragCatcher, fillAlpha: CGFloat) {
+    /// The first taken file's thumbnail: asked for once per take, kept
+    /// across stand-downs so every showing draws the same image.
+    private var thumbnail: (url: URL, image: NSImage?, cancel: GuestDragCancel?)?
+    /// The drag over the view, restyled again when the thumbnail arrives.
+    private var draggingInfo: (any NSDraggingInfo)?
+
+    init(catcher: GuestDragCatcher, thumbnails: any GuestDragThumbnails, fillAlpha: CGFloat) {
         self.catcher = catcher
+        self.thumbnails = thumbnails
         fill = NSColor.white.withAlphaComponent(fillAlpha)
         super.init(frame: .zero)
         hud.install(in: self)
@@ -171,40 +225,79 @@ private final class CatcherView: NSView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        catcher?.draggingEntered(drag(sender)) ?? []
+        let operation = catcher?.draggingEntered(drag(sender)) ?? []
+        // The pointer is parked on the HUD from the first callback, so the
+        // source's image is replaced at once rather than when AppKit asks.
+        restyle(sender)
+        return operation
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
         catcher?.draggingUpdated(drag(sender)) ?? []
     }
 
-    /// Draws each item of the drag the catcher accepted as its file's icon in
-    /// the HUD's icon zone, all items on the one frame, whatever size the
-    /// source drew them at.
-    ///
-    /// `NSDragging.h`: changes made through the enumeration hold only while
-    /// the drag is over this destination and are removed when it exits, so
-    /// every entry is restyled afresh.
     override func updateDraggingItemsForDrag(_ sender: (any NSDraggingInfo)?) {
-        guard let sender, catcher?.holdsDragOnSurface == true else { return }
+        guard let sender else { return }
+        restyle(sender)
+    }
+
+    /// Draws every item of the drag the catcher accepted as the first taken
+    /// file's ``CatcherDragImage``, all on the HUD's icon zone, whatever the
+    /// source's image, layout, or grab offset — so the items stack as one.
+    ///
+    /// `NSDragging.h`: a destination "may change the dragging images at any
+    /// time", and changes made through the enumeration hold only while the
+    /// drag is over it and are removed when it exits, so every entry restyles
+    /// afresh.
+    private func restyle(_ sender: any NSDraggingInfo) {
+        guard catcher?.holdsDragOnSurface == true, let first = catcher?.takenFileURLs?.first else { return }
+        draggingInfo = sender
+        prepareThumbnail()
         layoutSubtreeIfNeeded()
         let frame = convert(hud.iconZone.frame, from: hud)
+        let image = thumbnail?.image ?? CatcherDragImage.workspaceIcon(of: first)
+        let name = FileManager.default.displayName(atPath: first.path)
         // The source's formation would move the items off the frames set here.
         sender.draggingFormation = .none
         sender.enumerateDraggingItems(
             options: [], for: self, classes: [NSURL.self], searchOptions: [.urlReadingFileURLsOnly: true]
-        ) { item, _, _ in
-            guard let url = item.item as? URL else { return }
-            let icon = NSWorkspace.shared.icon(forFile: url.path)
-            let image = NSImage(size: frame.size, flipped: false) { rect in
-                icon.draw(in: rect)
-                return true
-            }
-            item.setDraggingFrame(frame, contents: image)
+        ) { item, index, _ in
+            let components = CatcherDragImage.components(image: image, name: index == 0 ? name : nil)
+            item.draggingFrame = frame
+            item.imageComponentsProvider = { components }
         }
     }
 
+    /// Asks for the first taken file's thumbnail, unless this take already did.
+    func prepareThumbnail() {
+        guard let url = catcher?.takenFileURLs?.first, thumbnail?.url != url else { return }
+        thumbnail?.cancel?()
+        thumbnail = (url, nil, nil)
+        let cancel = thumbnails.thumbnail(of: url, fitting: CatcherDragImage.iconSize) { [weak self] image in
+            self?.thumbnailArrived(image, for: url)
+        }
+        if thumbnail?.url == url, thumbnail?.image == nil {
+            thumbnail?.cancel = cancel
+        }
+    }
+
+    private func thumbnailArrived(_ image: NSImage, for url: URL) {
+        guard thumbnail?.url == url else { return }
+        thumbnail = (url, image, nil)
+        if let draggingInfo { restyle(draggingInfo) }
+    }
+
+    /// The window went down: the drag is no longer over it, and once the take
+    /// is over its thumbnail is no longer wanted.
+    func surfaceHidden() {
+        draggingInfo = nil
+        guard catcher?.takenFileURLs == nil else { return }
+        thumbnail?.cancel?()
+        thumbnail = nil
+    }
+
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        draggingInfo = nil
         catcher?.draggingExited()
     }
 
@@ -221,6 +314,7 @@ private final class CatcherView: NSView {
     }
 
     override func draggingEnded(_ sender: any NSDraggingInfo) {
+        draggingInfo = nil
         catcher?.draggingEnded()
     }
 }
@@ -232,9 +326,8 @@ private final class CatcherView: NSView {
 /// and its label below. Decoration only: no point in it takes a hit test, so
 /// the whole screen stays the catcher's drag destination and click target.
 private final class CatcherHUD: NSVisualEffectView {
-    /// The icon zone's size, so the size the catcher draws each dragged
-    /// item's icon at: Finder's default icon-view size.
-    private static let iconSize = NSSize(width: 64, height: 64)
+    /// The box's inset around its content on every side.
+    private static let margin: CGFloat = 24
 
     /// Where the drag image sits, in the box's coordinates.
     let iconZone = NSLayoutGuide()
@@ -261,20 +354,84 @@ private final class CatcherHUD: NSVisualEffectView {
         let hugging = widthAnchor.constraint(equalToConstant: 0)
         hugging.priority = .defaultLow
         NSLayoutConstraint.activate([
-            zone.widthAnchor.constraint(equalToConstant: Self.iconSize.width),
-            zone.heightAnchor.constraint(equalToConstant: Self.iconSize.height),
+            zone.widthAnchor.constraint(equalToConstant: CatcherDragImage.size.width),
+            zone.heightAnchor.constraint(equalToConstant: CatcherDragImage.size.height),
             zone.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             zone.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             zone.centerXAnchor.constraint(equalTo: centerXAnchor),
-            zone.topAnchor.constraint(equalTo: topAnchor, constant: 24),
-            label.topAnchor.constraint(equalTo: zone.bottomAnchor, constant: 14),
+            zone.topAnchor.constraint(equalTo: topAnchor, constant: Self.margin),
+            label.topAnchor.constraint(equalTo: zone.bottomAnchor, constant: Self.margin),
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 28),
-            bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: 20),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 208),
+            bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: Self.margin),
+            widthAnchor.constraint(greaterThanOrEqualTo: zone.widthAnchor, constant: 2 * Self.margin),
             hugging,
         ])
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The image the catcher draws each dragged item as, the way Finder's icon
+/// view draws a file: a large icon or thumbnail, its name in a pill below.
+@MainActor
+private enum CatcherDragImage {
+    /// The square the icon or thumbnail fits in.
+    static let iconSize = NSSize(width: 128, height: 128)
+
+    /// The whole image: the widest name pill, over the icon square and the pill.
+    static let size = NSSize(width: 200, height: iconSize.height + labelGap + labelHeight)
+
+    private static let labelGap: CGFloat = 4
+    private static let labelHeight: CGFloat = 18
+    private static let labelPadding: CGFloat = 6
+    private static let font = NSFont.systemFont(ofSize: 12)
+
+    /// `url`'s Finder icon, at the icon square's size.
+    static func workspaceIcon(of url: URL) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = iconSize
+        return icon
+    }
+
+    /// `image` fitted and centered in the icon square at the top and, given a
+    /// name, its pill centered below — in the item's own bounds of ``size``.
+    static func components(image: NSImage, name: String?) -> [NSDraggingImageComponent] {
+        let square = NSRect(
+            x: (size.width - iconSize.width) / 2, y: size.height - iconSize.height,
+            width: iconSize.width, height: iconSize.height)
+        let scale = min(
+            square.width / max(image.size.width, 1), square.height / max(image.size.height, 1))
+        let fitted = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let iconComponent = NSDraggingImageComponent(key: .icon)
+        iconComponent.frame = NSRect(
+            x: square.midX - fitted.width / 2, y: square.midY - fitted.height / 2,
+            width: fitted.width, height: fitted.height)
+        iconComponent.contents = image
+        guard let name else { return [iconComponent] }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: NSColor.alternateSelectedControlTextColor,
+        ]
+        let textWidth = min(
+            ceil((name as NSString).size(withAttributes: attributes).width), size.width - 2 * labelPadding)
+        let pill = NSSize(width: textWidth + 2 * labelPadding, height: labelHeight)
+        let labelComponent = NSDraggingImageComponent(key: .label)
+        labelComponent.frame = NSRect(origin: NSPoint(x: (size.width - pill.width) / 2, y: 0), size: pill)
+        labelComponent.contents = NSImage(size: pill, flipped: false) { rect in
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            paragraph.lineBreakMode = .byTruncatingMiddle
+            var drawn = attributes
+            drawn[.paragraphStyle] = paragraph
+            let line = ceil(font.ascender - font.descender)
+            (name as NSString).draw(
+                in: NSRect(x: labelPadding, y: (rect.height - line) / 2, width: textWidth, height: line),
+                withAttributes: drawn)
+            return true
+        }
+        return [iconComponent, labelComponent]
+    }
 }

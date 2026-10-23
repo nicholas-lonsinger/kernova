@@ -307,3 +307,36 @@ final class FakeDraggingInfo: NSObject, @MainActor NSDraggingInfo {
     func slideDraggedImage(to screenPoint: NSPoint) {}
     func resetSpringLoading() {}
 }
+
+/// The guest's thumbnailer, answering when a test says.
+@MainActor
+final class FakeGuestDragThumbnails: GuestDragThumbnails {
+    private struct Request {
+        let url: URL
+        let size: NSSize
+        let completion: @MainActor (NSImage) -> Void
+        var cancelled = false
+    }
+
+    private var requests: [Request] = []
+
+    /// Each request's file and size, in order.
+    var asked: [URL] { requests.map(\.url) }
+    var sizes: [NSSize] { requests.map(\.size) }
+    /// How many requests were cancelled.
+    var cancelCount: Int { requests.filter(\.cancelled).count }
+
+    func thumbnail(
+        of url: URL, fitting size: NSSize, then completion: @escaping @MainActor (NSImage) -> Void
+    ) -> GuestDragCancel {
+        let index = requests.count
+        requests.append(Request(url: url, size: size, completion: completion))
+        return { [weak self] in self?.requests[index].cancelled = true }
+    }
+
+    /// Hands `image` to the latest request, unless it was cancelled.
+    func deliver(_ image: NSImage) {
+        guard let request = requests.last, !request.cancelled else { return }
+        request.completion(image)
+    }
+}

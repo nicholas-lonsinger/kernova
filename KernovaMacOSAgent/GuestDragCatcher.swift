@@ -251,6 +251,9 @@ final class GuestDragCatcher {
         send(.failed(failure.code, message: failure.message), for: current.claim.generation)
     }
 
+    /// The file URLs of the take the catcher holds, stood down or not.
+    var takenFileURLs: [URL]? { take?.claim.fileURLs }
+
     /// The taken drag is over the surface and answered copy, so it can drop
     /// there.
     var holdsDragOnSurface: Bool {
