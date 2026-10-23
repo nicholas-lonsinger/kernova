@@ -217,7 +217,7 @@ package final class GuestDragTake: GuestDragTaking {
     private let progressIdleGap: TimeInterval
     private let clock: any EngineClock
     private let holds: @MainActor () -> Bool
-    private let onRetired: @MainActor (GuestDragTake) -> Void
+    private let onFinished: @MainActor (GuestDragTake) -> Void
 
     @ObservationIgnored private var nextNudge: GuestDragNudge = .center
     @ObservationIgnored private var deadline: Task<Void, Never>?
@@ -258,6 +258,7 @@ package final class GuestDragTake: GuestDragTaking {
     /// Whether this take is done with the drag: `DragComplete` sent, or the
     /// channel gone.
     @ObservationIgnored private var isRetired = false
+    @ObservationIgnored private var isFinished = false
     @ObservationIgnored private var readout: ClipboardTransferOperation?
 
     nonisolated private static let logger = KernovaLogger(
@@ -266,13 +267,15 @@ package final class GuestDragTake: GuestDragTaking {
     /// Takes over `drag` on `endpoint` for `display`, which the take drives
     /// while `holds` stays true.
     ///
-    /// Nothing is sent until ``begin()``.
+    /// `onFinished` is called once, when the take is retired and no write is
+    /// still pulling or landing — from then on nothing reads what the drag's
+    /// pulls staged. Nothing is sent until ``begin()``.
     init(
         drag: ClipboardInboundDrag, endpoint: ClipboardEndpoint, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
         progressRevealDelay: TimeInterval, progressIdleGap: TimeInterval, clock: any EngineClock,
         holds: @escaping @MainActor () -> Bool,
-        onRetired: @escaping @MainActor (GuestDragTake) -> Void
+        onFinished: @escaping @MainActor (GuestDragTake) -> Void
     ) {
         self.generation = drag.generation
         self.items = drag.items
@@ -284,7 +287,7 @@ package final class GuestDragTake: GuestDragTaking {
         self.progressIdleGap = progressIdleGap
         self.clock = clock
         self.holds = holds
-        self.onRetired = onRetired
+        self.onFinished = onFinished
     }
 
     /// Asks the guest to hand the drag over, and starts the hand-off's bounds:
@@ -724,7 +727,15 @@ package final class GuestDragTake: GuestDragTaking {
         } else {
             endpoint.retireInbound(generation: generation)
         }
-        onRetired(self)
+        finishIfIdle()
+    }
+
+    /// Reports the take finished once it is retired and its last write has
+    /// settled: a channel's end retires a take with writes still in flight.
+    private func finishIfIdle() {
+        guard isRetired, writesInFlight == 0, !isFinished else { return }
+        isFinished = true
+        onFinished(self)
     }
 
     /// Ends the transfers a Mac destination is still owed as interrupted: the
@@ -822,7 +833,10 @@ package final class GuestDragTake: GuestDragTaking {
     /// Settles one write, returning the error its caller throws, if any.
     private func endWrite(_ index: Int, ending: WriteEnding) -> GuestDragWriteFailure? {
         writesInFlight -= 1
-        defer { retireIfDone() }
+        defer {
+            retireIfDone()
+            finishIfIdle()
+        }
         let fault: WriteFault
         switch ending {
         case .landed:

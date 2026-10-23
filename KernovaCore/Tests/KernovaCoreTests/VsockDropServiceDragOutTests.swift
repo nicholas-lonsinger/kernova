@@ -945,6 +945,65 @@ struct VsockDropServiceDragOutTests {
 
     // MARK: - Writing items
 
+    @Test("later drags' pulls leave an earlier drag's staging alone while its write is in flight")
+    func concurrentDragsKeepTheirStaging() async throws {
+        let harness = try Harness(parksPulls: true)
+        defer { harness.tearDown() }
+        let destination = try makeDestination()
+        let first = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        first.hostSessionEnded(dropped: true)
+        let firstWrite = Task {
+            await harness.write(first, item: 0, to: destination.appendingPathComponent("a.txt"))
+        }
+        let firstPull = try await harness.parked.next()
+        // Stands in for what the first drag's pull has staged so far.
+        let staged = try harness.service.dragStagingForTesting.reserveScratchDirectory(
+            generation: first.generation)
+
+        // Past the newest-generations window a clipboard's staging keeps, each
+        // still live: its second item is never asked for.
+        for name in ["b", "c", "d"] {
+            let take = try await harness.releasedTake([
+                try makeFile(named: "\(name).txt", contents: name),
+                try makeFile(named: "\(name)-more.txt", contents: name),
+            ])
+            take.hostSessionEnded(dropped: true)
+            let target = destination.appendingPathComponent("\(name).txt")
+            let write = Task { await harness.write(take, item: 0, to: target) }
+            // A duplicate, so the harness's teardown still closes the one it holds.
+            harness.service.acceptDataConnection(fd: dup(try await harness.parked.next()))
+            #expect(await write.value == .landed)
+        }
+
+        #expect(FileManager.default.fileExists(atPath: staged.path))
+        harness.service.acceptDataConnection(fd: dup(firstPull))
+        #expect(await firstWrite.value == .landed)
+        #expect(
+            try String(contentsOf: destination.appendingPathComponent("a.txt"), encoding: .utf8)
+                == "a")
+    }
+
+    @Test("the channel ending leaves a drag's staging to the write in flight, whose end frees it")
+    func channelEndLeavesStagingToTheWriteInFlight() async throws {
+        let harness = try Harness(parksPulls: true)
+        defer { harness.tearDown() }
+        let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
+        take.hostSessionEnded(dropped: true)
+        let destination = try makeDestination().appendingPathComponent("a.txt")
+        let write = Task { await harness.write(take, item: 0, to: destination) }
+        _ = try await harness.parked.next()
+        // Stands in for what the drag's pull has staged so far.
+        let staged = try harness.service.dragStagingForTesting.reserveScratchDirectory(
+            generation: take.generation)
+
+        harness.guestChannel.close()
+        try await waitForChange { !harness.service.isConnected }
+
+        #expect(FileManager.default.fileExists(atPath: staged.path))
+        #expect(await write.value != .landed)
+        #expect(!FileManager.default.fileExists(atPath: staged.path))
+    }
+
     @Test("each item lands at exactly the URL asked for — a file, and a folder as its tree")
     func itemsLandAtTheDestination() async throws {
         let harness = try Harness()

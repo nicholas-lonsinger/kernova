@@ -75,7 +75,9 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     private let runOffMainActor: (@escaping @Sendable () -> Void) -> Void
 
     /// Where the guest's dragged items land before each is moved to where it was
-    /// dropped; swept when the service settles.
+    /// dropped. Each drag's folder is discarded when its take finishes, and by
+    /// nothing else: concurrent takes and a landing still running past the
+    /// channel's end each read their own.
     private let dragStaging: ClipboardFileStaging
 
     /// Every take still running on this connection, by drag generation.
@@ -110,6 +112,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
 
     #if DEBUG
     var lifecycleTasksForTesting: [Task<Void, Never>] { endpoint.lifecycleTasksForTesting }
+    var dragStagingForTesting: ClipboardFileStaging { dragStaging }
     #endif
 
     // MARK: - Init
@@ -136,7 +139,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         self.progressIdleGap = progressIdleGap
         self.clock = clock
         let staging = ClipboardFileStaging(
-            label: "host-drag-\(stagingKey)", root: stagingRoot,
+            label: "host-drag-\(stagingKey)", root: stagingRoot, receivingOn: .drop, as: .host,
             freeSpaceProvider: freeSpaceProvider)
         self.dragStaging = staging
         self.endpoint = ClipboardEndpoint(
@@ -197,7 +200,6 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         guestDrag = nil
         for take in Array(takes.values) { take.channelEnded() }
         takes.removeAll()
-        dragStaging.sweep()
         guard wasConnected else { return }
         Self.logger.log(
             .notice,
@@ -355,7 +357,10 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
             drag: drag, endpoint: endpoint, display: display, reporter: reporter, peerName: label,
             progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
             clock: clock, holds: holds,
-            onRetired: { [weak self] take in self?.takes[take.generation] = nil })
+            onFinished: { [weak self, dragStaging] take in
+                self?.takes[take.generation] = nil
+                dragStaging.discardGeneration(take.generation)
+            })
         takes[generation] = take
         take.begin()
         return take

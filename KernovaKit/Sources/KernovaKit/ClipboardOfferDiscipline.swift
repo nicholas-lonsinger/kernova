@@ -70,6 +70,12 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
     let cachesMaterialized: Bool
     /// The offers this side holds go with the session that brought them.
     let retiresOnSessionEnd: Bool
+    /// How long the staging this side's pulls fill lives.
+    ///
+    /// A clipboard offer replaces the last and a drop's jobs pull one at a
+    /// time, so the newest few generations cover every live reader; drags out
+    /// pull concurrently, so each keeps its folder until its take discards it.
+    let stagingRetention: ClipboardFileStaging.Retention
 
     /// The discipline of the offers `sender` makes on `kind`'s channel.
     init(kind: ClipboardControlSession.Kind, sender: ClipboardControlSession.Role) {
@@ -80,22 +86,31 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
                 servingGesture: .peerPaste, hasClaimDeadline: false, reportsSettle: false,
                 failsOnSessionEnd: false, cancelRetiresOffer: false, ownerWithdraws: false,
                 servesInline: true, namesEveryUnit: false, cachesMaterialized: true,
-                retiresOnSessionEnd: false)
+                retiresOnSessionEnd: false,
+                stagingRetention: .newest(ClipboardFileStaging.maxGenerations))
         case (.drop, .host):
             self.init(
                 flow: .drop, supersedes: false, dedups: false, readout: .upFront,
                 servingGesture: .drop, hasClaimDeadline: true, reportsSettle: true,
                 failsOnSessionEnd: true, cancelRetiresOffer: true, ownerWithdraws: false,
                 servesInline: false, namesEveryUnit: true, cachesMaterialized: false,
-                retiresOnSessionEnd: true)
+                retiresOnSessionEnd: true,
+                stagingRetention: .newest(ClipboardFileStaging.maxGenerations))
         case (.drop, .guest):
             self.init(
                 flow: .dragOut, supersedes: false, dedups: false,
                 readout: .perEntryOnFirstRequest, servingGesture: .dragOut,
                 hasClaimDeadline: false, reportsSettle: false, failsOnSessionEnd: false,
                 cancelRetiresOffer: true, ownerWithdraws: true, servesInline: false,
-                namesEveryUnit: true, cachesMaterialized: false, retiresOnSessionEnd: true)
+                namesEveryUnit: true, cachesMaterialized: false, retiresOnSessionEnd: true,
+                stagingRetention: .untilDiscarded)
         }
+    }
+
+    /// The discipline of the offers `receiver` takes from its peer on `kind`'s
+    /// channel.
+    init(kind: ClipboardControlSession.Kind, receiver: ClipboardControlSession.Role) {
+        self.init(kind: kind, sender: receiver == .host ? .guest : .host)
     }
 
     private init(
@@ -103,7 +118,7 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         servingGesture: ClipboardTransferGesture, hasClaimDeadline: Bool, reportsSettle: Bool,
         failsOnSessionEnd: Bool, cancelRetiresOffer: Bool, ownerWithdraws: Bool,
         servesInline: Bool, namesEveryUnit: Bool, cachesMaterialized: Bool,
-        retiresOnSessionEnd: Bool
+        retiresOnSessionEnd: Bool, stagingRetention: ClipboardFileStaging.Retention
     ) {
         self.flow = flow
         self.supersedes = supersedes
@@ -119,6 +134,7 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         self.namesEveryUnit = namesEveryUnit
         self.cachesMaterialized = cachesMaterialized
         self.retiresOnSessionEnd = retiresOnSessionEnd
+        self.stagingRetention = stagingRetention
     }
 
     // MARK: - Vocabulary

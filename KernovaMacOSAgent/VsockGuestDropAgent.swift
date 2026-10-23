@@ -140,7 +140,8 @@ final class VsockGuestDropAgent: Sendable {
         self.revealInFinder = revealInFinder
         self.dragOutSystem = dragOutSystem
         self.staging = ClipboardFileStaging(
-            label: "agent-drop", root: stagingRoot, freeSpaceProvider: freeSpaceProvider)
+            label: "agent-drop", root: stagingRoot, receivingOn: .drop, as: .guest,
+            freeSpaceProvider: freeSpaceProvider)
         // Default-paused: nothing dials until the host's `Hello` says it has a
         // drop listener.
         client.pause()

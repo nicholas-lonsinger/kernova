@@ -146,8 +146,7 @@ public final class ClipboardControlSession {
         self.dataSocketTimeout = dataSocketTimeout
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
         self.outboundDiscipline = ClipboardOfferDiscipline(kind: kind, sender: role)
-        self.inboundDiscipline = ClipboardOfferDiscipline(
-            kind: kind, sender: role == .host ? .guest : .host)
+        self.inboundDiscipline = ClipboardOfferDiscipline(kind: kind, receiver: role)
         // A guest cannot be connected to: a session that expects to accept data
         // connections in that role would leave every transfer waiting for one
         // that can never arrive.

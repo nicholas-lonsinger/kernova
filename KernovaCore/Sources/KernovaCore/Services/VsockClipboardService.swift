@@ -190,7 +190,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         let staging = ClipboardFileStaging(
-            label: "host-\(stagingKey)", root: stagingRoot,
+            label: "host-\(stagingKey)", root: stagingRoot, receivingOn: .clipboard, as: .host,
             freeSpaceProvider: freeSpaceProvider)
         self.staging = staging
         self.dropStaging = ClipboardFileStaging(

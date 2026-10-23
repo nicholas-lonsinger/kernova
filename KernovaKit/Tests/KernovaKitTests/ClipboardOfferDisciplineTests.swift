@@ -48,4 +48,16 @@ struct ClipboardOfferDisciplineTests {
         #expect(clipboard.supersedes && !drop.supersedes && !drag.supersedes)
         #expect(drag.ownerWithdraws && !drop.ownerWithdraws && !clipboard.ownerWithdraws)
     }
+
+    @Test("only a drag out's staging outlives the newest-generations window, until its take discards it")
+    func stagingRetention() {
+        let newest = ClipboardFileStaging.Retention.newest(ClipboardFileStaging.maxGenerations)
+
+        #expect(ClipboardOfferDiscipline(kind: .clipboard, receiver: .host).stagingRetention == newest)
+        #expect(ClipboardOfferDiscipline(kind: .clipboard, receiver: .guest).stagingRetention == newest)
+        #expect(ClipboardOfferDiscipline(kind: .drop, receiver: .guest).stagingRetention == newest)
+        #expect(
+            ClipboardOfferDiscipline(kind: .drop, receiver: .host).stagingRetention
+                == .untilDiscarded)
+    }
 }
