@@ -202,6 +202,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     nonisolated private let endpoint: ClipboardEndpoint
     nonisolated private let writer: GuestDragItemWriter
     @ObservationIgnored private weak var display: (any GuestDragDisplay)?
+    private let reporter: ClipboardTransferReporter
     private let peerName: String
     private let clock: any EngineClock
     private let holds: @MainActor () -> Bool
@@ -269,6 +270,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             peerName: peerName, progressRevealDelay: progressRevealDelay,
             progressIdleGap: progressIdleGap)
         self.display = display
+        self.reporter = reporter
         self.peerName = peerName
         self.clock = clock
         self.holds = holds
@@ -278,7 +280,13 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
 
     /// Asks the guest to hand the drag over, and starts the hand-off's bounds:
     /// its deadline, and the condition it holds under.
+    ///
+    /// Announced to the reporter as a gesture of its own: a write can fail
+    /// before its readout publishes anything, and its refusal would otherwise
+    /// collapse into the identical one the last take left standing
+    /// (`ClipboardTransferReporter.gestureBegan`).
     func begin() {
+        reporter.gestureBegan()
         endpoint.sendDragTake(generation: generation)
         startDeadline()
         holdsWatch = observeRecurring(

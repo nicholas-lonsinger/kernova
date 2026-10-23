@@ -109,6 +109,30 @@ struct ClipboardProgressFormatTests {
         #expect(withSpeed.contains("(") == true)
     }
 
+    @Test("a total still awaiting its size is never named, only what has moved")
+    func byteProgressAwaitingSize() {
+        #expect(
+            ClipboardProgressFormat.byteProgress(
+                bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil, awaitsSize: true)
+                == "Waiting for the total size")
+        let partial = ClipboardProgressFormat.byteProgress(
+            bytesTransferred: 47_600_000, totalBytes: 47_600_000, bytesPerSecond: 7_800_000,
+            awaitsSize: true)
+        #expect(partial.hasSuffix(" so far — waiting for the total size"))
+        #expect(!partial.contains(" of "))
+    }
+
+    @Test("the summary says the total is not known in place of a percentage")
+    func summaryAwaitingSize() {
+        let snapshot = ClipboardProgressSnapshot(
+            direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
+            fileCount: 1, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
+            secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 1, awaitsSize: true)
+        #expect(
+            ClipboardProgressFormat.summary(snapshot)
+                == "Receiving from “VM”… — waiting for the total size")
+    }
+
     @Test("the summary leads with the headline and carries the counter for a multi-file paste")
     func summaryMultipleItems() {
         let snapshot = Self.snapshot(

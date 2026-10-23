@@ -115,6 +115,65 @@ struct ClipboardTransferOperationTests {
         #expect(recorder.finish?.failure == .timedOut)
     }
 
+    // MARK: - Size wait
+
+    @Test("a transfer held on its size reveals the readout at the reveal delay, its total unknown")
+    func sizeWaitRevealsWithNoEvent() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .dragOut)
+
+        operation.sizeWaitBegan()
+        await settle()
+        #expect(recorder.reports.isEmpty)
+
+        // Nothing else happens until the size arrives: the reveal is the
+        // operation's own.
+        let reveal = try #require(clock.parked.first)
+        #expect(reveal.seconds == Self.revealDelay)
+        clock.advance(seconds: Self.revealDelay)
+        clock.release(reveal)
+        await clock.completion(of: reveal)
+        await settle()
+        let waiting = try #require(recorder.runningSnapshot)
+        #expect(waiting.awaitsSize)
+        #expect(waiting.bytesTransferred == 0)
+        #expect(waiting.secondsRemaining == nil)
+        #expect(waiting.fractionComplete == 0)
+
+        // The size arriving is news the throttle would not otherwise admit:
+        // no byte has moved since the reveal.
+        operation.sizeWaitEnded()
+        operation.unitBegan(id: 0, expectedBytes: 4_096)
+        await settle()
+        let sized = try #require(recorder.runningSnapshot)
+        #expect(!sized.awaitsSize)
+        #expect(sized.totalBytes == 4_096)
+    }
+
+    @Test("a transfer held on its size keeps the idle terminal from completing the operation")
+    func sizeWaitHoldsOffTheIdleTerminal() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let operation = makeOperation(
+            recorder: recorder, clock: clock, gesture: .dragOut, expectedItems: 2)
+        clock.advance(seconds: Self.revealDelay)
+        operation.unitBegan(id: 0, expectedBytes: 100)
+        operation.unitEnded(id: 0, succeeded: true)
+        operation.finishWhenIdle()
+        let gap = try #require(clock.parked.first)
+
+        // The next item is a folder whose size has not arrived.
+        operation.sizeWaitBegan()
+        try await clock.parkedChanged.wait { !clock.parked.contains(gap) }
+        operation.finishWhenIdle()
+        await settle()
+
+        #expect(clock.parked.isEmpty)
+        #expect(operation.isLive)
+        #expect(recorder.runningSnapshot?.awaitsSize == true)
+    }
+
     // MARK: - Aggregation
 
     @Test("concurrent and sequential transfers fill one bar between them")

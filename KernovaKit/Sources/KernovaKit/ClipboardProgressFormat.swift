@@ -61,12 +61,19 @@ public enum ClipboardProgressFormat {
     /// parentheses ("47.6 MB of 3.03 GB (7.8 MB/s)") — Safari's download-list
     /// phrasing.
     ///
-    /// Drops the parenthetical before a speed estimate exists.
+    /// Drops the parenthetical before a speed estimate exists. While
+    /// `awaitsSize` the total is not yet known, so the line says that instead
+    /// of naming one.
     public static func byteProgress(
-        bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?
+        bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?,
+        awaitsSize: Bool = false
     ) -> String {
         let transferred = ByteCountFormatter.string(
             fromByteCount: Int64(clamping: bytesTransferred), countStyle: .file)
+        if awaitsSize {
+            guard bytesTransferred > 0 else { return awaitingSize }
+            return "\(transferred) so far — \(awaitingSize.lowercased())"
+        }
         let total = ByteCountFormatter.string(
             fromByteCount: Int64(clamping: totalBytes), countStyle: .file)
         var line = "\(transferred) of \(total)"
@@ -75,6 +82,9 @@ public enum ClipboardProgressFormat {
         }
         return line
     }
+
+    /// What the readout says in place of a total it does not know yet.
+    static let awaitingSize = "Waiting for the total size"
 
     /// Time remaining in Safari's download phrasing ("6 minutes, 27 seconds
     /// remaining"), or `nil` when it can't be estimated.
@@ -114,7 +124,9 @@ public enum ClipboardProgressFormat {
                 direction: snapshot.direction, peerName: snapshot.peerName,
                 gesture: snapshot.gesture)
         ]
-        parts.append(percent(fraction: snapshot.fractionComplete))
+        parts.append(
+            snapshot.awaitsSize
+                ? awaitingSize.lowercased() : percent(fraction: snapshot.fractionComplete))
         if let counter = itemCounter(
             completed: snapshot.filesCompleted, total: snapshot.fileCount)
         {

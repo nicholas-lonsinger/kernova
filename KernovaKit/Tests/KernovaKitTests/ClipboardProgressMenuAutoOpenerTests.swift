@@ -42,6 +42,32 @@ struct ClipboardProgressMenuAutoOpenerTests {
         #expect(opener.readoutChanged(nil, menuIsOpen: true, canOpen: true) == .close)
     }
 
+    @Test("the dropdown it closes reads as closing until it has closed")
+    func closingLastsUntilTheClose() {
+        var opener = ClipboardProgressMenuAutoOpener()
+        _ = opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true)
+        opener.menuOpened(automatically: true)
+        #expect(!opener.isClosingDropdown)
+
+        // A refusal raised as the readout clears never shows in this dropdown,
+        // so whoever owes the user that refusal waits for the close.
+        #expect(opener.readoutChanged(nil, menuIsOpen: true, canOpen: true) == .close)
+        #expect(opener.isClosingDropdown)
+
+        opener.menuClosed()
+        #expect(!opener.isClosingDropdown)
+    }
+
+    @Test("a dropdown the user opened is never read as closing")
+    func aUserOpenedDropdownIsNotClosing() {
+        var opener = ClipboardProgressMenuAutoOpener()
+        _ = opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true)
+        opener.menuOpened(automatically: false)
+
+        _ = opener.readoutChanged(nil, menuIsOpen: true, canOpen: true)
+        #expect(!opener.isClosingDropdown)
+    }
+
     @Test("a dropdown the user opened is left alone when the paste ends")
     func leavesAUserOpenedDropdownAlone() {
         var opener = ClipboardProgressMenuAutoOpener()
@@ -185,6 +211,17 @@ struct ClipboardProgressMenuAutoOpenerTests {
             opener.readoutChanged(
                 Self.readout(secondsRemaining: nil, bytesTransferred: 0, totalBytes: 0),
                 menuIsOpen: false, canOpen: true) == .open)
+    }
+
+    @Test("a drag whose total waits on a folder's size opens on the elapsed floor alone")
+    func awaitedSizeOpens() {
+        var opener = ClipboardProgressMenuAutoOpener()
+        // An item already in makes the partial total look complete.
+        let waiting = ClipboardProgressSnapshot(
+            direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 1,
+            fileCount: 2, bytesTransferred: 1_000, totalBytes: 1_000, bytesPerSecond: nil,
+            secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 5, awaitsSize: true)
+        #expect(opener.readoutChanged(waiting, menuIsOpen: false, canOpen: true) == .open)
     }
 
     @Test("the shipped thresholds hold a short paste back and let a longer one through")

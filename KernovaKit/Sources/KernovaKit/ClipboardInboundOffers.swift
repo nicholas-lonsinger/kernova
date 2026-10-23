@@ -671,7 +671,9 @@ public final class ClipboardInboundOffers {
             #if DEBUG
             sizeWaitBeganForTesting.withLock { $0 }?()
             #endif
+            operation.sizeWaitBegan()
             await latch.opened()
+            operation.sizeWaitEnded()
         }
         let plan: PullPlan
         switch resolve(generation: generation, repIndex: repIndex, servesFileURL: false) {
@@ -720,7 +722,8 @@ public final class ClipboardInboundOffers {
     /// is served (`LazyPullCoordinator`).
     ///
     /// A drag's folder whose size has not arrived is held the same way until
-    /// the size arrives or the drag ends, then pulled.
+    /// the size arrives or the drag ends, then pulled; `operation` reads the
+    /// hold as a transfer whose total is not yet known.
     nonisolated public func pull(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) -> LazyPullOutcome {
@@ -728,7 +731,10 @@ public final class ClipboardInboundOffers {
             #if DEBUG
             sizeWaitBeganForTesting.withLock { $0 }?()
             #endif
-            if let refused = coordinator.hold(until: latch) { return refused }
+            operation.sizeWaitBegan()
+            let refused = coordinator.hold(until: latch)
+            operation.sizeWaitEnded()
+            if let refused { return refused }
         }
         let plan: PullPlan
         switch MainActorBridge.sync({

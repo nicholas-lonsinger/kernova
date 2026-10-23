@@ -219,11 +219,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Presents each VM's newly raised refusal, if the status item can carry a
     /// popover right now.
     ///
-    /// A notice that can't be shown is dropped rather than deferred: the
-    /// dropdown's own line is the fallback, and a refusal replayed later would
-    /// interrupt for something the user has moved past. A refusal the *guest*
-    /// user's gesture produced is not presented here at all — the guest's own
-    /// dropdown reveals it over there.
+    /// A dropdown on screen carries the refusal's line instead — except the
+    /// one the readout opened, closing as the readout ends, which takes the
+    /// line with it; the notice waits for that close. Otherwise a notice that
+    /// can't be shown is dropped rather than deferred: the dropdown's own line
+    /// is the fallback, and a refusal replayed later would interrupt for
+    /// something the user has moved past. A refusal the *guest* user's gesture
+    /// produced is not presented here at all — the guest's own dropdown
+    /// reveals it over there.
     private func presentPendingNotices() {
         for instance in viewModel.instances {
             guard case .finished(let finish) = instance.clipboardTransferReport,
@@ -232,6 +235,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 let wording = ClipboardTransferWording.wording(
                     for: finish, vmName: instance.name)
             else { continue }
+            if isMenuOpen, transferProgressPresenter.isClosingDropdown { continue }
             lastPresentedNoticeDates[instance.instanceID] = finish.date
             let instanceID = instance.instanceID
             let content = ClipboardNoticeViewController(wording: wording) { [weak self] in
@@ -374,6 +378,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
         transferProgressPresenter.menuDidClose()
+        performOnMainRunLoop { [weak self] in self?.presentPendingNotices() }
     }
 
     /// Re-syncs the dropdown's VM rows and held-alert lines if it is on screen;

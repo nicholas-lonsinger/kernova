@@ -126,8 +126,11 @@ struct VsockDropServiceDragOutTests {
         private let hostStagingRoot = TestStagingRoot()
         private let guestStaging: ClipboardFileStaging
 
-        /// `progressIdleGap` is the host readout's idle gap.
-        init(parksPulls: Bool = false, progressIdleGap: TimeInterval = 0) throws {
+        /// `progressRevealDelay` and `progressIdleGap` are the host readout's.
+        init(
+            parksPulls: Bool = false, progressRevealDelay: TimeInterval = 0,
+            progressIdleGap: TimeInterval = 0
+        ) throws {
             let (hostFd, guestFd) = try makeRawSocketPair()
             hostChannel = VsockChannel(fileDescriptor: hostFd)
             guestChannel = VsockChannel(fileDescriptor: guestFd)
@@ -136,7 +139,8 @@ struct VsockDropServiceDragOutTests {
             let service = VsockDropService(
                 channel: hostChannel, label: "Drag VM", reporter: reports.reporter,
                 stagingRoot: hostStagingRoot.root, stagingKey: "drag-vm",
-                progressRevealDelay: 0, progressIdleGap: progressIdleGap, clock: clock)
+                progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
+                clock: clock)
             self.service = service
             guestStaging = ClipboardFileStaging(label: "guest", root: TestStagingRoot().root)
             let parked = self.parked
@@ -193,17 +197,23 @@ struct VsockDropServiceDragOutTests {
         }
 
         /// Offers `urls` and takes the drag, waiting for the guest to hear
-        /// `DragTake`, then sends its folders' sizes as the agent does.
-        func offerAndTake(_ urls: [URL]) async throws -> GuestDragTake {
+        /// `DragTake`, then — unless `sendingSizes` is false — sends its
+        /// folders' sizes as the agent does.
+        func offerAndTake(_ urls: [URL], sendingSizes: Bool = true) async throws -> GuestDragTake {
             let take = try take(try await offer(urls))
             try await guestRecorder.wait { self.guestRecorder.takes.contains(take.generation) }
-            let folders = guest.outboundContent(generation: take.generation)?.directorySources ?? [:]
-            if !folders.isEmpty {
-                guest.sendDragSizes(
-                    generation: take.generation,
-                    folderByteCounts: folders.mapValues { ClipboardArchive.estimatedByteCount(at: $0) })
-            }
+            if sendingSizes { sendSizes(of: take) }
             return take
+        }
+
+        /// Sends the sizes of `take`'s folders, as the agent does once it has
+        /// measured them.
+        func sendSizes(of take: GuestDragTake) {
+            let folders = guest.outboundContent(generation: take.generation)?.directorySources ?? [:]
+            guard !folders.isEmpty else { return }
+            guest.sendDragSizes(
+                generation: take.generation,
+                folderByteCounts: folders.mapValues { ClipboardArchive.estimatedByteCount(at: $0) })
         }
 
         /// Reports one hand-off step from the guest and waits for the take to
@@ -218,16 +228,16 @@ struct VsockDropServiceDragOutTests {
 
         /// Takes a drag over and drives it to its catcher's target: armed, then
         /// targeted.
-        func readyTake(_ urls: [URL]) async throws -> GuestDragTake {
-            let take = try await offerAndTake(urls)
+        func readyTake(_ urls: [URL], sendingSizes: Bool = true) async throws -> GuestDragTake {
+            let take = try await offerAndTake(urls, sendingSizes: sendingSizes)
             try await handOff(.armed, for: take, reaching: .handingOff(armed: true))
             try await handOff(.targeted, for: take, reaching: .ready)
             return take
         }
 
         /// A ready take whose next withheld drag began the Mac session.
-        func carriedTake(_ urls: [URL]) async throws -> GuestDragTake {
-            let take = try await readyTake(urls)
+        func carriedTake(_ urls: [URL], sendingSizes: Bool = true) async throws -> GuestDragTake {
+            let take = try await readyTake(urls, sendingSizes: sendingSizes)
             take.withheldDrag()
             #expect(take.phase == .carried(.outside(targeted: true)))
             return take
@@ -1147,6 +1157,67 @@ struct VsockDropServiceDragOutTests {
         #expect(
             ClipboardTransferWording.wording(for: finish, vmName: "Guest")?.message
                 == "The VM couldn't read \u{201C}Mail.db\u{201D} (permission denied), so the drag didn't finish.")
+    }
+
+    /// The live case: the same unreadable folder dragged again, its pull asked
+    /// for as the drop lands and failing before a byte, inside the readout's
+    /// reveal gate.
+    @Test("a take's failure that repeats the last take's, before its readout reveals, is reported again")
+    func repeatedFailureBeforeTheRevealIsReportedAgain() async throws {
+        // A reveal no test outlasts: neither readout publishes a bar.
+        let harness = try Harness(progressRevealDelay: 3600)
+        defer { harness.tearDown() }
+        let folder = try makeFolder(named: "Home", files: ["a.txt": "alpha"])
+        let locked = folder.appendingPathComponent("Mail.db")
+        try Data("mail".utf8).write(to: locked)
+        let sealed = try WithheldPermissions(locked)
+        defer { withExtendedLifetime(sealed) {} }
+        let failure = ClipboardTransferFailure.sourceUnreadable(
+            ClipboardSourceReadFailure(itemPath: "Home/Mail.db", reason: .posix(EACCES)))
+
+        let first = try await harness.releasedTake([folder])
+        let firstTarget = try makeDestination().appendingPathComponent("Home")
+        #expect(await harness.write(first, item: 0, to: firstTarget) == .failed(failure))
+        try await harness.reports.wait { harness.reports.refusals.count == 1 }
+
+        let second = try await harness.carriedTake([folder])
+        let secondTarget = try makeDestination().appendingPathComponent("Home")
+        let write = Task { await harness.write(second, item: 0, to: secondTarget) }
+        second.hostSessionEnded(dropped: true)
+        harness.guest.sendDragHandOff(generation: second.generation, step: .caught)
+        #expect(await write.value == .failed(failure))
+        try await harness.waitForComplete(second.generation)
+
+        // One notice per take: each refusal stood on its own, once.
+        try await harness.reports.wait { harness.reports.refusals.count == 2 }
+        #expect(harness.reports.refusals.allSatisfy { $0.gesture == .dragOut && $0.failure == failure })
+    }
+
+    @Test("a write held on its folder's size shows the readout, its total not yet known")
+    func sizeWaitShowsTheReadout() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let folder = try makeFolder(named: "Docs", files: ["a.txt": "alpha"])
+        let take = try await harness.carriedTake([folder], sendingSizes: false)
+        take.hostSessionEnded(dropped: true)
+
+        let target = try makeDestination().appendingPathComponent("Docs")
+        let write = Task { await harness.write(take, item: 0, to: target) }
+        try await harness.reports.wait { harness.reports.runningSnapshot?.awaitsSize == true }
+        let waiting = try #require(harness.reports.runningSnapshot)
+        #expect(waiting.gesture == .dragOut)
+        #expect(waiting.bytesTransferred == 0)
+        #expect(waiting.fractionComplete == 0)
+
+        harness.sendSizes(of: take)
+        #expect(await write.value == .landed)
+        #expect(FileManager.default.fileExists(atPath: target.appendingPathComponent("a.txt").path))
+        // The size's arrival reached the readout as a total.
+        #expect(
+            harness.reports.reports.contains { report in
+                guard case .running(let snapshot, _) = report else { return false }
+                return !snapshot.awaitsSize && snapshot.totalBytes > 0
+            })
     }
 
     @Test("the readout's Cancel fails the write in flight as cancelled and completes the drag")
