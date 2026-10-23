@@ -66,6 +66,8 @@ final class FakeTake: GuestDragTaking {
     var onWithheldMouseUp: () -> Void = {}
     /// Runs when a withheld drag comes back inside the display.
     var onPointerReturned: () -> Void = {}
+    /// Runs when the Mac session ends.
+    var onHostSessionEnded: () -> Void = {}
     /// Whether the take carries the Mac session over a display, so a drop
     /// there goes to the guest.
     var carriesOverDisplay = false
@@ -122,7 +124,10 @@ final class FakeTake: GuestDragTaking {
         return carriesOverDisplay
     }
 
-    func hostSessionEnded(dropped: Bool) { events.append(.hostSessionEnded(dropped: dropped)) }
+    func hostSessionEnded(dropped: Bool) {
+        events.append(.hostSessionEnded(dropped: dropped))
+        onHostSessionEnded()
+    }
 
     nonisolated func writeItem(at index: Int, to destination: URL) throws {
         writes.withLock { $0.append((index, destination)) }

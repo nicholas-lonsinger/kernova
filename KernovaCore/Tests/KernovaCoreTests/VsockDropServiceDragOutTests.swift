@@ -694,10 +694,13 @@ struct VsockDropServiceDragOutTests {
         defer { harness.tearDown() }
         let take = try await harness.insideTake(
             [try makeFile(named: "a.txt", contents: "a")], at: CGPoint(x: 10, y: 20))
+        var changes: [Bool] = []
+        take.sessionOverDisplayChanged = { changes.append($0) }
 
         #expect(take.hostSessionDropped(on: harness.display, at: CGPoint(x: 30, y: 40)))
 
         #expect(take.phase == .released(at: .dropPoint))
+        #expect(changes == [false])
         #expect(Array(harness.display.calls.suffix(2)) == [.drag(CGPoint(x: 30, y: 40)), .release])
         take.hostSessionEnded(dropped: true)
         // No destination asks for the items, and the catcher is down.
@@ -837,12 +840,16 @@ struct VsockDropServiceDragOutTests {
         let take = try await harness.insideTake(
             [try makeFile(named: "a.txt", contents: "a")], at: CGPoint(x: 10, y: 20))
         let calls = harness.display.calls.count
+        var changes: [Bool] = []
+        take.sessionOverDisplayChanged = { changes.append($0) }
 
         harness.running.isRunning = false
 
         try await waitForChange { take.phase == .unreleased }
+        #expect(changes == [false])
         take.hostSessionLeft(harness.display)
         take.hostSessionEnded(dropped: false)
+        #expect(changes == [false])
         #expect(harness.display.calls.count == calls)
         try await harness.waitForComplete(take.generation)
     }

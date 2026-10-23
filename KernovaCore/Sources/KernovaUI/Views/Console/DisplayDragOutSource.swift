@@ -115,8 +115,14 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
     func draggingSession(
         _ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation
     ) {
+        sessionEnded(dropped: !operation.isEmpty)
+    }
+
+    /// The session ended, `dropped` if a destination took it: its images stop
+    /// following the take before the take hears the end.
+    func sessionEnded(dropped: Bool) {
         take.sessionOverDisplayChanged = nil
-        take.hostSessionEnded(dropped: !operation.isEmpty)
+        take.hostSessionEnded(dropped: dropped)
     }
 
     // MARK: - NSFilePromiseProviderDelegate

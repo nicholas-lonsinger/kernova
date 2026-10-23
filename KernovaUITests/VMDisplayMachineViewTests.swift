@@ -508,6 +508,38 @@ struct DisplayDragOutSourceTests {
         }
     }
 
+    @Test(
+        "following the images applies the take's state at once, over its display or off it",
+        arguments: [true, false])
+    func followingAppliesTheStateAtOnce(over: Bool) throws {
+        let (source, take) = makeSource()
+        let session = FakeImageSession(items: source.draggingItems(centeredAt: .zero))
+        let original = session.drawn
+        take.sessionOverDisplay = over
+
+        source.followImages(of: session)
+
+        #expect(session.drawn == (over ? original.map { _ in [] } : original))
+    }
+
+    @Test("the session ending stops its images following the take before the take hears the end")
+    func endingClearsTheHookFirst() throws {
+        let (source, take) = makeSource()
+        let session = FakeImageSession(items: source.draggingItems(centeredAt: .zero))
+        source.followImages(of: session)
+        take.sessionOverDisplay = true
+        take.onHostSessionEnded = { take.sessionOverDisplay = false }
+
+        source.sessionEnded(dropped: false)
+
+        #expect(take.events.last == .hostSessionEnded(dropped: false))
+        #expect(take.sessionOverDisplayChanged == nil)
+        #expect(session.drawn.allSatisfy { $0.isEmpty })
+        take.sessionOverDisplay = true
+        take.sessionOverDisplay = false
+        #expect(session.drawn.allSatisfy { $0.isEmpty })
+    }
+
     @Test("writes run one at a time, off the main queue")
     func writesRunSerially() throws {
         let (source, _) = makeSource()
