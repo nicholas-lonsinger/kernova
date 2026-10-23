@@ -1150,7 +1150,7 @@ struct ConfigurationBuilderTests {
 
             // Recovery, through the session's view, attaches the same network
             // without creating another.
-            let device = MockNetworkDeviceControl()
+            let device = MockNetworkDeviceControl(vmnetNetworks: result.products.vmnetNetworks)
             let coordinator = NetworkAttachmentCoordinator(
                 vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
                 linkObserver: MockNetworkLinkObserver(), vmnetNetworks: result.products.vmnetNetworks,

@@ -233,7 +233,7 @@ struct VMScriptingGatewayTests {
     func propertiesAnswerFromTheRead() async throws {
         let wired = WiredCommandCore()
         let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
-        wired.vmnet.materialize(.common(.nat), on: "192.168.64.0")
+        wired.vmnet.join(.common(.nat), on: "192.168.64.0")
         let baseline = VMSnapshot(name: "Baseline", createdAt: Date(timeIntervalSince1970: 1), macAddress: nil)
         let later = VMSnapshot(name: "Later", createdAt: Date(timeIntervalSince1970: 2), macAddress: nil)
         let alpha = wired.register(

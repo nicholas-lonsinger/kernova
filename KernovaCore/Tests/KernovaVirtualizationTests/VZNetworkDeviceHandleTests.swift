@@ -27,7 +27,7 @@ struct VZNetworkDeviceHandleTests {
         let sessionNetworks = vmnet.service.sessionNetworks(ownedBy: owner)
         let attachments = MockVmnetAttachments()
         // Up before any apply, so one onto it attaches straight away.
-        vmnet.materialize(.common(.hostOnly), through: sessionNetworks)
+        vmnet.join(.common(.hostOnly), through: sessionNetworks)
         return Harness(
             handle: VZNetworkDeviceHandle(
                 session: install, initialPlan: initialPlan, vmnetNetworks: sessionNetworks,
@@ -71,12 +71,12 @@ struct VZNetworkDeviceHandleTests {
     func aQueuedBuildHoldsItsNetwork() throws {
         let harness = makeHarness()
         let operations = harness.vmnet.operations
-        harness.vmnet.materialize(.own(.nat), through: harness.sessionNetworks)
+        harness.vmnet.join(.own(.nat), through: harness.sessionNetworks)
         let ownNAT = try #require(harness.sessionNetworks.joinedNetworkIfMaterialized(for: .own(.nat))?.network)
         #expect(harness.handle.apply(.vmnet(.own(.nat))))
 
         // The own NAT network loses its only member.
-        harness.vmnet.materialize(.own(.hostOnly), through: harness.sessionNetworks)
+        harness.vmnet.join(.own(.hostOnly), through: harness.sessionNetworks)
         #expect(operations.releasedNetworks.isEmpty)
 
         var attachment = autoreleasepool { harness.install.runBuild(ofApplyAt: 0) }
@@ -93,7 +93,7 @@ struct VZNetworkDeviceHandleTests {
         let harness = makeHarness()
         #expect(harness.handle.apply(.vmnet(.common(.hostOnly))))
 
-        harness.vmnet.materialize(.own(.nat), through: harness.sessionNetworks)
+        harness.vmnet.join(.own(.nat), through: harness.sessionNetworks)
         let attachment = autoreleasepool { harness.install.runBuild(ofApplyAt: 0) }
         #expect(attachment != nil)
 

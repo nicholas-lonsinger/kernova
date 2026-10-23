@@ -51,8 +51,10 @@ extension VMConfiguration {
 package protocol NetworkDeviceControlling: AnyObject {
     /// The plan the device's current attachment realizes, `nil` while detached.
     var currentPlan: NetworkAttachmentPlan? { get }
-    /// Realizes `plan` on the device. Returns `false` when the host cannot
-    /// provide it right now — the bridge interface vanished since resolution.
+    /// Realizes `plan` on the device; applying a vmnet plan makes the VM a
+    /// member of that network. Returns `false` when the host cannot provide it
+    /// right now — the bridge interface vanished since resolution, or the
+    /// vmnet network is not materialized.
     func apply(_ plan: NetworkAttachmentPlan) -> Bool
     func detach()
     /// The framework nil'd the live attachment ahead of its disconnect
@@ -310,10 +312,14 @@ package final class NetworkAttachmentCoordinator {
                 guard let coordinator = self, coordinator.isActive, coordinator.isPending else {
                     break
                 }
-                if await vmnetNetworks.materializeNetwork(for: selection) {
+                if let hold = await vmnetNetworks.materializeNetwork(for: selection) {
                     self?.clearMaterializationTask(generation: generation)
-                    if let coordinator = self, coordinator.isActive {
-                        coordinator.reconcile(trigger: "vmnet network materialized")
+                    // The reconcile's apply joins the network; one the choice
+                    // has since left goes with the hold.
+                    withExtendedLifetime(hold) {
+                        if let coordinator = self, coordinator.isActive {
+                            coordinator.reconcile(trigger: "vmnet network materialized")
+                        }
                     }
                     return
                 }

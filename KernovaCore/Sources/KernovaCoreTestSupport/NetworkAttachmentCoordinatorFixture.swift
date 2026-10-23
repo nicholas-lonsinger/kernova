@@ -24,7 +24,7 @@ func attachNetworkCoordinator(
         device: device,
         interfaces: provider,
         linkObserver: linkObserver,
-        vmnetNetworks: VmnetNetworkService.scripted().sessionNetworks(ownedBy: instance.id),
+        vmnetNetworks: device.vmnetNetworks,
         entitlements: entitlements,
         retryDelays: retryDelays,
         vmnetRematerializeDelays: vmnetRematerializeDelays,
