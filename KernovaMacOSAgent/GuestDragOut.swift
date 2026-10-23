@@ -165,8 +165,9 @@ protocol GuestDragInput: AnyObject {
 @MainActor
 protocol GuestDragCatcherSurface: AnyObject {
     /// Orders the surface front over the whole screen under the pointer,
-    /// returning `false` when there is no screen to cover.
-    func show() -> Bool
+    /// its box showing `fileURLs`, returning `false` when there is no screen
+    /// to cover.
+    func show(fileURLs: [URL]) -> Bool
 
     /// Orders the surface out.
     func hide()

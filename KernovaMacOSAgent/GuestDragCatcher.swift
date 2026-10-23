@@ -96,7 +96,7 @@ final class GuestDragCatcher {
         let surface = surface ?? makeSurface(self)
         self.surface = surface
         take = Take(claim: claim)
-        guard surface.show() else {
+        guard surface.show(fileURLs: claim.fileURLs) else {
             finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
             return
         }
@@ -157,7 +157,7 @@ final class GuestDragCatcher {
             return
         }
         guard current.showing == nil, !current.refused, let surface else { return }
-        guard surface.show() else {
+        guard surface.show(fileURLs: current.claim.fileURLs) else {
             finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
             return
         }
@@ -249,13 +249,6 @@ final class GuestDragCatcher {
             "Catcher refused the drag after it was targeted (gen=\(current.claim.generation, privacy: .public)): \(failure.message, privacy: .public)"
         )
         send(.failed(failure.code, message: failure.message), for: current.claim.generation)
-    }
-
-    /// The taken drag's file URLs while the surface is up for it, neither
-    /// refused nor caught — whether or not the drag has entered it.
-    var shownFileURLs: [URL]? {
-        guard let take, take.showing != nil, !take.caught, !take.refused else { return nil }
-        return take.claim.fileURLs
     }
 
     /// The drag left the surface before ending.

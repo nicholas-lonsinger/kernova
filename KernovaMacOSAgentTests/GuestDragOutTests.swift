@@ -941,254 +941,105 @@ struct GuestDragOutTests {
 
     // MARK: - The catcher's window
 
-    /// The live catcher window laid out over `screen`, never ordered front.
+    /// The live catcher window laid out over `screen` for `urls`, never
+    /// ordered front.
     private func catcherWindow(
+        for urls: [URL] = [URL(fileURLWithPath: "/one.txt")],
         over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
-    ) -> (
-        panel: GuestDragCatcherPanel, window: NSPanel, catcher: GuestDragCatcher, icons: FakeGuestDragTypeIcons
-    ) {
+    ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
         let catcher = GuestDragCatcher(peer: FakeGuestDragPeer(), makeSurface: { _ in FakeCatcherSurface() })
         let icons = FakeGuestDragTypeIcons()
         let panel = GuestDragCatcherPanel(catcher: catcher, typeIcon: icons.icon(for:))
+        panel.layOut(fileURLs: urls, over: screen)
         let window = panel.windowForTesting
-        window.setFrame(screen, display: false)
         window.contentView?.layoutSubtreeIfNeeded()
-        return (panel, window, catcher, icons)
+        return (window, icons)
     }
 
-    private func hud(in window: NSPanel) throws -> (box: NSVisualEffectView, label: NSTextField) {
+    private func hud(
+        in window: NSPanel
+    ) throws -> (box: NSVisualEffectView, icon: NSImageView, label: NSTextField, name: NSTextField) {
         let box = try #require(window.contentView?.subviews.compactMap { $0 as? NSVisualEffectView }.first)
-        let label = try #require(box.subviews.compactMap { $0 as? NSTextField }.first)
-        return (box, label)
-    }
-
-    @Test("the catcher shows a Copy to Mac box centered on the screen, its label below the center")
-    func catcherHUDIsCentered() throws {
-        let (_, window, _, _) = catcherWindow()
-        let (box, label) = try hud(in: window)
-        let center = NSPoint(x: 720, y: 450)
-
-        #expect(label.stringValue == "Copy to Mac")
-        #expect(box.material == .hudWindow)
-        #expect(box.state == .active)
-        #expect(abs(box.frame.midX - center.x) < 0.5)
-        #expect(box.frame.contains(center))
-        #expect(box.frame.width >= 208)
-        // The content view is not flipped: below the center is a lower y.
-        let labelFrame = box.convert(label.frame, to: window.contentView)
-        #expect(labelFrame.maxY < center.y)
-    }
-
-    /// The box's icon zone, in the content view's coordinates.
-    private func iconZone(in window: NSPanel) throws -> NSRect {
-        let content = try #require(window.contentView)
-        let (box, _) = try hud(in: window)
-        let zone = try #require(box.layoutGuides.first)
-        return content.convert(zone.frame, from: box)
-    }
-
-    /// Arms `catcher` for a take of `urls` and enters the window's view with
-    /// their drag, the way AppKit does before asking it to update the items.
-    private func enter(
-        _ window: NSPanel, armed catcher: GuestDragCatcher, with urls: [URL]
-    ) throws -> FakeDraggingInfo {
-        catcher.arm(GuestDragWatcher.Claim(generation: 1, press: 1, fileURLs: urls))
-        let drag = FakeDraggingInfo(fileURLs: urls)
-        let content = try #require(window.contentView)
-        #expect(content.draggingEntered(drag) == .copy)
-        return drag
-    }
-
-    /// Expects every item of `drag` drawn as one image centered on `zone`,
-    /// the formation keeping it there: each item on the same frame, its icon
-    /// `image` in the 128-point square at the top, and the first item's name
-    /// pill centered below it.
-    private func expectDrawn(_ drag: FakeDraggingInfo, on zone: NSRect, image: NSImage?) {
-        #expect(drag.draggingFormation == .none)
-        let frames = Set(drag.items.map { NSStringFromRect($0.draggingFrame) })
-        #expect(frames.count == 1)
-        for (index, item) in drag.items.enumerated() {
-            let frame = item.draggingFrame
-            #expect(abs(frame.midX - zone.midX) < 0.5)
-            #expect(abs(frame.midY - zone.midY) < 0.5)
-            #expect(zone.contains(frame))
-            let components = item.imageComponents ?? []
-            #expect(components.map(\.key) == (index == 0 ? [.icon, .label] : [.icon]))
-            let bounds = NSRect(origin: .zero, size: frame.size)
-            for component in components {
-                #expect(bounds.contains(component.frame))
-                #expect(abs(component.frame.midX - bounds.midX) < 0.5)
-            }
-            guard let icon = components.first(where: { $0.key == .icon }) else { continue }
-            #expect(icon.contents as? NSImage === image)
-            #expect(icon.frame.size == NSSize(width: 128, height: 128))
-            #expect(icon.frame.maxY == bounds.maxY)
-            if let label = components.first(where: { $0.key == .label })?.frame {
-                #expect(label.minY == bounds.minY)
-                #expect(label.maxY < icon.frame.minY)
-            }
-        }
-    }
-
-    @Test("the icon zone is centered on the screen, its margins in the box and gap to the label even")
-    func catcherIconZoneIsFixed() throws {
-        let (_, window, _, _) = catcherWindow()
-        let zone = try iconZone(in: window)
-        let (box, label) = try hud(in: window)
-        let labelFrame = box.convert(label.frame, to: window.contentView)
-
-        #expect(zone.midX == 720 && zone.midY == 450)
-        #expect(zone.width >= 128 && zone.height > 128)
-        #expect(box.frame.contains(zone))
-        let top = box.frame.maxY - zone.maxY
-        #expect(zone.minX - box.frame.minX == top)
-        #expect(box.frame.maxX - zone.maxX == top)
-        #expect(zone.minY - labelFrame.maxY == top)
-        #expect(labelFrame.minY - box.frame.minY == top)
+        let icon = try #require(box.subviews.compactMap { $0 as? NSImageView }.first)
+        let labels = box.subviews.compactMap { $0 as? NSTextField }
+        try #require(labels.count == 2)
+        return (box, icon, labels[0], labels[1])
     }
 
     @Test(
-        "entering the catcher draws the items as the first one's type icon over its name, centered on the box",
+        "the catcher's box sits centered below the screen's middle, clear of the drag image there",
         arguments: [
             NSRect(x: 0, y: 0, width: 1440, height: 900),
             NSRect(x: 1440, y: -82, width: 1511, height: 983),
         ])
-    func enteringDrawsItemsCenteredOnTheIconZone(screen: NSRect) throws {
-        let (_, window, catcher, icons) = catcherWindow(over: screen)
-        let urls = [try file("one.txt"), try file("two.txt")]
-        let drag = try enter(window, armed: catcher, with: urls)
-
-        #expect(drag.enumerations == 1)
-        #expect(drag.items.count == 2)
-        let zone = try iconZone(in: window)
+    func catcherHUDSitsBelowTheMiddle(screen: NSRect) throws {
+        let (window, _) = catcherWindow(over: screen)
         let content = try #require(window.contentView)
-        #expect(abs(zone.midX - content.bounds.midX) < 0.5 && abs(zone.midY - content.bounds.midY) < 0.5)
-        expectDrawn(drag, on: zone, image: icons.images.last)
-        #expect(icons.asked == [.plainText])
+        let (box, icon, label, name) = try hud(in: window)
+        let middle = NSPoint(x: content.bounds.midX, y: content.bounds.midY)
+
+        #expect(label.stringValue == "Copy to Mac")
+        #expect(box.material == .hudWindow)
+        #expect(box.state == .active)
+        #expect(abs(box.frame.midX - middle.x) < 0.5)
+        // The content view is not flipped: below the middle is a lower y.
+        #expect(abs(box.frame.maxY - (middle.y - 72)) < 0.5)
+        #expect(icon.frame.size == NSSize(width: 128, height: 128))
+        #expect(abs(box.bounds.maxY - icon.frame.maxY - 24) < 0.5)
+        #expect(abs(icon.frame.minY - label.frame.maxY - 10) < 0.5)
+        #expect(abs(label.frame.minY - name.frame.maxY - 4) < 0.5)
+        #expect(abs(name.frame.minY - 24) < 0.5)
+        for row in [icon, label, name] as [NSView] {
+            #expect(abs(row.frame.midX - box.bounds.midX) < 0.5)
+            #expect(row.frame.minX >= 23.5)
+        }
     }
 
-    @Test("a name wider than the icon centers its pill and the icon on the box alike")
-    func longNameStaysCentered() throws {
-        let (_, window, catcher, icons) = catcherWindow()
-        let drag = try enter(
-            window, armed: catcher, with: [try file("a rather long name for one dragged photo.heic")])
+    @Test("the box names one item, or counts several")
+    func catcherHUDNamesTheItems() throws {
+        let one = catcherWindow(for: [try file("one.txt")])
+        #expect(try hud(in: one.window).name.stringValue == "one.txt")
+        #expect(one.icons.asked == [.plainText])
+        #expect(try hud(in: one.window).icon.image === one.icons.images.last)
 
-        let item = try #require(drag.items.first)
-        #expect(item.draggingFrame.width > 128)
-        expectDrawn(drag, on: try iconZone(in: window), image: icons.images.last)
-        #expect(icons.asked == [.heic])
+        let three = catcherWindow(for: [try file("one.txt"), try file("two.txt"), try file("three.txt")])
+        #expect(try hud(in: three.window).name.stringValue == "3 items")
+        #expect(three.icons.asked.isEmpty)
+    }
+
+    @Test("a long name truncates in the middle at the name line's widest")
+    func catcherHUDTruncatesALongName() throws {
+        let name = String(repeating: "a rather long name for one dragged photo ", count: 4) + ".heic"
+        let (window, _) = catcherWindow(for: [URL(fileURLWithPath: "/\(name)")])
+        let (box, _, _, nameLabel) = try hud(in: window)
+
+        #expect(nameLabel.frame.width <= 272)
+        #expect(nameLabel.lineBreakMode == .byTruncatingMiddle)
+        #expect(box.frame.width <= 272 + 48)
     }
 
     @Test(
-        "the drag image's icon comes from each name alone, never the file",
+        "the box's icon comes from the item's name alone, never the file",
         arguments: [
             ("photo.heic", false, UTType.heic), ("Folder", true, .folder), ("Tool.app", true, .applicationBundle),
             ("README", false, .data), ("archive.unknownext", false, UTType(filenameExtension: "unknownext") ?? .data),
         ])
     func iconComesFromTheName(name: String, isDirectory: Bool, type: UTType) throws {
-        let (_, window, catcher, icons) = catcherWindow()
         // Under a directory that does not exist: any read of the item finds
         // nothing, so a type that matches the name came from the name.
         let missing = URL(fileURLWithPath: "/\(UUID().uuidString)", isDirectory: true)
         let url = missing.appendingPathComponent(name, isDirectory: isDirectory)
-        let drag = try enter(window, armed: catcher, with: [url])
+        let (window, icons) = catcherWindow(for: [url])
 
         #expect(icons.asked == [type])
-        expectDrawn(drag, on: try iconZone(in: window), image: icons.images.last)
-    }
-
-    @Test("an update over the catcher draws the items on the icon zone")
-    func updateDrawsItemsOnTheIconZone() throws {
-        let (_, window, catcher, icons) = catcherWindow()
-        let drag = try enter(window, armed: catcher, with: [try file("one.txt")])
-        drag.exit()
-
-        try #require(window.contentView).updateDraggingItemsForDrag(drag)
-
-        #expect(drag.enumerations == 2)
-        expectDrawn(drag, on: try iconZone(in: window), image: icons.images.last)
-    }
-
-    @Test("a drag the catcher refused keeps the images its source drew")
-    func catcherLeavesARefusedDragAlone() throws {
-        let (_, window, catcher, _) = catcherWindow()
-        let urls = [try file("one.txt")]
-        catcher.arm(GuestDragWatcher.Claim(generation: 1, press: 1, fileURLs: urls))
-        let drag = FakeDraggingInfo(fileURLs: urls, mask: [.move])
-        let content = try #require(window.contentView)
-
-        #expect(content.draggingEntered(drag) == [])
-        content.updateDraggingItemsForDrag(drag)
-
-        #expect(drag.enumerations == 0)
-        #expect(drag.draggingFormation == FakeDraggingInfo.sourceFormation)
-    }
-
-    @Test("every showing after standing down draws the image on its entry, with no update asked")
-    func catcherDrawsItemsOnEveryShowing() throws {
-        let (panel, window, catcher, icons) = catcherWindow()
-        let content = try #require(window.contentView)
-        let drag = try enter(window, armed: catcher, with: [try file("one.txt")])
-        let zone = try iconZone(in: window)
-
-        for pass in 1...6 {
-            content.draggingExited(drag)
-            drag.exit()
-            catcher.setShown(false, generation: 1)
-            panel.hide()
-            content.updateDraggingItemsForDrag(drag)
-            #expect(drag.enumerations == pass)
-            #expect(drag.items.first?.draggingFrame == FakeDraggingInfo.sourceFrame)
-
-            catcher.setShown(true, generation: 1)
-            #expect(content.draggingEntered(drag) == .copy)
-
-            #expect(drag.enumerations == pass + 1)
-            expectDrawn(drag, on: zone, image: icons.images.last)
-        }
-    }
-
-    @Test("a showing draws the image when AppKit asks before the drag enters, or after a late exit")
-    func catcherDrawsItemsWhileShownBeforeEntry() throws {
-        let (panel, window, catcher, icons) = catcherWindow()
-        let content = try #require(window.contentView)
-        let drag = try enter(window, armed: catcher, with: [try file("one.txt")])
-        catcher.setShown(false, generation: 1)
-        panel.hide()
-        drag.exit()
-        catcher.setShown(true, generation: 1)
-
-        content.updateDraggingItemsForDrag(drag)
-        expectDrawn(drag, on: try iconZone(in: window), image: icons.images.last)
-
-        #expect(content.draggingEntered(drag) == .copy)
-        // The previous showing's exit, arriving after this one's entry.
-        content.draggingExited(drag)
-        drag.exit()
-        content.updateDraggingItemsForDrag(drag)
-
-        #expect(drag.enumerations == 4)
-        expectDrawn(drag, on: try iconZone(in: window), image: icons.images.last)
-    }
-
-    @Test("a caught drag keeps whatever images it has")
-    func catcherLeavesACaughtDragAlone() throws {
-        let (_, window, catcher, _) = catcherWindow()
-        let content = try #require(window.contentView)
-        let drag = try enter(window, armed: catcher, with: [try file("one.txt")])
-        #expect(content.performDragOperation(drag))
-        drag.exit()
-
-        content.updateDraggingItemsForDrag(drag)
-
-        #expect(drag.enumerations == 1)
+        #expect(try hud(in: window).name.stringValue == name)
     }
 
     @Test("a point on the box hit-tests to the catcher's own view")
     func catcherHUDTakesNoHits() throws {
-        let (_, window, _, _) = catcherWindow()
+        let (window, _) = catcherWindow()
         let content = try #require(window.contentView)
-        let (box, label) = try hud(in: window)
+        let (box, _, label, _) = try hud(in: window)
         let labelCenter = box.convert(NSPoint(x: label.frame.midX, y: label.frame.midY), to: content)
 
         #expect(content.hitTest(NSPoint(x: box.frame.midX, y: box.frame.midY)) === content)
@@ -1197,8 +1048,8 @@ struct GuestDragOutTests {
 
     @Test("the box takes the guest's appearance, light or dark")
     func catcherHUDFollowsAppearance() throws {
-        let (_, window, _, _) = catcherWindow()
-        let (box, label) = try hud(in: window)
+        let (window, _) = catcherWindow()
+        let (box, _, label, _) = try hud(in: window)
         #expect(box.appearance == nil)
         #expect(label.appearance == nil)
         #expect(label.textColor == .labelColor)
