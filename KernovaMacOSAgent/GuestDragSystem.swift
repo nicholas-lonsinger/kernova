@@ -104,9 +104,7 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
         panel.ignoresMouseEvents = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        let content = CatcherView(catcher: catcher, fillAlpha: Self.fillAlpha)
-        panel.contentView = content
-        CatcherHUD.install(in: content)
+        panel.contentView = CatcherView(catcher: catcher, fillAlpha: Self.fillAlpha)
     }
 
     #if DEBUG
@@ -132,15 +130,17 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
 }
 
 /// The catcher window's content: the drag destination, forwarding each
-/// callback to the catcher.
+/// callback to the catcher, and the HUD's owner.
 private final class CatcherView: NSView {
     private weak var catcher: GuestDragCatcher?
     private let fill: NSColor
+    private let hud = CatcherHUD()
 
     init(catcher: GuestDragCatcher, fillAlpha: CGFloat) {
         self.catcher = catcher
         fill = NSColor.white.withAlphaComponent(fillAlpha)
         super.init(frame: .zero)
+        hud.install(in: self)
         registerForDraggedTypes(
             [.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) })
     }
@@ -178,6 +178,32 @@ private final class CatcherView: NSView {
         catcher?.draggingUpdated(drag(sender)) ?? []
     }
 
+    /// Draws each item of the drag the catcher accepted as its file's icon in
+    /// the HUD's icon zone, all items on the one frame, whatever size the
+    /// source drew them at.
+    ///
+    /// `NSDragging.h`: changes made through the enumeration hold only while
+    /// the drag is over this destination and are removed when it exits, so
+    /// every entry is restyled afresh.
+    override func updateDraggingItemsForDrag(_ sender: (any NSDraggingInfo)?) {
+        guard let sender, catcher?.holdsDragOnSurface == true else { return }
+        layoutSubtreeIfNeeded()
+        let frame = convert(hud.iconZone.frame, from: hud)
+        // The source's formation would move the items off the frames set here.
+        sender.draggingFormation = .none
+        sender.enumerateDraggingItems(
+            options: [], for: self, classes: [NSURL.self], searchOptions: [.urlReadingFileURLsOnly: true]
+        ) { item, _, _ in
+            guard let url = item.item as? URL else { return }
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            let image = NSImage(size: frame.size, flipped: false) { rect in
+                icon.draw(in: rect)
+                return true
+            }
+            item.setDraggingFrame(frame, contents: image)
+        }
+    }
+
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
         catcher?.draggingExited()
     }
@@ -206,43 +232,46 @@ private final class CatcherView: NSView {
 /// and its label below. Decoration only: no point in it takes a hit test, so
 /// the whole screen stays the catcher's drag destination and click target.
 private final class CatcherHUD: NSVisualEffectView {
-    /// Finder's drag image of one file: its icon, and the name tag below it.
-    private static let iconZone = NSSize(width: 72, height: 88 + 20)
+    /// The icon zone's size, so the size the catcher draws each dragged
+    /// item's icon at: Finder's default icon-view size.
+    private static let iconSize = NSSize(width: 64, height: 64)
+
+    /// Where the drag image sits, in the box's coordinates.
+    let iconZone = NSLayoutGuide()
 
     /// Adds the box to `content`, its icon zone centered on `content`'s center.
-    static func install(in content: NSView) {
-        let hud = CatcherHUD()
-        hud.material = .hudWindow
-        hud.blendingMode = .behindWindow
-        hud.state = .active
-        hud.wantsLayer = true
-        hud.layer?.cornerRadius = 22
-        hud.layer?.masksToBounds = true
-        hud.translatesAutoresizingMaskIntoConstraints = false
+    func install(in content: NSView) {
+        material = .hudWindow
+        blendingMode = .behindWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 22
+        layer?.masksToBounds = true
+        translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: "Copy to Mac")
         label.font = .systemFont(ofSize: 15, weight: .semibold)
         label.textColor = .labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
-        hud.addSubview(label)
-        content.addSubview(hud)
+        addSubview(label)
+        content.addSubview(self)
 
-        let zone = NSLayoutGuide()
-        hud.addLayoutGuide(zone)
-        let hugging = hud.widthAnchor.constraint(equalToConstant: 0)
+        let zone = iconZone
+        addLayoutGuide(zone)
+        let hugging = widthAnchor.constraint(equalToConstant: 0)
         hugging.priority = .defaultLow
         NSLayoutConstraint.activate([
-            zone.widthAnchor.constraint(equalToConstant: iconZone.width),
-            zone.heightAnchor.constraint(equalToConstant: iconZone.height),
+            zone.widthAnchor.constraint(equalToConstant: Self.iconSize.width),
+            zone.heightAnchor.constraint(equalToConstant: Self.iconSize.height),
             zone.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             zone.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            zone.centerXAnchor.constraint(equalTo: hud.centerXAnchor),
-            zone.topAnchor.constraint(equalTo: hud.topAnchor, constant: 24),
+            zone.centerXAnchor.constraint(equalTo: centerXAnchor),
+            zone.topAnchor.constraint(equalTo: topAnchor, constant: 24),
             label.topAnchor.constraint(equalTo: zone.bottomAnchor, constant: 14),
-            label.centerXAnchor.constraint(equalTo: hud.centerXAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: hud.leadingAnchor, constant: 28),
-            hud.bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: 20),
-            hud.widthAnchor.constraint(greaterThanOrEqualToConstant: 208),
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 28),
+            bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: 20),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 208),
             hugging,
         ])
     }

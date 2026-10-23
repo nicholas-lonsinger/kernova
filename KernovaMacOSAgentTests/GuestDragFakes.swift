@@ -243,3 +243,67 @@ func promisedFileItem(_ url: URL) -> FakePasteboardItem {
         (type: .fileURL, data: Data(url.absoluteString.utf8)), (type: promiseType, data: Data()),
     ])
 }
+
+/// A drag over the catcher's window: a real pasteboard of file URLs, and items
+/// a destination may restyle — every change undone on ``exit()``, as
+/// `NSDragging.h` says a drag's leaving its destination does.
+@MainActor
+final class FakeDraggingInfo: NSObject, @MainActor NSDraggingInfo {
+    /// The frame the source drew every item at.
+    static let sourceFrame = NSRect(x: 0, y: 0, width: 16, height: 16)
+    /// The formation the source set.
+    static let sourceFormation = NSDraggingFormation.stack
+
+    let draggingPasteboard = NSPasteboard.withUniqueName()
+    let draggingSourceOperationMask: NSDragOperation
+    private let fileURLs: [URL]
+    private(set) var items: [NSDraggingItem] = []
+    /// How many times a destination enumerated the items.
+    private(set) var enumerations = 0
+    var draggingFormation = sourceFormation
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop: Int
+
+    init(fileURLs: [URL], mask: NSDragOperation = [.copy, .move, .generic]) {
+        self.fileURLs = fileURLs
+        draggingSourceOperationMask = mask
+        numberOfValidItemsForDrop = fileURLs.count
+        super.init()
+        draggingPasteboard.clearContents()
+        draggingPasteboard.writeObjects(fileURLs.map { $0 as NSURL })
+        exit()
+    }
+
+    /// The drag left its destination: the items are the source's again.
+    func exit() {
+        items = fileURLs.map { url in
+            let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+            item.setDraggingFrame(Self.sourceFrame, contents: NSImage(size: Self.sourceFrame.size))
+            return item
+        }
+        draggingFormation = Self.sourceFormation
+    }
+
+    func enumerateDraggingItems(
+        options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes classArray: [AnyClass],
+        searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+        using block: @escaping (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) {
+        enumerations += 1
+        var stop: ObjCBool = false
+        for (index, item) in items.enumerated() {
+            block(item, index, &stop)
+            if stop.boolValue { break }
+        }
+    }
+
+    var draggingDestinationWindow: NSWindow? { nil }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+}

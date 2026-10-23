@@ -251,6 +251,13 @@ final class GuestDragCatcher {
         send(.failed(failure.code, message: failure.message), for: current.claim.generation)
     }
 
+    /// The taken drag is over the surface and answered copy, so it can drop
+    /// there.
+    var holdsDragOnSurface: Bool {
+        guard let take, !take.caught, !take.refused else { return false }
+        return take.showing?.entered == true
+    }
+
     /// The drag left the surface before ending.
     func draggingExited() {
         take?.showing?.entered = false
