@@ -103,15 +103,9 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     nonisolated func writeItem(at index: Int, to destination: URL) throws
 }
 
-/// Why a dragged item never reached where it was dropped.
-package enum GuestDragWriteError: Error, Equatable, Sendable {
-    /// The transfer failed, for the reason the drag's readout reports.
-    case failed(ClipboardTransferFailure)
-}
-
 /// One guest drag the VM display took over at its edge: the hand-off that moves
-/// the guest's drag onto its catcher, the Mac drag session that carries it on,
-/// and the item writes a Mac destination asks for.
+/// the guest's drag onto its catcher, and the Mac drag session that carries it
+/// on. Its ``GuestDragItemWriter`` writes the items a Mac destination asks for.
 ///
 /// Every button release the take injects is a real drop under the guest
 /// pointer, so it lands in one of two places: on a catcher that has reported
@@ -128,7 +122,7 @@ package enum GuestDragWriteError: Error, Equatable, Sendable {
 /// it hands the press back.
 @MainActor
 @Observable
-package final class GuestDragTake: GuestDragTaking {
+package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// How long the guest may go without its catcher becoming the drag's
     /// target: from the take to the Mac session, and from the session's end to
     /// the release onto a catcher shown again.
@@ -182,39 +176,15 @@ package final class GuestDragTake: GuestDragTaking {
         case exitPoint
     }
 
-    /// How the take's transfers ended early.
-    private enum Terminal {
-        case cancelled
-        /// `reported` once the readout has said so. A failure no write has met
-        /// is reported by the first write that asks, so a destination that
-        /// never asks for the rest is told nothing.
-        case failed(ClipboardTransferFailure, reported: Bool)
-    }
-
-    /// How one item write ended, as the main actor settles it.
-    private enum WriteEnding: Sendable {
-        case landed
-        case failed(WriteFault)
-    }
-
-    /// Why one item write did not land.
-    private enum WriteFault: Sendable {
-        case pullEnded(LazyPullOutcome)
-        case offerRetired
-        case landingFailed
-    }
-
     nonisolated package let generation: UInt64
     nonisolated package let items: [ClipboardDraggedItem]
     /// Where the hand-off stands now; the one observed property.
     package private(set) var phase: Phase = .handingOff(armed: false)
 
     nonisolated private let endpoint: ClipboardEndpoint
+    nonisolated private let writer: GuestDragItemWriter
     @ObservationIgnored private weak var display: (any GuestDragDisplay)?
-    private let reporter: ClipboardTransferReporter
     private let peerName: String
-    private let progressRevealDelay: TimeInterval
-    private let progressIdleGap: TimeInterval
     private let clock: any EngineClock
     private let holds: @MainActor () -> Bool
     private let onFinished: @MainActor (GuestDragTake) -> Void
@@ -251,15 +221,11 @@ package final class GuestDragTake: GuestDragTaking {
     /// `DragComplete` can no longer reach its catcher ahead of the injected
     /// release.
     @ObservationIgnored private var guestDragEnded = false
-    @ObservationIgnored private var written: Set<Int> = []
-    @ObservationIgnored private var writesInFlight = 0
     @ObservationIgnored private var isSuperseded = false
-    @ObservationIgnored private var terminal: Terminal?
     /// Whether this take is done with the drag: `DragComplete` sent, or the
     /// channel gone.
     @ObservationIgnored private var isRetired = false
     @ObservationIgnored private var isFinished = false
-    @ObservationIgnored private var readout: ClipboardTransferOperation?
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "GuestDragTake")
@@ -280,14 +246,16 @@ package final class GuestDragTake: GuestDragTaking {
         self.generation = drag.generation
         self.items = drag.items
         self.endpoint = endpoint
+        self.writer = GuestDragItemWriter(
+            generation: drag.generation, items: drag.items, endpoint: endpoint, reporter: reporter,
+            peerName: peerName, progressRevealDelay: progressRevealDelay,
+            progressIdleGap: progressIdleGap)
         self.display = display
-        self.reporter = reporter
         self.peerName = peerName
-        self.progressRevealDelay = progressRevealDelay
-        self.progressIdleGap = progressIdleGap
         self.clock = clock
         self.holds = holds
         self.onFinished = onFinished
+        writer.owner = self
     }
 
     /// Asks the guest to hand the drag over, and starts the hand-off's bounds:
@@ -502,10 +470,10 @@ package final class GuestDragTake: GuestDragTaking {
         case .handingOff, .ready:
             abandon(because: "the guest withdrew the drag", tellingGuest: true)
         case .carried:
-            cancelOwedWrites()
+            writer.cancelOwed(destinationMayAsk: destinationMayAsk)
         case .released, .unreleased:
             guestDragEnded = true
-            cancelOwedWrites()
+            writer.cancelOwed(destinationMayAsk: destinationMayAsk)
             retireIfDone()
         case .abandoned:
             break
@@ -536,11 +504,11 @@ package final class GuestDragTake: GuestDragTaking {
         case .handingOff, .ready:
             abandon(because: "the drop channel closed", tellingGuest: false)
         case .carried(let carriage):
-            endOwedTransfers()
+            writer.interruptOwed(destinationMayAsk: destinationMayAsk)
             retire(tellingGuest: false)
             loseCatcher(because: "the drop channel closed", carriage: carriage)
         case .released, .unreleased:
-            endOwedTransfers()
+            writer.interruptOwed(destinationMayAsk: destinationMayAsk)
             retire(tellingGuest: false)
         case .abandoned:
             break
@@ -713,9 +681,8 @@ package final class GuestDragTake: GuestDragTaking {
         case .handingOff, .ready, .carried, .abandoned: return
         }
         guard !isRetired else { return }
-        let nothingMoreToWrite =
-            !hasHostSession || noDestinationAsks || written.count == items.count || terminal != nil
-        guard guestDone, nothingMoreToWrite, writesInFlight == 0 else { return }
+        let nothingMoreToWrite = !destinationMayAsk || writer.isDone
+        guard guestDone, nothingMoreToWrite, writer.isIdle else { return }
         retire(tellingGuest: true)
     }
 
@@ -733,209 +700,28 @@ package final class GuestDragTake: GuestDragTaking {
     /// Reports the take finished once it is retired and its last write has
     /// settled: a channel's end retires a take with writes still in flight.
     private func finishIfIdle() {
-        guard isRetired, writesInFlight == 0, !isFinished else { return }
+        guard isRetired, writer.isIdle, !isFinished else { return }
         isFinished = true
         onFinished(self)
     }
 
-    /// Ends the transfers a Mac destination is still owed as interrupted: the
-    /// one in flight now, or the next one asked for.
-    private func endOwedTransfers() {
-        let owed = items.count - written.count
-        if writesInFlight > 0 {
-            fail(.interrupted(fileCount: owed))
-        } else if hasHostSession, !noDestinationAsks, owed > 0 {
-            // Kernova's own clipboard window takes only a drop's first
-            // promise, so an accepted drop can leave items no destination
-            // will ever ask for.
-            endTransfers(on: .interrupted(fileCount: owed), reported: false)
-        }
-    }
-
-    /// The guest user's Cancel: fails what a Mac destination is still owed as
-    /// cancelled.
-    private func cancelOwedWrites() {
-        guard hasHostSession, !noDestinationAsks, written.count < items.count else { return }
-        cancelWrites()
-    }
+    /// Whether a Mac destination may still ask for items: a Mac session
+    /// carries them, and it neither ended with nothing taking it nor was
+    /// dropped into the guest.
+    private var destinationMayAsk: Bool { hasHostSession && !noDestinationAsks }
 
     // MARK: - Writing items
 
     nonisolated package func writeItem(at index: Int, to destination: URL) throws {
-        let repIndex: Int
-        let operation: ClipboardTransferOperation
-        switch MainActorBridge.sync({ self.beginWrite(index) }) {
-        case .success(let start): (repIndex, operation) = start
-        case .failure(let refusal): throw refusal.error
-        }
-        let outcome = endpoint.pull(generation: generation, repIndex: repIndex, operation: operation)
-        var landingError: (any Error)?
-        let ending: WriteEnding
-        switch outcome {
-        case .delivered(let representation):
-            // Asked again before landing: a Cancel retires the drag, and an item
-            // landed after it would put a file where the user called it off.
-            // Staging is app-internal, so a copy that does not land is removed
-            // outright.
-            let discard = {
-                guard let url = representation.fileURL else { return }
-                _ = try? FileManager.default.removeItem(at: url)
-            }
-            if endpoint.hasLiveInboundOffer(generation: generation) {
-                do {
-                    // Staging's volume is what the pull's free-space pre-flight
-                    // read, so a destination full on another volume surfaces
-                    // here, as a failed move.
-                    try StagedItemLanding.land(representation, at: destination)
-                    ending = .landed
-                } catch {
-                    landingError = error
-                    ending = .failed(.landingFailed)
-                    discard()
-                }
-            } else {
-                ending = .failed(.offerRetired)
-                discard()
-            }
-        default:
-            ending = .failed(.pullEnded(outcome))
-        }
-        let failure = MainActorBridge.sync { self.endWrite(index, ending: ending) }
-        if let landingError { throw landingError }
-        if let failure { throw failure.error }
+        try writer.write(at: index, to: destination)
     }
 
-    /// Accounts for one write starting, opening the take's readout if none is
-    /// running, or says why it cannot run.
-    private func beginWrite(
-        _ index: Int
-    ) -> Result<(repIndex: Int, operation: ClipboardTransferOperation), GuestDragWriteFailure> {
-        guard items.indices.contains(index) else {
-            return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
-        }
-        if let terminal {
-            if case .failed(let failure, reported: false) = terminal {
-                self.terminal = .failed(failure, reported: true)
-                liveReadout().finish(.failed(failure))
-            }
-            return .failure(Self.error(for: terminal))
-        }
-        guard hasHostSession, !isRetired else {
-            // No Mac session carries the drag, or it was already
-            // garbage-collected: every item was written, or the session ended
-            // with nothing dropped.
-            return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
-        }
-        writesInFlight += 1
-        return .success((items[index].repIndex, liveReadout()))
-    }
+    var acceptsWrites: Bool { hasHostSession && !isRetired }
 
-    /// Settles one write, returning the error its caller throws, if any.
-    private func endWrite(_ index: Int, ending: WriteEnding) -> GuestDragWriteFailure? {
-        writesInFlight -= 1
-        defer {
-            retireIfDone()
-            finishIfIdle()
-        }
-        let fault: WriteFault
-        switch ending {
-        case .landed:
-            written.insert(index)
-            readout?.finishWhenIdle()
-            return nil
-        case .failed(let ended):
-            fault = ended
-        }
-        if let terminal { return Self.error(for: terminal) }
-        let failure = failure(for: fault)
-        fail(failure)
-        return GuestDragWriteFailure(GuestDragWriteError.failed(failure))
-    }
-
-    /// The failure a write that did not land reports, when nothing had already
-    /// ended the take's transfers.
-    private func failure(for fault: WriteFault) -> ClipboardTransferFailure {
-        let lostOffer: ClipboardTransferFailure =
-            endpoint.hasEnded ? .interrupted(fileCount: nil) : .peerReported(nil)
-        switch fault {
-        case .landingFailed:
-            return .stagingFailed
-        case .offerRetired:
-            return lostOffer
-        case .pullEnded(let outcome):
-            switch outcome {
-            case .aborted(let info):
-                guard !info.isRetiring else { return lostOffer }
-                return ClipboardTransferFailure.inboundPullAborted(info) ?? .transferFailed
-            case .timedOut:
-                return .timedOut
-            case .cancelled:
-                return lostOffer
-            case .delivered, .mainThreadUnavailable:
-                return .transferFailed
-            }
-        }
-    }
-
-    /// Ends the take's transfers on `failure` and has the readout report it —
-    /// one opened for the purpose when none is running.
-    private func fail(_ failure: ClipboardTransferFailure) {
-        endTransfers(on: failure, reported: true)
-    }
-
-    /// Ends the take's transfers on `failure`, so no further item is pulled,
-    /// reporting it now only when `reported`.
-    private func endTransfers(on failure: ClipboardTransferFailure, reported: Bool) {
-        guard terminal == nil else { return }
-        terminal = .failed(failure, reported: reported)
-        if reported { liveReadout().finish(.failed(failure)) }
-        endpoint.cancelInbound(generation: generation)
-    }
-
-    /// Either side's Cancel — the readout's here, or the guest's on its own —
-    /// fails every pending write as cancelled, and the drag is done with.
-    private func cancelWrites() {
-        guard terminal == nil else { return }
-        terminal = .cancelled
-        readout?.finish(.cancelled)
-        // Wakes a parked pull; the guest hears `DragComplete` once the writes
-        // have settled.
-        endpoint.cancelInbound(generation: generation)
+    func writesSettled() {
         retireIfDone()
+        finishIfIdle()
     }
-
-    /// The readout this take's writes report on — the one running, or a new
-    /// one when the last has ended.
-    private func liveReadout() -> ClipboardTransferOperation {
-        if let readout, readout.isLive { return readout }
-        let operation = ClipboardTransferOperation(
-            gesture: .dragOut, direction: .inbound, peerName: peerName,
-            expectedBytes: endpoint.inboundByteCount(generation: generation),
-            expectedItems: items.count,
-            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
-            onCancelRequested: { [weak self] in
-                // Called outside the operation's lock on whichever thread saw
-                // the click, so it hops before touching anything.
-                MainActorBridge.async { self?.cancelWrites() }
-            },
-            reporter: reporter)
-        readout = operation
-        return operation
-    }
-
-    private static func error(for terminal: Terminal) -> GuestDragWriteFailure {
-        switch terminal {
-        case .cancelled: GuestDragWriteFailure(CocoaError(.userCancelled))
-        case .failed(let failure, _): GuestDragWriteFailure(GuestDragWriteError.failed(failure))
-        }
-    }
-}
-
-/// An error a write hands back across the main-actor hop that decided it.
-private struct GuestDragWriteFailure: Error, Sendable {
-    let error: any Error & Sendable
-
-    init(_ error: any Error & Sendable) { self.error = error }
 }
 
 extension GuestDragTake.ReleaseSpot {
