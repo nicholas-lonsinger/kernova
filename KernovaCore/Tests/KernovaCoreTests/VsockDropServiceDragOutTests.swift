@@ -653,11 +653,17 @@ struct VsockDropServiceDragOutTests {
         let harness = try Harness()
         defer { harness.tearDown() }
         let take = try await harness.carriedTake([try makeFile(named: "a.txt", contents: "a")])
+        #expect(!take.sessionOverDisplay)
+        var changes: [Bool] = []
+        take.sessionOverDisplayChanged = { changes.append($0) }
 
         #expect(take.hostSession(over: harness.display, at: CGPoint(x: 10, y: 20)))
+        #expect(changes == [true])
         #expect(take.hostSession(over: harness.display, at: CGPoint(x: 12, y: 22)))
 
         #expect(take.phase == .carried(.inside))
+        #expect(take.sessionOverDisplay)
+        #expect(changes == [true])
         #expect(
             Array(harness.display.calls.suffix(2)) == [
                 .drag(CGPoint(x: 10, y: 20)), .drag(CGPoint(x: 12, y: 22)),
@@ -708,9 +714,14 @@ struct VsockDropServiceDragOutTests {
         let take = try await harness.insideTake(
             [try makeFile(named: "a.txt", contents: "a")], at: CGPoint(x: 10, y: 20))
 
+        var changes: [Bool] = []
+        take.sessionOverDisplayChanged = { changes.append($0) }
+
         take.hostSessionLeft(harness.display)
 
         #expect(take.phase == .carried(.outside(targeted: false)))
+        #expect(!take.sessionOverDisplay)
+        #expect(changes == [false])
         try await harness.waitForCatcherChanges(2)
         #expect(harness.guestRecorder.catcherChanges.last == .init(generation: take.generation, shown: true))
         // A target reported for the showing that was stood down says nothing

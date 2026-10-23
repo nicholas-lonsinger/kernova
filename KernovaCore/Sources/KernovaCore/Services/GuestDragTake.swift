@@ -61,6 +61,14 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// What the drag carries.
     var items: [ClipboardDraggedItem] { get }
 
+    /// Whether the Mac session is over the display the take began on,
+    /// carrying the guest's drag there.
+    var sessionOverDisplay: Bool { get }
+
+    /// Called with ``sessionOverDisplay``'s new value in the same call that
+    /// changes it.
+    var sessionOverDisplayChanged: (@MainActor (Bool) -> Void)? { get set }
+
     /// The display withheld a physical drag event of the press.
     func withheldDrag()
 
@@ -179,7 +187,17 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     nonisolated package let generation: UInt64
     nonisolated package let items: [ClipboardDraggedItem]
     /// Where the hand-off stands now; the one observed property.
-    package private(set) var phase: Phase = .handingOff(armed: false)
+    package private(set) var phase: Phase = .handingOff(armed: false) {
+        didSet {
+            if (oldValue == .carried(.inside)) != sessionOverDisplay {
+                sessionOverDisplayChanged?(sessionOverDisplay)
+            }
+        }
+    }
+
+    package var sessionOverDisplay: Bool { phase == .carried(.inside) }
+
+    @ObservationIgnored package var sessionOverDisplayChanged: (@MainActor (Bool) -> Void)?
 
     nonisolated private let endpoint: ClipboardEndpoint
     nonisolated private let writer: GuestDragItemWriter

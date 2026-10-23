@@ -245,9 +245,7 @@ final class VMDisplayBackingView: NSView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        let operation = verdict(for: sender)
-        if !operation.isEmpty, ownDragOut(sender) != nil { hideDraggedImages(of: sender) }
-        return operation
+        verdict(for: sender)
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -311,17 +309,6 @@ final class VMDisplayBackingView: NSView {
     /// Where `sender` is, in the machine view's coordinates.
     private func machineLocation(of sender: any NSDraggingInfo) -> CGPoint {
         machineView.convert(sender.draggingLocation, from: nil)
-    }
-
-    /// Hides the Mac session's images while it is over this display, where
-    /// the guest draws its own drag image under the guest pointer the session
-    /// moves; AppKit restores them when the drag exits (`NSDragging.h`).
-    private func hideDraggedImages(of sender: any NSDraggingInfo) {
-        sender.enumerateDraggingItems(
-            options: [], for: self, classes: [NSPasteboardItem.self], searchOptions: [:]
-        ) { item, _, _ in
-            item.setDraggingFrame(item.draggingFrame, contents: nil)
-        }
     }
 
     /// Whether the guest can take a drop now from `sender`, a drag from

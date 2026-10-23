@@ -69,6 +69,14 @@ final class FakeTake: GuestDragTaking {
     /// Whether the take carries the Mac session over a display, so a drop
     /// there goes to the guest.
     var carriesOverDisplay = false
+    /// Set as a take sets it: by the session coming over a display that
+    /// carries it, and leaving it.
+    var sessionOverDisplay = false {
+        didSet {
+            if sessionOverDisplay != oldValue { sessionOverDisplayChanged?(sessionOverDisplay) }
+        }
+    }
+    var sessionOverDisplayChanged: (@MainActor (Bool) -> Void)?
 
     /// Every write asked for, by item index and destination.
     nonisolated let writes = Mutex<[(index: Int, destination: URL)]>([])
@@ -100,10 +108,14 @@ final class FakeTake: GuestDragTaking {
 
     func hostSession(over display: any GuestDragDisplay, at point: CGPoint) -> Bool {
         events.append(.hostSessionOver(point))
+        if carriesOverDisplay { sessionOverDisplay = true }
         return carriesOverDisplay
     }
 
-    func hostSessionLeft(_ display: any GuestDragDisplay) { events.append(.hostSessionLeft) }
+    func hostSessionLeft(_ display: any GuestDragDisplay) {
+        events.append(.hostSessionLeft)
+        sessionOverDisplay = false
+    }
 
     func hostSessionDropped(on display: any GuestDragDisplay, at point: CGPoint) -> Bool {
         events.append(.hostSessionDropped(point))

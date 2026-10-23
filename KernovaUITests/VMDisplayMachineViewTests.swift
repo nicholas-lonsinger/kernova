@@ -452,6 +452,62 @@ struct DisplayDragOutSourceTests {
         #expect(answers.1 == 1)
     }
 
+    /// A session holding its items' images, which hands out a fresh item for
+    /// each one on every pass, as `NSDraggingSession` does, and keeps what the
+    /// pass left on it.
+    ///
+    /// A fresh item each pass because an `NSDraggingItem` keeps the components
+    /// it first produced: neither a new provider nor `setDraggingFrame` after
+    /// a read changes what `imageComponents` returns.
+    @MainActor
+    final class FakeImageSession: DraggingItemImageSetting {
+        private var frames: [NSRect]
+        private var providers: [(() -> [NSDraggingImageComponent])?]
+
+        init(items: [NSDraggingItem]) {
+            frames = items.map(\.draggingFrame)
+            providers = items.map(\.imageComponentsProvider)
+        }
+
+        func forEachDraggingItem(_ body: (NSDraggingItem, Int) -> Void) {
+            for index in providers.indices {
+                let item = NSDraggingItem(pasteboardWriter: "item" as NSString)
+                item.draggingFrame = frames[index]
+                item.imageComponentsProvider = providers[index]
+                body(item, index)
+                frames[index] = item.draggingFrame
+                providers[index] = item.imageComponentsProvider
+            }
+        }
+
+        /// What each item draws now: its components' contents, by identity.
+        var drawn: [[ObjectIdentifier]] {
+            providers.map { provider in
+                (provider?() ?? []).compactMap { $0.contents.map { ObjectIdentifier($0 as AnyObject) } }
+            }
+        }
+    }
+
+    @Test("the session's images hide while it is over its display and come back each time it leaves")
+    func imagesFollowTheDisplay() throws {
+        let (source, take) = makeSource()
+        let session = FakeImageSession(items: source.draggingItems(centeredAt: .zero))
+        let original = session.drawn
+        #expect(original.count == 2)
+        #expect(original.allSatisfy { !$0.isEmpty })
+
+        source.followImages(of: session)
+        #expect(session.drawn == original)
+
+        for _ in 0..<2 {
+            take.sessionOverDisplay = true
+            #expect(session.drawn.allSatisfy { $0.isEmpty })
+
+            take.sessionOverDisplay = false
+            #expect(session.drawn == original)
+        }
+    }
+
     @Test("writes run one at a time, off the main queue")
     func writesRunSerially() throws {
         let (source, _) = makeSource()
