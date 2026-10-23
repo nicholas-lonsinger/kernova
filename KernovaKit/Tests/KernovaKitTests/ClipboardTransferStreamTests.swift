@@ -437,7 +437,8 @@ struct ClipboardTransferStreamTests {
     /// Runs one sender to its terminal and reports what it ended with.
     private func runToCompletion(
         _ sender: ClipboardTransferSender, representation: ClipboardContent.Representation,
-        isInline: Bool = true, onSourceUnreadable: (@Sendable () -> Void)? = nil
+        isInline: Bool = true,
+        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil
     ) async throws -> Bool {
         let ended = AsyncGate()
         let outcome = Locked<Bool?>(nil)
@@ -496,7 +497,7 @@ struct ClipboardTransferStreamTests {
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: 4 << 20, filename: "Project"),
             isInline: false,
-            onSourceUnreadable: { unreadable.withLock { $0 = true } })
+            onSourceUnreadable: { _ in unreadable.withLock { $0 = true } })
 
         #expect(succeeded == false)
         #expect(unreadable.withLock { $0 } == false)

@@ -26,8 +26,15 @@ enum ClipboardDataConnectionError: Error, Equatable {
     case io(Int32)
 }
 
-/// The 33 bytes every data connection ends with: how the payload ended, and —
-/// when it ended cleanly — the SHA-256 that proves it arrived intact.
+/// What every data connection ends with: how the payload ended, and — when it
+/// ended cleanly — the SHA-256 that proves it arrived intact.
+///
+/// The last ``byteCount`` bytes are a kind byte and a 32-byte body: the digest
+/// for a complete payload; for an abort, the code in the body's first 30 bytes
+/// and, in its last two, the big-endian length of a detail that precedes the
+/// kind byte — a serialized ``ClipboardSourceReadFailure``, or nothing. A
+/// reader finds where the trailer begins from its last bytes alone, which is
+/// what lets it hold back at most ``maximumByteCount``.
 ///
 /// Carrying the reason in the byte stream rather than in a control frame is
 /// what lets an abort be a plain `shutdown(2)` on the receiving side and a
@@ -39,15 +46,24 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
         /// Every payload byte was written; the SHA-256 over them follows.
         case complete(digest: Data)
         /// The sending side gave up, naming a `ClipboardStreamAbortCode` raw
-        /// value. The spelling is the peer's, so it is kept as written.
-        case aborted(rawCode: String)
+        /// value — kept as the peer spelled it — and, for a `read.error`, the
+        /// item it could not read.
+        case aborted(rawCode: String, readFailure: ClipboardSourceReadFailure? = nil)
     }
 
-    /// Total size on the wire: one kind byte plus 32 bytes of digest or code.
+    /// The fixed tail: one kind byte plus 32 bytes of digest or abort code and
+    /// detail length.
     public static let byteCount = 33
+
+    /// The longest a trailer can be: the fixed tail plus the largest detail.
+    public static let maximumByteCount = byteCount + ClipboardSourceReadFailure.maximumEncodedByteCount
 
     /// Bytes after the kind byte.
     private static let bodyByteCount = byteCount - 1
+
+    /// Bytes of an abort's body that carry its code; the rest carry the detail
+    /// length.
+    private static let abortCodeByteCount = bodyByteCount - 2
 
     /// How the payload ended.
     public let ending: Ending
@@ -64,26 +80,54 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
         case .complete(let digest):
             let body = digest.prefix(Self.bodyByteCount)
             bytes.replaceSubrange(1..<(1 + body.count), with: body)
-        case .aborted(let rawCode):
+            return bytes
+        case .aborted(let rawCode, let readFailure):
             bytes[0] = 1
-            let body = Array(rawCode.utf8.prefix(Self.bodyByteCount))
-            bytes.replaceSubrange(1..<(1 + body.count), with: body)
+            let code = Array(rawCode.utf8.prefix(Self.abortCodeByteCount))
+            bytes.replaceSubrange(1..<(1 + code.count), with: code)
+            let detail = readFailure?.encoded ?? Data()
+            bytes[Self.byteCount - 2] = UInt8(truncatingIfNeeded: detail.count >> 8)
+            bytes[Self.byteCount - 1] = UInt8(truncatingIfNeeded: detail.count)
+            return detail + bytes
         }
-        return bytes
     }
 
-    /// Reads a trailer out of exactly ``byteCount`` bytes, or `nil` when they
+    /// How many of the last bytes of `tail` a well-formed trailer would take,
+    /// or `nil` when `tail` cannot end in one.
+    ///
+    /// Only the fixed tail is read, so this is where a stream's trailer begins
+    /// once the stream has ended — not proof that it parses.
+    public static func byteCount(endingWith tail: Data) -> Int? {
+        guard tail.count >= byteCount else { return nil }
+        let fixed = tail.suffix(byteCount)
+        guard fixed[fixed.startIndex] == 1 else { return byteCount }
+        let detail = Int(fixed[fixed.endIndex - 2]) << 8 | Int(fixed[fixed.endIndex - 1])
+        guard detail <= ClipboardSourceReadFailure.maximumEncodedByteCount,
+            tail.count >= byteCount + detail
+        else { return nil }
+        return byteCount + detail
+    }
+
+    /// Reads a trailer out of exactly the bytes it takes, or `nil` when they
     /// are not a well-formed one.
+    ///
+    /// An abort's detail that does not decode leaves its code standing: the
+    /// code is what the receiver acts on, and the detail only names the item.
     public static func parse(_ bytes: Data) -> ClipboardTransferTrailer? {
-        guard bytes.count == byteCount else { return nil }
-        let body = Data(bytes.dropFirst())
-        switch bytes[bytes.startIndex] {
+        guard let length = byteCount(endingWith: bytes), length == bytes.count else { return nil }
+        let fixed = Data(bytes.suffix(byteCount))
+        let body = fixed.dropFirst()
+        switch fixed[fixed.startIndex] {
         case 0:
-            return ClipboardTransferTrailer(ending: .complete(digest: body))
+            return ClipboardTransferTrailer(ending: .complete(digest: Data(body)))
         case 1:
-            let code = String(decoding: body.prefix(while: { $0 != 0 }), as: UTF8.self)
+            let code = String(
+                decoding: body.prefix(abortCodeByteCount).prefix(while: { $0 != 0 }), as: UTF8.self)
             guard !code.isEmpty else { return nil }
-            return ClipboardTransferTrailer(ending: .aborted(rawCode: code))
+            let detail = Data(bytes.prefix(bytes.count - byteCount))
+            return ClipboardTransferTrailer(
+                ending: .aborted(
+                    rawCode: code, readFailure: ClipboardSourceReadFailure(encoded: detail)))
         default:
             return nil
         }
@@ -194,7 +238,7 @@ public enum ClipboardDataConnection {
         try write(fd: fd, VsockChannel.serializeFramed(frame))
     }
 
-    /// Writes the 33-byte trailer that ends the payload.
+    /// Writes the trailer that ends the payload.
     public static func writeTrailer(_ trailer: ClipboardTransferTrailer, fd: Int32) throws {
         try write(fd: fd, trailer.encoded)
     }
@@ -269,9 +313,11 @@ public enum ClipboardDataConnection {
 // MARK: - Header frames
 
 extension Frame {
-    /// A `ClipboardTransferReply` refusing a transfer outright.
+    /// A `ClipboardTransferReply` refusing a transfer outright, naming the item
+    /// that could not be read for a `read.error` refusal.
     static func clipboardTransferRefusal(
-        transferID: UInt64, code: ClipboardStreamAbortCode, message: String
+        transferID: UInt64, code: ClipboardStreamAbortCode, message: String,
+        readFailure: ClipboardSourceReadFailure? = nil
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -279,6 +325,7 @@ extension Frame {
             $0.transferID = transferID
             $0.refusalCode = code.rawValue
             $0.refusalMessage = message
+            if let readFailure { $0.readFailure = readFailure.wire }
         }
         return frame
     }
@@ -379,8 +426,9 @@ final class ClipboardPayloadWriter {
 // MARK: - Payload reader
 
 /// Reads one transfer's payload bytes off its data connection, holding the last
-/// ``ClipboardTransferTrailer/byteCount`` back so the trailer never reaches the
-/// consumer, and hashing every byte as it is released.
+/// ``ClipboardTransferTrailer/maximumByteCount`` back until the stream ends —
+/// and then exactly the trailer its last bytes describe — so the trailer never
+/// reaches the consumer, and hashing every byte as it is released.
 ///
 /// The lag is what lets the payload and its ending share one byte stream: the
 /// consumer sees a payload that ends at exactly the right place, and whatever
@@ -389,6 +437,7 @@ final class ClipboardPayloadWriter {
 final class ClipboardPayloadReader {
     private let fd: Int32
     private let bufferBytes: Int
+    private let onArrival: (@Sendable () -> Void)?
     private let onRelease: (@Sendable (Int) -> Void)?
 
     /// What one attempt to release payload bytes found.
@@ -410,7 +459,12 @@ final class ClipboardPayloadReader {
 
         /// Takes up to `count` releasable bytes, hashing what it releases.
         mutating func take(upTo count: Int) -> Next {
-            let releasable = pending.count - ClipboardTransferTrailer.byteCount
+            let heldBack =
+                atEnd
+                ? ClipboardTransferTrailer.byteCount(endingWith: pending)
+                    ?? ClipboardTransferTrailer.byteCount
+                : ClipboardTransferTrailer.maximumByteCount
+            let releasable = pending.count - heldBack
             guard releasable > 0, count > 0 else { return atEnd ? .ended : .needsFill }
             let taken = Data(pending.prefix(min(count, releasable)))
             pending = Data(pending.dropFirst(taken.count))
@@ -433,15 +487,20 @@ final class ClipboardPayloadReader {
     /// - Parameters:
     ///   - fd: the connected socket.
     ///   - bufferBytes: how much is taken off the socket at a time, which is
-    ///     also the cadence `onRelease` fires at.
+    ///     also the cadence `onArrival` and `onRelease` fire at.
     ///   - onRelease: called with the cumulative payload byte count each time
     ///     bytes are released to the consumer.
+    ///   - onArrival: called each time bytes are taken off the socket, whether
+    ///     or not any can be released yet — the trailer's hold-back delays a
+    ///     release, never an arrival.
     init(
         fd: Int32, bufferBytes: Int = ClipboardStreamTuning.dataReadBufferBytes,
-        onRelease: (@Sendable (Int) -> Void)? = nil
+        onRelease: (@Sendable (Int) -> Void)? = nil,
+        onArrival: (@Sendable () -> Void)? = nil
     ) {
         self.fd = fd
         self.bufferBytes = max(1, bufferBytes)
+        self.onArrival = onArrival
         self.onRelease = onRelease
     }
 
@@ -572,5 +631,6 @@ final class ClipboardPayloadReader {
                 state.atEnd = true
             }
         }
+        if got > 0 { onArrival?() }
     }
 }

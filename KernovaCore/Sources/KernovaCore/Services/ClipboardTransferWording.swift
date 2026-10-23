@@ -170,7 +170,8 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest timed out",
                 mentionsMacClipboardKept: false)
 
-        case (.transferFailed, .preview), (.unpackFailed, .preview), (.stagingFailed, .preview):
+        case (.transferFailed, .preview), (.unpackFailed, .preview), (.stagingFailed, .preview),
+            (.sourceUnreadable, .preview):
             return ClipboardTransferWording(
                 headline: "Clipboard preview from \(vm) failed.",
                 message: "The preview from the guest couldn't be loaded.",
@@ -182,6 +183,21 @@ package struct ClipboardTransferWording: Equatable {
                 headline: "Clipboard not pasted from \(vm).",
                 message: "The transfer from the guest failed, so the paste didn't finish.",
                 menuLine: "Clipboard: paste from the guest failed",
+                mentionsMacClipboardKept: false)
+
+        case (.sourceUnreadable(let readFailure), let gesture):
+            let reader = gesture.readsOnThisMac ? "This Mac" : "The VM"
+            let unfinished: String
+            switch gesture {
+            case .drop: unfinished = "the drop"
+            case .copy, .forward: unfinished = "the copy"
+            case .paste, .peerPaste, .preview, .dragOut: unfinished = "the paste"
+            }
+            return ClipboardTransferWording(
+                headline: headline(for: gesture, vm: vm),
+                message: "\(unreadableClause(readFailure, reader: reader)), so \(unfinished) didn't finish.",
+                menuLine: unreadableMenuLine(
+                    readFailure, prefix: gesture == .drop ? "Drop" : "Clipboard", reader: reader),
                 mentionsMacClipboardKept: false)
 
         case (.unpackFailed, _):
@@ -279,6 +295,9 @@ package struct ClipboardTransferWording: Equatable {
         case .peerReported:
             message = "The VM couldn't send the files, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
+        case .sourceUnreadable(let readFailure):
+            message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
+            menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
         case .tooLarge, .supersededCopyRetracted, .incompleteFileSet, .transferFailed,
             .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed:
             message = "The transfer from the VM failed, so the drag didn't finish."
@@ -287,6 +306,50 @@ package struct ClipboardTransferWording: Equatable {
         return ClipboardTransferWording(
             headline: headline(for: .dragOut, vm: vm), message: message, menuLine: menuLine,
             mentionsMacClipboardKept: false)
+    }
+
+    /// The clause naming an item `reader` could not read: the item's own name —
+    /// the one the read failed on, which may sit deep inside what the user
+    /// dragged — and the reason the read gave, if it gave one.
+    private static func unreadableClause(
+        _ failure: ClipboardSourceReadFailure?, reader: String
+    ) -> String {
+        guard let failure, !failure.itemName.isEmpty else {
+            return "\(reader) couldn't read one of the items"
+        }
+        let clause = "\(reader) couldn't read \(quoted(failure.itemName))"
+        guard let reason = reasonPhrase(failure.reason) else { return clause }
+        return "\(clause) (\(reason))"
+    }
+
+    /// The dropdown line for an item `reader` could not read.
+    private static func unreadableMenuLine(
+        _ failure: ClipboardSourceReadFailure?, prefix: String, reader: String
+    ) -> String {
+        guard let failure, !failure.itemName.isEmpty else {
+            return "\(prefix): \(reader.lowercasedFirst) couldn't read an item"
+        }
+        return "\(prefix): \(reader.lowercasedFirst) couldn't read \(quoted(failure.itemName))"
+    }
+
+    /// The reason a read gave, at the strength its error code carries, or `nil`
+    /// when it gave none.
+    ///
+    /// `EPERM` and `EACCES` both mean the reader was refused the item; neither
+    /// says what refused it.
+    private static func reasonPhrase(_ reason: ClipboardSourceReadFailure.Reason) -> String? {
+        switch reason {
+        case .posix(EPERM), .posix(EACCES):
+            return "permission denied"
+        case .posix(ENOENT):
+            return "it no longer exists"
+        case .posix(let code):
+            return String(cString: strerror(code)).lowercasedFirst
+        case .endedEarly:
+            return "it changed while it was being copied"
+        case .unknown:
+            return nil
+        }
     }
 
     /// The needed and free byte counts a disk-full refusal knows, joined, or
@@ -307,4 +370,24 @@ package struct ClipboardTransferWording: Equatable {
     }
 
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
+}
+
+extension ClipboardTransferGesture {
+    /// Whether the bytes this gesture moves are read on this Mac — it sends
+    /// them — rather than in the VM.
+    fileprivate var readsOnThisMac: Bool {
+        switch self {
+        case .drop, .forward, .peerPaste: true
+        case .paste, .preview, .copy, .dragOut: false
+        }
+    }
+}
+
+extension String {
+    /// The string with its first character lowercased, for a phrase that
+    /// continues a sentence.
+    fileprivate var lowercasedFirst: String {
+        guard let first else { return self }
+        return first.lowercased() + dropFirst()
+    }
 }

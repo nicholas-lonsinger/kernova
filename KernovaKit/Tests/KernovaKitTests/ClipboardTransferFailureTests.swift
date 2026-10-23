@@ -43,7 +43,9 @@ struct ClipboardTransferFailureTests {
             }
         case .extractError:
             #expect(failure == .unpackFailed)
-        case .requestRange, .requestUTI, .requestCancelled, .readError, .sendFailed,
+        case .readError:
+            #expect(failure == .sourceUnreadable(nil))
+        case .requestRange, .requestUTI, .requestCancelled, .sendFailed,
             .sizeOverrun, .sizeMismatch, .digestMismatch, .payloadUnsupported, .payloadInvalid,
             .writeError, .stageError, .mapError, .stallTimeout, .pasteTimeout:
             #expect(failure == .transferFailed)

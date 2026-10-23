@@ -120,6 +120,9 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     public let neededBytes: Int?
     /// Bytes available on the staging volume, for a `disk.full` abort.
     public let availableBytes: Int?
+    /// The item the sender could not read, for a `read.error` abort that named
+    /// one.
+    public let readFailure: ClipboardSourceReadFailure?
 
     /// Whether the abort retires the transfer quietly instead of reporting a
     /// failure.
@@ -135,7 +138,7 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     /// by construction.
     public init(
         transferID: UInt64, code: ClipboardStreamAbortCode, message: String, neededBytes: Int?,
-        availableBytes: Int?
+        availableBytes: Int?, readFailure: ClipboardSourceReadFailure? = nil
     ) {
         self.transferID = transferID
         self.code = code
@@ -143,6 +146,7 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
         self.message = message
         self.neededBytes = neededBytes
         self.availableBytes = availableBytes
+        self.readFailure = readFailure
     }
 
     /// Creates abort info from what a peer wrote — its refusal reply or its
@@ -150,7 +154,7 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     /// since the peer's spelling is untrusted.
     init(
         transferID: UInt64, rawCode: String, message: String, neededBytes: Int?,
-        availableBytes: Int?
+        availableBytes: Int?, readFailure: ClipboardSourceReadFailure? = nil
     ) {
         self.transferID = transferID
         self.code = ClipboardStreamAbortCode(rawValue: rawCode)
@@ -158,5 +162,6 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
         self.message = message
         self.neededBytes = neededBytes
         self.availableBytes = availableBytes
+        self.readFailure = readFailure
     }
 }

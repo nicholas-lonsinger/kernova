@@ -726,9 +726,8 @@ struct LazyPullCoordinatorTests {
         let arrivals = Tally()
         let box = RepBox()
         let gate = AsyncGate()
-        // A raw payload spanning several socket reads: its wire bytes are the
-        // payload, so each read the receiver takes is both an arrival and a
-        // figure.
+        // A raw payload spanning several socket reads: each read is an arrival,
+        // and its wire bytes are the payload, so each release is a figure.
         let bytes = patternedBytes(
             count: 3 * ClipboardStreamTuning.dataReadBufferBytes + 7, multiplier: 7, offset: 1)
         harness.inbox.awaitTransfer(
@@ -750,7 +749,7 @@ struct LazyPullCoordinatorTests {
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == bytes)
         #expect(progress.value > 1)
-        #expect(arrivals.value == progress.value)
+        #expect(arrivals.value > 1)
         // The callback carries cumulative bytes: monotonic, constant total, final
         // == the full payload.
         #expect(progress.isMonotonic)

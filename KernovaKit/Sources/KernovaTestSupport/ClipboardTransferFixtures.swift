@@ -6,8 +6,8 @@ import KernovaSynchronization
 
 // Driving one transfer's data connection by hand, from whichever side a test is
 // standing in for. A real connection carries, in order: one header frame from
-// the initiator, the sender's `ClipboardTransferReply`, the payload bytes, a
-// 33-byte trailer, then EOF.
+// the initiator, the sender's `ClipboardTransferReply`, the payload bytes, the
+// trailer, then EOF.
 
 // MARK: - Opening a connection
 
@@ -187,8 +187,14 @@ public struct ReceivedTransfer: Sendable {
 
     /// The abort code the trailer named, if it aborted.
     public var abortCode: String? {
-        guard case .aborted(let rawCode)? = trailer?.ending else { return nil }
+        guard case .aborted(let rawCode, _)? = trailer?.ending else { return nil }
         return rawCode
+    }
+
+    /// The item the trailer said the sender could not read, if it named one.
+    public var readFailure: ClipboardSourceReadFailure? {
+        guard case .aborted(_, let readFailure)? = trailer?.ending else { return nil }
+        return readFailure
     }
 }
 
@@ -218,11 +224,11 @@ public func receiveTransfer(
 ) throws -> ReceivedTransfer {
     defer { ClipboardDataConnection.end(fd: fd) }
     var rest = try readToEnd(fd: fd)
-    guard rest.count >= ClipboardTransferTrailer.byteCount else {
+    guard let trailerByteCount = ClipboardTransferTrailer.byteCount(endingWith: rest) else {
         return ReceivedTransfer(reply: reply, payload: rest, trailer: nil)
     }
-    let trailerBytes = Data(rest.suffix(ClipboardTransferTrailer.byteCount))
-    rest = Data(rest.dropLast(ClipboardTransferTrailer.byteCount))
+    let trailerBytes = Data(rest.suffix(trailerByteCount))
+    rest = Data(rest.dropLast(trailerByteCount))
     return ReceivedTransfer(
         reply: reply, payload: rest, trailer: ClipboardTransferTrailer.parse(trailerBytes))
 }

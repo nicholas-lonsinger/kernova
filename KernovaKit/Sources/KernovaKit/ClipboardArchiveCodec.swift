@@ -276,7 +276,9 @@ enum ClipboardArchiveCodec {
     ///     `1` reports every write, which is what an unpaced ceiling needs.
     ///   - onOutputAdvanced: consulted with the running uncompressed total;
     ///     throwing from it stops the encode.
-    /// - Returns: the failure that ended the encode, or `nil` when the whole
+    /// - Returns: the failure that ended the encode — a
+    ///   ``ClipboardSourceReadFailure`` naming the entry, relative to the
+    ///   source, when the source could not be read — or `nil` when the whole
     ///   archive was written and every stream closed cleanly.
     static func encode<Sink: ArchiveByteStreamProtocol & AnyObject>(
         _ source: ClipboardArchiveSource, into sink: Sink,
@@ -320,10 +322,7 @@ enum ClipboardArchiveCodec {
 
             switch source {
             case .directory(let url):
-                guard let keySet = ArchiveHeader.FieldKeySet(ClipboardArchive.fieldKeys)
-                else { throw ClipboardArchive.ArchiveError.invalidFieldKeySet }
-                try encodeStream.writeDirectoryContents(
-                    archiveFrom: FilePath(url.path), keySet: keySet)
+                try writeTree(at: url.path, to: encodeStream)
             case .file(let url, let name, let byteCount):
                 try writeFileEntry(url, name: name, byteCount: byteCount, to: encodeStream)
             case .blob(let data, let name):
@@ -409,23 +408,141 @@ enum ClipboardArchiveCodec {
     }
 
     /// Writes one regular-file entry named `name` carrying exactly `byteCount`
-    /// bytes of the file at `url`, with the attribute fields
-    /// `writeDirectoryContents` gives an entry of the archive's key set.
+    /// bytes of the file at `url`.
     ///
-    /// The file is opened and read here — the one place a single-file archive
-    /// touches the volume — so the read policy is this method's: plain, cached
-    /// reads in `fileReadBlockSize` blocks, the policy AppleArchive itself
-    /// applies to a folder's entries.
+    /// - Throws: ``ClipboardSourceReadFailure`` naming the file itself (an empty
+    ///   path) when it cannot be opened, is not a regular file, or ends before
+    ///   `byteCount`.
     static func writeFileEntry(
         _ url: URL, name: String, byteCount: Int, to encodeStream: ArchiveStream
     ) throws {
-        let descriptor = Darwin.open(url.path, O_RDONLY)
-        guard descriptor >= 0 else { throw ClipboardArchive.ArchiveError.sourceRead }
-        defer { Darwin.close(descriptor) }
-        var status = stat()
-        guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
-            throw ClipboardArchive.ArchiveError.sourceRead
+        let file = try OpenedRegularFile(path: url.path, itemPath: "")
+        defer { file.close() }
+        try writeRegularFileEntry(file, name: name, byteCount: byteCount, to: encodeStream)
+    }
+
+    /// Writes the tree rooted at `root` — the root's own entry, with an empty
+    /// `PAT`, then every entry beneath it, each directory ahead of its contents
+    /// — with the fields of ``ClipboardArchive/fieldKeys``.
+    ///
+    /// Walked here rather than by `writeDirectoryContents`, which reports a file
+    /// it cannot open only as `ArchiveError.ioError` and archives a directory it
+    /// cannot list as an empty one, raising nothing
+    /// (docs/research/2026-10-22-applearchive-folder-encoder-read-failures.md).
+    ///
+    /// - Throws: ``ClipboardSourceReadFailure`` naming the first entry, relative
+    ///   to `root`, that could not be described, listed, or read. The walk stops
+    ///   there: nothing is skipped.
+    static func writeTree(at root: String, to encodeStream: ArchiveStream) throws {
+        guard let keySet = ArchiveHeader.FieldKeySet(ClipboardArchive.fieldKeys) else {
+            assertionFailure("ClipboardArchive.fieldKeys does not parse")
+            throw ClipboardArchive.ArchiveError.invalidFieldKeySet
         }
+        try writeTreeEntry(root: root, itemPath: "", keySet: keySet, to: encodeStream)
+    }
+
+    /// Writes the entry at `itemPath` under `root` and, for a directory,
+    /// everything beneath it.
+    private static func writeTreeEntry(
+        root: String, itemPath: String, keySet: ArchiveHeader.FieldKeySet,
+        to encodeStream: ArchiveStream
+    ) throws {
+        let path = itemPath.isEmpty ? root : "\(root)/\(itemPath)"
+        var status = stat()
+        guard lstat(path, &status) == 0 else {
+            throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .posix(errno))
+        }
+        if (status.st_mode & S_IFMT) == S_IFREG {
+            // Header and bytes both come from the one descriptor, so the entry
+            // describes exactly the file it carries.
+            let file = try OpenedRegularFile(path: path, itemPath: itemPath)
+            defer { file.close() }
+            try writeRegularFileEntry(
+                file, name: itemPath, byteCount: Int(file.status.st_size), to: encodeStream)
+            return
+        }
+        guard
+            let header = ArchiveHeader(
+                keySet: keySet, directory: FilePath(root), path: FilePath(itemPath), flags: [])
+        else { throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .unknown) }
+        try encodeStream.writeHeader(header)
+        guard (status.st_mode & S_IFMT) == S_IFDIR else { return }
+        for name in try childNames(of: path, itemPath: itemPath) {
+            try writeTreeEntry(
+                root: root, itemPath: itemPath.isEmpty ? name : "\(itemPath)/\(name)",
+                keySet: keySet, to: encodeStream)
+        }
+    }
+
+    /// The names in the directory at `path`, sorted so the archive's order is
+    /// the tree's and not the volume's.
+    private static func childNames(of path: String, itemPath: String) throws -> [String] {
+        guard let directory = opendir(path) else {
+            throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .posix(errno))
+        }
+        defer { closedir(directory) }
+        var names: [String] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(directory) else {
+                // `readdir` returns NULL both at the end and on an error, telling
+                // them apart only by `errno`.
+                if errno != 0 {
+                    throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .posix(errno))
+                }
+                break
+            }
+            let name = withUnsafeBytes(of: entry.pointee.d_name) { raw in
+                String(decoding: raw.prefix(Int(entry.pointee.d_namlen)), as: UTF8.self)
+            }
+            if name != "." && name != ".." { names.append(name) }
+        }
+        return names.sorted()
+    }
+
+    /// A regular file opened for reading, with the status of the descriptor
+    /// that will be read.
+    private struct OpenedRegularFile {
+        let descriptor: Int32
+        let status: stat
+        /// What a failure reading it names.
+        let itemPath: String
+
+        /// Opens the file at `path`, refusing anything that is not a regular
+        /// file by the time it is open.
+        init(path: String, itemPath: String) throws {
+            let descriptor = Darwin.open(path, O_RDONLY | O_NOFOLLOW)
+            guard descriptor >= 0 else {
+                throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .posix(errno))
+            }
+            var status = stat()
+            guard fstat(descriptor, &status) == 0 else {
+                let code = errno
+                Darwin.close(descriptor)
+                throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .posix(code))
+            }
+            guard (status.st_mode & S_IFMT) == S_IFREG else {
+                Darwin.close(descriptor)
+                throw ClipboardSourceReadFailure(itemPath: itemPath, reason: .posix(EFTYPE))
+            }
+            self.descriptor = descriptor
+            self.status = status
+            self.itemPath = itemPath
+        }
+
+        func close() { Darwin.close(descriptor) }
+    }
+
+    /// Writes one regular-file entry named `name` carrying exactly `byteCount`
+    /// bytes of `file`, with the attribute fields of ``ClipboardArchive/fieldKeys``
+    /// in the order `writeDirectoryContents` gives them.
+    ///
+    /// The read policy is this method's: plain, cached reads in
+    /// `fileReadBlockSize` blocks, the policy AppleArchive itself applies.
+    private static func writeRegularFileEntry(
+        _ file: OpenedRegularFile, name: String, byteCount: Int, to encodeStream: ArchiveStream
+    ) throws {
+        let status = file.status
         let header = ArchiveHeader()
         header.append(
             .uint(key: .init("TYP"), value: UInt64(ArchiveHeader.EntryType.regularFile.rawValue)))
@@ -434,9 +551,9 @@ enum ClipboardArchiveCodec {
         header.append(.uint(key: .init("GID"), value: UInt64(status.st_gid)))
         header.append(.uint(key: .init("MOD"), value: UInt64(status.st_mode & 0o7777)))
         header.append(.uint(key: .init("FLG"), value: UInt64(status.st_flags)))
-        header.append(.timespec(key: .init("MTM"), value: status.st_mtimespec))
         // `CTM` is the entry's creation time (AADefs.h), not the inode change time.
         header.append(.timespec(key: .init("CTM"), value: status.st_birthtimespec))
+        header.append(.timespec(key: .init("MTM"), value: status.st_mtimespec))
         header.append(.blob(key: .init("DAT"), size: UInt64(byteCount)))
         try encodeStream.writeHeader(header)
 
@@ -445,11 +562,13 @@ enum ClipboardArchiveCodec {
             byteCount: min(fileReadBlockSize, max(1, byteCount)), alignment: 16)
         defer { buffer.deallocate() }
         while remaining > 0 {
-            let got = Darwin.read(descriptor, buffer.baseAddress, min(buffer.count, remaining))
-            // Zero is the file ending before the byte count its offer declared;
-            // negative is a read error. Both would leave the entry short of the
-            // size its header declared.
-            guard got > 0 else { throw ClipboardArchive.ArchiveError.sourceRead }
+            let got = Darwin.read(file.descriptor, buffer.baseAddress, min(buffer.count, remaining))
+            // Zero is the file ending before the byte count its header declared;
+            // negative is a read error. Both would leave the entry short.
+            guard got > 0 else {
+                throw ClipboardSourceReadFailure(
+                    itemPath: file.itemPath, reason: got == 0 ? .endedEarly : .posix(errno))
+            }
             try encodeStream.writeBlob(
                 key: .init("DAT"), from: UnsafeRawBufferPointer(rebasing: buffer[..<got]))
             remaining -= got

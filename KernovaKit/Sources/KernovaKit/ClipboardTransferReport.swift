@@ -82,6 +82,9 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case timedOut
     /// The transfer aborted for a reason with no more specific case.
     case transferFailed
+    /// The sending side could not read what it was sending, so the transfer
+    /// stopped there; the failure names the item and how, when the read said.
+    case sourceUnreadable(ClipboardSourceReadFailure?)
     /// The bytes arrived but could not be unpacked into the file or folder.
     case unpackFailed
     /// The bytes arrived but could not be written to a file on this side.
@@ -123,7 +126,7 @@ extension ClipboardTransferFailure {
     ///
     /// A code this build does not define is a failure to surface, not one to
     /// swallow: `isRetiring` is false for it, so it lands on the generic failure
-    /// alongside every read, integrity, staging, and timeout code.
+    /// alongside every integrity, staging, and timeout code.
     public static func inboundPullAborted(
         _ info: ClipboardStreamAbortInfo
     ) -> ClipboardTransferFailure? {
@@ -131,6 +134,7 @@ extension ClipboardTransferFailure {
         switch info.code {
         case .diskFull: return .diskFull(from: info)
         case .extractError: return .unpackFailed
+        case .readError: return .sourceUnreadable(info.readFailure)
         default: return .transferFailed
         }
     }

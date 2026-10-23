@@ -444,21 +444,96 @@ struct ClipboardArchiveStreamTests {
     func missingSourceFails() throws {
         let missing = scratch.url.appendingPathComponent("nope", isDirectory: true)
         // An empty archive here would be a folder silently arriving empty.
-        #expect(throws: (any Error).self) {
+        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(ENOENT))) {
             _ = try ClipboardArchive.archiveBytes(of: .directory(missing))
         }
     }
 
     @Test("a file source naming a directory or a missing path fails the encode")
     func fileSourceRequiresARegularFile() throws {
-        #expect(throws: (any Error).self) {
+        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(EFTYPE))) {
             _ = try ClipboardArchive.archiveBytes(of: .file(scratch.url, name: "dir", byteCount: 0))
         }
-        #expect(throws: (any Error).self) {
+        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(ENOENT))) {
             _ = try ClipboardArchive.archiveBytes(
                 of: .file(
                     scratch.url.appendingPathComponent("nope.bin"), name: "nope.bin", byteCount: 16))
         }
+    }
+
+    /// A tree whose readable entries sort on both sides of the one that is not,
+    /// so the walk has written entries before it and would write more after.
+    private func makeTreeAroundSealedEntry() throws -> URL {
+        let source = scratch.url.appendingPathComponent("Home", isDirectory: true)
+        let inner = source.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        try Data("first".utf8).write(to: source.appendingPathComponent("a.txt"))
+        try Data("last".utf8).write(to: source.appendingPathComponent("z.txt"))
+        return source
+    }
+
+    /// The encode stops on an item it cannot read rather than leaving it out,
+    /// and the failure is the item's own: AppleArchive's folder encoder would
+    /// report only `ioError`.
+    @Test("a file in a folder that cannot be read stops the encode, naming it and why")
+    func unreadableFileInAFolderIsNamed() throws {
+        let source = try makeTreeAroundSealedEntry()
+        let locked = source.appendingPathComponent("Library/locked.db")
+        try Data("secret".utf8).write(to: locked)
+        let sealed = try WithheldPermissions(locked)
+        defer { withExtendedLifetime(sealed) {} }
+
+        #expect(
+            throws: ClipboardSourceReadFailure(itemPath: "Library/locked.db", reason: .posix(EACCES))
+        ) {
+            _ = try ClipboardArchive.archiveBytes(of: .directory(source))
+        }
+    }
+
+    /// AppleArchive's folder encoder archives a directory it cannot list as an
+    /// empty one and reports success, so the folder would land missing what
+    /// it held.
+    @Test("a folder inside that cannot be listed stops the encode rather than arriving empty")
+    func unlistableFolderIsNamed() throws {
+        let source = try makeTreeAroundSealedEntry()
+        let vault = source.appendingPathComponent("Library/Mail", isDirectory: true)
+        try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+        try Data("mail".utf8).write(to: vault.appendingPathComponent("inbox.mbox"))
+        let sealed = try WithheldPermissions(vault)
+        defer { withExtendedLifetime(sealed) {} }
+
+        #expect(throws: ClipboardSourceReadFailure(itemPath: "Library/Mail", reason: .posix(EACCES))) {
+            _ = try ClipboardArchive.archiveBytes(of: .directory(source))
+        }
+    }
+
+    /// A FIFO is an entry, never a read: opening one would park the encode
+    /// until something wrote to it.
+    @Test("a special file in a folder is archived as its entry, not read")
+    func specialFileIsArchivedNotRead() throws {
+        let source = try makeTreeAroundSealedEntry()
+        #expect(mkfifo(source.appendingPathComponent("Library/pipe").path, 0o644) == 0)
+
+        let archive = scratch.url.appendingPathComponent("tree.aar")
+        try ClipboardArchive.archiveBytes(of: .directory(source)).write(to: archive)
+
+        let file = try #require(
+            ArchiveByteStream.fileStream(
+                path: FilePath(archive.path), mode: .readOnly, options: [], permissions: []))
+        defer { try? file.close() }
+        let decompress = try #require(ArchiveByteStream.decompressionStream(readingFrom: file))
+        defer { try? decompress.close() }
+        let decode = try #require(ArchiveStream.decodeStream(readingFrom: decompress))
+        defer { try? decode.close() }
+        var types: [String: UInt64] = [:]
+        while let header = try decode.readHeader() {
+            guard case .string(_, let path)? = header.field(forKey: ArchiveHeader.FieldKey("PAT")),
+                case .uint(_, let type)? = header.field(forKey: ArchiveHeader.FieldKey("TYP"))
+            else { continue }
+            types[path] = type
+        }
+        #expect(types["Library/pipe"] == UInt64(ArchiveHeader.EntryType.fifo.rawValue))
+        #expect(types["z.txt"] == UInt64(ArchiveHeader.EntryType.regularFile.rawValue))
     }
 
     @Test("a file source that ends before its declared byte count fails the encode")
@@ -468,7 +543,7 @@ struct ClipboardArchiveStreamTests {
 
         // The entry's header has already declared the larger size, so the
         // archive can only be abandoned — never quietly closed short.
-        #expect(throws: (any Error).self) {
+        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .endedEarly)) {
             _ = try ClipboardArchive.archiveBytes(
                 of: .file(file, name: "shrank.bin", byteCount: 8192))
         }

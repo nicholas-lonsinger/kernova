@@ -267,6 +267,92 @@ struct ClipboardEndpointDragTests {
         #expect(try Data(contentsOf: tree.appendingPathComponent("b.txt")) == Data("beta".utf8))
     }
 
+    // MARK: - An item the guest cannot read
+
+    /// What reading the sealed file in ``makeFolderWithSealedFile()`` fails
+    /// with: its path from the dragged folder's own name, and the reason.
+    private static let sealedFailure = ClipboardSourceReadFailure(
+        itemPath: "Home/Library/locked.db", reason: .posix(EACCES))
+
+    /// A folder named `Home` whose readable files sort on both sides of one the
+    /// guest cannot read, and the seal that keeps it unreadable while held.
+    private func makeFolderWithSealedFile() throws -> (
+        representation: ClipboardContent.Representation, sealed: WithheldPermissions
+    ) {
+        let folder = try makeDirectoryRepresentation(
+            named: "Home", files: ["a.txt": Data("first".utf8), "z.txt": Data("last".utf8)])
+        let library = folder.url.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let locked = library.appendingPathComponent("locked.db")
+        try Data("secret".utf8).write(to: locked)
+        return (folder.representation, try WithheldPermissions(locked))
+    }
+
+    /// The failure the drag-out readout in `reports` finished with, if it
+    /// finished failed.
+    private func dragOutFailure(_ reports: ClipboardTransferReports) -> ClipboardTransferFailure? {
+        reports.reports.lazy.compactMap { report -> ClipboardTransferFailure? in
+            guard case .finished(let finish) = report, finish.gesture == .dragOut else { return nil }
+            return finish.failure
+        }.first
+    }
+
+    @Test("a folder holding an item the guest cannot read fails on both ends, naming the item and why")
+    func unreadableItemFailsNamingIt() async throws {
+        let pair = try EndpointPair(kind: .drop)
+        defer { pair.tearDown() }
+        let folder = try makeFolderWithSealedFile()
+        defer { withExtendedLifetime(folder.sealed) {} }
+        pair.guest.endpoint.offer(ClipboardContent(representations: [folder.representation]))
+        try await pair.host.recorder.waitForDrag()
+
+        let operation = pair.host.makeOperation(gesture: .dragOut, direction: .inbound)
+        let pull = pair.host.startPull(generation: 1, repIndex: 0, operation: operation)
+        #expect(pair.guest.endpoint.sendDragSizes(generation: 1, folderByteCounts: [0: 15]))
+        guard case .aborted(let info) = await pull.value else {
+            Issue.record("Expected the pull to abort on the unreadable item")
+            return
+        }
+
+        #expect(info.code == .readError)
+        #expect(info.readFailure == Self.sealedFailure)
+        #expect(
+            ClipboardTransferFailure.inboundPullAborted(info) == .sourceUnreadable(Self.sealedFailure))
+        // The guest's own readout ends on the same item rather than completing.
+        let guestReports = pair.guest.reports
+        try await guestReports.wait { dragOutFailure(guestReports) != nil }
+        #expect(dragOutFailure(guestReports) == .sourceUnreadable(Self.sealedFailure))
+        #expect(completedDragOuts(guestReports) == 0)
+    }
+
+    @Test("the trailer names the item the guest could not read, and DragComplete ends the readout failed")
+    func unreadableItemRidesTheTrailer() async throws {
+        let harness = try RawPeerHarness(
+            role: .guest, kind: .drop, progressIdleGap: Self.unreachedIdleGap)
+        defer { harness.tearDown() }
+        let folder = try makeFolderWithSealedFile()
+        defer { withExtendedLifetime(folder.sealed) {} }
+        harness.endpoint.offer(ClipboardContent(representations: [folder.representation]))
+
+        try harness.send(
+            makeRequestFrame(
+                generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
+                uti: "public.folder"))
+        let fd = try await harness.nextDialledConnection()
+        let received = try #require(await offCooperativePool { try? receiveTransfer(fd: fd) })
+
+        #expect(received.abortCode == ClipboardStreamAbortCode.readError.rawValue)
+        #expect(received.readFailure == Self.sealedFailure)
+        let reports = harness.side.reports
+        #expect(dragOutFailure(reports) == nil)
+
+        try harness.send(.dragComplete(generation: 1))
+
+        try await reports.wait { dragOutFailure(reports) != nil }
+        #expect(dragOutFailure(reports) == .sourceUnreadable(Self.sealedFailure))
+        #expect(completedDragOuts(reports) == 0)
+    }
+
     // MARK: - Folder sizes
 
     /// Counts the pulls on an endpoint that have started waiting for a

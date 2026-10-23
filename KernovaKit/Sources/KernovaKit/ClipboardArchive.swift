@@ -11,8 +11,9 @@ import KernovaSynchronization
 /// framework — never shelling out to `ditto`/`tar`/`zip`, which the App Sandbox
 /// blocks. This type never logs; callers log at their own subsystem.
 public enum ClipboardArchive {
-    /// A stream in the archive pipeline could not be opened, the field-key set
-    /// failed to parse, or a source could not be described as an entry.
+    /// A stream in the archive pipeline could not be opened, or the field-key
+    /// set failed to parse. A source that cannot be read raises
+    /// ``ClipboardSourceReadFailure`` instead.
     public enum ArchiveError: Error {
         case openWriteStream
         case openCompressionStream
@@ -22,9 +23,6 @@ public enum ClipboardArchive {
         case openDecodeStream
         case openExtractStream
         case invalidFieldKeySet
-        /// A file source could not be opened, or ended before the byte count
-        /// its offer declared.
-        case sourceRead
     }
 
     /// The archive's fidelity key set — what a file or folder round trip

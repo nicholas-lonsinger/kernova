@@ -1119,6 +1119,36 @@ struct VsockDropServiceDragOutTests {
         try await harness.waitForComplete(take.generation)
     }
 
+    /// The live case: a home folder whose app data the guest agent may not
+    /// read. The drag stops on the item, as Finder's copy does, and says which.
+    @Test("a folder holding an item the guest cannot read fails the write, naming the item and why")
+    func unreadableItemFailsTheWriteNamingIt() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let folder = try makeFolder(named: "Home", files: ["a.txt": "alpha", "z.txt": "zeta"])
+        let library = folder.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let locked = library.appendingPathComponent("Mail.db")
+        try Data("mail".utf8).write(to: locked)
+        let sealed = try WithheldPermissions(locked)
+        defer { withExtendedLifetime(sealed) {} }
+        let take = try await harness.releasedTake([folder])
+        let unreadable = ClipboardSourceReadFailure(
+            itemPath: "Home/Library/Mail.db", reason: .posix(EACCES))
+
+        let target = try makeDestination().appendingPathComponent("Home")
+        #expect(
+            await harness.write(take, item: 0, to: target) == .failed(.sourceUnreadable(unreadable)))
+
+        #expect(!FileManager.default.fileExists(atPath: target.path))
+        try await harness.reports.changed.wait { harness.reports.failure != nil }
+        let finish = try #require(harness.reports.finish)
+        #expect(finish.failure == .sourceUnreadable(unreadable))
+        #expect(
+            ClipboardTransferWording.wording(for: finish, vmName: "Guest")?.message
+                == "The VM couldn't read \u{201C}Mail.db\u{201D} (permission denied), so the drag didn't finish.")
+    }
+
     @Test("the readout's Cancel fails the write in flight as cancelled and completes the drag")
     func cancelCallsOffTheWrites() async throws {
         let harness = try Harness(parksPulls: true)

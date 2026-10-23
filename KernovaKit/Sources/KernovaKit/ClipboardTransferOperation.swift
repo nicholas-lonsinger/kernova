@@ -154,6 +154,9 @@ public final class ClipboardTransferOperation: Sendable {
         /// Bytes the units expect to move; see `transferredBytes`.
         private(set) var declaredBytes: UInt64 = 0
         var completedCount = 0
+        /// The first failure a transfer reported for itself, which a terminal
+        /// that would complete reports instead.
+        var unitFailure: ClipboardTransferFailure?
         /// Transfers currently in flight, in the order they began; the readout
         /// names the most recently begun one.
         var activeUnits: [UInt64] = []
@@ -249,8 +252,14 @@ public final class ClipboardTransferOperation: Sendable {
             var isFailure = false
             switch terminal {
             case .completed:
-                outcome = .completed(final: snapshot(at: now, header: header))
-                label = "completed"
+                if let unitFailure {
+                    outcome = .failed(unitFailure)
+                    label = "failed"
+                    isFailure = true
+                } else {
+                    outcome = .completed(final: snapshot(at: now, header: header))
+                    label = "completed"
+                }
             case .cancelled:
                 outcome = .cancelled(final: snapshot(at: now, header: header))
                 label = "cancelled"
@@ -431,12 +440,25 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
+    /// Records why one of this operation's transfers failed, for a transfer
+    /// that knows: a terminal that would complete the operation — its idle
+    /// gap's, or its owner's — ends it failed with the first such failure, since
+    /// what it measured did not all arrive.
+    ///
+    /// The transfer still ends through ``unitEnded(id:succeeded:)``.
+    public func unitFailed(id: UInt64, _ failure: ClipboardTransferFailure) {
+        apply(id: id, declaring: nil) { state, _ in
+            if state.unitFailure == nil { state.unitFailure = failure }
+        }
+    }
+
     // MARK: - Terminals
 
     /// Ends the operation, publishing its finished report.
     ///
     /// For a caller that owns the loop — a preview fetch, a paste fire, a drop.
-    /// Idempotent; later events are dropped. A `.completed`/`.cancelled` terminal
+    /// Idempotent; later events are dropped. `.completed` reports a failure
+    /// ``unitFailed(id:_:)`` recorded instead. A `.completed`/`.cancelled` terminal
     /// inside the reveal gate publishes nothing, so an operation nobody saw never
     /// flashes UI; a `.failed` one always reports, since a refusal is owed an
     /// answer whether or not a bar was on screen.

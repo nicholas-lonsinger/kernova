@@ -497,8 +497,12 @@ final class ClipboardOutboundOffers {
             },
             // One item this side cannot read never cancels the batch: the peer
             // skips it and keeps pulling, and this is what lets the verdict name
-            // how many were left behind.
-            onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
+            // how many were left behind. The readout hears which item, so an
+            // ending that would otherwise complete reports it instead.
+            onSourceUnreadable: { failure in
+                unreadable.record(repIndex: repIndex)
+                operation.unitFailed(id: xid, .sourceUnreadable(failure))
+            },
             // No `activity` count here: activity is bytes moving, and a
             // transfer's end is the start of the wait for the peer's next move
             // — its next pull, or its `DropComplete` — which is exactly what
@@ -737,8 +741,9 @@ final class ClipboardOutboundOffers {
     ///
     /// The readout an entry carries here is a drag out's — a clipboard offer's
     /// is held apart, and a drop never retires this way — and it ends as its
-    /// idle gap would have: the peer will ask it for nothing more, and the
-    /// entry is the readout's only owner.
+    /// idle gap would have, failed if one of its transfers failed to read: the
+    /// peer will ask it for nothing more, and the entry is the readout's only
+    /// owner.
     private func retire(_ entry: Entry) {
         entry.live.withLock { $0 = 0 }
         forget(entry)

@@ -62,7 +62,7 @@ final class ClipboardTransferOutbox: Sendable {
     ///     after its first progress report.
     ///   - onProgress: cumulative `(bytesSent, totalBytes)` as bytes leave.
     ///   - onSourceUnreadable: fired before the peer is told, when the source
-    ///     turns out not to be readable.
+    ///     turns out not to be readable, with the item a read named.
     ///   - onComplete: fired exactly once when the transfer ends.
     /// - Returns: whether this call is the one serving `transferID`.
     @discardableResult
@@ -76,7 +76,7 @@ final class ClipboardTransferOutbox: Sendable {
         link: ClipboardTransferLink,
         onBegin: (@Sendable () -> Void)? = nil,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
-        onSourceUnreadable: (@Sendable () -> Void)? = nil,
+        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) -> Bool {
         let sender = ClipboardTransferSender(
