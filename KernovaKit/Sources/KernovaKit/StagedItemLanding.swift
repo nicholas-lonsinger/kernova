@@ -4,20 +4,20 @@ import Foundation
 ///
 /// A pull lands only in staging, and its receiver deletes its extract
 /// destination on failure, so it is never pointed at a user's folder: staging
-/// then moving is how a received file or folder reaches one. A rename when
-/// staging shares the destination's volume, so nothing payload-scaled happens
-/// there; a cross-device move falls back to copy-and-delete.
+/// then moving is how a received file or folder reaches one.
 public enum StagedItemLanding {
     /// Moves `representation`'s staged file or folder to exactly `destination`.
     ///
-    /// Never replaces an existing item: the move throws instead.
+    /// Never replaces an existing item.
     ///
     /// - Throws: `CocoaError(.fileNoSuchFile)` for a representation with no
-    ///   staged file, or the move's or copy's error.
+    ///   staged file, or the move's error when the item could not be put at
+    ///   `destination`.
     public static func land(
         _ representation: ClipboardContent.Representation, at destination: URL
     ) throws {
-        try land(representation, at: destination, move: FileManager.default.moveItem)
+        guard let source = representation.fileURL else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.moveItem(at: source, to: destination)
     }
 
     /// Moves `representation`'s staged file or folder into `directory` under
@@ -30,62 +30,11 @@ public enum StagedItemLanding {
         _ representation: ClipboardContent.Representation, inDirectory directory: URL,
         named filename: String
     ) throws -> URL {
-        try land(
-            representation, inDirectory: directory, named: filename,
-            move: FileManager.default.moveItem)
-    }
-
-    // MARK: - Seams
-
-    /// ``land(_:at:)`` with the rename, the cross-device copy, and the Trash
-    /// injected, so a test can stand in a cross-device move or a copy that
-    /// fails partway.
-    ///
-    /// A copy that fails partway leaves a truncated item at `destination`
-    /// under the original's name, which is put in the Trash before the error
-    /// is rethrown; the staged item stays where it was.
-    static func land(
-        _ representation: ClipboardContent.Representation, at destination: URL,
-        move: (URL, URL) throws -> Void,
-        copy: (URL, URL) throws -> Void = FileManager.default.copyItem,
-        trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
-    ) throws {
-        guard let source = representation.fileURL else { throw CocoaError(.fileNoSuchFile) }
-        do {
-            try move(source, destination)
-        } catch let error as NSError where isCrossDevice(error) {
-            do {
-                try copy(source, destination)
-            } catch let copyError as CocoaError where copyError.code == .fileWriteFileExists {
-                // The copy refused an item already there, which is not its own.
-                throw copyError
-            } catch {
-                // Anything else at `destination` is the copy's partial: it never
-                // replaces an existing item. The user can see it, so it goes to
-                // the Trash.
-                try? trash(destination)
-                throw error
-            }
-            // Staging is app-internal, so its copy is removed outright.
-            try? FileManager.default.removeItem(at: source)
-        }
-    }
-
-    /// ``land(_:inDirectory:named:)`` with the rename injected.
-    static func land(
-        _ representation: ClipboardContent.Representation, inDirectory directory: URL,
-        named filename: String, move: (URL, URL) throws -> Void
-    ) throws -> URL {
         guard let source = representation.fileURL else { throw CocoaError(.fileNoSuchFile) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = NameUniquing.uniqueDestination(
             in: directory, filename: filename.isEmpty ? source.lastPathComponent : filename)
-        try land(representation, at: destination, move: move)
+        try land(representation, at: destination)
         return destination
-    }
-
-    private static func isCrossDevice(_ error: NSError) -> Bool {
-        (error.userInfo[NSUnderlyingErrorKey] as? NSError)?.code == Int(EXDEV)
-            || error.code == Int(EXDEV)
     }
 }

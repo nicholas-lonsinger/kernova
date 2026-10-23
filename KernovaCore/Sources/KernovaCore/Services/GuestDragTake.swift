@@ -774,7 +774,7 @@ package final class GuestDragTake: GuestDragTaking {
                 do {
                     // Staging's volume is what the pull's free-space pre-flight
                     // read, so a destination full on another volume surfaces
-                    // here, as a failed copy.
+                    // here, as a failed move.
                     try StagedItemLanding.land(representation, at: destination)
                     ending = .landed
                 } catch {

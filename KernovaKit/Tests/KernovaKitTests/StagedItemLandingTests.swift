@@ -6,8 +6,7 @@ import UniformTypeIdentifiers
 @testable import KernovaKit
 
 /// Moving a pulled item out of staging: to the exact URL a Mac destination
-/// asked for, or under a Finder-style unique name in a folder, by rename or —
-/// across volumes — by copy.
+/// asked for, or under a Finder-style unique name in a folder.
 @Suite("StagedItemLanding", .caseScoped)
 struct StagedItemLandingTests {
     private let scratch = TestScratchDirectory(prefix: "StagedItemLandingTests")
@@ -52,73 +51,13 @@ struct StagedItemLandingTests {
         #expect(try Data(contentsOf: destination) == Data("theirs".utf8))
     }
 
-    @Test("a cross-device rename falls back to copying, then frees the staged copy")
-    func crossDeviceMoveCopies() throws {
+    @Test("a failed move is thrown, leaving the staged item where it was")
+    func failedMoveThrows() throws {
         let representation = try staged("report.pdf")
-        let destination = try destinationFolder().appendingPathComponent("report.pdf")
-        let crossDevice = NSError(
-            domain: NSCocoaErrorDomain, code: CocoaError.fileWriteUnknown.rawValue,
-            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))])
-
-        try StagedItemLanding.land(representation, at: destination) { _, _ in throw crossDevice }
-
-        #expect(try Data(contentsOf: destination) == Data("payload".utf8))
-        #expect(!FileManager.default.fileExists(atPath: try #require(representation.fileURL).path))
-    }
-
-    @Test("a cross-device copy that fails partway puts its partial in the Trash and keeps the staged item")
-    func failedCrossDeviceCopyTrashesThePartial() throws {
-        let representation = try staged("report.pdf")
-        let destination = try destinationFolder().appendingPathComponent("report.pdf")
-        let crossDevice = NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))
-        var trashed: [URL] = []
+        let destination = scratch.url.appendingPathComponent("missing/report.pdf")
 
         #expect(throws: CocoaError.self) {
-            try StagedItemLanding.land(
-                representation, at: destination, move: { _, _ in throw crossDevice },
-                copy: { _, to in
-                    try Data("pay".utf8).write(to: to)
-                    throw CocoaError(.fileWriteOutOfSpace)
-                },
-                trash: { url in
-                    trashed.append(url)
-                    try FileManager.default.removeItem(at: url)
-                })
-        }
-        #expect(trashed == [destination])
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
-        #expect(
-            try Data(contentsOf: try #require(representation.fileURL)) == Data("payload".utf8))
-    }
-
-    @Test("a cross-device copy refused by an item already there leaves that item alone")
-    func crossDeviceCopyKeepsAnExistingItem() throws {
-        let representation = try staged("report.pdf")
-        let destination = try destinationFolder().appendingPathComponent("report.pdf")
-        try Data("theirs".utf8).write(to: destination)
-        let crossDevice = NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))
-
-        var trashed: [URL] = []
-
-        #expect(throws: CocoaError.self) {
-            try StagedItemLanding.land(
-                representation, at: destination, move: { _, _ in throw crossDevice },
-                trash: { trashed.append($0) })
-        }
-        #expect(trashed.isEmpty)
-        #expect(try Data(contentsOf: destination) == Data("theirs".utf8))
-        #expect(FileManager.default.fileExists(atPath: try #require(representation.fileURL).path))
-    }
-
-    @Test("any other failed move is thrown, leaving the staged item where it was")
-    func otherMoveFailuresThrow() throws {
-        let representation = try staged("report.pdf")
-        let destination = try destinationFolder().appendingPathComponent("report.pdf")
-
-        #expect(throws: CocoaError.self) {
-            try StagedItemLanding.land(representation, at: destination) { _, _ in
-                throw CocoaError(.fileWriteNoPermission)
-            }
+            try StagedItemLanding.land(representation, at: destination)
         }
         #expect(FileManager.default.fileExists(atPath: try #require(representation.fileURL).path))
         #expect(!FileManager.default.fileExists(atPath: destination.path))
