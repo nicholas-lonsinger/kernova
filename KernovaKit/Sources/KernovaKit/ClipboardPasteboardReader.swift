@@ -183,10 +183,8 @@ public enum ClipboardPasteboardReader {
     /// source representation carrying `sizeOf`'s estimate, or `0` when
     /// `sizeOf` is `nil` and nothing inside the folder is read; no archive is
     /// built until the peer requests the rep. A folder is checked at its root only:
-    /// AppleArchive's directory encoder has no per-entry skip, so an entry
-    /// inside one that cannot be read fails that folder's own transfer, which
-    /// the batch then leaves out the way it leaves out any other unreadable
-    /// item.
+    /// the archive walk stops at the first entry inside it that cannot be read,
+    /// failing that folder's own transfer.
     ///
     /// The item is named from the URL that was copied or dragged while its
     /// bytes come from ``readableSource(for:)``, so a symlink crosses as its

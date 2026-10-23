@@ -346,7 +346,7 @@ package struct ClipboardTransferWording: Equatable {
         case .posix(let code):
             return String(cString: strerror(code)).lowercasedFirst
         case .endedEarly:
-            return "it changed while it was being copied"
+            return "it changed size"
         case .unknown:
             return nil
         }

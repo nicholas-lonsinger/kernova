@@ -11,8 +11,8 @@ import KernovaSynchronization
 /// framework — never shelling out to `ditto`/`tar`/`zip`, which the App Sandbox
 /// blocks. This type never logs; callers log at their own subsystem.
 public enum ClipboardArchive {
-    /// A stream in the archive pipeline could not be opened, or the field-key
-    /// set failed to parse. A source that cannot be read raises
+    /// A stream in the archive pipeline could not be opened, or
+    /// ``fieldKeys`` names a field no entry header produces. A source that cannot be read raises
     /// ``ClipboardSourceReadFailure`` instead.
     public enum ArchiveError: Error {
         case openWriteStream
@@ -22,11 +22,12 @@ public enum ClipboardArchive {
         case openDecompressionStream
         case openDecodeStream
         case openExtractStream
-        case invalidFieldKeySet
+        case unproducibleFieldKey
     }
 
     /// The archive's fidelity key set — what a file or folder round trip
-    /// preserves.
+    /// preserves — in the order an entry's header carries them, which is the
+    /// order AppleArchive's own headers use.
     ///
     /// AppleArchive writes a per-entry digest (`SH2`) into the entry *header*, so
     /// carrying one makes the encoder read and hash each file in full before its
@@ -37,7 +38,7 @@ public enum ClipboardArchive {
     /// `com.apple.quarantine` and `kMDItemWhereFroms` cross on no paste path in
     /// either direction — a gap uniform by construction, which this key set is
     /// the one place to close.
-    static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM"
+    static let fieldKeys = "TYP,PAT,LNK,DEV,UID,GID,MOD,FLG,CTM,MTM,DAT"
 }
 
 extension ClipboardArchive {

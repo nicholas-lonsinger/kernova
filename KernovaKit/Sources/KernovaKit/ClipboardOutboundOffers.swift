@@ -495,10 +495,12 @@ final class ClipboardOutboundOffers {
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
-            // One item this side cannot read never cancels the batch: the peer
-            // skips it and keeps pulling, and this is what lets the verdict name
-            // how many were left behind. The readout hears which item, so an
-            // ending that would otherwise complete reports it instead.
+            // One item this side cannot read never cancels the batch from this
+            // side; whether the rest still cross is the peer's call — a drop
+            // skips it and keeps pulling, a drag-out ends the whole drag. This
+            // is what lets the verdict name how many were left behind. The
+            // readout hears which item, so an ending that would otherwise
+            // complete reports it instead.
             onSourceUnreadable: { failure in
                 unreadable.record(repIndex: repIndex)
                 operation.unitFailed(id: xid, .sourceUnreadable(failure))

@@ -271,7 +271,7 @@ struct ClipboardTransferWordingTests {
             (.posix(EACCES), " (permission denied)"),
             (.posix(ENOENT), " (it no longer exists)"),
             (.posix(EIO), " (input/output error)"),
-            (.endedEarly, " (it changed while it was being copied)"),
+            (.endedEarly, " (it changed size)"),
             (.unknown, ""),
         ]
         for (reason, parenthetical) in reasons {
