@@ -27,7 +27,10 @@ import KernovaLogging
 /// While the host's Mac session is over this VM's display, the host stands the
 /// surface down and moves the guest pointer itself, so the drag can drop
 /// inside the guest; the take stays, and the host shows the surface again —
-/// a fresh `armed`, then `targeted` — when the session leaves.
+/// a fresh `armed`, then `targeted` — when the session leaves. Drag callbacks
+/// AppKit delivers while the surface is down are refused without a word, and
+/// the press ending then is the user's own drop inside the guest, so it ends
+/// the take without a failure.
 ///
 /// The surface covers the screen and takes mouse events, so while it is up the
 /// guest cannot be clicked: every path that shows it ends at ``finish(failing:)``
@@ -49,21 +52,27 @@ final class GuestDragCatcher {
         let fileURLs: [URL]?
     }
 
+    /// One stretch of the surface being up for a take, reported by its own
+    /// `armed`.
+    private struct Showing {
+        /// The guest's drag manager is inside the surface with the taken drag.
+        var entered = false
+        /// `targeted` went out in this showing, so the host may have released
+        /// the button.
+        var targeted = false
+    }
+
     /// The drag a take armed the catcher for.
     private struct Take {
         let claim: GuestDragWatcher.Claim
-        /// The guest's drag manager is inside the surface with the taken drag.
-        var entered = false
-        /// `targeted` went out, so the host may have released the button.
-        var targeted = false
+        /// The surface is up for the take; `nil` while the host's Mac session
+        /// is over this VM's display.
+        var showing: Showing? = Showing()
         /// The take was refused after `targeted`: the surface stays up and
         /// refuses the drop.
         var refused = false
         /// The drag ended on the surface; its items stay pullable.
         var caught = false
-        /// The surface is up for the take; `false` while the host's Mac
-        /// session is over this VM's display.
-        var shown = true
     }
 
     private let peer: any GuestDragOutPeer
@@ -84,9 +93,6 @@ final class GuestDragCatcher {
     /// Puts the surface up for a drag the watcher has handed over, and tells
     /// the host it is armed.
     func arm(_ claim: GuestDragWatcher.Claim) {
-        if let previous = take {
-            finish(failing: previous.caught ? nil : (.dragTakeFailed, "A newer take replaced this one"))
-        }
         let surface = surface ?? makeSurface(self)
         self.surface = surface
         take = Take(claim: claim)
@@ -109,9 +115,16 @@ final class GuestDragCatcher {
     }
 
     /// The press `press` ended; a take whose drag is not on the surface has
-    /// nothing left to catch, and no release to drop on it.
+    /// nothing left to catch, and no release to drop on it. While the surface
+    /// is stood down the drag was the user's to drop inside the guest, so
+    /// that take ends without a failure.
     func pressEnded(_ press: UInt64) {
-        guard let take, take.claim.press == press, !take.entered, !take.caught else { return }
+        guard let take, take.claim.press == press, !take.caught else { return }
+        guard let showing = take.showing else {
+            finish(failing: nil)
+            return
+        }
+        guard !showing.entered else { return }
         finish(failing: (.dragTakeFailed, "The press ended before the drag reached the catcher"))
     }
 
@@ -119,7 +132,7 @@ final class GuestDragCatcher {
     /// after `targeted` keeps the surface up, for the drop it must refuse.
     func complete(generation: UInt64) {
         guard let current = take, current.claim.generation == generation,
-            !(current.refused && current.shown)
+            !(current.refused && current.showing != nil)
         else { return }
         finish(failing: nil)
     }
@@ -138,19 +151,17 @@ final class GuestDragCatcher {
             return
         }
         guard shown else {
-            take?.shown = false
-            take?.entered = false
-            take?.targeted = false
+            take?.showing = nil
             surface?.hide()
             Self.logger.log(.notice, "Catcher stood down (gen=\(generation, privacy: .public))")
             return
         }
-        guard !current.shown, !current.refused, let surface else { return }
+        guard current.showing == nil, !current.refused, let surface else { return }
         guard surface.show() else {
             finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
             return
         }
-        take?.shown = true
+        take?.showing = Showing()
         send(.armed, for: generation)
         Self.logger.log(.notice, "Catcher armed again (gen=\(generation, privacy: .public))")
     }
@@ -202,20 +213,22 @@ final class GuestDragCatcher {
 
     /// Answers copy for the taken drag and nothing for anything else, which
     /// fails the take: never move or generic, which let a source delete what
-    /// it dragged.
+    /// it dragged. A callback with the surface stood down is answered with
+    /// nothing and reports nothing.
     private func accept(_ drag: Drag) -> NSDragOperation {
-        guard let current = take, !current.caught, !current.refused else { return [] }
+        guard let current = take, let showing = current.showing, !current.caught, !current.refused else {
+            return []
+        }
         guard drag.sourceMask.contains(.copy) else {
-            decline(current, (.dragTakeRefused, "The drag's source does not allow a copy"))
+            decline(current, showing, (.dragTakeRefused, "The drag's source does not allow a copy"))
             return []
         }
         guard drag.fileURLs == current.claim.fileURLs else {
-            decline(current, (.dragTakeRefused, "The drag holds other items than the taken one"))
+            decline(current, showing, (.dragTakeRefused, "The drag holds other items than the taken one"))
             return []
         }
-        if !current.entered {
-            take?.entered = true
-            take?.targeted = true
+        if !showing.entered {
+            take?.showing = Showing(entered: true, targeted: true)
             send(.targeted, for: current.claim.generation)
         }
         return .copy
@@ -223,8 +236,10 @@ final class GuestDragCatcher {
 
     /// Fails `current`, keeping the surface up when the host may already have
     /// released the button onto it.
-    private func decline(_ current: Take, _ failure: (code: ClipboardErrorCode, message: String)) {
-        guard current.targeted else {
+    private func decline(
+        _ current: Take, _ showing: Showing, _ failure: (code: ClipboardErrorCode, message: String)
+    ) {
+        guard showing.targeted else {
             finish(failing: failure)
             return
         }
@@ -238,12 +253,14 @@ final class GuestDragCatcher {
 
     /// The drag left the surface before ending.
     func draggingExited() {
-        take?.entered = false
+        take?.showing?.entered = false
     }
 
     /// The drag ended on the surface.
     func performDragOperation() -> Bool {
-        guard let current = take, current.entered, !current.caught, !current.refused else { return false }
+        guard let current = take, current.showing?.entered == true, !current.caught, !current.refused else {
+            return false
+        }
         take?.caught = true
         send(.caught, for: current.claim.generation)
         return true
@@ -254,9 +271,11 @@ final class GuestDragCatcher {
         finish(failing: nil)
     }
 
-    /// The drag ended, wherever it ended.
+    /// The drag ended, wherever it ended; with the surface stood down it was
+    /// the user's to drop inside the guest.
     func draggingEnded() {
         guard let current = take else { return }
-        finish(failing: current.caught ? nil : (.dragTakeFailed, "The drag ended without reaching the catcher"))
+        let missed = !current.caught && current.showing != nil
+        finish(failing: missed ? (.dragTakeFailed, "The drag ended without reaching the catcher") : nil)
     }
 }

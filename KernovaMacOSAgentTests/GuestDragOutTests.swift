@@ -814,24 +814,75 @@ struct GuestDragOutTests {
             ])
     }
 
-    @Test("a drag dropped inside the guest while stood down ends the take with its press")
+    @Test("a drag dropped inside the guest while stood down ends the take with its press, failing nothing")
     func aDropInsideTheGuestEndsTheTake() throws {
         let urls = [try file("one.txt")]
         let rig = takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
         rig.dragOut.setCatcherShown(false, generation: 1)
+        let reported = rig.peer.handOffs
 
         // The host's release lands on a guest target; the press ends.
         rig.releaseAndTick()
 
         #expect(!rig.surface.isShown)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected the take to end, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.handOffs == reported)
+        // The take is gone: showing it again is refused as stale.
         rig.dragOut.setCatcherShown(true, generation: 1)
         #expect(!rig.surface.isShown)
+        guard case .handOff(1, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a stale refusal, got \(rig.peer.handOffs)")
+            return
+        }
+    }
+
+    @Test("a drag callback after standing down neither targets nor reports, so the next showing targets afresh")
+    func aCallbackWhileStoodDownIsRefusedQuietly() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        rig.dragOut.setCatcherShown(false, generation: 1)
+
+        #expect(catcher.draggingUpdated(caught(urls)) == [])
+        #expect(catcher.draggingEntered(caught(urls, mask: [.move])) == [])
+        #expect(!catcher.performDragOperation())
+        #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
+
+        rig.dragOut.setCatcherShown(true, generation: 1)
+        #expect(catcher.draggingEntered(caught(urls)) == .copy)
+        #expect(
+            rig.peer.handOffs == [
+                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .armed),
+                .handOff(generation: 1, step: .targeted),
+            ])
+    }
+
+    @Test("showing the catcher again starts untargeted and reports armed once")
+    func aShowingStartsUntargeted() throws {
+        let urls = [try file("one.txt")]
+        let rig = takenRig(urls)
+        let catcher = rig.dragOut.catcherForTesting
+        _ = catcher.draggingEntered(caught(urls))
+        rig.dragOut.setCatcherShown(false, generation: 1)
+
+        rig.dragOut.setCatcherShown(true, generation: 1)
+        rig.dragOut.setCatcherShown(true, generation: 1)
+
+        #expect(rig.surface.isShown)
+        #expect(
+            rig.peer.handOffs == [
+                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
+                .handOff(generation: 1, step: .armed),
+            ])
+        // Untargeted in this showing, a refusal takes the surface down rather
+        // than holding it up for a release.
+        _ = catcher.draggingEntered(caught(urls, mask: [.move]))
+        #expect(!rig.surface.isShown)
+        guard case .handOff(1, .failed(.dragTakeRefused, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a refusal, got \(rig.peer.handOffs)")
+            return
+        }
     }
 
     @Test("showing the catcher of a take this side no longer holds refuses it as stale")

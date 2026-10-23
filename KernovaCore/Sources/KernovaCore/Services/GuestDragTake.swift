@@ -442,8 +442,10 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             case .handingOff, .ready:
                 abandon(because: reason, tellingGuest: true)
             case .carried(let carriage):
-                // The guest reports a take's failure once and nothing after
-                // it, so a `DragComplete` can no longer overtake anything.
+                // A failed take's catcher is down, or up only to refuse the
+                // drop, so a `DragComplete` can no longer overtake anything. A
+                // later `FAILED` — the stale refusal of a re-show after the
+                // guest ended the take — lands here again and changes nothing.
                 guestDragEnded = true
                 loseCatcher(because: reason, carriage: carriage)
             case .released, .unreleased:
