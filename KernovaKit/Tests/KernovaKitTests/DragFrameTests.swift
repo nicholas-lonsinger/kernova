@@ -58,6 +58,19 @@ struct DragFrameTests {
         #expect(take.generation == 5)
     }
 
+    @Test("a catcher frame round-trips its generation and whether to show it", arguments: [false, true])
+    func catcherRoundTrips(shown: Bool) throws {
+        guard
+            case .dragCatcher(let catcher) = try roundTrip(.dragCatcher(generation: 8, shown: shown))
+                .payload
+        else {
+            Issue.record("Expected a drag catcher payload")
+            return
+        }
+        #expect(catcher.generation == 8)
+        #expect(catcher.shown == shown)
+    }
+
     @Test(
         "every hand-off step round-trips, carrying a code only when it failed",
         arguments: [
@@ -106,13 +119,16 @@ struct DragFrameTests {
         take.dragTake = Kernova_V1_DragTake()
         var handOff = Frame()
         handOff.dragHandOff = Kernova_V1_DragHandOff()
+        var catcher = Frame()
+        catcher.dragCatcher = Kernova_V1_DragCatcher()
 
-        // Fields 43–47 with wire type 2 encode as the tag byte pairs below.
+        // Fields 43–48 with wire type 2 encode as the tag byte pairs below.
         #expect(Array(try offer.serializedData()).prefix(2) == [0xDA, 0x02])
         #expect(Array(try complete.serializedData()).prefix(2) == [0xE2, 0x02])
         #expect(Array(try release.serializedData()).prefix(2) == [0xEA, 0x02])
         #expect(Array(try take.serializedData()).prefix(2) == [0xF2, 0x02])
         #expect(Array(try handOff.serializedData()).prefix(2) == [0xFA, 0x02])
+        #expect(Array(try catcher.serializedData()).prefix(2) == [0x82, 0x03])
     }
 
     @Test("every drag frame on the control channel classifies as wrong port")
@@ -120,7 +136,7 @@ struct DragFrameTests {
         let frames: [Frame] = [
             .dragOffer(generation: 1, reps: []), .dragComplete(generation: 1),
             .dragRelease(generation: 1), .dragTake(generation: 1),
-            .dragHandOff(generation: 1, step: .armed),
+            .dragHandOff(generation: 1, step: .armed), .dragCatcher(generation: 1, shown: true),
         ]
         for frame in frames {
             #expect(ControlChannelInbound.classify(frame) == .wrongPort)

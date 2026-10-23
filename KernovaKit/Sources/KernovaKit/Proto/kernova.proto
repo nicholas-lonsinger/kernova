@@ -71,6 +71,7 @@ message Frame {
     DragRelease drag_release = 45;
     DragTake drag_take = 46;
     DragHandOff drag_hand_off = 47;
+    DragCatcher drag_catcher = 48;
 
     // 50..59: the clipboard data connection. One guest-initiated vsock
     // connection per transfer carries these two frames as its header, then the
@@ -476,8 +477,9 @@ message DragOffer {
 
 // Host->guest: the host is done with the drag for `generation` — nothing will
 // pull from it again, or a take that was not caught is abandoned. The guest
-// retires the offer and orders out a catcher armed for it — at once, or, if
-// the drag already targeted it, once the guest's drag ends, refusing its drop.
+// retires the offer and orders out a catcher armed for it — at once, or, for
+// one still up that refused the drag after it was targeted, once the guest's
+// drag ends, refusing its drop.
 message DragComplete {
   uint64 generation = 1;
 }
@@ -496,13 +498,25 @@ message DragTake {
   uint64 generation = 1;
 }
 
+// Host->guest: the Mac drag session carrying the drag for `generation`
+// entered this VM's display (`shown` false) or left it (`shown` true). Entering,
+// the guest orders its catcher out and keeps the take, and the host moves the
+// guest pointer with the session; leaving, the guest orders the catcher front
+// again and reports `STAGE_ARMED`, then `STAGE_TARGETED` as the guest drag
+// manager re-enters it. A catcher this side already failed stays out.
+message DragCatcher {
+  uint64 generation = 1;
+  bool shown = 2;
+}
+
 // Guest->host: one step of the hand-off for `generation`.
 message DragHandOff {
   uint64 generation = 1;
 
   enum Stage {
     STAGE_UNSPECIFIED = 0;
-    // The catcher is ordered front under the pointer.
+    // The catcher is ordered front under the pointer — once for `DragTake`,
+    // and once for each `DragCatcher` that shows it again.
     STAGE_ARMED = 1;
     // The guest drag manager entered the catcher, which answered copy.
     STAGE_TARGETED = 2;

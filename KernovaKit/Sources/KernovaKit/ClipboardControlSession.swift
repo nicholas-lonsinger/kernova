@@ -433,6 +433,12 @@ public final class ClipboardControlSession {
         try? channel.send(.dragTake(generation: generation))
     }
 
+    /// Shows the guest's catcher for `generation` again, or stands it down.
+    /// Best-effort: a channel that died took the drag with it.
+    nonisolated public func sendDragCatcher(generation: UInt64, shown: Bool) {
+        try? channel.send(.dragCatcher(generation: generation, shown: shown))
+    }
+
     /// Reports one step of handing the drag for `generation` to the host.
     /// Best-effort: a channel that died took the drag with it.
     nonisolated public func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {

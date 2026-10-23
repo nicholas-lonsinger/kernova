@@ -161,7 +161,7 @@ final class VsockGuestLogService: VsockFeatureService {
         case .hello, .heartbeat, .policyUpdate, .clipboardOffer, .clipboardRequest,
             .clipboardRelease, .clipboardTransferRequest, .clipboardTransferReply,
             .dropOffer, .dropComplete, .dropRelease, .dragOffer, .dragComplete, .dragRelease,
-            .dragTake, .dragHandOff:
+            .dragTake, .dragHandOff, .dragCatcher:
             // Hello, Heartbeat, and PolicyUpdate belong on the control channel;
             // clipboard payloads belong on the clipboard channel, drop payloads
             // on the drop channel.

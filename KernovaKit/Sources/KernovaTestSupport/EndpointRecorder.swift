@@ -29,6 +29,20 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
         public let step: ClipboardDragHandOffStep
     }
 
+    /// One `didReceiveDragCatcher` call.
+    public struct CatcherChange: Equatable, Sendable {
+        /// The drag whose catcher it names.
+        public let generation: UInt64
+        /// Whether the catcher is to be shown again, or stood down.
+        public let shown: Bool
+
+        /// One call's arguments.
+        public init(generation: UInt64, shown: Bool) {
+            self.generation = generation
+            self.shown = shown
+        }
+    }
+
     /// Every offer the peer made, in arrival order.
     public private(set) var offers: [ClipboardEndpoint.InboundOffer] = []
 
@@ -40,6 +54,9 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
 
     /// Every hand-off step the guest reported, in arrival order.
     public private(set) var handOffs: [HandOff] = []
+
+    /// Every `DragCatcher` the host sent, in arrival order.
+    public private(set) var catcherChanges: [CatcherChange] = []
 
     /// Every generation the host said it is done with, in arrival order.
     public private(set) var completedDrags: [UInt64] = []
@@ -163,6 +180,14 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
     /// Records the host asking to take a drag.
     public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64) {
         takes.append(generation)
+        changed.notify()
+    }
+
+    /// Records the host standing a catcher down or showing it again.
+    public func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragCatcher shown: Bool, generation: UInt64
+    ) {
+        catcherChanges.append(CatcherChange(generation: generation, shown: shown))
         changed.notify()
     }
 

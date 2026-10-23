@@ -37,7 +37,7 @@ public enum KernovaCapability {
 
     /// Files dragged out of the VM display onto the Mac: offered by the guest on
     /// the drop channel (`DragOffer`), handed over at the display edge
-    /// (`DragTake`/`DragHandOff`), and pulled by the host one item at a time as
+    /// (`DragTake`/`DragHandOff`/`DragCatcher`), and pulled by the host one item at a time as
     /// a Mac destination asks for it.
     ///
     /// A feature tag, not a version. The guest offers drags only to a host that

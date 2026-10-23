@@ -478,6 +478,14 @@ public final class ClipboardEndpoint {
         session.sendDragTake(generation: generation)
     }
 
+    /// Stands the guest's catcher for `generation` down while the Mac session
+    /// is over this VM's display (`shown` false), or shows it again once the
+    /// session leaves (`shown` true). Host drop channel only; best-effort.
+    nonisolated public func sendDragCatcher(generation: UInt64, shown: Bool) {
+        guard role == .host, kind == .drop else { return }
+        session.sendDragCatcher(generation: generation, shown: shown)
+    }
+
     /// Reports one step of handing the drag for `generation` to the host. Guest
     /// drop channel only; best-effort.
     nonisolated public func sendDragHandOff(
@@ -624,6 +632,10 @@ public final class ClipboardEndpoint {
         case .dragTake(let take):
             guard kind == .drop, role == .guest else { return closeOnWrongPort() }
             delegate?.endpoint(self, didReceiveDragTake: take.generation)
+        case .dragCatcher(let catcher):
+            guard kind == .drop, role == .guest else { return closeOnWrongPort() }
+            delegate?.endpoint(
+                self, didReceiveDragCatcher: catcher.shown, generation: catcher.generation)
         case .dragHandOff(let handOff):
             guard kind == .drop, role == .host else { return closeOnWrongPort() }
             delegate?.endpoint(
@@ -737,6 +749,12 @@ public protocol ClipboardEndpointDelegate: AnyObject {
     /// the pointer left the VM display holding it. Guest drop channel only.
     func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64)
 
+    /// The host asks for the catcher of the drag taken under `generation` to
+    /// be stood down (`shown` false) or shown again (`shown` true). Guest drop
+    /// channel only.
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragCatcher shown: Bool, generation: UInt64)
+
     /// The guest reports one step of handing over the drag under `generation`.
     /// Host drop channel only.
     func endpoint(
@@ -780,6 +798,11 @@ extension ClipboardEndpointDelegate {
 
     /// Does nothing.
     public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64) {}
+
+    /// Does nothing.
+    public func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragCatcher shown: Bool, generation: UInt64
+    ) {}
 
     /// Does nothing.
     public func endpoint(

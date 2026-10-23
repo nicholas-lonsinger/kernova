@@ -126,6 +126,18 @@ extension Frame {
         return frame
     }
 
+    /// A `DragCatcher` showing the guest's catcher for `generation` again, or
+    /// standing it down.
+    public static func dragCatcher(generation: UInt64, shown: Bool) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.dragCatcher = Kernova_V1_DragCatcher.with {
+            $0.generation = generation
+            $0.shown = shown
+        }
+        return frame
+    }
+
     /// A `DragHandOff` reporting one step of the hand-off for `generation`.
     public static func dragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) -> Frame {
         var frame = Frame()

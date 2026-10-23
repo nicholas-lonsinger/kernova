@@ -448,6 +448,13 @@ struct ClipboardEndpointDragTests {
 
         pair.host.endpoint.sendDragTake(generation: 7)
         try await pair.guest.recorder.wait { pair.guest.recorder.takes == [7] }
+        pair.host.endpoint.sendDragCatcher(generation: 7, shown: false)
+        pair.host.endpoint.sendDragCatcher(generation: 7, shown: true)
+        try await pair.guest.recorder.wait { pair.guest.recorder.catcherChanges.count == 2 }
+        #expect(
+            pair.guest.recorder.catcherChanges == [
+                .init(generation: 7, shown: false), .init(generation: 7, shown: true),
+            ])
 
         let steps: [ClipboardDragHandOffStep] = [
             .armed, .targeted, .caught, .failed(.dragTakeRefused, message: "no copy"),
@@ -478,6 +485,25 @@ struct ClipboardEndpointDragTests {
             sinceCount: 1, aheadOfMarkerOn: harness.side.channel)
     }
 
+    @Test("the host's senders on the guest's end send nothing")
+    func hostSendersAreRoleBound() async throws {
+        let harness = try RawPeerHarness(role: .guest, kind: .drop)
+        defer { harness.tearDown() }
+
+        harness.endpoint.sendDragTake(generation: 1)
+        harness.endpoint.sendDragCatcher(generation: 1, shown: false)
+        harness.endpoint.sendDragHandOff(generation: 1, step: .armed)
+
+        // The hand-off step is the only frame a guest sends of the three.
+        try await harness.recorder.waitForFrameCount(1)
+        guard case .dragHandOff = harness.recorder.frames.first?.payload else {
+            Issue.record("Expected only the hand-off step to go out")
+            return
+        }
+        try await harness.recorder.expectNoNewFrames(
+            sinceCount: 1, aheadOfMarkerOn: harness.side.channel)
+    }
+
     // MARK: - Direction guards
 
     @Test(
@@ -487,6 +513,7 @@ struct ClipboardEndpointDragTests {
             WrongWay("DropRelease", at: .host, .dropRelease(generation: 1)),
             WrongWay("DragComplete", at: .host, .dragComplete(generation: 1)),
             WrongWay("DragTake", at: .host, .dragTake(generation: 1)),
+            WrongWay("DragCatcher", at: .host, .dragCatcher(generation: 1, shown: false)),
             WrongWay(
                 "ClipboardRequest", at: .host,
                 .clipboardRequest(
@@ -508,6 +535,7 @@ struct ClipboardEndpointDragTests {
         #expect(harness.side.recorder.offers.isEmpty)
         #expect(harness.side.recorder.takes.isEmpty)
         #expect(harness.side.recorder.handOffs.isEmpty)
+        #expect(harness.side.recorder.catcherChanges.isEmpty)
     }
 
     @Test(

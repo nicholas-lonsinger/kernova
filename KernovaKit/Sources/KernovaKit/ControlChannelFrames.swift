@@ -112,7 +112,7 @@ public enum ControlChannelInbound: Equatable, Sendable {
         case .clipboardOffer, .clipboardRequest, .clipboardRelease,
             .clipboardTransferRequest, .clipboardTransferReply, .logRecord,
             .dropOffer, .dropComplete, .dropRelease, .dragOffer, .dragComplete, .dragRelease,
-            .dragTake, .dragHandOff, .none:
+            .dragTake, .dragHandOff, .dragCatcher, .none:
             return .wrongPort
         }
     }
