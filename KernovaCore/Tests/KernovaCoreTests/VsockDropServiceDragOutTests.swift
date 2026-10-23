@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import Observation
 import Testing
@@ -67,6 +68,32 @@ struct VsockDropServiceDragOutTests {
     @Observable
     final class RunningFlag {
         var isRunning = true
+    }
+
+    /// Holds a write's landing on its writing thread until the test releases
+    /// it, recording the staged copy the landing moves.
+    final class HeldLanding: Sendable {
+        private let staged = Locked<URL??>(nil)
+        private let gate = AsyncGate()
+        private let held = DispatchSemaphore(value: 0)
+
+        /// The seam to hand the take.
+        var body: @Sendable (URL?) -> Void {
+            { [self] url in
+                staged.withLock { $0 = .some(url) }
+                gate.notify()
+                held.wait()
+            }
+        }
+
+        /// The staged copy, once a landing has begun.
+        func began(isolation: isolated (any Actor)? = #isolation) async throws -> URL {
+            try await gate.wait(isolation: isolation) { staged.withLock { $0 } != nil }
+            return try #require(staged.withLock { $0 } ?? nil)
+        }
+
+        /// Lets the held landing go on.
+        func release() { held.signal() }
     }
 
     /// How one item write ended, as a destination would see it.
@@ -988,25 +1015,30 @@ struct VsockDropServiceDragOutTests {
                 == "a")
     }
 
-    @Test("the channel ending leaves a drag's staging to the write in flight, whose end frees it")
-    func channelEndLeavesStagingToTheWriteInFlight() async throws {
-        let harness = try Harness(parksPulls: true)
+    @Test("the channel ending leaves a drag's staging to the landing in flight, whose end frees it")
+    func channelEndLeavesStagingToTheLandingInFlight() async throws {
+        let harness = try Harness()
         defer { harness.tearDown() }
         let take = try await harness.releasedTake([try makeFile(named: "a.txt", contents: "a")])
-        take.hostSessionEnded(dropped: true)
+        let landing = HeldLanding()
+        defer { landing.release() }
+        take.onLandingForTesting(landing.body)
         let destination = try makeDestination().appendingPathComponent("a.txt")
         let write = Task { await harness.write(take, item: 0, to: destination) }
-        _ = try await harness.parked.next()
-        // Stands in for what the drag's pull has staged so far.
-        let staged = try harness.service.dragStagingForTesting.reserveScratchDirectory(
+        let staged = try await landing.began()
+        // The rest of the drag's staging, beside the copy being landed.
+        let rest = try harness.service.dragStagingForTesting.reserveScratchDirectory(
             generation: take.generation)
 
         harness.guestChannel.close()
         try await waitForChange { !harness.service.isConnected }
 
         #expect(FileManager.default.fileExists(atPath: staged.path))
-        #expect(await write.value != .landed)
-        #expect(!FileManager.default.fileExists(atPath: staged.path))
+        #expect(FileManager.default.fileExists(atPath: rest.path))
+        landing.release()
+        #expect(await write.value == .landed)
+        #expect(try String(contentsOf: destination, encoding: .utf8) == "a")
+        #expect(!FileManager.default.fileExists(atPath: rest.path))
     }
 
     @Test("each item lands at exactly the URL asked for — a file, and a folder as its tree")

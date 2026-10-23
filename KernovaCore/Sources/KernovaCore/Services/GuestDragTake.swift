@@ -722,6 +722,13 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         retireIfDone()
         finishIfIdle()
     }
+
+    #if DEBUG
+    /// Test seam: ``GuestDragItemWriter/onLandingForTesting(_:)``.
+    func onLandingForTesting(_ body: (@Sendable (URL?) -> Void)?) {
+        writer.onLandingForTesting(body)
+    }
+    #endif
 }
 
 extension GuestDragTake.ReleaseSpot {

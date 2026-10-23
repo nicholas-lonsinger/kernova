@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import Synchronization
 
 /// Why a dragged item never reached where it was dropped.
 package enum GuestDragWriteError: Error, Equatable, Sendable {
@@ -61,6 +62,16 @@ final class GuestDragItemWriter {
     private var writesInFlight = 0
     private var terminal: Terminal?
     private var readout: ClipboardTransferOperation?
+
+    #if DEBUG
+    nonisolated private let landingBeganForTesting = Mutex<(@Sendable (URL?) -> Void)?>(nil)
+
+    /// Test seam: `body` is called on the writing thread as a delivered item
+    /// starts to land, with the staged copy it moves.
+    nonisolated func onLandingForTesting(_ body: (@Sendable (URL?) -> Void)?) {
+        landingBeganForTesting.withLock { $0 = body }
+    }
+    #endif
 
     init(
         generation: UInt64, items: [ClipboardDraggedItem], endpoint: ClipboardEndpoint,
@@ -130,6 +141,9 @@ final class GuestDragItemWriter {
                 _ = try? FileManager.default.removeItem(at: url)
             }
             if endpoint.hasLiveInboundOffer(generation: generation) {
+                #if DEBUG
+                landingBeganForTesting.withLock { $0 }?(representation.fileURL)
+                #endif
                 do {
                     // Staging's volume is what the pull's free-space pre-flight
                     // read, so a destination full on another volume surfaces
