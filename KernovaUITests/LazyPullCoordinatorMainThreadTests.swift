@@ -55,6 +55,24 @@ struct LazyPullCoordinatorMainThreadTests {
         #expect(delivered.inMemoryData == Data("live".utf8))
     }
 
+    @Test("a main-thread hold keeps the run loop turning: a block performed on it opens the latch")
+    func performedMainRunLoopBlockEndsHold() throws {
+        let waits = Locked<[NestedEventLoopWait]>([])
+        let coordinator = coordinator(slice: NestedEventLoopWait.defaultSlice, recordingInto: waits)
+        let latch = OneShotLatch()
+        // Scheduled before the hold. A parked wait could only run it after
+        // returning, which nothing else would let it do.
+        RunLoop.main.perform { latch.open() }
+        // The hold has no deadline of its own: a lost fast path is ended by
+        // the test plan's per-test allowance.
+        let refusal = coordinator.hold(until: latch)
+
+        #expect(refusal == nil)
+        let waitsTaken = waits.withLock { $0 }
+        try #require(waitsTaken.count == 1)
+        #expect(waitsTaken[0].endingsForTesting == [.resolved])
+    }
+
     @Test("failAll performed on the main run loop cancels a main-thread pull")
     func performedFailAllCancelsPull() {
         let coordinator = LazyPullCoordinator()

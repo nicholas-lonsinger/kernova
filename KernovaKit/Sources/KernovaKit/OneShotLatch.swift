@@ -39,14 +39,6 @@ final class OneShotLatch: Sendable {
         if isOpen { body() }
     }
 
-    /// Holds the calling thread until the latch opens, which another thread
-    /// must do.
-    func wait() {
-        let semaphore = DispatchSemaphore(value: 0)
-        whenOpen { semaphore.signal() }
-        semaphore.wait()
-    }
-
     /// Suspends until the latch opens.
     func opened() async {
         await withCheckedContinuation { continuation in

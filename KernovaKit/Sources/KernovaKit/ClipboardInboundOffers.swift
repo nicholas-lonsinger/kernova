@@ -719,18 +719,16 @@ public final class ClipboardInboundOffers {
     /// the events — the main thread is refused rather than parked, and nothing
     /// is served (`LazyPullCoordinator`).
     ///
-    /// A drag's folder whose size has not arrived holds the calling thread
-    /// until it does or the drag ends, so the main thread, where the size
-    /// arrives, is refused for one.
+    /// A drag's folder whose size has not arrived is held the same way until
+    /// the size arrives or the drag ends, then pulled.
     nonisolated public func pull(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) -> LazyPullOutcome {
         if let latch = unsizedFolderLatch(generation: generation, repIndex: repIndex) {
-            guard !Thread.isMainThread else { return .mainThreadUnavailable }
             #if DEBUG
             sizeWaitBeganForTesting.withLock { $0 }?()
             #endif
-            latch.wait()
+            if let refused = coordinator.hold(until: latch) { return refused }
         }
         let plan: PullPlan
         switch MainActorBridge.sync({

@@ -258,16 +258,49 @@ final class LazyPullCoordinator: Sendable {
             transferID: transferID, wakeup: .synchronous(semaphore, eventLoop),
             onProgress: onProgress)
         let slotTimeout = enter(waiter, timeout: timeout, retire: retire, start: start)
+        return Self.hold(
+            eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: slotTimeout
+        ) { waiter.outcome }
+    }
+
+    /// Holds the calling thread until `latch` opens, the way
+    /// ``pull(transferID:timeout:onProgress:retire:start:)`` holds it: the
+    /// event loop on the main run loop's base, a park anywhere else off the
+    /// main thread. Nothing times the wait out.
+    ///
+    /// - Returns: `.mainThreadUnavailable` without waiting where a pull is
+    ///   refused, `nil` once the latch has opened.
+    func hold(until latch: OneShotLatch) -> LazyPullOutcome? {
+        let eventLoop = eventLoopWait()
+        guard eventLoop != nil || !Thread.isMainThread else { return .mainThreadUnavailable }
+        let semaphore = DispatchSemaphore(value: 0)
+        latch.whenOpen {
+            semaphore.signal()
+            eventLoop?.wake()
+        }
+        Self.hold(eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: .infinity) {
+            latch.isOpen ? () : nil
+        }
+        return nil
+    }
+
+    /// Holds the calling thread until `resolved` returns a value: on
+    /// `eventLoop` when there is one, else parked on `semaphore`, which
+    /// whatever resolves it signals from another thread.
+    ///
+    /// `resolved`, never the wait's return, decides — so a signal racing a
+    /// re-check is still honored, and no timeout is decided here.
+    private static func hold<Value>(
+        eventLoop: NestedEventLoopWait?, semaphore: DispatchSemaphore,
+        recheckingEvery interval: TimeInterval, until resolved: @Sendable () -> Value?
+    ) -> Value {
         while true {
-            // The waiter's own outcome, never the wait's return, decides — so a
-            // signal racing the deadline is still honored, and the timeout
-            // *decision* stays the slot timer's alone.
+            if let value = resolved() { return value }
             if let eventLoop {
-                _ = eventLoop.wait(timeout: slotTimeout) { waiter.outcome != nil }
+                _ = eventLoop.wait(timeout: interval) { resolved() != nil }
             } else {
-                _ = semaphore.wait(timeout: .now() + slotTimeout)
+                _ = semaphore.wait(timeout: .now() + interval)
             }
-            if let outcome = waiter.outcome { return outcome }
         }
     }
 
