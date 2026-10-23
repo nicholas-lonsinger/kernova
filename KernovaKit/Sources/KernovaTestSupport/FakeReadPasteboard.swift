@@ -39,21 +39,34 @@ public struct FakePasteboardItem: ClipboardPasteboardItemReading, Sendable {
 
 /// In-memory `ClipboardReadPasteboard` a test stages a snapshot on directly.
 public final class FakeReadPasteboard: ClipboardReadPasteboard, Sendable {
-    private let staged = Locked<[FakePasteboardItem]>([])
+    private struct State: Sendable {
+        var items: [FakePasteboardItem] = []
+        var changeCount = 0
+    }
+
+    private let state = Locked(State())
 
     /// Creates an empty pasteboard double.
     public init() {}
 
-    /// The items currently staged, in order.
-    public var items: [any ClipboardPasteboardItemReading] { staged.withLock { $0 } }
+    /// Monotonic change count, bumped by every staging call as a real
+    /// pasteboard's is by every write.
+    public var changeCount: Int { state.withLock { $0.changeCount } }
 
-    /// Stages a single item, as one copy does.
+    /// The items currently staged, in order.
+    public var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
+
+    /// Stages a single item, as one copy does, bumping the change count.
     public func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) {
         setItems([FakePasteboardItem(representations)])
     }
 
-    /// Stages several items, as a multi-select copy does.
+    /// Stages several items, as a multi-select copy does, bumping the change
+    /// count.
     public func setItems(_ items: [FakePasteboardItem]) {
-        staged.withLock { $0 = items }
+        state.withLock { state in
+            state.items = items
+            state.changeCount += 1
+        }
     }
 }

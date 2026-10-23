@@ -474,7 +474,8 @@ struct ClipboardEndpointDragTests {
             Issue.record("Expected only the take to go out")
             return
         }
-        try await harness.recorder.expectNoNewFrames(sinceCount: 1)
+        try await harness.recorder.expectNoNewFrames(
+            sinceCount: 1, aheadOfMarkerOn: harness.side.channel)
     }
 
     // MARK: - Direction guards

@@ -684,7 +684,7 @@ public final class ClipboardEndpoint {
     }
 
     /// Test seam: how many inbound pulls this connection has started.
-    public var inboundPullsStartedForTesting: Int { inbound?.pullsStartedForTesting ?? 0 }
+    public var inboundPullsStartedForTesting: Int { inbound.pullsStartedForTesting }
 
     /// Delivers a control frame as the consume loop's hop would, but
     /// synchronously on the caller's own main-actor turn.
