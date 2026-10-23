@@ -937,4 +937,83 @@ struct GuestDragOutTests {
             return
         }
     }
+
+    // MARK: - The catcher's window
+
+    /// The live catcher window laid out over `screen`, never ordered front.
+    private func catcherWindow(
+        over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
+    ) -> (panel: GuestDragCatcherPanel, window: NSPanel, catcher: GuestDragCatcher) {
+        let catcher = GuestDragCatcher(peer: FakeGuestDragPeer(), makeSurface: { _ in FakeCatcherSurface() })
+        let panel = GuestDragCatcherPanel(catcher: catcher)
+        let window = panel.windowForTesting
+        window.setFrame(screen, display: false)
+        window.contentView?.layoutSubtreeIfNeeded()
+        return (panel, window, catcher)
+    }
+
+    private func hud(in window: NSPanel) throws -> (box: NSVisualEffectView, label: NSTextField) {
+        let box = try #require(window.contentView?.subviews.compactMap { $0 as? NSVisualEffectView }.first)
+        let label = try #require(box.subviews.compactMap { $0 as? NSTextField }.first)
+        return (box, label)
+    }
+
+    @Test("the catcher shows a Copy to Mac box centered on the screen, its label below the center")
+    func catcherHUDIsCentered() throws {
+        let (_, window, _) = catcherWindow()
+        let (box, label) = try hud(in: window)
+        let center = NSPoint(x: 720, y: 450)
+
+        #expect(label.stringValue == "Copy to Mac")
+        #expect(box.material == .hudWindow)
+        #expect(box.state == .active)
+        #expect(abs(box.frame.midX - center.x) < 0.5)
+        #expect(box.frame.contains(center))
+        #expect(box.frame.width >= 208)
+        // The content view is not flipped: below the center is a lower y.
+        let labelFrame = box.convert(label.frame, to: window.contentView)
+        #expect(labelFrame.maxY < center.y)
+    }
+
+    @Test("a point on the box hit-tests to the catcher's own view")
+    func catcherHUDTakesNoHits() throws {
+        let (_, window, _) = catcherWindow()
+        let content = try #require(window.contentView)
+        let (box, label) = try hud(in: window)
+        let labelCenter = box.convert(NSPoint(x: label.frame.midX, y: label.frame.midY), to: content)
+
+        #expect(content.hitTest(NSPoint(x: box.frame.midX, y: box.frame.midY)) === content)
+        #expect(content.hitTest(labelCenter) === content)
+    }
+
+    @Test("the box takes the guest's appearance, light or dark")
+    func catcherHUDFollowsAppearance() throws {
+        let (_, window, _) = catcherWindow()
+        let (box, label) = try hud(in: window)
+        #expect(box.appearance == nil)
+        #expect(label.appearance == nil)
+        #expect(label.textColor == .labelColor)
+
+        func resolved(_ color: NSColor, in appearance: NSAppearance) -> NSColor? {
+            var resolved: NSColor?
+            appearance.performAsCurrentDrawingAppearance {
+                resolved = color.usingColorSpace(.sRGB)
+            }
+            return resolved
+        }
+        var seen: [NSColor] = []
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try #require(NSAppearance(named: name))
+            window.appearance = appearance
+            // Inside the effect view AppKit hands its content the vibrant
+            // variant of the window's appearance.
+            let modes: [NSAppearance.Name] = [.aqua, .darkAqua]
+            #expect(box.effectiveAppearance.bestMatch(from: modes) == name)
+            #expect(label.effectiveAppearance.bestMatch(from: modes) == name)
+            let labelColor = try #require(resolved(label.textColor ?? .clear, in: label.effectiveAppearance))
+            #expect(labelColor == resolved(.labelColor, in: label.effectiveAppearance))
+            seen.append(labelColor)
+        }
+        #expect(seen[0] != seen[1])
+    }
 }

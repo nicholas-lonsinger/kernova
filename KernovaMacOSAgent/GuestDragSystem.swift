@@ -104,8 +104,15 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
         panel.ignoresMouseEvents = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.contentView = CatcherView(catcher: catcher, fillAlpha: Self.fillAlpha)
+        let content = CatcherView(catcher: catcher, fillAlpha: Self.fillAlpha)
+        panel.contentView = content
+        CatcherHUD.install(in: content)
     }
+
+    #if DEBUG
+    /// Test seam: the catcher's window, never ordered front by a test.
+    var windowForTesting: NSPanel { panel }
+    #endif
 
     func show() -> Bool {
         let pointer = NSEvent.mouseLocation
@@ -190,4 +197,55 @@ private final class CatcherView: NSView {
     override func draggingEnded(_ sender: any NSDraggingInfo) {
         catcher?.draggingEnded()
     }
+}
+
+/// The box behind the guest's drag image saying where the drag is going.
+///
+/// The host nudges the guest pointer to the screen's center, so the drag image
+/// sits there, above every window; the box puts its icon zone on that point
+/// and its label below. Decoration only: no point in it takes a hit test, so
+/// the whole screen stays the catcher's drag destination and click target.
+private final class CatcherHUD: NSVisualEffectView {
+    /// Finder's drag image of one file: its icon, and the name tag below it.
+    private static let iconZone = NSSize(width: 72, height: 88 + 20)
+
+    /// Adds the box to `content`, its icon zone centered on `content`'s center.
+    static func install(in content: NSView) {
+        let hud = CatcherHUD()
+        hud.material = .hudWindow
+        hud.blendingMode = .behindWindow
+        hud.state = .active
+        hud.wantsLayer = true
+        hud.layer?.cornerRadius = 22
+        hud.layer?.masksToBounds = true
+        hud.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "Copy to Mac")
+        label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.textColor = .labelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        hud.addSubview(label)
+        content.addSubview(hud)
+
+        let zone = NSLayoutGuide()
+        hud.addLayoutGuide(zone)
+        let hugging = hud.widthAnchor.constraint(equalToConstant: 0)
+        hugging.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            zone.widthAnchor.constraint(equalToConstant: iconZone.width),
+            zone.heightAnchor.constraint(equalToConstant: iconZone.height),
+            zone.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            zone.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            zone.centerXAnchor.constraint(equalTo: hud.centerXAnchor),
+            zone.topAnchor.constraint(equalTo: hud.topAnchor, constant: 24),
+            label.topAnchor.constraint(equalTo: zone.bottomAnchor, constant: 14),
+            label.centerXAnchor.constraint(equalTo: hud.centerXAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: hud.leadingAnchor, constant: 28),
+            hud.bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: 20),
+            hud.widthAnchor.constraint(greaterThanOrEqualToConstant: 208),
+            hugging,
+        ])
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
