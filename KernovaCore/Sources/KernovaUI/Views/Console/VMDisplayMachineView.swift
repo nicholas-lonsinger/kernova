@@ -11,8 +11,9 @@ import Virtualization
 /// the pointer left still takes over. From then until the take settles, no
 /// physical drag or mouse-up reaches the guest: each is withheld and drives the
 /// take, and the guest sees only what the take injects. A take that fails, or
-/// one the pointer comes back inside the display before the release, hands the
-/// rest of the press back.
+/// one the pointer comes back inside the display before the Mac session
+/// begins, hands the rest of the press back; once a session carries it, the
+/// take drives the guest pointer until it releases.
 ///
 /// `VZVirtualMachineView` receives a press as ordinary `mouseDown`/
 /// `mouseDragged`/`mouseUp` calls and runs no tracking loop of its own, and a
@@ -34,6 +35,9 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         case tracking
         /// The guest's drag is being taken over; the press is withheld.
         case taking(any GuestDragTaking)
+        /// A Mac drag session carries the rest of the press, and the take
+        /// drives the guest pointer until it releases.
+        case carried(any GuestDragTaking)
         /// The press is the guest's again for the rest of it.
         case forwarding
     }
@@ -44,9 +48,13 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     /// session begins from.
     private var withheldDrag: NSEvent?
 
-    /// Where the last nudge put the guest pointer, which is where the release
-    /// goes.
-    private var lastNudgePoint: NSPoint?
+    /// Where the last event this view sent the guest put its pointer, which
+    /// is where a release goes.
+    private var guestPointer: NSPoint?
+
+    /// Where the drag left the display: the last physical event forwarded, or
+    /// the last point a Mac session put the guest pointer over the display.
+    private var exitPoint: NSPoint?
 
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMDisplayMachineView")
@@ -54,36 +62,39 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     // MARK: - The press
 
     override func mouseDown(with event: NSEvent) {
-        if case .taking(let take) = press { take.displayAbandoned() }
+        switch press {
+        case .taking(let take), .carried(let take): take.displayAbandoned()
+        case .idle, .tracking, .forwarding: break
+        }
         press = .tracking
-        lastNudgePoint = nil
+        guestPointer = nil
+        exitPoint = nil
         transferHost()?.displayPressBegan()
-        forward(event)
+        forwardPhysical(event)
     }
 
     override func mouseDragged(with event: NSEvent) {
         switch press {
         case .tracking:
-            guard !bounds.contains(convert(event.locationInWindow, from: nil)),
-                let take = transferHost()?.takeGuestDrag(display: self)
-            else { return forward(event) }
+            guard !isOverDisplay(event), let take = transferHost()?.takeGuestDrag(display: self)
+            else { return forwardPhysical(event) }
             // Withheld from here: the guest's pointer stays where the last
             // forwarded event put it until the take moves it.
             press = .taking(take)
         case .taking(let take):
-            if bounds.contains(convert(event.locationInWindow, from: nil)) {
+            if isOverDisplay(event) {
                 take.pointerReturned()
             } else {
                 withheldDrag = event
                 take.withheldDrag()
                 withheldDrag = nil
             }
-            if case .forwarding = press { forward(event) }
+            if case .forwarding = press { forwardPhysical(event) }
         case .forwarding:
-            forward(event)
-        case .idle:
-            // A press whose release was injected: one more drag would move a
-            // guest pointer whose button is up.
+            forwardPhysical(event)
+        case .idle, .carried:
+            // A press whose release was injected, or one a Mac session owns:
+            // one more drag would move a guest pointer the take now drives.
             break
         }
     }
@@ -95,45 +106,68 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
             // A take that failed hands this release back to the guest; one
             // that released injected its own, and a second would be a second
             // drop.
-            if case .forwarding = press { forward(event) }
+            if case .forwarding = press { forwardPhysical(event) }
         case .tracking, .forwarding:
-            forward(event)
-        case .idle:
+            forwardPhysical(event)
+        case .idle, .carried:
             break
         }
+        if case .carried = press { return }
         press = .idle
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window == nil, case .taking(let take) = press else { return }
-        press = .idle
-        take.displayAbandoned()
+        guard window == nil else { return }
+        switch press {
+        case .taking(let take), .carried(let take):
+            press = .idle
+            take.displayAbandoned()
+        case .idle, .tracking, .forwarding:
+            break
+        }
+    }
+
+    /// Whether `event` lies over the display, its edges included: AppKit
+    /// reports a full-screen window's top row at `maxY`, which
+    /// `NSRect.contains` leaves out.
+    private func isOverDisplay(_ event: NSEvent) -> Bool {
+        let point = convert(event.locationInWindow, from: nil)
+        return (bounds.minX...bounds.maxX).contains(point.x)
+            && (bounds.minY...bounds.maxY).contains(point.y)
     }
 
     // MARK: - GuestDragDisplay
 
     func injectNudge(_ nudge: GuestDragNudge) {
-        let point = nudgePoint(nudge)
-        lastNudgePoint = point
-        guard let event = makeEvent(.leftMouseDragged, at: point) else { return }
-        forward(event)
+        inject(.leftMouseDragged, at: nudgePoint(nudge))
+    }
+
+    func injectDrag(at point: CGPoint) {
+        exitPoint = point
+        inject(.leftMouseDragged, at: point)
+    }
+
+    func returnToExitPoint() {
+        guard let exitPoint, exitPoint != guestPointer else { return }
+        inject(.leftMouseDragged, at: exitPoint)
     }
 
     func injectRelease() {
         press = .idle
-        guard let event = makeEvent(.leftMouseUp, at: lastNudgePoint ?? nudgePoint(.center)) else {
-            return
-        }
-        forward(event)
+        inject(.leftMouseUp, at: guestPointer ?? nudgePoint(.center))
     }
 
     func beginHostSession(carrying take: any GuestDragTaking) -> Bool {
         guard let event = withheldDrag, let vmID = transferHost()?.id else { return false }
         let source = DisplayDragOutSource(vmID: vmID, take: take)
         let location = convert(event.locationInWindow, from: nil)
-        return startDraggingSession(
-            with: source.draggingItems(centeredAt: location), event: event, source: source)
+        guard
+            startDraggingSession(
+                with: source.draggingItems(centeredAt: location), event: event, source: source)
+        else { return false }
+        press = .carried(take)
+        return true
     }
 
     func resumeForwarding() {
@@ -152,6 +186,22 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         case .leftMouseUp: super.mouseUp(with: event)
         default: break
         }
+    }
+
+    /// Forwards one of the user's own events, which leaves the guest pointer
+    /// where the drag will have left the display.
+    private func forwardPhysical(_ event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guestPointer = point
+        exitPoint = point
+        forward(event)
+    }
+
+    /// Sends the guest a constructed `type` event at `point`.
+    private func inject(_ type: NSEvent.EventType, at point: NSPoint) {
+        guard let event = makeEvent(type, at: point) else { return }
+        guestPointer = point
+        forward(event)
     }
 
     /// Begins the Mac drag session, reporting whether it began.

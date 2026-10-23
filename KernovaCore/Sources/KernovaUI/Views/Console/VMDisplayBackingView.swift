@@ -245,7 +245,9 @@ final class VMDisplayBackingView: NSView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        verdict(for: sender)
+        let operation = verdict(for: sender)
+        if !operation.isEmpty, ownDragOut(sender) != nil { hideDraggedImages(of: sender) }
+        return operation
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -254,6 +256,7 @@ final class VMDisplayBackingView: NSView {
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
         showRejectCursor(false)
+        if let sender, let take = ownDragOut(sender) { take.hostSessionLeft(machineView) }
     }
 
     override func draggingEnded(_ sender: any NSDraggingInfo) {
@@ -282,18 +285,47 @@ final class VMDisplayBackingView: NSView {
 
     /// `.copy` when this drag can be sent to the guest, else the empty operation
     /// AppKit renders as "no" — no accept badge, and a release springs back.
+    ///
+    /// A drag out of this same VM is the guest's own drag, still live in the
+    /// guest: its take moves the guest pointer with it and says whether a drop
+    /// here goes to the guest. Its promises are never read — they would be
+    /// written by pulling from the guest that is to receive them.
     private func dragOperation(for sender: any NSDraggingInfo) -> NSDragOperation {
+        if let take = ownDragOut(sender) {
+            return take.hostSession(over: machineView, at: machineLocation(of: sender)) ? .copy : []
+        }
         guard acceptsDrop(of: sender), carriesFiles(sender.draggingPasteboard) else {
             return []
         }
         return .copy
     }
 
-    /// Whether the guest can take a drop now, from wherever `sender` came.
-    ///
-    /// Files dragged out of this same VM are refused: their promises would be
-    /// written by pulling from the guest that is to receive them. Another VM's
-    /// take the ordinary promise path.
+    /// The take carrying `sender`, when it is a drag out of this same VM.
+    private func ownDragOut(_ sender: any NSDraggingInfo) -> (any GuestDragTaking)? {
+        guard let source = sender.draggingSource as? DisplayDragOutSource,
+            let host = transferHost(), source.vmID == host.id
+        else { return nil }
+        return source.take
+    }
+
+    /// Where `sender` is, in the machine view's coordinates.
+    private func machineLocation(of sender: any NSDraggingInfo) -> CGPoint {
+        machineView.convert(sender.draggingLocation, from: nil)
+    }
+
+    /// Hides the Mac session's images while it is over this display, where
+    /// the guest draws its own drag image under the guest pointer the session
+    /// moves; AppKit restores them when the drag exits (`NSDragging.h`).
+    private func hideDraggedImages(of sender: any NSDraggingInfo) {
+        sender.enumerateDraggingItems(
+            options: [], for: self, classes: [NSPasteboardItem.self], searchOptions: [:]
+        ) { item, _, _ in
+            item.setDraggingFrame(item.draggingFrame, contents: nil)
+        }
+    }
+
+    /// Whether the guest can take a drop now from `sender`, a drag from
+    /// anywhere but this same VM.
     private func acceptsDrop(of sender: any NSDraggingInfo) -> Bool {
         guard let host = transferHost(), host.displayDropAvailability == .available else {
             return false
@@ -312,6 +344,9 @@ final class VMDisplayBackingView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if let take = ownDragOut(sender) {
+            return take.hostSessionDropped(on: machineView, at: machineLocation(of: sender))
+        }
         // Re-checked here rather than trusted from `draggingUpdated`: the guest
         // agent can go away between the last pointer move and the release.
         guard acceptsDrop(of: sender) else { return false }

@@ -342,8 +342,8 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     ///
     /// The take runs while `holds` stays true; the condition turning false
     /// abandons it. Any earlier take is superseded: one still handing off is
-    /// abandoned, and a released one keeps writing what its destination asks
-    /// for.
+    /// abandoned, and one a Mac session carries keeps writing what its
+    /// destination asks for.
     func takeGuestDrag(
         generation: UInt64, display: any GuestDragDisplay,
         while holds: @escaping @MainActor () -> Bool

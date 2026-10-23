@@ -271,6 +271,8 @@ struct VMInstanceDisplayDropTests {
         let changed = AsyncGate()
 
         func injectNudge(_ nudge: GuestDragNudge) {}
+        func injectDrag(at point: CGPoint) {}
+        func returnToExitPoint() {}
         func injectRelease() {}
         func beginHostSession(carrying take: any GuestDragTaking) -> Bool { false }
 

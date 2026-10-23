@@ -97,11 +97,13 @@ struct VMDisplayBackingViewTests {
 
     // MARK: - File drop
 
-    /// A dragging info carrying whatever `pasteboard` holds, from `source`; only
-    /// those two are read by the drop path.
+    /// A dragging info carrying whatever `pasteboard` holds, from `source`, at
+    /// `draggingLocation`, with `items` as the session's dragging items.
     private final class StubDraggingInfo: NSObject, NSDraggingInfo {
         let draggingPasteboard: NSPasteboard
         let draggingSource: Any?
+        var draggingLocation: NSPoint = .zero
+        var items: [NSDraggingItem] = []
         @MainActor init(pasteboard: NSPasteboard, source: Any? = nil) {
             self.draggingPasteboard = pasteboard
             self.draggingSource = source
@@ -109,7 +111,6 @@ struct VMDisplayBackingViewTests {
 
         var draggingDestinationWindow: NSWindow? { nil }
         var draggingSourceOperationMask: NSDragOperation { .copy }
-        var draggingLocation: NSPoint { .zero }
         var draggedImageLocation: NSPoint { .zero }
         var draggedImage: NSImage? { nil }
         var draggingSequenceNumber: Int { 0 }
@@ -122,7 +123,13 @@ struct VMDisplayBackingViewTests {
             options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?,
             classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any],
             using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
-        ) {}
+        ) {
+            var stop: ObjCBool = false
+            for (index, item) in items.enumerated() {
+                block(item, index, &stop)
+                if stop.boolValue { break }
+            }
+        }
         func resetSpringLoading() {}
     }
 
@@ -174,8 +181,8 @@ struct VMDisplayBackingViewTests {
 
     // MARK: - Files dragged out of a VM
 
-    @Test("files dragged out of this same VM are refused, with the reject cursor")
-    func refusesItsOwnDragOut() throws {
+    @Test("files dragged out of this same VM that its take does not carry here are refused, with the reject cursor")
+    func refusesItsOwnUncarriedDragOut() throws {
         let backing = makeBacking()
         host.displayDropAvailability = .available
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.txt"])])
@@ -186,13 +193,58 @@ struct VMDisplayBackingViewTests {
             offered = true
             return true
         }
-        let source = DisplayDragOutSource(vmID: host.id, take: FakeTake(items: []))
+        let take = FakeTake(items: [])
+        let source = DisplayDragOutSource(vmID: host.id, take: take)
         let drag = makeTextDrag("promise", source: source)
 
         #expect(backing.draggingEntered(drag) == [])
         #expect(pushes == [true])
         #expect(!backing.performDragOperation(drag))
         #expect(!offered)
+        #expect(take.events == [.hostSessionOver(.zero), .hostSessionDropped(.zero)])
+    }
+
+    @Test("files dragged out of this same VM go back into the guest, the promises unread, the Mac images hidden")
+    func carriesItsOwnDragOutIntoTheGuest() throws {
+        let backing = makeBacking()
+        // The drop goes to the guest over its display, not the drop channel.
+        host.displayDropAvailability = .disconnected
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
+        var promisesRead = false
+        backing.promiseSource = DisplayDropPromiseSource(
+            carriesPromises: { _ in
+                promisesRead = true
+                return true
+            },
+            receivers: { _ in
+                promisesRead = true
+                return []
+            })
+        let take = FakeTake(items: [])
+        take.carriesOverDisplay = true
+        let drag = makeTextDrag("promise", source: DisplayDragOutSource(vmID: host.id, take: take))
+        drag.draggingLocation = NSPoint(x: 30, y: 40)
+        let item = NSDraggingItem(pasteboardWriter: "a.txt" as NSString)
+        item.setDraggingFrame(
+            NSRect(x: 0, y: 0, width: 64, height: 64), contents: NSImage(size: NSSize(width: 64, height: 64)))
+        drag.items = [item]
+        let point = backing.machineView.convert(drag.draggingLocation, from: nil)
+
+        #expect(backing.draggingEntered(drag) == .copy)
+        #expect((item.imageComponents ?? []).allSatisfy { $0.contents == nil })
+        #expect(backing.draggingUpdated(drag) == .copy)
+        backing.draggingExited(drag)
+        #expect(backing.draggingEntered(drag) == .copy)
+        #expect(backing.performDragOperation(drag))
+
+        #expect(
+            take.events == [
+                .hostSessionOver(point), .hostSessionOver(point), .hostSessionLeft,
+                .hostSessionOver(point), .hostSessionDropped(point),
+            ])
+        #expect(pushes.allSatisfy { !$0 })
+        #expect(!promisesRead)
     }
 
     @Test("files dragged out of another VM take the promise path")

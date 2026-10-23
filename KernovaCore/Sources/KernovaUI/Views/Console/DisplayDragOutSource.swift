@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 /// destination can ask for the guest's items to be moved or deleted.
 @MainActor
 final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProviderDelegate {
-    /// The VM the drag came out of, so its own display can refuse it.
+    /// The VM the drag came out of, so its own display can hand the drag back
+    /// to the guest.
     let vmID: UUID
 
     /// The take whose items this session carries.
@@ -72,6 +73,10 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         _ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
         .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        take.hostSessionMoved()
     }
 
     func draggingSession(
