@@ -677,8 +677,7 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // A copy this connection watched arrive, so the one after it reads as a
-        // gesture the guest made rather than a standing snapshot re-evaluated.
+        // An offer standing on the host, for the total loss after it to withdraw.
         pasteboard.setString("carried", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
         let offer = try await awaitOffer(on: hostChannel)
@@ -718,12 +717,6 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // A copy this connection watched arrive, so the one after it reads as a
-        // gesture the guest made rather than a standing snapshot re-evaluated.
-        pasteboard.setString("carried", forType: .string)
-        await MainActor.run { agent.checkClipboardChange() }
-        _ = try await awaitOffer(on: hostChannel)
-
         let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
         // A mode-000 file stats exactly like a readable one, so only asking for
         // the open permission separates them.
@@ -750,8 +743,8 @@ struct VsockGuestClipboardAgentTests {
             await MainActor.run { agent.clipboardActivity } == .copyPartlyCarried(skipped: 1))
     }
 
-    @Test("outbound: the first poll of a connection re-announces a partial copy without a notice")
-    func outboundFirstPollAfterConnectingRaisesNoPartialNotice() async throws {
+    @Test("outbound: a partial copy standing when the channel comes up is not offered")
+    func outboundStandingPartialCopyIsNotOffered() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -775,7 +768,7 @@ struct VsockGuestClipboardAgentTests {
         // A copy of two files, one of them unreadable, already standing when the
         // channel comes up — a VM resumed from a save, the host app restarted,
         // or clipboard sharing toggled off and on.
-        let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
+        let standing = try writeTempFile(name: "standing.txt", data: Data("body".utf8))
         let sealed = try writeTempFile(name: "sealed.txt", data: Data("secret".utf8))
         defer {
             try? FileManager.default.setAttributes(
@@ -783,35 +776,34 @@ struct VsockGuestClipboardAgentTests {
         }
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: sealed.path)
         pasteboard.setItems([
-            [(type: .fileURL, data: Data(readable.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(standing.absoluteString.utf8))],
             [(type: .fileURL, data: Data(sealed.absoluteString.utf8))],
         ])
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
         await MainActor.run { agent.checkClipboardChange() }
-        let offer = try await awaitOffer(on: hostChannel)
-        #expect(offer.repInfo.map(\.filename) == ["readable.txt"])
-
-        // Re-announcing to a host with no record of prior offers is not a
-        // gesture anyone just made, and the notice pops the guest's dropdown by
-        // itself — so nobody is interrupted for a copy already accounted for.
-        try await resolved.wait { resolves.withLock { $0 } == 1 }
         #expect(notices.value == 0)
-        #expect(await MainActor.run { agent.clipboardActivity } == .offeredToHost)
+        #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
 
-        // The copy after it is watched arriving, so that one is reported.
+        // The next copy crosses and is reported. The wire is ordered, so an
+        // offer or release the poll above made would arrive ahead of its offer.
+        let next = try writeTempFile(name: "next.txt", data: Data("body".utf8))
         pasteboard.setItems([
-            [(type: .fileURL, data: Data(readable.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(next.absoluteString.utf8))],
             [(type: .fileURL, data: Data(sealed.absoluteString.utf8))],
         ])
         await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.map(\.filename) == ["next.txt"])
+        try await resolved.wait { resolves.withLock { $0 } == 1 }
         try await notices.changed.wait { notices.value == 1 }
         #expect(
             await MainActor.run { agent.clipboardActivity } == .copyPartlyCarried(skipped: 1))
+        #expect(resolves.withLock { $0 } == 1)
     }
 
-    @Test("outbound: the first poll of a connection re-reads a snapshot without blaming a copy")
-    func outboundFirstPollAfterConnectingReportsNoCopy() async throws {
+    @Test("outbound: a snapshot standing when the channel comes up is not reported as a copy")
+    func outboundStandingSnapshotIsNotReported() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -824,29 +816,27 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         // A snapshot already standing when the channel comes up, whose flavors
-        // read as nothing. The promise this agent wrote for a host offer is the
-        // one that matters: reconnecting drops the promise behind it, so its
-        // providers stop serving and every type comes back empty — for a copy
-        // the guest user never made.
+        // read as nothing.
         pasteboard.setItem([
             (type: .fileURL, data: Data("file:///nonexistent/\(UUID().uuidString)".utf8))
         ])
         try await startAgentAndWaitForLiveChannel(agent: agent)
         await MainActor.run { agent.checkClipboardChange() }
-
-        // Re-announcing to a host that has no record of prior offers is not a
-        // gesture anyone just made, so it interrupts nobody and leaves the line
-        // where policy set it.
         #expect(notices.value == 0)
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
 
-        // The copy after it is watched arriving, so that one is reported.
+        // The next copy is reported.
         pasteboard.setItem([
             (type: .fileURL, data: Data("file:///nonexistent/\(UUID().uuidString)".utf8))
         ])
         await MainActor.run { agent.checkClipboardChange() }
         try await notices.changed.wait { notices.value == 1 }
         #expect(await MainActor.run { agent.clipboardActivity } == .copyCarriedNothing)
+
+        // Neither snapshot put anything on the wire: the copy after them is the
+        // first frame the host reads.
+        try await expectNothingSentBeforeNextCopy(
+            agent: agent, pasteboard: pasteboard, channel: hostChannel)
     }
 
     @Test("outbound: an emptied clipboard withdraws the offer without reading as a failed copy")
@@ -1870,10 +1860,10 @@ struct VsockGuestClipboardAgentTests {
 
     // MARK: - Reconnect / lifecycle
 
-    @Test("reconnect resets echo-suppression digest so agent re-offers current pasteboard")
-    func reconnectResetsEchoSuppression() async throws {
+    @Test("neither connection is offered the standing pasteboard; a repeat of the last offer crosses again")
+    func reconnectOffersOnlyCopiesMadeWhileConnected() async throws {
         let pasteboard = FakePasteboard()
-        pasteboard.setString("persistent text", forType: .string)
+        pasteboard.setString("standing text", forType: .string)
 
         let (agentFd0, remoteFd0) = try makeRawSocketPair()
         let (agentFd1, remoteFd1) = try makeRawSocketPair()
@@ -1906,35 +1896,34 @@ struct VsockGuestClipboardAgentTests {
             reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
 
-        agent.start()
-        // Production agents are default-disabled until host policy enables them.
-        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-
-        // First connection: wait for liveChannel to be published.
-        try await waitUntil { agent.liveChannelForTesting != nil }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
         let firstChannel = try #require(agent.liveChannelForTesting)
-
-        // Trigger a poll — agent should offer "persistent text"
         await MainActor.run { agent.checkClipboardChange() }
 
-        let offer1Frame = try await nextFrame(from: host0)
-        guard case .clipboardOffer(let offer1) = offer1Frame.payload else {
-            throw TestFailure("Expected ClipboardOffer on first connection")
-        }
-        #expect(offer1.generation >= 1)
+        // The wire is ordered, so an offer of the standing text would arrive
+        // ahead of this copy's.
+        let copied = "copied text"
+        pasteboard.setString(copied, forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer1 = try await awaitOffer(on: host0)
+        #expect(offer1.repInfo.map(\.byteCount) == [UInt64(Data(copied.utf8).count)])
 
-        // Close first connection to force reconnect
+        // A copy the first connection never polled stands when the second comes
+        // up, so it differs from what the first connection offered.
+        let unpolled = "copied before the reconnect"
+        pasteboard.setString(unpolled, forType: .string)
         host0.close()
         try await waitForReconnect(of: agent, replacing: firstChannel)
-
-        // The new connection's endpoint starts with no offer-dedup digest, so the
-        // next poll re-offers the unchanged pasteboard.
         await MainActor.run { agent.checkClipboardChange() }
 
-        let offer2Frame = try await nextFrame(from: host1)
-        guard case .clipboardOffer(let offer2) = offer2Frame.payload else {
-            throw TestFailure("Expected ClipboardOffer after reconnect")
-        }
+        // The new connection's endpoint has offered nothing, so the same content
+        // the first connection offered crosses again, and under a higher
+        // generation. Its offer being the first frame shows the standing copy
+        // was not offered ahead of it.
+        pasteboard.setString(copied, forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer2 = try await awaitOffer(on: host1)
+        #expect(offer2.repInfo.map(\.byteCount) == [UInt64(Data(copied.utf8).count)])
         #expect(offer2.generation > offer1.generation)
     }
 
@@ -1989,8 +1978,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(pasteboard.providerInvocations == 1)
 
         // The channel goes and the agent redials. The promise stays standing —
-        // its providers hold the offer's cache alive — and the change-count gate
-        // is unset for the new host.
+        // its providers hold the offer's cache alive — and is what the new
+        // connection's change-count gate is seeded from.
         host0.close()
         try await waitForReconnect(of: agent, replacing: firstChannel)
 

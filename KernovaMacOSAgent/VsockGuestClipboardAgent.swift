@@ -85,16 +85,9 @@ final class VsockGuestClipboardAgent {
     /// Last `NSPasteboard.changeCount` we observed; set after every poll and
     /// every host write so we don't echo our own content.
     ///
-    /// `Self.unobservedChangeCount` until a poll on this connection has seen the
-    /// pasteboard, so whatever is standing is re-evaluated for the new host.
+    /// Seeded from the pasteboard when a connection comes up, so only a copy
+    /// made while that connection is live is offered to the host.
     private var lastPasteboardChangeCount: Int
-
-    /// `lastPasteboardChangeCount` before this connection has observed anything.
-    ///
-    /// No real `changeCount` is negative, so the first poll of a connection
-    /// always re-evaluates the standing snapshot — and knows it is looking at
-    /// one it never watched arrive.
-    private static let unobservedChangeCount = -1
 
     /// Materializes streamed file payloads to local temp files.
     ///
@@ -327,15 +320,13 @@ final class VsockGuestClipboardAgent {
                 progressIdleGap: progressIdleGap,
                 clock: clock,
                 dataLink: .dials(port: KernovaVsockPort.clipboardData, connect: dataDialer),
-                // A brand-new host has no record of prior offers; the fresh
-                // dedup latch is what re-announces the standing snapshot.
                 firstGeneration: nextLocalGeneration),
             reporter: reporter)
         connectionTag = endpoint.connectionTag
         liveChannel = channel
         self.endpoint = endpoint
         endpoint.delegate = self
-        lastPasteboardChangeCount = Self.unobservedChangeCount
+        lastPasteboardChangeCount = pasteboard.changeCount
         endpoint.start()
         Self.logger.log(
             .notice,
@@ -382,23 +373,12 @@ final class VsockGuestClipboardAgent {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
         // Ahead of every read: reading a promised flavor *fires* its provider,
-        // and this agent's own promise is still standing across a teardown and
-        // reconnect — where the change-count gate is unset, so this latch is
-        // what keeps the first poll of a connection from pulling the Mac's own
-        // content back and offering it as a guest copy. The publisher outlives
-        // the connections, so the latch does too.
+        // so a change count this agent's own publisher wrote is never read,
+        // whatever the gate holds.
         guard currentCount != publisher.lastWriteChangeCount else {
             lastPasteboardChangeCount = currentCount
             return
         }
-
-        // Captured once, before any gate advances, and passed to every path that
-        // can raise a menu notice: only a snapshot a poll on this connection
-        // watched arrive is a gesture someone just made. The first poll of a
-        // connection re-evaluates whatever was already standing
-        // (`unobservedChangeCount`), and a notice for that pops the guest's
-        // dropdown open with nobody having touched the clipboard.
-        let watchedItArrive = lastPasteboardChangeCount != Self.unobservedChangeCount
 
         // The shared reader owns every rule about what may cross — marker
         // disposition, per-item file classification, path-fallback suppression
@@ -415,23 +395,19 @@ final class VsockGuestClipboardAgent {
             lastPasteboardChangeCount = currentCount
         case .empty:
             noteSnapshotOfferedNothing(
-                pasteboardHeldSomething: false, watchedItArrive: watchedItArrive,
-                changeCount: currentCount)
+                pasteboardHeldSomething: false, changeCount: currentCount)
         case .nothingOfferable:
             noteSnapshotOfferedNothing(
-                pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
-                changeCount: currentCount)
+                pasteboardHeldSomething: true, changeCount: currentCount)
         case .textOnlyRefusal:
             // Unreachable: this poll always reads with `allowsBinary: true`.
             Self.logger.log(.fault, "Clipboard snapshot refused as text-only on a binary transport")
             assertionFailure("Clipboard snapshot refused as text-only on a binary transport")
             noteSnapshotOfferedNothing(
-                pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
-                changeCount: currentCount)
+                pasteboardHeldSomething: true, changeCount: currentCount)
         case .content(let content, let skipped):
             offer(
-                content, skipped: skipped, watchedItArrive: watchedItArrive,
-                changeCount: currentCount)
+                content, skipped: skipped, changeCount: currentCount)
         case .pendingFiles(let urls, let unresolved):
             // A file this agent materialized from a prior inbound paste is the
             // Mac's own content; offering it back is an echo, not a copy.
@@ -445,13 +421,11 @@ final class VsockGuestClipboardAgent {
                 // pasteboard still moved on, and the offer it displaced is all
                 // that may be withdrawn.
                 noteSnapshotOfferedNothing(
-                    pasteboardHeldSomething: false, watchedItArrive: watchedItArrive,
-                    changeCount: currentCount)
+                    pasteboardHeldSomething: false, changeCount: currentCount)
                 return
             }
             resolveAndOffer(
-                offerable, unresolved: unresolved, watchedItArrive: watchedItArrive,
-                channel: channel, changeCount: currentCount)
+                offerable, unresolved: unresolved, channel: channel, changeCount: currentCount)
         }
     }
 
@@ -460,16 +434,13 @@ final class VsockGuestClipboardAgent {
     ///
     /// `pasteboardHeldSomething` separates a copy whose every flavor was
     /// filtered out from a pasteboard emptied outright, which are not the same
-    /// news. `watchedItArrive` is `checkClipboardChange`'s reading of whether
-    /// this snapshot is a gesture at all, taken before any gate advanced.
-    private func noteSnapshotOfferedNothing(
-        pasteboardHeldSomething: Bool, watchedItArrive: Bool, changeCount: Int
-    ) {
+    /// news.
+    private func noteSnapshotOfferedNothing(pasteboardHeldSomething: Bool, changeCount: Int) {
         // The pasteboard still moved on, so the host's previous offer is retired
         // rather than left serving a copy the user has replaced.
         let released = endpoint?.release() ?? false
         lastPasteboardChangeCount = changeCount
-        guard pasteboardHeldSomething, watchedItArrive else {
+        guard pasteboardHeldSomething else {
             // Nobody's copy came up short here, so the only line that can be
             // left wrong is one claiming the offer this just withdrew.
             if released { clipboardActivityStorage = .enabled }
@@ -492,11 +463,8 @@ final class VsockGuestClipboardAgent {
     ///
     /// The gesture was made in this guest, so a partial loss is accounted for
     /// here: the host's readout covers only what the offer carried, and nothing
-    /// else would name the difference. `watchedItArrive` is what keeps a
-    /// re-announced standing snapshot from claiming a gesture.
-    private func offer(
-        _ content: ClipboardContent, skipped: Int, watchedItArrive: Bool, changeCount: Int
-    ) {
+    /// else would name the difference.
+    private func offer(_ content: ClipboardContent, skipped: Int, changeCount: Int) {
         guard let endpoint else { return }
         switch endpoint.offer(content) {
         case .sent, .duplicate:
@@ -514,10 +482,6 @@ final class VsockGuestClipboardAgent {
             .warning,
             "The offer to the host left \(skipped, privacy: .public) unreadable item(s) out (conn=\(self.connectionTag, privacy: .public))"
         )
-        // Re-announcing a standing snapshot to a new host is nobody's gesture,
-        // and the notice shows the guest's status-item callout by itself — so a
-        // reconnect over an already-partial copy must interrupt no one.
-        guard watchedItArrive else { return }
         clipboardActivityStorage = .copyPartlyCarried(skipped: skipped)
         onClipboardNotice()
     }
@@ -530,8 +494,7 @@ final class VsockGuestClipboardAgent {
     /// global queue and back; a folder is encoded only when the host requests
     /// the rep, and then straight onto the wire.
     private func resolveAndOffer(
-        _ urls: [URL], unresolved: Int, watchedItArrive: Bool, channel: VsockChannel,
-        changeCount: Int
+        _ urls: [URL], unresolved: Int, channel: VsockChannel, changeCount: Int
     ) {
         guard !resolveInFlight else { return }
         resolveInFlight = true
@@ -557,8 +520,7 @@ final class VsockGuestClipboardAgent {
                     // the total loss the inline path reports the same way, and
                     // it advances the gate itself.
                     self.noteSnapshotOfferedNothing(
-                        pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
-                        changeCount: changeCount)
+                        pasteboardHeldSomething: true, changeCount: changeCount)
                     return
                 }
                 // Advance the change-count gate so the files aren't re-walked
@@ -566,8 +528,7 @@ final class VsockGuestClipboardAgent {
                 self.lastPasteboardChangeCount = changeCount
                 self.offer(
                     ClipboardContent(representations: intake.representations),
-                    skipped: intake.skipped, watchedItArrive: watchedItArrive,
-                    changeCount: changeCount)
+                    skipped: intake.skipped, changeCount: changeCount)
             }
         }
     }
