@@ -42,10 +42,10 @@ enum AgentMenuText {
 
     /// Why a paste of the host's clipboard did not happen, per failure code.
     ///
-    /// `pasteUnpackFailed`, `copyTooLarge`, `pasteIncompleteSet`,
-    /// `forwardItemsSkipped`, the four drop codes and the four drag codes are
-    /// outcomes the guest reports, or the host keeps, rather than ones the
-    /// guest receives, so they read as the generic failure.
+    /// `copyTooLarge`, `pasteIncompleteSet`, `forwardItemsSkipped`, the four
+    /// drop codes and the four drag codes are outcomes the guest reports, or
+    /// the host keeps, rather than ones the guest receives, so they read as
+    /// the generic failure.
     private static func pasteRefusalDetail(
         _ code: ClipboardErrorCode, pasteLimitBytes: Int?
     ) -> String {
@@ -56,7 +56,8 @@ enum AgentMenuText {
                 "too large to paste — over the \(ClipboardPasteLimit.displayLimit(pasteLimitBytes)) transfer limit"
         case .pasteDiskFull: return "not enough disk space to paste"
         case .pasteTimeout: return "paste timed out"
-        case .pasteFailed, .pasteUnpackFailed, .copyTooLarge, .pasteIncompleteSet,
+        case .pasteUnpackFailed: return "couldn't save the pasted item"
+        case .pasteFailed, .copyTooLarge, .pasteIncompleteSet,
             .forwardItemsSkipped, .dropDiskFull, .dropDownloadsDenied, .dropFailed,
             .dropUnpackFailed, .dragTakeStale, .dragTakeRefused, .dragTakeFailed,
             .dragItemUnavailable:

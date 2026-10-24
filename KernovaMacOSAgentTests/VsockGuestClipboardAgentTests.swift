@@ -1653,13 +1653,13 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
 
-        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+        // The guest's own extract fails on the second entry at the same path.
+        let duplicated = try rawArchive([.root(), .file("dup.txt", "first"), .file("dup.txt", "second")])
         let pull = lazyPull(pasteboard, forType: .fileURL)
         let connection = try await acceptPull(on: dialled, generation: 35)
-        try abortTransfer(
-            fd: connection.fd, transferID: connection.request.transferID,
-            code: ClipboardStreamAbortCode.extractError.rawValue, isArchive: true, isInline: false,
-            itemFailure: unwritable)
+        try serveTransfer(
+            fd: connection.fd, transferID: connection.request.transferID, payload: duplicated,
+            isArchive: true, isInline: false)
         #expect(await pull.value == nil)
 
         let frame = try await nextFrame(from: hostChannel)
@@ -1669,8 +1669,8 @@ struct VsockGuestClipboardAgentTests {
         }
         #expect(error.code == ClipboardErrorCode.pasteUnpackFailed.rawValue)
         #expect(error.hasItemFailure)
-        #expect(error.itemFailure.itemPath == unwritable.itemPath)
-        #expect(error.itemFailure.posixError == EILSEQ)
+        #expect(error.itemFailure.itemPath == "Project/dup.txt")
+        #expect(error.itemFailure.posixError == EEXIST)
         try await notices.changed.wait { notices.value == 1 }
         #expect(
             await MainActor.run { agent.clipboardActivity }

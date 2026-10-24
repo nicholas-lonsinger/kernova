@@ -136,6 +136,24 @@ struct ClipboardEndpointDropTests {
         }
     }
 
+    @Test("a drop the guest couldn't unpack, naming no entry, fails naming none")
+    func unpackFailedDropWithoutAnEntryNamesNone() async throws {
+        let harness = try RawPeerHarness(kind: .drop)
+        defer { harness.tearDown() }
+        harness.endpoint.offer(
+            ClipboardContent(representations: [try dropRep("one.bin", Data("one".utf8))]))
+
+        try harness.send(
+            makeDropCompleteFrame(
+                generation: 1, outcome: .failed, code: .dropUnpackFailed, message: "x"))
+
+        try await harness.side.reports.wait {
+            dropFinishes(harness.side.reports).contains {
+                $0.outcome == .failed(.unpackFailed(nil))
+            }
+        }
+    }
+
     @Test("an empty drop is answered with a failure rather than taken on")
     func emptyDropOfferIsRefused() async throws {
         let harness = try RawPeerHarness(role: .guest, kind: .drop)

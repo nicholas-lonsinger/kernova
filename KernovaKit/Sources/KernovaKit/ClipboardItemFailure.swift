@@ -5,10 +5,9 @@ import Foundation
 /// read, or an entry the receiving side could not write.
 ///
 /// Raised where the read or write happens, so the item is the one that actually
-/// failed rather than one inferred afterwards; it crosses the wire as a
-/// `ClipboardItemFailure`. Its descriptions leave the item out, so a log line
-/// that interpolates one publicly names only the reason — the item is logged
-/// apart, as private.
+/// failed rather than one inferred afterwards. Its descriptions leave the item
+/// out, so a log line that interpolates one publicly names only the reason —
+/// the item is logged apart, as private.
 public struct ClipboardItemFailure: Error, Equatable, Sendable {
     /// How the read or write failed.
     public enum Reason: Equatable, Sendable {
@@ -23,12 +22,14 @@ public struct ClipboardItemFailure: Error, Equatable, Sendable {
 
     /// The item, as a slash-separated path. On the wire and to the receiver it
     /// starts with the representation's own name; inside the archive codec it is
-    /// relative to the source, empty for the source itself.
+    /// relative to the source for a read failure and to the extract's root for a
+    /// write failure, empty for the source or root itself.
     public let itemPath: String
     /// How the read or write failed.
     public let reason: Reason
 
-    /// The most a serialized failure may take in an abort trailer.
+    /// The most a serialized failure may take in any wire form, as
+    /// ``boundedWire`` bounds it.
     static let maximumEncodedByteCount = 4096
 
     /// Creates a failure naming the item at `itemPath`.

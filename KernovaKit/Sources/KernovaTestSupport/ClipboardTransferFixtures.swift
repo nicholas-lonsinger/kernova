@@ -139,13 +139,13 @@ public func serveTransfer(
 }
 
 /// Serves a transfer that stops part-way: the reply, `sent` payload bytes, then
-/// an abort trailer naming `code` and `itemFailure` as its detail, then EOF.
+/// an abort trailer naming `code`, then EOF.
 ///
 /// `declaredBytes` is what the reply advertises, so the receiver is left short
 /// of the payload it was promised and reads the trailer for the reason.
 public func abortTransfer(
     fd: Int32, transferID: UInt64, code: String, isArchive: Bool = false, isInline: Bool = true,
-    sent: Data = Data(), declaredBytes: Int = 1, itemFailure: ClipboardItemFailure? = nil
+    sent: Data = Data(), declaredBytes: Int = 1
 ) throws {
     defer { ClipboardDataConnection.end(fd: fd) }
     try ClipboardDataConnection.writeFrame(
@@ -155,8 +155,7 @@ public func abortTransfer(
         fd: fd)
     try writeTransferBytes(fd: fd, sent)
     try ClipboardDataConnection.writeTrailer(
-        ClipboardTransferTrailer(ending: .aborted(rawCode: code, readFailure: itemFailure)),
-        fd: fd)
+        ClipboardTransferTrailer(ending: .aborted(rawCode: code)), fd: fd)
 }
 
 /// Refuses a transfer outright: a reply naming `code`, no payload, no trailer.

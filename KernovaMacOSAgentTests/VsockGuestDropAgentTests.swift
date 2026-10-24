@@ -452,20 +452,24 @@ struct VsockGuestDropAgentTests {
 
         try harness.host.send(
             makeDropOfferFrame(
-                generation: 1, reps: [fileRep("Project", bytes: Data(repeating: 0x44, count: 64))]))
-        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
-        let pull = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
-        try abortTransfer(
-            fd: pull.fd, transferID: pull.request.transferID,
-            code: ClipboardStreamAbortCode.extractError.rawValue, isArchive: true, isInline: false,
-            itemFailure: unwritable)
+                generation: 1,
+                reps: [
+                    RepInfo(
+                        uti: ClipboardArchive.directoryUTI, byteCount: 64, filename: "Project",
+                        isInline: false, isDirectory: true)
+                ]))
+        // The guest's own extract fails on the second entry at the same path.
+        let duplicated = try rawArchive([.root(), .file("dup.txt", "first"), .file("dup.txt", "second")])
+        try await serveRequest(
+            on: harness.dialled, generation: 1, repIndex: 0, payload: duplicated,
+            payloadIsArchived: true)
 
         let complete = try await awaitCompletion(on: harness.host)
         #expect(complete.outcome == .failed)
         #expect(complete.code == ClipboardErrorCode.dropUnpackFailed.rawValue)
         #expect(complete.hasItemFailure)
-        #expect(complete.itemFailure.itemPath == unwritable.itemPath)
-        #expect(complete.itemFailure.posixError == EILSEQ)
+        #expect(complete.itemFailure.itemPath == "Project/dup.txt")
+        #expect(complete.itemFailure.posixError == EEXIST)
         #expect(harness.revealed.value == nil)
     }
 

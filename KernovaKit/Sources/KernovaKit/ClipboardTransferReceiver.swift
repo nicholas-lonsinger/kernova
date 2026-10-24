@@ -654,20 +654,22 @@ final class ClipboardTransferReceiver: Sendable {
 
     /// The stop a peer's refusal or abort trailer names.
     ///
-    /// A source the peer could not read is logged here, where its item
-    /// arrives: whichever pull this resolves may report the failure without a
-    /// log line of its own.
+    /// The peer's item is kept only under `read.error`, so an item this side
+    /// reports as unsaved comes from ``stop(forUnwritable:)`` alone. A kept
+    /// item is logged here, where it arrives: whichever pull this resolves may
+    /// report the failure without a log line of its own.
     private func stop(
         fromPeer rawCode: String, message: String = "The sender ended the transfer",
         readFailure: ClipboardItemFailure?
     ) -> ReceiveStop {
-        if let readFailure {
+        let unread = rawCode == ClipboardStreamAbortCode.readError.rawValue ? readFailure : nil
+        if let unread {
             Self.logger.log(
                 .notice,
-                "Clipboard transfer \(self.transferID, privacy: .public): the sender couldn't read '\(readFailure.itemPath, privacy: .private)' — \(readFailure.description, privacy: .public)"
+                "Clipboard transfer \(self.transferID, privacy: .public): the sender couldn't read '\(unread.itemPath, privacy: .private)' — \(unread.description, privacy: .public)"
             )
         }
-        return ReceiveStop(rawCode: rawCode, message: message, itemFailure: readFailure)
+        return ReceiveStop(rawCode: rawCode, message: message, itemFailure: unread)
     }
 
     /// The stop an entry this side could not create ends the transfer with.

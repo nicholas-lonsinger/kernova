@@ -17,7 +17,7 @@ private func fieldKey(_ name: String) -> __AAFieldKey {
 
 /// An entry header built field by field, in the order the fields are
 /// appended.
-final class ClipboardArchiveHeaderBuilder {
+package final class ClipboardArchiveHeaderBuilder {
     /// A header's encoding is at most `UInt16.max` bytes, and every field but
     /// the strings encodes in under this many together.
     private static let nonStringFieldBound = 256
@@ -32,19 +32,19 @@ final class ClipboardArchiveHeaderBuilder {
     }
 
     /// An empty header, or `nil` when AppleArchive cannot allocate one.
-    init?() {
+    package init?() {
         guard let header = __AAHeaderCreate() else { return nil }
         self.header = header
     }
 
     deinit { __AAHeaderDestroy(header) }
 
-    func append(uint value: UInt64, key: String) {
+    package func append(uint value: UInt64, key: String) {
         record(__AAHeaderSetFieldUInt(header, UInt32.max, fieldKey(key), value))
     }
 
     /// Appends a string field carrying `bytes` exactly.
-    func append(string bytes: [UInt8], key: String) {
+    package func append(string bytes: [UInt8], key: String) {
         // Terminated, so even an empty string has a non-null pointer.
         let terminated = bytes.map { CChar(bitPattern: $0) } + [0]
         record(
@@ -54,19 +54,19 @@ final class ClipboardArchiveHeaderBuilder {
             })
     }
 
-    func append(timespec value: timespec, key: String) {
+    package func append(timespec value: timespec, key: String) {
         var value = value
         record(__AAHeaderSetFieldTimespec(header, UInt32.max, fieldKey(key), &value))
     }
 
     /// Appends a blob field declaring `size` bytes of payload.
-    func append(blobSize size: UInt64, key: String) {
+    package func append(blobSize size: UInt64, key: String) {
         record(__AAHeaderSetFieldBlob(header, UInt32.max, fieldKey(key), size))
     }
 
     /// The header, or `nil` when a field was refused or the encoding does not
     /// parse.
-    func make() -> ArchiveHeader? {
+    package func make() -> ArchiveHeader? {
         guard !refused, let encoded = __AAHeaderGetEncodedData(header) else { return nil }
         return ArchiveHeader(
             withAAEncodedData: UnsafeBufferPointer(start: encoded, count: __AAHeaderGetEncodedSize(header)))

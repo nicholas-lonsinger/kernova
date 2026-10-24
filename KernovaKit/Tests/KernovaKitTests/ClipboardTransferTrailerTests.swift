@@ -129,6 +129,32 @@ struct ClipboardTransferTrailerTests {
                     readFailure: ClipboardItemFailure(itemPath: "Mail", reason: .posix(EACCES))))
     }
 
+    @Test("a refusal's read failure too long for the bound crosses as the item's own name")
+    func overlongRefusalReadFailureCrossesAsItsName() throws {
+        let deep = Array(repeating: "folder", count: 1000).joined(separator: "/") + "/Mail"
+        let frame = Frame.clipboardTransferRefusal(
+            transferID: 1, code: .readError, message: "refused",
+            readFailure: ClipboardItemFailure(itemPath: deep, reason: .posix(EACCES)))
+
+        let reply = frame.clipboardTransferReply
+        #expect(reply.hasReadFailure)
+        #expect(
+            ClipboardItemFailure(wire: reply.readFailure)
+                == ClipboardItemFailure(itemPath: "Mail", reason: .posix(EACCES)))
+    }
+
+    @Test("a refusal whose item name alone is past the bound carries no read failure")
+    func unboundableRefusalReadFailureIsLeftOut() throws {
+        let name = String(repeating: "m", count: ClipboardItemFailure.maximumEncodedByteCount + 1)
+        let failure = ClipboardItemFailure(itemPath: "folder/\(name)", reason: .posix(EACCES))
+        #expect(failure.boundedWire == nil)
+
+        let frame = Frame.clipboardTransferRefusal(
+            transferID: 1, code: .readError, message: "refused", readFailure: failure)
+
+        #expect(!frame.clipboardTransferReply.hasReadFailure)
+    }
+
     // MARK: - Holding the trailer back
 
     @Test("the reader releases the payload and never a byte of the trailer")

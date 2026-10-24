@@ -417,8 +417,9 @@ package struct ClipboardTransferWording: Equatable {
     /// The reason a read or save gave, at the strength its error code carries,
     /// or `nil` when it gave none.
     ///
-    /// `EPERM` and `EACCES` both mean the reader was refused the item; neither
-    /// says what refused it. A save creates each entry by its own name in a
+    /// `EPERM` and `EACCES` both mean the reader or saver was refused the
+    /// item; neither says what refused it. A save creates each entry by its
+    /// own name in a
     /// folder it has just made, so `EILSEQ` is the volume refusing that name,
     /// `EEXIST` an earlier entry of the same folder whose name the volume
     /// treats as the same, and `ENAMETOOLONG` that one name over the volume's
