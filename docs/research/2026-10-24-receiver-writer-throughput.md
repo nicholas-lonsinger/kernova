@@ -69,6 +69,48 @@ file (0.387 s, +44 %) and five `extractStream` runs (+13 % to +22 %). A `sync()`
    way. Clearing `UF_COMPRESSED` in the filter's `extractAttributes` message stops the compression, and then
    `extractStream`'s output matches `TreeMaterializer`'s in every entry's type, mode, flags, mtime, birth time and
    size.
+6. **AppleArchive's zero-block scan does not explain `extractStream`'s extra time on the 1 GiB incompressible
+   file.** `extractStream` by default makes a hole of every aligned zero block (`AA_FLAG_EXTRACT_NO_AUTO_SPARSE`,
+   `AAFlagSet.h`). Turning that off, and running the extract with one thread as well, changes nothing beyond
+   run-to-run noise:
+
+   | Writer | Wall (s) | User CPU (s) | System CPU (s) |
+   |---|---|---|---|
+   | extractStream | 0.420 | 0.690 | 0.190 |
+   | extractStream, `.extractNoAutoSparse` | 0.438 | 0.705 | 0.187 |
+   | extractStream, `.extractNoAutoSparse`, `threadCount: 1` | 0.427 | 0.687 | 0.177 |
+   | TreeMaterializer | 0.271 | 0.276 | 0.083 |
+
+   With `threadCount: 1`, each extract runs one `extractThreadProc` worker instead of ten; one file occupies one
+   worker either way.
+7. **`extractStream`'s remaining time on the 1 GiB file goes to its write path and to a thread polling the clock.**
+   Of the samples not parked in a wait, with `.extractNoAutoSparse` set:
+
+   | Where | Share |
+   |---|---|
+   | `pwrite`, from `flushBuf` under `afStreamWrite` on the extract worker | 35 % |
+   | `retireThreadProc` looping on `gettimeofday`/`mach_absolute_time` and `pthread_mutex_lock`/`unlock` | 39 % |
+   | `memmove`: the decoder's shared-buffer hand-offs 13 %, `decodeStreamReadData` 3 %, the extract worker's own buffer 3 %, the source and decompressor 3 % | 23 % |
+   | condition-variable signalling | 2 % |
+
+   No frame scans for zeros. `extractStream` spends 0.19 s of system time per GiB written against
+   `TreeMaterializer`'s 0.08 s; the `pwrite` sizes are not visible without root. `TreeMaterializer`'s samples on the
+   same file are 81 % `memmove` (the same source, decompressor, shared-buffer and decoder copies) and 15 % `write`.
+8. **On a file that is 90 % zeros, `extractStream`'s holes make it the fastest writer, and `TreeMaterializer`
+   allocates every zero.** The file is 512 repeats of 208 KiB of random bytes followed by 1,840 KiB of zeros:
+
+   | Writer | Wall (s) | User CPU (s) | System CPU (s) | `st_blocks × 512` | `du -k` |
+   |---|---|---|---|---|---|
+   | extractStream | 0.167 | 0.856 | 0.090 | 109,051,904 | 106,496 |
+   | extractStream, `.extractNoAutoSparse` | 0.448 | 1.043 | 0.182 | 1,073,741,824 | 1,048,576 |
+   | TreeMaterializer | 0.252 | 0.525 | 0.071 | 1,073,741,824 | 1,048,576 |
+
+   `extractStream`'s allocation is exactly the random data, 512 × 208 KiB, so every zero run became a hole.
+   `TreeMaterializer` takes 1.5× its wall time and allocates 10× the space. 0 of the file's 65,536 pages were
+   resident after any run.
+
+   For findings 6 and 8, the slowest of a writer's five runs was at most 24 % above its median, except one
+   `TreeMaterializer` run on the zero file at 0.376 s (+49 %).
 
 ## Method
 
@@ -119,3 +161,19 @@ Outputs were compared in one extra run per writer:
 Profiles came from `sample <pid> 4 1` attached 0.4 s into a run on the 50,000-file tree; the shares are top-of-stack
 counts on the thread running the extract. The worker count is the number of threads whose stacks hold
 `extractThreadProc` in a `sample` of `extractStream` on the same tree, against `hw.ncpu` of 10.
+
+Findings 6–8 came from a later session with the same harness, rebuilt from the same sources. Two variants were
+added: `.extractNoAutoSparse` joined `.ignoreOperationNotPermitted` in `extractStream`'s flags, and
+`threadCount: 1` was passed to both `extractStream` and `ArchiveStream.process`. The decompression and decode
+streams kept their default thread counts in every variant, as both writers use them.
+
+The 90 % zero file was written by Python: 512 repeats of 208 KiB from `os.urandom` followed by 1,840 KiB of
+written zeros. That made 89.8 % zeros, in runs aligned to 16 KiB, and the source was fully allocated
+(1,048,576 KiB). Its archive was 115,076,268 bytes. The 1 GiB incompressible file was made again with `dd`. Each
+case ran five rotated rounds, timed as above. Each run's landed file was read with `stat` (`st_blocks × 512`) and
+`du -k`.
+
+For the 1 GiB profiles, one process ran ten extracts in a row, and `sample <pid> 2 1` was attached 0.8 s in. The
+shares are self samples summed over every thread, leaving out `__psynch_cvwait`, `__semwait_signal`,
+`__psynch_mutexwait` and `__ulock_wait`, and each is attributed to its two calling frames. The per-extract worker
+count is the number of threads holding `extractThreadProc` in a one-second `sample` of the same process shape.
