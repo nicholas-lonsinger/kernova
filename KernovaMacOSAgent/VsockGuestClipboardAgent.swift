@@ -82,8 +82,9 @@ final class VsockGuestClipboardAgent {
     /// never be handed a generation this agent already used.
     private var nextLocalGeneration: UInt64 = 1
 
-    /// Last `NSPasteboard.changeCount` we observed; set after every poll and
-    /// every host write so we don't echo our own content.
+    /// Last `NSPasteboard.changeCount` we observed, moved past every write this
+    /// agent makes: a poll that read this agent's own promise would fire its
+    /// providers and offer the Mac's content back as a guest copy.
     ///
     /// Seeded from the pasteboard when a connection comes up, so only a copy
     /// made while that connection is live is offered to the host.
@@ -372,19 +373,12 @@ final class VsockGuestClipboardAgent {
         guard let channel = liveChannel else { return }
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
-        // Ahead of every read: reading a promised flavor *fires* its provider,
-        // so a change count this agent's own publisher wrote is never read,
-        // whatever the gate holds.
-        guard currentCount != publisher.lastWriteChangeCount else {
-            lastPasteboardChangeCount = currentCount
-            return
-        }
 
         // The shared reader owns every rule about what may cross — marker
         // disposition, per-item file classification, path-fallback suppression
         // — so a guest copy and a Mac copy are judged identically. What is left
         // here is this side's own bookkeeping: the staging-root exclusion, the
-        // change-count gates, and the guest menu's account of the gesture.
+        // change-count gate, and the guest menu's account of the gesture.
         let snapshot = ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: true)
         switch snapshot {
         case .suppressed(let reason):
