@@ -66,10 +66,18 @@ message Frame {
     DropOffer drop_offer = 40;
     DropComplete drop_complete = 41;
     DropRelease drop_release = 42;
+    DragOffer drag_offer = 43;
+    DragComplete drag_complete = 44;
+    DragRelease drag_release = 45;
+    DragTake drag_take = 46;
+    DragHandOff drag_hand_off = 47;
+    DragCatcher drag_catcher = 48;
+    DragSizes drag_sizes = 49;
 
     // 50..59: the clipboard data connection. One guest-initiated vsock
     // connection per transfer carries these two frames as its header, then the
-    // payload bytes, then a fixed 33-byte trailer, then EOF.
+    // payload bytes, then the trailer `ClipboardTransferTrailer` lays out,
+    // then EOF.
     ClipboardTransferRequest clipboard_transfer_request = 50;
     ClipboardTransferReply clipboard_transfer_reply = 51;
   }
@@ -237,14 +245,15 @@ message ClipboardOffer {
   bool is_concealed = 5;
 }
 
-// Sent in response to a `ClipboardOffer` to pull one representation's bytes,
-// by the side that cannot dial — the host, which only ever accepts vsock
-// connections. The OS asks the pasteboard per type, so a paste pulls only the
-// representation actually read; the requester sends one `ClipboardRequest` per
-// representation it consumes. The responder answers by dialling that
-// transfer's data connection and writing a `ClipboardTransferReply` naming
-// this `transfer_id`. A guest pulls with a `ClipboardTransferRequest` on the
-// connection instead, so this frame only ever travels host→guest.
+// Sent in response to a `ClipboardOffer` — or, on the drop channel, a
+// `DragOffer` — to pull one representation's bytes, by the side that cannot
+// dial: the host, which only ever accepts vsock connections. The OS asks the
+// pasteboard per type, so a paste pulls only the representation actually read;
+// the requester sends one `ClipboardRequest` per representation it consumes.
+// The responder answers by dialling that transfer's data connection and writing
+// a `ClipboardTransferReply` naming this `transfer_id`. A guest pulls with a
+// `ClipboardTransferRequest` on the connection instead, so this frame only ever
+// travels host→guest.
 message ClipboardRequest {
   // Echoes the offer's generation so a request racing a newer offer is dropped.
   uint64 generation = 1;
@@ -336,6 +345,23 @@ message ClipboardTransferReply {
   // the requester already read, stands in for the receiver's pre-flight and
   // extract ceiling.
   uint64 total_bytes = 6;
+
+  // Set on a `read.error` refusal: the item the sender could not read.
+  ClipboardReadFailure read_failure = 7;
+}
+
+// Which item the sending side could not read, and how the read failed. Carried
+// by a `read.error` refusal, and by a `read.error` abort trailer as its detail.
+message ClipboardReadFailure {
+  // The item, as a slash-separated path that starts with the representation's
+  // own name — the dragged folder's name, then the path inside it.
+  string item_path = 1;
+
+  // The `errno` the read failed with; 0 when it named none.
+  int32 posix_error = 2;
+
+  // The file ended before the size its archive entry declared.
+  bool ended_early = 3;
 }
 
 // Liveness ping exchanged on the control channel. Each side sends one on a
@@ -377,10 +403,11 @@ message PolicyUpdate {
   // `0` means unset — the receiver uses its own built-in default.
   uint64 clipboard_max_paste_bytes = 3;
 
-  // Whether the guest's drop agent should dial the drop port and take
-  // `DropOffer` frames. The host binds the drop and drop-data ports only
-  // while this is set, so a guest that dials anyway is refused every retry
-  // interval for as long as the setting is off.
+  // Whether the guest's drop agent should dial the drop port, take
+  // `DropOffer` frames, and — with the host's `drag.out.files.v1` — offer the
+  // files dragged out of the guest as `DragOffer` frames. The host binds the
+  // drop and drop-data ports only while this is set, so a guest that dials
+  // anyway is refused every retry interval for as long as the setting is off.
   bool drop_files_enabled = 4;
 }
 
@@ -450,4 +477,91 @@ message DropComplete {
 // Downloads, and replies `DropComplete{OUTCOME_CANCELLED}`.
 message DropRelease {
   uint64 generation = 1;
+}
+
+// Guest->host: a drag carrying files is in progress in the guest. Metadata
+// only, like `DropOffer` in the other direction. The host may take it over
+// (`DragTake`) once the pointer leaves the VM display, and pulls each item it
+// needs with a `ClipboardRequest` on this channel, which the guest answers
+// over the drop data port. Every representation carries a non-empty
+// `filename`; `is_inline` is ignored, and so is a folder's `byte_count`: the
+// guest lists no folder's contents to offer a drag, and sends the folders'
+// sizes in `DragSizes` once the host takes it.
+message DragOffer {
+  // Per-connection counter, starting at 1, scoped to the guest. Several drags
+  // can be live at once: a taken drag stays pullable while a new one starts.
+  uint64 generation = 1;
+
+  // Metadata for each dragged item, in the order the drag carried them.
+  repeated ClipboardRepresentationInfo rep_info = 2;
+}
+
+// Host->guest: the host is done with the drag for `generation` — nothing will
+// pull from it again, or a take that was not caught is abandoned. The guest
+// retires the offer and orders out a catcher armed for it — at once, or, for
+// one still up that refused the drag after it was targeted, once the guest's
+// drag ends, refusing its drop.
+message DragComplete {
+  uint64 generation = 1;
+}
+
+// Guest->host: the guest withdraws the drag for `generation` — it ended inside
+// the guest, or a newer drag in the same press replaced it. A host that has
+// already taken `generation` treats this as that take's `STAGE_FAILED`.
+message DragRelease {
+  uint64 generation = 1;
+}
+
+// Host->guest: the pointer left the VM display holding the drag for
+// `generation`; the guest arms its catcher and reports each step in
+// `DragHandOff`.
+message DragTake {
+  uint64 generation = 1;
+}
+
+// Host->guest: the Mac drag session carrying the drag for `generation`
+// entered this VM's display (`shown` false) or left it (`shown` true). Entering,
+// the guest orders its catcher out and keeps the take, and the host moves the
+// guest pointer with the session; leaving, the guest orders the catcher front
+// again and reports `STAGE_ARMED`, then `STAGE_TARGETED` as the guest drag
+// manager re-enters it. A catcher this side already failed stays out.
+message DragCatcher {
+  uint64 generation = 1;
+  bool shown = 2;
+}
+
+// Guest->host: one step of the hand-off for `generation`.
+message DragHandOff {
+  uint64 generation = 1;
+
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;
+    // The catcher is ordered front under the pointer — once for `DragTake`,
+    // and once for each `DragCatcher` that shows it again.
+    STAGE_ARMED = 1;
+    // The guest drag manager entered the catcher, which answered copy.
+    STAGE_TARGETED = 2;
+    // The guest drag ended on the catcher; its items stay pullable.
+    STAGE_CAUGHT = 3;
+    // The hand-off cannot complete — see `code` and `message`.
+    STAGE_FAILED = 4;
+  }
+  Stage stage = 2;
+
+  // `ClipboardErrorCode` raw value for `STAGE_FAILED`; empty otherwise.
+  string code = 3;
+
+  // Human-readable detail for logs. Never rendered in host UI.
+  string message = 4;
+}
+
+// Guest->host: the sizes of the folders in the drag for `generation`, measured
+// once the guest accepted the host's `DragTake`. The host pulls none of the
+// drag's folders until this arrives; its files carry their sizes in the offer.
+message DragSizes {
+  uint64 generation = 1;
+
+  // Each folder's measured tree size — the sum of its regular files — keyed
+  // by the folder's index in the offer.
+  map<uint32, uint64> folder_byte_counts = 2;
 }

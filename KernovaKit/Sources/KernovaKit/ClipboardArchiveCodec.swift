@@ -276,7 +276,9 @@ enum ClipboardArchiveCodec {
     ///     `1` reports every write, which is what an unpaced ceiling needs.
     ///   - onOutputAdvanced: consulted with the running uncompressed total;
     ///     throwing from it stops the encode.
-    /// - Returns: the failure that ended the encode, or `nil` when the whole
+    /// - Returns: the failure that ended the encode — a
+    ///   ``ClipboardSourceReadFailure`` naming the entry, relative to the
+    ///   source, when the source could not be read — or `nil` when the whole
     ///   archive was written and every stream closed cleanly.
     static func encode<Sink: ArchiveByteStreamProtocol & AnyObject>(
         _ source: ClipboardArchiveSource, into sink: Sink,
@@ -320,10 +322,7 @@ enum ClipboardArchiveCodec {
 
             switch source {
             case .directory(let url):
-                guard let keySet = ArchiveHeader.FieldKeySet(ClipboardArchive.fieldKeys)
-                else { throw ClipboardArchive.ArchiveError.invalidFieldKeySet }
-                try encodeStream.writeDirectoryContents(
-                    archiveFrom: FilePath(url.path), keySet: keySet)
+                try writeTree(at: url.path, to: encodeStream)
             case .file(let url, let name, let byteCount):
                 try writeFileEntry(url, name: name, byteCount: byteCount, to: encodeStream)
             case .blob(let data, let name):
@@ -406,54 +405,6 @@ enum ClipboardArchiveCodec {
             failure = error
         }
         return failure ?? closes.failure
-    }
-
-    /// Writes one regular-file entry named `name` carrying exactly `byteCount`
-    /// bytes of the file at `url`, with the attribute fields
-    /// `writeDirectoryContents` gives an entry of the archive's key set.
-    ///
-    /// The file is opened and read here — the one place a single-file archive
-    /// touches the volume — so the read policy is this method's: plain, cached
-    /// reads in `fileReadBlockSize` blocks, the policy AppleArchive itself
-    /// applies to a folder's entries.
-    static func writeFileEntry(
-        _ url: URL, name: String, byteCount: Int, to encodeStream: ArchiveStream
-    ) throws {
-        let descriptor = Darwin.open(url.path, O_RDONLY)
-        guard descriptor >= 0 else { throw ClipboardArchive.ArchiveError.sourceRead }
-        defer { Darwin.close(descriptor) }
-        var status = stat()
-        guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
-            throw ClipboardArchive.ArchiveError.sourceRead
-        }
-        let header = ArchiveHeader()
-        header.append(
-            .uint(key: .init("TYP"), value: UInt64(ArchiveHeader.EntryType.regularFile.rawValue)))
-        header.append(.string(key: .init("PAT"), value: name))
-        header.append(.uint(key: .init("UID"), value: UInt64(status.st_uid)))
-        header.append(.uint(key: .init("GID"), value: UInt64(status.st_gid)))
-        header.append(.uint(key: .init("MOD"), value: UInt64(status.st_mode & 0o7777)))
-        header.append(.uint(key: .init("FLG"), value: UInt64(status.st_flags)))
-        header.append(.timespec(key: .init("MTM"), value: status.st_mtimespec))
-        // `CTM` is the entry's creation time (AADefs.h), not the inode change time.
-        header.append(.timespec(key: .init("CTM"), value: status.st_birthtimespec))
-        header.append(.blob(key: .init("DAT"), size: UInt64(byteCount)))
-        try encodeStream.writeHeader(header)
-
-        var remaining = byteCount
-        let buffer = UnsafeMutableRawBufferPointer.allocate(
-            byteCount: min(fileReadBlockSize, max(1, byteCount)), alignment: 16)
-        defer { buffer.deallocate() }
-        while remaining > 0 {
-            let got = Darwin.read(descriptor, buffer.baseAddress, min(buffer.count, remaining))
-            // Zero is the file ending before the byte count its offer declared;
-            // negative is a read error. Both would leave the entry short of the
-            // size its header declared.
-            guard got > 0 else { throw ClipboardArchive.ArchiveError.sourceRead }
-            try encodeStream.writeBlob(
-                key: .init("DAT"), from: UnsafeRawBufferPointer(rebasing: buffer[..<got]))
-            remaining -= got
-        }
     }
 
     /// Writes one regular-file entry named `name` carrying `data`, with an

@@ -179,20 +179,9 @@ final class DetailContainerViewController: NSViewController {
             else { return }
             Task { await viewModel.resume(target) }
         }
-        backing.dropAvailability = { [weak viewModel] in
-            viewModel?.instances.first(where: { $0.id == instanceID })?.displayDropAvailability
-                ?? .none
+        backing.transferHost = { [weak viewModel] in
+            viewModel?.instances.first(where: { $0.id == instanceID })
         }
-        backing.onDropFiles = { [weak viewModel] urls, stagedIn in
-            guard let target = viewModel?.instances.first(where: { $0.id == instanceID })
-            else { return false }
-            return target.sendDroppedFilesToGuest(urls, stagedIn: stagedIn)
-        }
-        backing.onDropUnreadable = { [weak viewModel] in
-            viewModel?.instances.first(where: { $0.id == instanceID })?
-                .reportUnreadableDropToGuest()
-        }
-        backing.applyDropRegistration()
 
         backing.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backing)
@@ -259,14 +248,6 @@ final class DetailContainerViewController: NSViewController {
                         _ = inst.hasLiveVirtualMachine
                         _ = inst.displayMode
                         _ = inst.displayViewSettings
-                        // Everything `displayDropAvailability` reads, so the
-                        // display registers and unregisters as a drag
-                        // destination when the guest agent comes and goes, the
-                        // VM pauses, or the toggle flips.
-                        _ = inst.configuration.dropFilesEnabled
-                        _ = inst.lastSeenAgentVersion
-                        _ = inst.vsockDropService?.isConnected
-                        _ = inst.vsockControlService?.guestSupportsDropFiles
                     }
                 }
             },
@@ -291,7 +272,6 @@ final class DetailContainerViewController: NSViewController {
         for (id, backing) in backingViews {
             guard let instance = viewModel.instances.first(where: { $0.id == id }) else { continue }
             backing.apply(instance.displayViewSettings)
-            backing.applyDropRegistration()
         }
 
         // Evict backing views for VMs no longer running inline

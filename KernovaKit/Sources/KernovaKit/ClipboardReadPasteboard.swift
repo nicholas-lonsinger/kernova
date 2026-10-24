@@ -21,6 +21,10 @@ extension NSPasteboardItem: ClipboardPasteboardItemReading {}
 
 /// The read half of an `NSPasteboard`, paired with ``ClipboardWritePasteboard``.
 public protocol ClipboardReadPasteboard: AnyObject {
+    /// Monotonically increasing count of pasteboard changes — what a poll
+    /// compares to know a new snapshot is standing.
+    var changeCount: Int { get }
+
     /// Every item currently on the pasteboard, in order; empty when it holds
     /// nothing.
     var items: [any ClipboardPasteboardItemReading] { get }

@@ -14,7 +14,7 @@ import KernovaSynchronization
 /// payload, so inline content has no Kernova-imposed size cap.
 ///
 /// Everything runs off the owning actor, driven from the transfer's own serial
-/// queue, so the actor is never blocked, and the 33-byte trailer is verified —
+/// queue, so the actor is never blocked, and the trailer is verified —
 /// size and SHA-256 both — before anything is delivered. Each running signal
 /// has exactly one producer — the payload figure the stage that counts the
 /// payload, arriving bytes the wire reader — so the figure only ever climbs.
@@ -73,6 +73,7 @@ final class ClipboardTransferReceiver: Sendable {
         let message: String
         var neededBytes: Int?
         var availableBytes: Int?
+        var readFailure: ClipboardSourceReadFailure?
 
         init(code: ClipboardStreamAbortCode, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil) {
             self.init(
@@ -80,11 +81,15 @@ final class ClipboardTransferReceiver: Sendable {
                 availableBytes: availableBytes)
         }
 
-        init(rawCode: String, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil) {
+        init(
+            rawCode: String, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil,
+            readFailure: ClipboardSourceReadFailure? = nil
+        ) {
             self.rawCode = rawCode
             self.message = message
             self.neededBytes = neededBytes
             self.availableBytes = availableBytes
+            self.readFailure = readFailure
         }
     }
 
@@ -305,22 +310,24 @@ final class ClipboardTransferReceiver: Sendable {
     ) throws -> ClipboardContent.Representation {
         let reply = try readReply(fd: fd)
         guard reply.refusalCode.isEmpty else {
-            throw ReceiveStop(rawCode: reply.refusalCode, message: reply.refusalMessage)
+            throw stop(
+                fromPeer: reply.refusalCode, message: reply.refusalMessage,
+                readFailure: reply.hasReadFailure
+                    ? ClipboardSourceReadFailure(wire: reply.readFailure) : nil)
         }
         let totalBytes = Int(clamping: reply.totalBytes)
         let firstByteAt = clock.now
         let reader: ClipboardPayloadReader
         let outcome: (representation: ClipboardContent.Representation, byteCount: Int)
         if reply.isArchive {
-            reader = ClipboardPayloadReader(fd: fd) { _ in onActivity?() }
+            reader = ClipboardPayloadReader(fd: fd, onArrival: onActivity)
             outcome = try receiveArchive(reply: reply, reader: reader) { extracted in
                 onProgress?(extracted, totalBytes)
             }
         } else {
-            reader = ClipboardPayloadReader(fd: fd) { received in
-                onActivity?()
-                onProgress?(received, totalBytes)
-            }
+            reader = ClipboardPayloadReader(
+                fd: fd, onRelease: { received in onProgress?(received, totalBytes) },
+                onArrival: onActivity)
             outcome = try receiveRaw(reply: reply, reader: reader)
         }
         if let onTransferTimed {
@@ -585,8 +592,8 @@ final class ClipboardTransferReceiver: Sendable {
     {
         guard !cancelled else { throw cancellationStop }
         switch trailer.ending {
-        case .aborted(let rawCode):
-            throw stop(forAbortedTrailer: rawCode)
+        case .aborted(let rawCode, let readFailure):
+            throw stop(fromPeer: rawCode, readFailure: readFailure)
         case .complete(let digest):
             guard digest == reader.digest() else {
                 throw ReceiveStop(code: .digestMismatch, message: "SHA-256 mismatch at the trailer")
@@ -626,9 +633,22 @@ final class ClipboardTransferReceiver: Sendable {
         return ReceiveStop(code: .sendFailed, message: "\(attempt) failed: \(reason)")
     }
 
-    /// The stop a peer's abort trailer names.
-    private func stop(forAbortedTrailer rawCode: String) -> ReceiveStop {
-        ReceiveStop(rawCode: rawCode, message: "The sender ended the transfer")
+    /// The stop a peer's refusal or abort trailer names.
+    ///
+    /// A source the peer could not read is logged here, where its item
+    /// arrives: whichever pull this resolves may report the failure without a
+    /// log line of its own.
+    private func stop(
+        fromPeer rawCode: String, message: String = "The sender ended the transfer",
+        readFailure: ClipboardSourceReadFailure?
+    ) -> ReceiveStop {
+        if let readFailure {
+            Self.logger.log(
+                .notice,
+                "Clipboard transfer \(self.transferID, privacy: .public): the sender couldn't read '\(readFailure.itemPath, privacy: .private)' — \(readFailure.description, privacy: .public)"
+            )
+        }
+        return ReceiveStop(rawCode: rawCode, message: message, readFailure: readFailure)
     }
 
     /// What the sender wrote to end the payload, once the consumer has stopped
@@ -690,8 +710,8 @@ final class ClipboardTransferReceiver: Sendable {
             case .truncated:
                 // A sender that gave up mid-payload still wrote its reason, so
                 // read it rather than report the short payload it left behind.
-                if case .aborted(let rawCode)? = senderEnding(reader) {
-                    return stop(forAbortedTrailer: rawCode)
+                if case .aborted(let rawCode, let readFailure)? = senderEnding(reader) {
+                    return stop(fromPeer: rawCode, readFailure: readFailure)
                 }
                 return ReceiveStop(
                     code: .sizeMismatch, message: "The stream ended before its trailer")
@@ -703,8 +723,8 @@ final class ClipboardTransferReceiver: Sendable {
                 return ReceiveStop(code: .sizeMismatch, message: "The connection ended early")
             }
         }
-        if case .aborted(let rawCode)? = senderEnding(reader) {
-            return stop(forAbortedTrailer: rawCode)
+        if case .aborted(let rawCode, let readFailure)? = senderEnding(reader) {
+            return stop(fromPeer: rawCode, readFailure: readFailure)
         }
         // A volume that filled between the output guard's last check and the
         // extract's own write surfaces from AppleArchive as an archive failure.
@@ -722,6 +742,7 @@ final class ClipboardTransferReceiver: Sendable {
     private func abortInfo(_ stop: ReceiveStop) -> ClipboardStreamAbortInfo {
         ClipboardStreamAbortInfo(
             transferID: transferID, rawCode: stop.rawCode, message: stop.message,
-            neededBytes: stop.neededBytes, availableBytes: stop.availableBytes)
+            neededBytes: stop.neededBytes, availableBytes: stop.availableBytes,
+            readFailure: stop.readFailure)
     }
 }

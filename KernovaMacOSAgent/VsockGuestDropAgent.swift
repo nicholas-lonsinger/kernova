@@ -4,14 +4,15 @@ import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
 
-/// Guest-side agent for files dropped on the VM display, talking to the host's
-/// `VsockDropService` on `KernovaVsockPort.drop`.
+/// Guest-side agent for files dragged between the VM display and the Mac,
+/// talking to the host's `VsockDropService` on `KernovaVsockPort.drop`.
 ///
-/// Receive-only, and independent of clipboard sharing: a drop never touches the
-/// pasteboard. Each `DropOffer` becomes one job, pulled representation by
-/// representation on a dedicated worker queue and landed in the guest's
-/// Downloads folder with Finder's own "Keep Both" naming, then revealed in a
-/// Finder window.
+/// Independent of clipboard sharing. Files dropped on the display arrive as
+/// `DropOffer`s, each one job, pulled representation by representation on a
+/// dedicated worker queue and landed in the guest's Downloads folder with
+/// Finder's own "Keep Both" naming, then revealed in a Finder window. Files
+/// dragged out of the display leave through ``GuestDragOut``, whose offers the
+/// endpoint serves when the host pulls them.
 ///
 /// Connection state is confined to the main actor; the worker queue is what
 /// the blocking pulls park on, so no pull ever holds the main thread.
@@ -30,19 +31,21 @@ final class VsockGuestDropAgent: Sendable {
     private let downloadsDirectory: URL
     private let staging: ClipboardFileStaging
     private let revealInFinder: @Sendable ([URL]) -> Void
+    private let dragOutSystem: GuestDragOutSystem
 
     /// Opens one item's data connection to the host; tests hand over a
     /// socketpair in place of a real dial.
     private let dataDialer: @Sendable (UInt32) throws -> Int32
 
-    /// What decides whether the reconnect loop dials; both default off with the
-    /// client paused.
+    /// What decides whether the reconnect loop dials and whether drags out are
+    /// watched for; all default off with the client paused.
     private let enablement = Locked(Enablement())
 
     private struct Enablement: Sendable {
-        /// Whether the host advertised `drop.files.v3`, so the reconnect loop
-        /// only dials a host that has a drop listener.
-        var hostSupportsDrop = false
+        /// What the host's `Hello` advertised: the reconnect loop only dials a
+        /// host that has a drop listener, and drags are only offered to one
+        /// that takes them.
+        var host = HostDropCapabilities.unadvertised
 
         /// Whether the host's latest `PolicyUpdate` has drag and drop switched
         /// on: the host binds the drop ports only while the setting is on, so
@@ -50,7 +53,9 @@ final class VsockGuestDropAgent: Sendable {
         /// retry interval.
         var enabledByPolicy = false
 
-        var shouldDial: Bool { hostSupportsDrop && enabledByPolicy }
+        var shouldDial: Bool { host.supportsDropFiles && enabledByPolicy }
+
+        var watchesDrags: Bool { shouldDial && host.supportsDragOut }
     }
 
     /// Runs one drop job at a time, in offer order.
@@ -72,6 +77,9 @@ final class VsockGuestDropAgent: Sendable {
     /// The readout of every drop the host has offered and this side has not
     /// finished, by generation.
     @MainActor private var jobs: [UInt64: ClipboardTransferOperation] = [:]
+
+    /// The current connection's drags out of the guest.
+    @MainActor private var dragOut: GuestDragOut?
 
     #if DEBUG
     /// Test seam, readable from any thread: reads on the main actor that owns it.
@@ -97,8 +105,9 @@ final class VsockGuestDropAgent: Sendable {
 
     /// Designated init; tests inject a socketpair-backed client, a Downloads
     /// directory under a temp root, a staging root of their own, a
-    /// `freeSpaceProvider` to simulate a full disk, and a `revealInFinder` sink
-    /// in place of opening a real Finder window.
+    /// `freeSpaceProvider` to simulate a full disk, a `revealInFinder` sink
+    /// in place of opening a real Finder window, and a drag-out system of fakes
+    /// in place of the guest's event stream and screen.
     ///
     /// The agent runs unsandboxed inside the guest, so `.downloadsDirectory`
     /// resolves to the real `~/Downloads`.
@@ -119,7 +128,8 @@ final class VsockGuestDropAgent: Sendable {
         },
         revealInFinder: @escaping @Sendable ([URL]) -> Void = { urls in
             DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
-        }
+        },
+        dragOutSystem: GuestDragOutSystem = .live
     ) {
         self.client = client
         self.dataDialer = dataDialer
@@ -128,8 +138,10 @@ final class VsockGuestDropAgent: Sendable {
         self.progressIdleGap = progressIdleGap
         self.downloadsDirectory = downloadsDirectory
         self.revealInFinder = revealInFinder
+        self.dragOutSystem = dragOutSystem
         self.staging = ClipboardFileStaging(
-            label: "agent-drop", root: stagingRoot, freeSpaceProvider: freeSpaceProvider)
+            label: "agent-drop", root: stagingRoot, receivingOn: .drop, as: .guest,
+            freeSpaceProvider: freeSpaceProvider)
         // Default-paused: nothing dials until the host's `Hello` says it has a
         // drop listener.
         client.pause()
@@ -150,14 +162,14 @@ final class VsockGuestDropAgent: Sendable {
         updateEnablement { $0.enabledByPolicy = enabled }
     }
 
-    /// Records whether the host takes dropped files and matches the reconnect
-    /// loop to it.
+    /// Records what the host takes over the drop channel and matches the
+    /// reconnect loop and the drag watcher to it.
     ///
     /// Called whenever the control agent learns the host's capabilities — its
     /// `Hello`, and the clearing that precedes the next one — so a host with no
     /// drop listener is never redialled every retry interval.
-    func applyHostCapability(supportsDrop: Bool) {
-        updateEnablement { $0.hostSupportsDrop = supportsDrop }
+    func applyHostCapabilities(_ capabilities: HostDropCapabilities) {
+        updateEnablement { $0.host = capabilities }
     }
 
     private func updateEnablement(_ change: (inout Enablement) -> Void) {
@@ -170,6 +182,17 @@ final class VsockGuestDropAgent: Sendable {
         } else {
             client.pause()
         }
+        MainActorBridge.async { [weak self] in
+            self?.reconcileDragWatching()
+        }
+    }
+
+    /// Runs the drag watcher exactly while a connection is up and the host
+    /// and its policy both allow drags out, reading the enablement as it
+    /// stands now so hops landing out of order still settle on the latest.
+    @MainActor
+    private func reconcileDragWatching() {
+        dragOut?.setWatching(enablement.withLock { $0.watchesDrags })
     }
 
     func stop() {
@@ -183,6 +206,8 @@ final class VsockGuestDropAgent: Sendable {
     /// Clears per-connection state.
     @MainActor
     private func teardownConnectionState() {
+        dragOut?.stop()
+        dragOut = nil
         // Unblocks any worker parked on a pull; it reads the dead connection
         // as a cancellation and ends its job.
         endpoint?.stop()
@@ -220,8 +245,10 @@ final class VsockGuestDropAgent: Sendable {
                 reporter: self.reporter)
             self.liveChannel = channel
             self.endpoint = endpoint
+            self.dragOut = GuestDragOut(peer: endpoint, system: self.dragOutSystem)
             endpoint.delegate = self
             endpoint.start()
+            self.reconcileDragWatching()
             Self.logger.log(
                 .notice,
                 "Vsock drop connected to host (conn=\(endpoint.connectionTag, privacy: .public))")
@@ -374,28 +401,11 @@ final class VsockGuestDropAgent: Sendable {
     /// Moves a delivered representation out of staging and into the Downloads
     /// folder, naming it the way Finder would.
     ///
-    /// A rename, not a copy: staging and Downloads share the guest's data volume,
-    /// so nothing payload-scaled happens here. A cross-device move falls back to
-    /// copy-and-delete, which is the only case where it can.
+    /// Staging and Downloads share the guest's data volume, so this is a rename.
     private func land(_ representation: ClipboardContent.Representation, named filename: String)
         throws -> URL
     {
-        guard let source = representation.fileURL else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(
-            at: downloadsDirectory, withIntermediateDirectories: true)
-        let destination = NameUniquing.uniqueDestination(
-            in: downloadsDirectory,
-            filename: filename.isEmpty ? source.lastPathComponent : filename)
-        do {
-            try fileManager.moveItem(at: source, to: destination)
-        } catch let error as NSError where Self.isCrossDevice(error) {
-            try fileManager.copyItem(at: source, to: destination)
-            try? fileManager.removeItem(at: source)
-        }
-        return destination
+        try StagedItemLanding.land(representation, inDirectory: downloadsDirectory, named: filename)
     }
 
     /// Throws away a file that arrived for a job the user had already called
@@ -404,11 +414,6 @@ final class VsockGuestDropAgent: Sendable {
     private static func discard(_ representation: ClipboardContent.Representation) {
         guard let url = representation.fileURL else { return }
         try? FileManager.default.removeItem(at: url)
-    }
-
-    private static func isCrossDevice(_ error: NSError) -> Bool {
-        (error.userInfo[NSUnderlyingErrorKey] as? NSError)?.code == Int(EXDEV)
-            || error.code == Int(EXDEV)
     }
 
     /// Maps a filesystem failure to the code the host renders a sentence from.
@@ -450,6 +455,20 @@ extension VsockGuestDropAgent: ClipboardEndpointDelegate {
         _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
     ) {
         takeOn(offer, on: endpoint)
+    }
+
+    func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64) {
+        dragOut?.take(generation: generation)
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveDragCatcher shown: Bool, generation: UInt64
+    ) {
+        dragOut?.setCatcherShown(shown, generation: generation)
+    }
+
+    func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {
+        dragOut?.complete(generation: generation)
     }
 
     func endpointDidEnd(_ endpoint: ClipboardEndpoint) {

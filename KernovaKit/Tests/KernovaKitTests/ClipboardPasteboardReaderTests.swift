@@ -337,6 +337,20 @@ struct ClipboardPasteboardReaderTests {
         #expect(rep.byteCount == 4_096)
     }
 
+    @Test("with no walk, a folder becomes a directory source rep of no size")
+    func anUnwalkedFolderHasNoSize() throws {
+        let folder = scratch.url.appendingPathComponent("Unwalked", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("inside".utf8).write(to: folder.appendingPathComponent("inside.txt"))
+
+        let intake = ClipboardPasteboardReader.resolve(filesAt: [folder], sizeOf: nil)
+
+        let rep = try #require(intake.representations.first)
+        #expect(rep.isDirectory)
+        #expect(rep.directorySourceURL == folder)
+        #expect(rep.byteCount == 0)
+    }
+
     // MARK: - Helpers
 
     private func makePNG() throws -> Data {

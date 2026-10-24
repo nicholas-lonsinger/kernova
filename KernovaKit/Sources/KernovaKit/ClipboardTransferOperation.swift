@@ -154,9 +154,18 @@ public final class ClipboardTransferOperation: Sendable {
         /// Bytes the units expect to move; see `transferredBytes`.
         private(set) var declaredBytes: UInt64 = 0
         var completedCount = 0
+        /// The first failure a transfer reported for itself, which a terminal
+        /// that would complete reports instead.
+        var unitFailure: ClipboardTransferFailure?
         /// Transfers currently in flight, in the order they began; the readout
         /// names the most recently begun one.
         var activeUnits: [UInt64] = []
+        /// Transfers held until the size of what they will move arrives. Each
+        /// is in flight, though it sends no event until its size is known.
+        var sizeWaits = 0
+        /// What the last published readout said of ``sizeWaits``, so the
+        /// readout that changes it bypasses the throttle.
+        var publishedAwaitsSize = false
         /// Last file seen streaming, kept so the readout still names something
         /// during the gap between two transfers.
         var lastActiveName: String?
@@ -173,6 +182,9 @@ public final class ClipboardTransferOperation: Sendable {
         /// the terminal acts only if it takes the lock uncancelled — so one armed
         /// before a transfer began can never complete the operation.
         var idleTerminal: Task<Void, Never>?
+        /// The armed reveal of a readout whose transfers send no event — a size
+        /// wait — `nil` while none is.
+        var revealCheck: Task<Void, Never>?
         /// This operation's share of the republish-rate bound — the aggregate is
         /// a single byte stream even when several transfers feed it.
         var coalescer = FetchProgressCoalescer()
@@ -202,6 +214,16 @@ public final class ClipboardTransferOperation: Sendable {
             idleTerminal = nil
         }
 
+        /// Calls off both armed timers, for a terminal.
+        mutating func cancelTimers() {
+            cancelIdleTerminal()
+            revealCheck?.cancel()
+            revealCheck = nil
+        }
+
+        /// Whether nothing is in flight, the transfers held on a size included.
+        var isIdle: Bool { activeUnits.isEmpty && sizeWaits == 0 }
+
         /// Decides whether this event, sampled at `now`, may reach the UI, then
         /// resolves what to publish.
         ///
@@ -225,6 +247,11 @@ public final class ClipboardTransferOperation: Sendable {
                 coalescer.markForwarded(bytesTransferred: transferredBytes, at: now)
                 logs.append(.revealed(elapsed: elapsed, transferred: transferredBytes, total: totalBytes))
                 admits = true
+            } else if (sizeWaits > 0) != publishedAwaitsSize {
+                // What the readout says of its total changed, which no byte
+                // count reflects.
+                coalescer.markForwarded(bytesTransferred: transferredBytes, at: now)
+                admits = true
             } else {
                 admits = coalescer.shouldForward(
                     bytesTransferred: transferredBytes, totalBytes: totalBytes, at: now)
@@ -234,6 +261,7 @@ public final class ClipboardTransferOperation: Sendable {
             }
             guard admits else { return Outcome(logs: logs) }
             published = true
+            publishedAwaitsSize = sizeWaits > 0
             let snapshot = snapshot(at: now, header: header)
             logs.append(.emission(snapshot))
             return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
@@ -243,14 +271,20 @@ public final class ClipboardTransferOperation: Sendable {
         mutating func finish(_ terminal: Terminal, at now: EngineInstant, header: Header) -> Outcome {
             guard !isFinished else { return Outcome() }
             isFinished = true
-            cancelIdleTerminal()
+            cancelTimers()
             let outcome: ClipboardTransferOutcome
             let label: String
             var isFailure = false
             switch terminal {
             case .completed:
-                outcome = .completed(final: snapshot(at: now, header: header))
-                label = "completed"
+                if let unitFailure {
+                    outcome = .failed(unitFailure)
+                    label = "failed"
+                    isFailure = true
+                } else {
+                    outcome = .completed(final: snapshot(at: now, header: header))
+                    label = "completed"
+                }
             case .cancelled:
                 outcome = .cancelled(final: snapshot(at: now, header: header))
                 label = "cancelled"
@@ -275,7 +309,7 @@ public final class ClipboardTransferOperation: Sendable {
         mutating func abandon(at now: EngineInstant) -> Outcome {
             guard !isFinished else { return Outcome() }
             isFinished = true
-            cancelIdleTerminal()
+            cancelTimers()
             let logs: [LogEvent] = [ended("abandoned", at: now)]
             guard published else { return Outcome(logs: logs) }
             return Outcome(call: .retire, logs: logs)
@@ -283,6 +317,7 @@ public final class ClipboardTransferOperation: Sendable {
 
         func snapshot(at now: EngineInstant, header: Header) -> ClipboardProgressSnapshot {
             let total = totalBytes
+            let awaitsSize = sizeWaits > 0
             return ClipboardProgressSnapshot(
                 direction: header.direction,
                 peerName: header.peerName,
@@ -292,11 +327,12 @@ public final class ClipboardTransferOperation: Sendable {
                 bytesTransferred: min(transferredBytes, total),
                 totalBytes: total,
                 bytesPerSecond: rate.bytesPerSecond,
-                secondsRemaining: rate.secondsRemaining(bytes: transferredBytes, total: total),
+                secondsRemaining: awaitsSize
+                    ? nil : rate.secondsRemaining(bytes: transferredBytes, total: total),
                 gesture: header.gesture,
                 elapsedSeconds: max(0, startedAt.seconds(to: now)),
                 isCancellable: header.isCancellable,
-                operationID: header.id)
+                operationID: header.id, awaitsSize: awaitsSize)
         }
 
         func ended(_ terminal: String, at now: EngineInstant) -> LogEvent {
@@ -344,6 +380,22 @@ public final class ClipboardTransferOperation: Sendable {
             State(startedAt: clock.now, expectedBytes: expectedBytes, expectedItems: expectedItems))
     }
 
+    /// Retires a readout its owner let go of without a terminal.
+    ///
+    /// The reporter holds the operation weakly, so without this the last bar
+    /// an unended operation published would stand on every surface for good.
+    /// Every earlier publication captured `self`, so all of them have landed
+    /// before this runs and the retire is the last word.
+    deinit {
+        let outcome = state.withLock { $0.abandon(at: clock.now) }
+        guard outcome.call != nil else { return }
+        let reporter = reporter
+        let id = header.id
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { reporter.retire(id) }
+        }
+    }
+
     // MARK: - Transfer events
 
     /// Announces the operation as accepted but not yet moving bytes, so the
@@ -375,6 +427,43 @@ public final class ClipboardTransferOperation: Sendable {
             // A transfer in flight means the operation isn't idle: call off the
             // terminal armed for the gap this transfer just filled.
             state.cancelIdleTerminal()
+        }
+    }
+
+    /// Records that one of this operation's transfers is held until the size of
+    /// what it will move arrives — an event-free wait, so the readout reveals
+    /// at the reveal delay on its own, its total marked unknown
+    /// (``ClipboardProgressSnapshot/awaitsSize``).
+    ///
+    /// Paired with ``sizeWaitEnded()``, which the transfer's own
+    /// ``unitBegan(id:expectedBytes:name:)`` follows once it knows its size.
+    public func sizeWaitBegan() {
+        deliver(
+            state.withLock { state -> Outcome in
+                guard !state.isFinished else { return Outcome() }
+                state.sizeWaits += 1
+                state.cancelIdleTerminal()
+                let outcome = state.resolve(at: clock.now, revealDelay: revealDelay, header: header)
+                if !state.revealed, state.revealCheck == nil {
+                    let elapsed = state.startedAt.seconds(to: clock.now)
+                    state.revealCheck = clock.schedule(after: max(0, revealDelay - elapsed)) {
+                        [weak self] in
+                        self?.revealCheckFired()
+                    }
+                }
+                return outcome
+            })
+    }
+
+    /// Records that a transfer ``sizeWaitBegan()`` held is no longer waiting:
+    /// its size arrived, or it never will.
+    ///
+    /// Publishes nothing of its own: the transfer's next event carries the
+    /// total it now knows.
+    public func sizeWaitEnded() {
+        state.withLock { state in
+            guard !state.isFinished, state.sizeWaits > 0 else { return }
+            state.sizeWaits -= 1
         }
     }
 
@@ -415,12 +504,25 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
+    /// Records why one of this operation's transfers failed, for a transfer
+    /// that knows: a terminal that would complete the operation — its idle
+    /// gap's, or its owner's — ends it failed with the first such failure, since
+    /// what it measured did not all arrive.
+    ///
+    /// The transfer still ends through ``unitEnded(id:succeeded:)``.
+    public func unitFailed(id: UInt64, _ failure: ClipboardTransferFailure) {
+        apply(id: id, declaring: nil) { state, _ in
+            if state.unitFailure == nil { state.unitFailure = failure }
+        }
+    }
+
     // MARK: - Terminals
 
     /// Ends the operation, publishing its finished report.
     ///
     /// For a caller that owns the loop — a preview fetch, a paste fire, a drop.
-    /// Idempotent; later events are dropped. A `.completed`/`.cancelled` terminal
+    /// Idempotent; later events are dropped. `.completed` reports a failure
+    /// ``unitFailed(id:_:)`` recorded instead. A `.completed`/`.cancelled` terminal
     /// inside the reveal gate publishes nothing, so an operation nobody saw never
     /// flashes UI; a `.failed` one always reports, since a refusal is owed an
     /// answer whether or not a bar was on screen.
@@ -429,7 +531,8 @@ public final class ClipboardTransferOperation: Sendable {
     }
 
     /// Arms the idle terminal: the operation completes `idleGap` after its last
-    /// transfer ends if nothing has begun since.
+    /// transfer ends if nothing has begun since, and its owner still holds it —
+    /// one let go of first retires its readout instead.
     ///
     /// For a peer-driven operation, where nothing on this side knows the peer has
     /// stopped asking. Nothing in flight is not "finished" — a multi-file paste is
@@ -437,7 +540,7 @@ public final class ClipboardTransferOperation: Sendable {
     /// like the end, and this gap is what tells them apart.
     public func finishWhenIdle() {
         state.withLock { state in
-            guard !state.isFinished, state.activeUnits.isEmpty, state.idleTerminal == nil else { return }
+            guard !state.isFinished, state.isIdle, state.idleTerminal == nil else { return }
             state.idleTerminal = clock.schedule(after: idleGap) { [weak self] in
                 self?.idleTerminalFired()
             }
@@ -502,6 +605,16 @@ public final class ClipboardTransferOperation: Sendable {
             state.withLock { state -> Outcome in
                 guard !Task.isCancelled else { return Outcome() }
                 return state.finish(.completed, at: clock.now, header: header)
+            })
+    }
+
+    /// Reveals a readout no event has reached since its transfers were held.
+    private func revealCheckFired() {
+        deliver(
+            state.withLock { state -> Outcome in
+                guard !Task.isCancelled, !state.isFinished, !state.revealed else { return Outcome() }
+                state.revealCheck = nil
+                return state.resolve(at: clock.now, revealDelay: revealDelay, header: header)
             })
     }
 

@@ -28,6 +28,10 @@ public final class ClipboardProgressStatusItemPresenter {
     /// The readout on screen, or `nil` when there is none.
     public private(set) var snapshot: ClipboardProgressSnapshot?
 
+    /// Whether the dropdown on screen is the one the readout opened, closing
+    /// because the readout ended: a line staged for it now is never seen in it.
+    public var isClosingDropdown: Bool { autoOpener.isClosingDropdown }
+
     /// The dropdown's live readout, built on first use and then kept so it
     /// updates in place rather than being rebuilt under the cursor.
     private lazy var view = ClipboardProgressMenuItemView()

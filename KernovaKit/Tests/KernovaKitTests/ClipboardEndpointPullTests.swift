@@ -275,6 +275,37 @@ struct ClipboardEndpointPullTests {
         #expect(runningGestures(pair.guest.reports).contains(.paste))
     }
 
+    /// The clipboard's folder paste runs the drag's encoder and wire, so a
+    /// folder holding an item the offering side cannot read names it the same
+    /// way, on both readouts.
+    @Test("pasting a folder holding an item the peer cannot read is refused, naming the item and why")
+    func pastedFolderWithAnUnreadableItemIsRefusedNamingIt() async throws {
+        let pair = try EndpointPair()
+        defer { pair.tearDown() }
+        let folder = try makeDirectoryRepresentation(
+            named: "Home", files: ["a.txt": Data("first".utf8), "z.txt": Data("last".utf8)])
+        let locked = folder.url.appendingPathComponent("locked.db")
+        try Data("secret".utf8).write(to: locked)
+        let sealed = try WithheldPermissions(locked)
+        defer { withExtendedLifetime(sealed) {} }
+        let unreadable = ClipboardSourceReadFailure(
+            itemPath: "Home/locked.db", reason: .posix(EACCES))
+        pair.guest.endpoint.offer(ClipboardContent(representations: [folder.representation]))
+        try await pair.host.recorder.waitForOffer()
+
+        #expect(await pair.host.serveFileURLOffMain(generation: 1, repIndex: 0) == nil)
+
+        let refusal = try await pair.host.recorder.waitForRefusal()
+        #expect(refusal.gesture == .paste)
+        #expect(refusal.failure == .sourceUnreadable(unreadable))
+        // The serving side's readout ends on the same item rather than completing.
+        try await pair.guest.reports.wait {
+            finishes(pair.guest.reports).contains { $0.gesture == .peerPaste }
+        }
+        let served = finishes(pair.guest.reports).first { $0.gesture == .peerPaste }
+        #expect(served?.failure == .sourceUnreadable(unreadable))
+    }
+
     @Test("a refused paste abandons its readout rather than finishing it")
     func refusedPasteAbandonsItsReadout() async throws {
         let harness = try RawPeerHarness(freeSpaceProvider: { _ in 0 })

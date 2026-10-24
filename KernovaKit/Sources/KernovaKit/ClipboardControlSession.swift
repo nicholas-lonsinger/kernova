@@ -23,10 +23,14 @@ public final class ClipboardControlSession {
     }
 
     /// Which channel this session serves.
+    ///
+    /// Both channels carry offers both ways; what an offer does depends on
+    /// which end sent it (``ClipboardOfferDiscipline``).
     public enum Kind: Sendable {
         /// Clipboard sync, offered and pulled in both directions.
         case clipboard
-        /// Files dropped on the VM display, host→guest only.
+        /// Files dragged between the Mac and the VM display: dropped on it
+        /// host→guest, dragged out of it guest→host.
         case drop
     }
 
@@ -67,8 +71,14 @@ public final class ClipboardControlSession {
     /// name in the guest.
     nonisolated private let label: String
 
-    /// Where an inbound payload lands; `nil` for a send-only session.
-    private let staging: ClipboardFileStaging?
+    /// Where an inbound payload lands.
+    private let staging: ClipboardFileStaging
+
+    /// How the offers this side sends behave.
+    nonisolated let outboundDiscipline: ClipboardOfferDiscipline
+
+    /// How the offers the peer sends behave.
+    nonisolated let inboundDiscipline: ClipboardOfferDiscipline
 
     nonisolated private let dataLink: DataLink
     nonisolated let dataSocketTimeout: TimeInterval
@@ -120,11 +130,11 @@ public final class ClipboardControlSession {
 
     /// Creates a session for one accepted channel.
     ///
-    /// `staging` is where inbound payloads land; the host's drop session is
-    /// send-only and passes none.
+    /// `staging` is where inbound payloads land: every session receives, since
+    /// both channels carry offers both ways.
     public init(
         channel: VsockChannel, role: Role, kind: Kind, label: String,
-        staging: ClipboardFileStaging? = nil, dataLink: DataLink = .accepts,
+        staging: ClipboardFileStaging, dataLink: DataLink = .accepts,
         dataSocketTimeout: TimeInterval
     ) {
         self.channel = channel
@@ -135,13 +145,8 @@ public final class ClipboardControlSession {
         self.dataLink = dataLink
         self.dataSocketTimeout = dataSocketTimeout
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
-        if Self.receives(role: role, kind: kind), staging == nil {
-            Self.logger.log(
-                .fault,
-                "Clipboard control session for '\(label, privacy: .public)' receives but was given no staging"
-            )
-            assertionFailure("Receiving session for '\(label)' was given no staging")
-        }
+        self.outboundDiscipline = ClipboardOfferDiscipline(kind: kind, sender: role)
+        self.inboundDiscipline = ClipboardOfferDiscipline(kind: kind, receiver: role)
         // A guest cannot be connected to: a session that expects to accept data
         // connections in that role would leave every transfer waiting for one
         // that can never arrive.
@@ -156,8 +161,8 @@ public final class ClipboardControlSession {
 
     // MARK: - Transfers
 
-    /// The transfers this side is pulling, or `nil` before `start()`, after
-    /// `stop()`, and for a send-only session.
+    /// The transfers this side is pulling, or `nil` before `start()` and after
+    /// `stop()`.
     ///
     /// `nonisolated` so an arriving data connection can be adopted from the
     /// thread that read its header — see `inboxHolder`.
@@ -175,16 +180,6 @@ public final class ClipboardControlSession {
     nonisolated var dataDialer: (@Sendable () throws -> Int32)? {
         guard case .dials(let port, let connect) = dataLink else { return nil }
         return { try connect(port) }
-    }
-
-    /// Whether this side ever streams payload bytes on this channel.
-    static func sends(role: Role, kind: Kind) -> Bool {
-        !(role == .guest && kind == .drop)
-    }
-
-    /// Whether this side ever receives payload bytes on this channel.
-    static func receives(role: Role, kind: Kind) -> Bool {
-        !(role == .host && kind == .drop)
     }
 
     // MARK: - Lifecycle
@@ -243,29 +238,24 @@ public final class ClipboardControlSession {
         let received = Self.sentDirectionWord(role: role == .host ? .guest : .host)
         let subject = kind == .clipboard ? "clipboard transfer" : "drop"
 
-        if Self.sends(role: role, kind: kind) {
-            outboxStorage = ClipboardTransferOutbox(
-                socketTimeout: dataSocketTimeout,
-                // The only measured throughput number for what this side sends,
-                // so it logs at `.notice` (persisted) rather than `.debug`.
-                onTransferTimed: { metrics in
-                    Self.logger.log(
-                        .notice,
-                        "\(sent, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) sent: \(metrics.logSummary, privacy: .public)"
-                    )
-                })
-        }
-        var inbox: ClipboardTransferInbox?
-        if let staging, Self.receives(role: role, kind: kind) {
-            inbox = ClipboardTransferInbox(
-                staging: staging, socketTimeout: dataSocketTimeout,
-                onTransferTimed: { metrics in
-                    Self.logger.log(
-                        .notice,
-                        "\(received, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"
-                    )
-                })
-        }
+        outboxStorage = ClipboardTransferOutbox(
+            socketTimeout: dataSocketTimeout,
+            // The only measured throughput number for what this side sends, so
+            // it logs at `.notice` (persisted) rather than `.debug`.
+            onTransferTimed: { metrics in
+                Self.logger.log(
+                    .notice,
+                    "\(sent, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) sent: \(metrics.logSummary, privacy: .public)"
+                )
+            })
+        let inbox = ClipboardTransferInbox(
+            staging: staging, socketTimeout: dataSocketTimeout,
+            onTransferTimed: { metrics in
+                Self.logger.log(
+                    .notice,
+                    "\(received, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"
+                )
+            })
 
         inboxHolder.withLock { $0 = inbox }
         let channel = self.channel
@@ -346,7 +336,7 @@ public final class ClipboardControlSession {
         label: String,
         connectionTag: ClipboardConnectionTag,
         subject: String,
-        inbox: ClipboardTransferInbox?,
+        inbox: ClipboardTransferInbox,
         lifecycle: Locked<Lifecycle>,
         onEnded: @Sendable () -> Void,
         onControlFrame: @Sendable @escaping (Frame) -> Void
@@ -374,31 +364,27 @@ public final class ClipboardControlSession {
         lifecycle.withLock { phase in
             if case .live(let task) = phase { phase = .ended(consumeTask: task) }
         }
-        inbox?.cancelAll()
+        inbox.cancelAll()
         onEnded()
     }
 
     // MARK: - Sending control frames
 
-    /// Announces `reps` under `generation` in this channel's offer vocabulary.
+    /// Announces `reps` under `generation` in the vocabulary of what this side
+    /// offers — a `ClipboardOffer`, a host's `DropOffer`, a guest's `DragOffer`.
     nonisolated public func sendOffer(
         generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
     ) throws {
-        switch kind {
-        case .clipboard:
-            try channel.send(
-                .clipboardOffer(generation: generation, reps: reps, isConcealed: isConcealed))
-        case .drop:
-            try channel.send(.dropOffer(generation: generation, reps: reps))
-        }
+        try channel.send(
+            outboundDiscipline.offerFrame(
+                generation: generation, reps: reps, isConcealed: isConcealed))
     }
 
-    /// Retires the offer for `generation` in this channel's release vocabulary.
+    /// Retires the offer for `generation` in the vocabulary of what this side
+    /// offers — a `ClipboardRelease`, a host's `DropRelease`, a guest's
+    /// `DragRelease`.
     nonisolated public func sendRelease(generation: UInt64) throws {
-        switch kind {
-        case .clipboard: try channel.send(.clipboardRelease(generation: generation))
-        case .drop: try channel.send(.dropRelease(generation: generation))
-        }
+        try channel.send(outboundDiscipline.releaseFrame(generation: generation))
     }
 
     /// Asks the peer to dial one representation's data connection.
@@ -432,5 +418,35 @@ public final class ClipboardControlSession {
         try? channel.send(
             .dropComplete(
                 generation: generation, outcome: outcome, code: code, message: message))
+    }
+
+    /// Tells the guest the host is done with the drag for `generation`.
+    /// Best-effort: a channel that died took the drag with it.
+    nonisolated public func sendDragComplete(generation: UInt64) {
+        try? channel.send(.dragComplete(generation: generation))
+    }
+
+    /// Asks the guest to hand the drag for `generation` over. Best-effort: a
+    /// channel that died took the drag with it.
+    nonisolated public func sendDragTake(generation: UInt64) {
+        try? channel.send(.dragTake(generation: generation))
+    }
+
+    /// Shows the guest's catcher for `generation` again, or stands it down.
+    /// Best-effort: a channel that died took the drag with it.
+    nonisolated public func sendDragCatcher(generation: UInt64, shown: Bool) {
+        try? channel.send(.dragCatcher(generation: generation, shown: shown))
+    }
+
+    /// Reports one step of handing the drag for `generation` to the host.
+    /// Best-effort: a channel that died took the drag with it.
+    nonisolated public func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {
+        try? channel.send(.dragHandOff(generation: generation, step: step))
+    }
+
+    /// Tells the host the measured sizes of the folders in the drag for
+    /// `generation`.
+    nonisolated public func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) throws {
+        try channel.send(.dragSizes(generation: generation, folderByteCounts: folderByteCounts))
     }
 }

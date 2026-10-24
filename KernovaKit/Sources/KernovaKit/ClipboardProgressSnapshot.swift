@@ -30,8 +30,12 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     public let fileCount: Int
     /// Bytes moved across the whole operation.
     public let bytesTransferred: UInt64
-    /// Bytes the whole operation expects to move.
+    /// Bytes the whole operation expects to move — short of the whole while
+    /// ``awaitsSize``.
     public let totalBytes: UInt64
+    /// Whether a transfer is waiting for the size of what it will move, so the
+    /// operation's total is not yet known.
+    public let awaitsSize: Bool
     /// Recent throughput, or `nil` before enough samples to estimate one.
     public let bytesPerSecond: Double?
     /// Estimated seconds until the operation finishes, or `nil` when it can't be
@@ -62,7 +66,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         secondsRemaining: Double?, gesture: ClipboardTransferGesture,
         elapsedSeconds: TimeInterval, isCancellable: Bool = false,
         operationID: ClipboardTransferOperationID = .unattached,
-        pendingBehind: Int = 0
+        pendingBehind: Int = 0, awaitsSize: Bool = false
     ) {
         self.direction = direction
         self.peerName = peerName
@@ -71,6 +75,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         self.fileCount = fileCount
         self.bytesTransferred = bytesTransferred
         self.totalBytes = totalBytes
+        self.awaitsSize = awaitsSize
         self.bytesPerSecond = bytesPerSecond
         self.secondsRemaining = secondsRemaining
         self.gesture = gesture
@@ -80,9 +85,10 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         self.pendingBehind = pendingBehind
     }
 
-    /// Progress as a `0...1` fraction, clamped (a zero/unknown total reads as 0).
+    /// Progress as a `0...1` fraction, clamped (a zero or unknown total reads
+    /// as 0).
     public var fractionComplete: Double {
-        guard totalBytes > 0 else { return 0 }
+        guard totalBytes > 0, !awaitsSize else { return 0 }
         return min(1, max(0, Double(bytesTransferred) / Double(totalBytes)))
     }
 
@@ -96,6 +102,6 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
             bytesTransferred: bytesTransferred, totalBytes: totalBytes,
             bytesPerSecond: bytesPerSecond, secondsRemaining: secondsRemaining, gesture: gesture,
             elapsedSeconds: elapsedSeconds, isCancellable: isCancellable, operationID: operationID,
-            pendingBehind: count)
+            pendingBehind: count, awaitsSize: awaitsSize)
     }
 }

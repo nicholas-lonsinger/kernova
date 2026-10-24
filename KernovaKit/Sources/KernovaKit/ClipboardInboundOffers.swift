@@ -50,7 +50,9 @@ public final class ClipboardInboundOffers {
     /// One offer the peer has made and this side can still pull from.
     private final class Entry {
         let generation: UInt64
-        let reps: [Kernova_V1_ClipboardRepresentationInfo]
+        /// Every representation declared, at its wire index; a drag's folders
+        /// take their sizes when the peer's `DragSizes` arrives.
+        var reps: [Kernova_V1_ClipboardRepresentationInfo]
         let isConcealed: Bool
         /// Representations already pulled, each at most once and then served to
         /// every flavor and every later fire that asks.
@@ -110,14 +112,36 @@ public final class ClipboardInboundOffers {
         }
     }
 
+    /// The folders of one drag whose sizes the peer has not sent yet, and the
+    /// latch their pulls wait on.
+    private struct AwaitedFolderSizes: Sendable {
+        /// The folders' indices in the offer.
+        let folders: Set<Int>
+        let latch: OneShotLatch
+    }
+
+    /// Each drag whose folders are still unsized, by generation — held off the
+    /// main actor, so the session's end can wake the pulls waiting on it
+    /// without a hop.
+    ///
+    /// An entry leaves once its sizes arrive or its drag is retired. The
+    /// session's end opens its latch and leaves it, so a pull that wakes is
+    /// refused rather than run at a size nobody measured.
+    nonisolated private let awaitedSizes = Locked<[UInt64: AwaitedFolderSizes]>([:])
+
     private let clock: any EngineClock
     private let maxPasteBytes: @MainActor () -> Int
 
-    /// Called with each offer the peer makes, once it is live here.
+    /// Called with each clipboard offer or drop the peer makes, once it is live
+    /// here.
     ///
     /// Set after construction rather than taken at init: an owner that holds this
     /// as a stored property has no `self` to hand over while building it.
     public var onOfferReceived: @MainActor (InboundOffer) -> Void = { _ in }
+
+    /// Called with each drag the peer offers, once it is live here, its items
+    /// already made safe (``ClipboardDraggedItem``).
+    public var onDragReceived: @MainActor (ClipboardInboundDrag) -> Void = { _ in }
 
     /// Called when an offer this side was holding stops being servable, with the
     /// generation retired — `nil` when there was none, which is still the moment
@@ -141,7 +165,7 @@ public final class ClipboardInboundOffers {
     private var entries: [UInt64: Entry] = [:]
 
     /// The clipboard offer the peer currently holds here; `0` when it holds none.
-    /// A drop keeps several entries at once and never sets it.
+    /// A drop or a drag keeps several entries at once and never sets it.
     private var currentGeneration: UInt64 = 0
 
     #if DEBUG
@@ -149,6 +173,10 @@ public final class ClipboardInboundOffers {
     /// re-check that decides whether to cache it, so a test can drive a newer
     /// offer or a teardown into that exact gap.
     var afterInboundPullForTesting: (@MainActor () async -> Void)?
+
+    /// Test seam: called each time a pull starts waiting for a folder's size,
+    /// on the pulling thread.
+    nonisolated let sizeWaitBeganForTesting = Locked<(@Sendable () -> Void)?>(nil)
 
     /// Test seam: how many pulls ``resolve(generation:repIndex:servesFileURL:expectedUTI:)``
     /// has handed a plan to, on the main actor every pull passes through before
@@ -188,6 +216,9 @@ public final class ClipboardInboundOffers {
     // MARK: - Role and kind
 
     nonisolated private var tag: ClipboardConnectionTag { session.connectionTag }
+
+    /// How the peer's offers behave on this side.
+    nonisolated private var discipline: ClipboardOfferDiscipline { session.inboundDiscipline }
 
     /// Whether an inbound-paste refusal also goes to the peer as an `Error`
     /// frame.
@@ -229,6 +260,12 @@ public final class ClipboardInboundOffers {
     public func pasteBudget(generation: UInt64) -> ClipboardPromisePolicy.PasteBudget? {
         guard let entry = entries[generation] else { return nil }
         return ClipboardPromisePolicy.pasteBudget(entry.reps, limit: maxPasteBytes())
+    }
+
+    /// The sum of every size `generation` declares as this side knows it now,
+    /// or `0` when it names no live offer.
+    public func byteCount(generation: UInt64) -> UInt64 {
+        entries[generation]?.reps.reduce(UInt64(0)) { $0.saturatingAdding($1.byteCount) } ?? 0
     }
 
     /// The pasteboard items to promise for `generation`, or `nil` when it names
@@ -323,11 +360,130 @@ public final class ClipboardInboundOffers {
         )
     }
 
-    /// Calls off the drop the peer has withdrawn, keeping whatever already
-    /// landed.
-    public func handleDropRelease(_ release: Kernova_V1_DropRelease) {
-        cancelInbound(generation: release.generation)
-        onOfferRetracted(release.generation, .released)
+    /// Takes on one drag the peer has offered.
+    ///
+    /// Independent like a drop: a drag the owner has taken stays pullable while
+    /// the peer offers the next. Each item's name and declared flags are made
+    /// safe here, at intake, so nothing downstream reads a peer-supplied path
+    /// component or an inline flag that would skip the free-space pre-flight;
+    /// the declared UTI is kept as sent, since a pull must echo it, and the
+    /// owner reads the usable type from ``ClipboardDraggedItem``. A folder's
+    /// size is `0` until the peer's `DragSizes` (``handleDragSizes(_:)``), and
+    /// no pull of it starts before then.
+    public func handleDragOffer(_ offer: Kernova_V1_DragOffer) {
+        guard entries[offer.generation] == nil else {
+            Self.logger.log(
+                .warning,
+                "Duplicate drag offer for gen=\(offer.generation, privacy: .public) (conn=\(self.tag, privacy: .public)) — ignored"
+            )
+            return
+        }
+        let reps = boundedReps(offer.repInfo, generation: offer.generation).map { info in
+            var safe = info
+            safe.filename = ClipboardDraggedItem.safeFilename(
+                info.filename, isDirectory: info.isDirectory)
+            // `is_inline` is meaningless for a drag, whose every item lands as a
+            // file — and an inline rep would skip the on-disk pre-flight.
+            safe.isInline = false
+            if info.isDirectory { safe.byteCount = 0 }
+            return safe
+        }
+        guard !reps.isEmpty else {
+            // Nothing to take: the host is done with it before it began.
+            session.sendDragComplete(generation: offer.generation)
+            return
+        }
+        let entry = Entry(generation: offer.generation, reps: reps, isConcealed: false)
+        entries[offer.generation] = entry
+        let folders = Set(reps.indices.filter { reps[$0].isDirectory })
+        if !folders.isEmpty {
+            awaitedSizes.withLock {
+                $0[offer.generation] = AwaitedFolderSizes(folders: folders, latch: OneShotLatch())
+            }
+        }
+        onDragReceived(
+            ClipboardInboundDrag(
+                generation: offer.generation,
+                items: reps.indices.map { ClipboardDraggedItem(repIndex: $0, declared: reps[$0]) }))
+        Self.logger.log(
+            .notice,
+            "Received a drag of \(reps.count, privacy: .public) item(s) from '\(self.peerName, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.tag, privacy: .public)) — metadata only"
+        )
+    }
+
+    /// Records the sizes of a drag's folders, which the peer measured once this
+    /// side took the drag, and wakes the pulls waiting on them.
+    ///
+    /// A size is clamped like any declared one. A folder the frame leaves out
+    /// stays unsized, and its pull is refused rather than run at a size nobody
+    /// measured.
+    public func handleDragSizes(_ sizes: Kernova_V1_DragSizes) {
+        let generation = sizes.generation
+        guard let entry = entries[generation],
+            let awaited = awaitedSizes.withLock({ $0[generation] }), !awaited.latch.isOpen
+        else {
+            Self.logger.log(
+                .debug,
+                "Folder sizes for gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' that nothing awaits (conn=\(self.tag, privacy: .public)) — ignored"
+            )
+            return
+        }
+        var unsized: Set<Int> = []
+        for index in awaited.folders {
+            guard let declared = sizes.folderByteCounts[UInt32(index)] else {
+                unsized.insert(index)
+                continue
+            }
+            entry.reps[index].byteCount = min(declared, ClipboardOfferBounds.maxDeclaredByteCount)
+        }
+        awaitedSizes.withLock { awaitedSizes in
+            awaitedSizes[generation] =
+                unsized.isEmpty ? nil : AwaitedFolderSizes(folders: unsized, latch: awaited.latch)
+        }
+        awaited.latch.open()
+        if unsized.isEmpty {
+            Self.logger.log(
+                .notice,
+                "Received the sizes of \(awaited.folders.count, privacy: .public) folder(s) from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
+            )
+        } else {
+            Self.logger.log(
+                .warning,
+                "The folder sizes from '\(self.peerName, privacy: .public)' left \(unsized.count, privacy: .public) of \(awaited.folders.count, privacy: .public) folder(s) unsized (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public)) — those will not be pulled"
+            )
+        }
+    }
+
+    /// Wakes every pull waiting on `generation`'s folder sizes, which it
+    /// no longer has: the drag is retired.
+    private func releaseAwaitedSizes(generation: UInt64) {
+        awaitedSizes.withLock { $0.removeValue(forKey: generation) }?.latch.open()
+    }
+
+    /// Calls off the drop or drag the peer has withdrawn, keeping whatever
+    /// already landed, and tells the owner.
+    ///
+    /// The owner is told whether or not this side still held the generation:
+    /// a take it is running on a drag already retired here still has to end.
+    public func handleWithdrawal(generation: UInt64) {
+        cancelInbound(generation: generation)
+        onOfferRetracted(generation, .released)
+    }
+
+    /// Retires the drag for `generation` and tells the peer this side is done
+    /// with it, waking any pull still parked on it as cancelled.
+    ///
+    /// Sent whether or not the drag is still held here: it is also how a take
+    /// that failed before the guest caught the drag is abandoned, and the
+    /// guest retires by generation. Best-effort.
+    public func completeDrag(generation: UInt64) {
+        if callOff(generation: generation) {
+            Self.logger.log(
+                .notice,
+                "Done with the drag from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
+            )
+        }
+        session.sendDragComplete(generation: generation)
     }
 
     /// Takes on what the peer reported about a gesture made on its side.
@@ -354,6 +510,7 @@ public final class ClipboardInboundOffers {
     public func retire(generation: UInt64) {
         guard let entry = entries.removeValue(forKey: generation) else { return }
         if currentGeneration == generation { currentGeneration = 0 }
+        releaseAwaitedSizes(generation: generation)
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
         _ = takeSyncPulls(generation: generation)
     }
@@ -430,16 +587,17 @@ public final class ClipboardInboundOffers {
     /// A clipboard offer and its materialization cache stay: a pasteboard write
     /// this side published outlives the session behind it, and every
     /// representation already pulled stays servable from the cache and the
-    /// staged files — docs/CLIPBOARD.md, "Pay on consume". A drop's entries go —
-    /// nothing on this side advertises them, and the jobs they belonged to end
-    /// with the channel.
+    /// staged files — docs/CLIPBOARD.md, "Pay on consume". A drop's or a drag's
+    /// entries go — nothing on this side advertises them, and the jobs they
+    /// belonged to end with the channel.
     ///
     /// `nonisolated` so the channel's own end can run it before anything hops to
     /// main — a pull parked on the main thread is what would block that hop. The
     /// retirement is left to a later main turn for the same reason.
     nonisolated public func endSession() {
         coordinator.failAll()
-        guard session.kind == .drop else { return }
+        for awaited in awaitedSizes.withLock({ Array($0.values) }) { awaited.latch.open() }
+        guard discipline.retiresOnSessionEnd else { return }
         MainActorBridge.async {
             for generation in Array(self.entries.keys) { self.retire(generation: generation) }
         }
@@ -468,8 +626,19 @@ public final class ClipboardInboundOffers {
     /// wake the parked caller. Waking it first would let it start the next
     /// representation before the cancellation is visible.
     public func cancelInbound(generation: UInt64) {
-        guard let entry = entries.removeValue(forKey: generation) else { return }
+        guard callOff(generation: generation) else { return }
+        Self.logger.log(
+            .notice,
+            "Cancelled the inbound transfer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
+        )
+    }
+
+    /// Retires `generation` and wakes every pull it has in flight as
+    /// cancelled, reporting whether it was held at all.
+    private func callOff(generation: UInt64) -> Bool {
+        guard let entry = entries.removeValue(forKey: generation) else { return false }
         if currentGeneration == generation { currentGeneration = 0 }
+        releaseAwaitedSizes(generation: generation)
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
         for id in takeSyncPulls(generation: generation) {
             session.inbox?.cancelAwait(id)
@@ -479,10 +648,7 @@ public final class ClipboardInboundOffers {
                     transferID: id, code: .cancelled, message: "Cancelled by the user",
                     neededBytes: nil, availableBytes: nil))
         }
-        Self.logger.log(
-            .notice,
-            "Cancelled the inbound transfer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
-        )
+        return true
     }
 
     // MARK: - Pulling
@@ -501,6 +667,14 @@ public final class ClipboardInboundOffers {
     public func join(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
+        if let latch = unsizedFolderLatch(generation: generation, repIndex: repIndex) {
+            #if DEBUG
+            sizeWaitBeganForTesting.withLock { $0 }?()
+            #endif
+            operation.sizeWaitBegan()
+            await latch.opened()
+            operation.sizeWaitEnded()
+        }
         let plan: PullPlan
         switch resolve(generation: generation, repIndex: repIndex, servesFileURL: false) {
         case .cached(let representation, _): return representation
@@ -537,16 +711,31 @@ public final class ClipboardInboundOffers {
     ///
     /// The caller owns both `operation` and the outcome: it reports what a
     /// failure means in its own vocabulary, since a drop's answer crosses the
-    /// wire as a `DropComplete` rather than a refusal.
+    /// wire as a `DropComplete` rather than a refusal. Callable from any thread
+    /// but the main one inside a tracking loop — an `NSFilePromiseProvider`
+    /// operation queue among them.
     ///
     /// Safe to call on the main thread: the receiver resolves the pull off-main,
     /// and on the main run loop's base the wait runs the event loop rather than
     /// parking. Where that wait is unavailable — a tracking or modal loop owns
     /// the events — the main thread is refused rather than parked, and nothing
     /// is served (`LazyPullCoordinator`).
+    ///
+    /// A drag's folder whose size has not arrived is held the same way until
+    /// the size arrives or the drag ends, then pulled; `operation` reads the
+    /// hold as a transfer whose total is not yet known.
     nonisolated public func pull(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) -> LazyPullOutcome {
+        if let latch = unsizedFolderLatch(generation: generation, repIndex: repIndex) {
+            #if DEBUG
+            sizeWaitBeganForTesting.withLock { $0 }?()
+            #endif
+            operation.sizeWaitBegan()
+            let refused = coordinator.hold(until: latch)
+            operation.sizeWaitEnded()
+            if let refused { return refused }
+        }
         let plan: PullPlan
         switch MainActorBridge.sync({
             self.resolve(generation: generation, repIndex: repIndex, servesFileURL: false)
@@ -556,6 +745,19 @@ public final class ClipboardInboundOffers {
         case .ready(let ready): plan = ready
         }
         return runSyncPull(plan, operation: operation, caller: .caller)
+    }
+
+    /// The latch a pull of `(generation, repIndex)` waits on: set while it
+    /// names a drag's folder whose size has not arrived, `nil` otherwise.
+    nonisolated private func unsizedFolderLatch(generation: UInt64, repIndex: Int) -> OneShotLatch? {
+        guard let awaited = awaitedSizes.withLock({ $0[generation] }),
+            awaited.folders.contains(repIndex), !awaited.latch.isOpen
+        else { return nil }
+        Self.logger.log(
+            .notice,
+            "Pull of folder rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) waits for its size"
+        )
+        return awaited.latch
     }
 
     // MARK: - Serving a paste
@@ -747,6 +949,13 @@ public final class ClipboardInboundOffers {
             logCacheHit(cached, generation: generation, repIndex: repIndex)
             return .cached(cached, stagedURL: entry.stagedInlineURLs[repIndex])
         }
+        if awaitedSizes.withLock({ $0[generation]?.folders.contains(repIndex) == true }) {
+            Self.logger.log(
+                .warning,
+                "Pull requested folder rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)), whose size never arrived — serving nothing"
+            )
+            return .refused(.cancelled)
+        }
         guard let inbox = session.inbox else {
             Self.logger.log(
                 .warning,
@@ -783,12 +992,12 @@ public final class ClipboardInboundOffers {
     /// Records a pull for a generation this side no longer holds.
     ///
     /// Only a clipboard promise with nothing live behind it persists: a drop's
-    /// entry is retired the moment its job ends, so a pull for one that is gone
-    /// is the ordinary tail of a cancelled or completed job, and a superseded
-    /// clipboard generation is the benign supersession race — the newer offer's
-    /// own publication is what retires those promises.
+    /// or a drag's entry is retired the moment its job ends, so a pull for one
+    /// that is gone is the ordinary tail of a cancelled or completed job, and a
+    /// superseded clipboard generation is the benign supersession race — the
+    /// newer offer's own publication is what retires those promises.
     private func logMissingOffer(generation: UInt64, repIndex: Int) {
-        guard session.kind == .clipboard, currentGeneration == 0 else {
+        guard discipline.supersedes, currentGeneration == 0 else {
             Self.logger.log(
                 .debug,
                 "Pull requested rep \(repIndex, privacy: .public) of retired gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (live gen=\(self.currentGeneration, privacy: .public), conn=\(self.tag, privacy: .public)) — serving nothing"
@@ -951,10 +1160,10 @@ public final class ClipboardInboundOffers {
             report(outcome, plan: plan, operation: operation, caller: caller)
             return nil
         }
-        // A dropped file is landed by its caller, never served again, so caching
-        // it would only pin the staged copy it is about to move — and the hop
-        // that cache costs is one a drop's pull then never pays.
-        if session.kind == .clipboard {
+        // A dropped or dragged file is landed by its caller, never served
+        // again, so caching it would only pin the staged copy it is about to
+        // move — and the hop that cache costs is one its pull then never pays.
+        if discipline.cachesMaterialized {
             MainActorBridge.sync {
                 // The entry is re-read after the wait rather than captured before
                 // it: a supersession can land inside the nested event loop a

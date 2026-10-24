@@ -33,11 +33,11 @@ public final class ClipboardTransferReporter {
     /// One live operation — either its latest readout, or its place in the queue
     /// while it waits for the peer to start pulling.
     ///
-    /// The operation reference is weak: a producer that goes away without
-    /// finishing would otherwise be kept alive by the readout, and a gone
-    /// operation has nothing left to cancel.
+    /// Keyed by the operation's minted identity, which outlives it: an
+    /// operation that goes away unended retires its entry by that identity
+    /// from its `deinit`. The reference is weak, so the readout never keeps a
+    /// producer alive; it is only what a Cancel reaches.
     private struct Live {
-        let key: ObjectIdentifier
         let id: ClipboardTransferOperationID
         weak var operation: ClipboardTransferOperation?
         /// The latest readout, or `nil` for an operation that has only been
@@ -122,8 +122,7 @@ public final class ClipboardTransferReporter {
     public func publish(from operation: ClipboardTransferOperation, _ update: ClipboardTransferReport) {
         switch update {
         case .running(let snapshot, let since):
-            let key = ObjectIdentifier(operation)
-            if let index = live.firstIndex(where: { $0.key == key }) {
+            if let index = live.firstIndex(where: { $0.id == operation.id }) {
                 // Only the first bar takes an order: re-ordering the live set on
                 // every progress tick would hand the readout back and forth
                 // between two transfers running side by side.
@@ -137,7 +136,7 @@ public final class ClipboardTransferReporter {
                 revealCount &+= 1
                 live.append(
                     Live(
-                        key: key, id: operation.id, operation: operation, snapshot: snapshot,
+                        id: operation.id, operation: operation, snapshot: snapshot,
                         since: since, revealOrder: revealCount))
             }
             absorbsRepeats = false
@@ -146,8 +145,8 @@ public final class ClipboardTransferReporter {
             failureAwaitsDisplacement = false
             recompute()
         case .finished(let finish):
-            let since = live.first { $0.key == ObjectIdentifier(operation) }?.since
-            remove(operation)
+            let since = live.first { $0.id == operation.id }?.since
+            remove(operation.id)
             record(finish, startedAt: since)
         case .idle:
             retire(operation)
@@ -159,10 +158,9 @@ public final class ClipboardTransferReporter {
     /// It joins the live set without a readout, so it is counted behind whatever
     /// bar is on screen rather than replacing it with a bar at zero.
     public func queued(_ operation: ClipboardTransferOperation) {
-        let key = ObjectIdentifier(operation)
-        guard !live.contains(where: { $0.key == key }) else { return }
+        guard !live.contains(where: { $0.id == operation.id }) else { return }
         live.append(
-            Live(key: key, id: operation.id, operation: operation, snapshot: nil, since: Date()))
+            Live(id: operation.id, operation: operation, snapshot: nil, since: Date()))
         gestureBegan()
         recompute()
     }
@@ -188,7 +186,13 @@ public final class ClipboardTransferReporter {
 
     /// Drops `operation` from the readout without a finished report.
     public func retire(_ operation: ClipboardTransferOperation) {
-        remove(operation)
+        retire(operation.id)
+    }
+
+    /// Drops the operation `id` names from the readout without a finished
+    /// report — what an operation that goes away unended sends.
+    func retire(_ id: ClipboardTransferOperationID) {
+        remove(id)
         recompute()
     }
 
@@ -223,9 +227,8 @@ public final class ClipboardTransferReporter {
 
     // MARK: - Private
 
-    private func remove(_ operation: ClipboardTransferOperation) {
-        let key = ObjectIdentifier(operation)
-        live.removeAll { $0.key == key }
+    private func remove(_ id: ClipboardTransferOperationID) {
+        live.removeAll { $0.id == id }
     }
 
     /// Installs `finish` as the standing report, absorbing a repeat of the same
@@ -292,9 +295,6 @@ public final class ClipboardTransferReporter {
 
     /// Rebuilds ``report`` and notifies when it changed.
     private func recompute() {
-        // An operation that went away without a terminal leaves nothing to show
-        // and nothing to cancel; counting it would inflate the queue forever.
-        live.removeAll { $0.operation == nil && $0.snapshot == nil }
         let next: ClipboardTransferReport
         if failureAwaitsDisplacement, let lastFinish {
             next = .finished(lastFinish)

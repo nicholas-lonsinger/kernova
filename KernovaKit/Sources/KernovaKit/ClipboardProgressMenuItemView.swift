@@ -152,11 +152,16 @@ public final class ClipboardProgressMenuItemView: NSView {
         headline.stringValue = ClipboardProgressFormat.headline(
             direction: snapshot.direction, peerName: snapshot.peerName,
             gesture: snapshot.gesture)
+        if bar.isIndeterminate != snapshot.awaitsSize {
+            bar.isIndeterminate = snapshot.awaitsSize
+            if snapshot.awaitsSize { bar.startAnimation(nil) } else { bar.stopAnimation(nil) }
+        }
         bar.doubleValue = snapshot.fractionComplete
         byteProgress.stringValue = ClipboardProgressFormat.byteProgress(
             bytesTransferred: snapshot.bytesTransferred,
             totalBytes: snapshot.totalBytes,
-            bytesPerSecond: snapshot.bytesPerSecond)
+            bytesPerSecond: snapshot.bytesPerSecond,
+            awaitsSize: snapshot.awaitsSize)
         itemCounter.stringValue =
             ClipboardProgressFormat.itemCounter(
                 completed: snapshot.filesCompleted, total: snapshot.fileCount) ?? ""
@@ -183,5 +188,11 @@ public final class ClipboardProgressMenuItemView: NSView {
 
     /// Test seam: the fraction the bar shows.
     public var barFractionForTesting: Double { bar.doubleValue }
+
+    /// Test seam: whether the bar shows no fraction at all.
+    public var barIsIndeterminateForTesting: Bool { bar.isIndeterminate }
+
+    /// Test seam: the byte line.
+    public var byteProgressForTesting: String { byteProgress.stringValue }
     #endif
 }

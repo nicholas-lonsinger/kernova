@@ -116,8 +116,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
         // `onPolicy` gates the log, clipboard and drop capabilities;
         // `onStateChange` drives the status-item icon;
-        // `onHostCapabilitiesChanged` is what tells the drop client whether this
-        // host has a drop listener at all.
+        // `onHostCapabilitiesChanged` is what tells the drop agent whether this
+        // host has a drop listener at all, and whether it takes drags out.
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
@@ -135,8 +135,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                     self?.statusItemController?.connectionStateChanged()
                 }
             },
-            onHostCapabilitiesChanged: { [weak dropAgent] hostSupportsDropFiles in
-                dropAgent?.applyHostCapability(supportsDrop: hostSupportsDropFiles)
+            onHostCapabilitiesChanged: { [weak dropAgent] capabilities in
+                dropAgent?.applyHostCapabilities(capabilities)
             }
         )
 

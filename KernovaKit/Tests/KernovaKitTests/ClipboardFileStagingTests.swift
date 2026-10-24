@@ -68,6 +68,26 @@ struct ClipboardFileStagingTests {
         #expect(FileManager.default.fileExists(atPath: dirs[3].path))
     }
 
+    @Test("drag-out staging keeps every generation until it is discarded, and never recreates one")
+    func dragOutStagingLivesUntilDiscarded() throws {
+        let staging = ClipboardFileStaging(
+            label: "test-\(UUID().uuidString)", root: stagingRoot.root, receivingOn: .drop,
+            as: .host)
+        defer { staging.sweep() }
+
+        let dirs = try (1...4).map { generation in
+            try staging.reserveScratchDirectory(generation: UInt64(generation))
+                .deletingLastPathComponent()
+        }
+        #expect(dirs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+
+        staging.discardGeneration(1)
+
+        #expect(!FileManager.default.fileExists(atPath: dirs[0].path))
+        #expect(dirs.dropFirst().allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        #expect(throws: CocoaError.self) { try staging.makeSink(generation: 1, filename: "late.bin") }
+    }
+
     @Test("sinks for the same generation share one directory")
     func sameGenerationSharesDirectory() throws {
         let staging = makeStaging()

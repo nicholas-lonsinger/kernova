@@ -24,20 +24,31 @@ public enum KernovaCapability {
     /// port to dial.
     public static let clipboardTransferV3 = "clipboard.transfer.v3"
 
-    /// Files dragged onto the VM display, offered on their own vsock channel
-    /// and streamed in the `clipboardTransferV3` payload encoding into the
-    /// guest's Downloads folder.
+    /// The drop channel: files dragged onto the VM display, offered on their
+    /// own vsock channel and streamed in the `clipboardTransferV3` payload
+    /// encoding into the guest's Downloads folder.
     ///
-    /// Independent of clipboard sharing: the drop channel carries its own offer
+    /// Independent of clipboard sharing: the drop channel carries its own offers
     /// and never touches a pasteboard. A peer without it has no drop listener or
     /// drop client at all, so the display refuses the gesture rather than
-    /// starting a transfer nothing will answer.
+    /// starting a transfer nothing will answer. It admits the channel in both
+    /// directions; ``dragOutFilesV1`` adds the guest→host direction.
     public static let dropFilesV3 = "drop.files.v3"
+
+    /// Files dragged out of the VM display onto the Mac: offered by the guest on
+    /// the drop channel (`DragOffer`), handed over at the display edge
+    /// (`DragTake`/`DragHandOff`/`DragCatcher`), and pulled by the host one item at a time as
+    /// a Mac destination asks for it.
+    ///
+    /// A feature tag, not a version. The guest offers drags only to a host that
+    /// advertises it; the host needs no flag of its own, since a `DragOffer`
+    /// only ever comes from an agent that has the feature.
+    public static let dragOutFilesV1 = "drag.out.files.v1"
 
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardTransferV3, dropFilesV3,
+        controlV1, controlHeartbeatV1, clipboardTransferV3, dropFilesV3, dragOutFilesV1,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

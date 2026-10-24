@@ -56,8 +56,24 @@ struct ClipboardTransferWordingTests {
             (.itemsUnreadable, .drop),
             (.sendFailed, .drop),
             (.unclaimed, .drop),
+            (.diskFull(needed: 4096, available: 1024), .dragOut),
+            (.interrupted(fileCount: nil), .dragOut),
+            (.timedOut, .dragOut),
+            (.transferFailed, .dragOut),
+            (.unpackFailed, .dragOut),
+            (.stagingFailed, .dragOut),
+            (.peerReported(nil), .dragOut),
+            (.sourceUnreadable(Self.mailUnreadable), .dragOut),
+            (.sourceUnreadable(nil), .dragOut),
+            (.sourceUnreadable(Self.mailUnreadable), .paste),
+            (.sourceUnreadable(nil), .preview),
         ]
     }
+
+    /// A read the guest's privacy controls refused, deep inside a dragged home
+    /// folder.
+    private static let mailUnreadable = ClipboardSourceReadFailure(
+        itemPath: "pbear/Library/Mail", reason: .posix(EPERM))
 
     // MARK: - Outcomes with nothing to say
 
@@ -223,6 +239,60 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.peerReported(.dropFailed), .drop)).message
                 == "The drop didn't finish — some files may not be in the VM's Downloads folder.")
+    }
+
+    @Test("a drag out reads as files not copied from the VM, never as a paste or a drop")
+    func dragOutWording() throws {
+        for (failure, gesture) in everyArm where gesture == .dragOut {
+            let copy = try #require(wording(failure, gesture), "\(failure)")
+            #expect(copy.headline == "Files not copied from \(quotedVM).", "\(failure)")
+            #expect(copy.menuLine.hasPrefix("Drag: "), "\(failure)")
+            #expect(!copy.message.contains("paste"), "\(failure)")
+            #expect(!copy.message.contains("clipboard"), "\(failure)")
+        }
+        #expect(
+            try #require(wording(.diskFull(needed: nil, available: nil), .dragOut)).message
+                == "This Mac ran out of disk space receiving the files, so the drag didn't finish.")
+        #expect(
+            try #require(wording(.stagingFailed, .dragOut)).message
+                == "The files couldn't be saved where you dropped them, so the drag didn't finish.")
+    }
+
+    @Test("an item the VM couldn't read is named by its own name, with the reason the read gave")
+    func unreadableItemIsNamed() throws {
+        let copy = try #require(wording(.sourceUnreadable(Self.mailUnreadable), .dragOut))
+        #expect(copy.headline == "Files not copied from \(quotedVM).")
+        #expect(
+            copy.message
+                == "The VM couldn't read \u{201C}Mail\u{201D} (permission denied), so the drag didn't finish.")
+        #expect(copy.menuLine == "Drag: the VM couldn't read \u{201C}Mail\u{201D}")
+
+        let reasons: [(ClipboardSourceReadFailure.Reason, String)] = [
+            (.posix(EACCES), " (permission denied)"),
+            (.posix(ENOENT), " (it no longer exists)"),
+            (.posix(EIO), " (input/output error)"),
+            (.endedEarly, " (it changed size)"),
+            (.unknown, ""),
+        ]
+        for (reason, parenthetical) in reasons {
+            let failure = ClipboardSourceReadFailure(itemPath: "pbear/notes.txt", reason: reason)
+            #expect(
+                try #require(wording(.sourceUnreadable(failure), .dragOut)).message
+                    == "The VM couldn't read \u{201C}notes.txt\u{201D}\(parenthetical), so the drag didn't finish.")
+        }
+        #expect(
+            try #require(wording(.sourceUnreadable(nil), .dragOut)).message
+                == "The VM couldn't read one of the items, so the drag didn't finish.")
+    }
+
+    @Test("a paste the VM couldn't read names the item and says the paste didn't finish")
+    func unreadablePasteIsNamed() throws {
+        let copy = try #require(wording(.sourceUnreadable(Self.mailUnreadable), .paste))
+        #expect(copy.headline == "Clipboard not pasted from \(quotedVM).")
+        #expect(
+            copy.message
+                == "The VM couldn't read \u{201C}Mail\u{201D} (permission denied), so the paste didn't finish.")
+        #expect(copy.menuLine == "Clipboard: the VM couldn't read \u{201C}Mail\u{201D}")
     }
 
     @Test("a passthrough forward shows the intake's own note")

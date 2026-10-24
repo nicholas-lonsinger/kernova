@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 import KernovaSynchronization
 
 /// How a transfer's data connection is obtained.
@@ -27,7 +28,7 @@ enum ClipboardTransferLink: Sendable {
 
 /// Streams one clipboard representation onto its own vsock data connection:
 /// the descriptor's `ClipboardTransferReply`, then the payload bytes, then the
-/// 33-byte trailer, then EOF.
+/// trailer, then EOF.
 ///
 /// A small inline representation streams raw; every other representation — a
 /// file, a folder, an oversize inline payload — is encoded onto the socket as
@@ -61,6 +62,9 @@ final class ClipboardTransferSender: Sendable {
     /// The first stop this side raised, kept apart from what the archive
     /// reports, since AppleArchive rewraps an error thrown out of a callback.
     private let stopBox = ArchiveRefusalBox()
+
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardTransferSender")
 
     /// Creates a sender for one transfer.
     ///
@@ -117,10 +121,11 @@ final class ClipboardTransferSender: Sendable {
     ///     the cumulative `(bytesSent, totalBytes)` in the unit the offer
     ///     advertised. An archived transfer reports `0` for the total — the
     ///     progress tracker keeps the offer's own figure.
-    ///   - onSourceUnreadable: fired when the source cannot be read, *before*
-    ///     the reason is written to the peer. An owner counting what it failed
-    ///     to send has therefore counted this transfer before the peer can
-    ///     learn of it, let alone report the batch it belongs to.
+    ///   - onSourceUnreadable: fired when the source cannot be read, with the
+    ///     item that failed where a read named one, *before* the reason is
+    ///     written to the peer. An owner counting what it failed to send has
+    ///     therefore counted this transfer before the peer can learn of it, let
+    ///     alone report the batch it belongs to.
     ///   - onComplete: fired off the caller's actor exactly once when the
     ///     transfer ends, with `success` true only when every byte was streamed
     ///     and the completion trailer written.
@@ -130,7 +135,7 @@ final class ClipboardTransferSender: Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
-        onSourceUnreadable: (@Sendable () -> Void)? = nil,
+        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         queue.async { [self] in
@@ -157,6 +162,16 @@ final class ClipboardTransferSender: Sendable {
 
     private var retirement: ClipboardStreamAbortCode? { retiredAs.withLock { $0 } }
 
+    /// Why a payload stopped streaming before its end.
+    private struct StreamFailure {
+        let code: ClipboardStreamAbortCode
+        /// Whether a write reached the socket's stall bound, which leaves the
+        /// reason nowhere to go.
+        let stalled: Bool
+        /// The item a `read.error` could not read, when the read named one.
+        let readFailure: ClipboardSourceReadFailure?
+    }
+
     /// What crosses the wire: raw bytes for an inline payload the receiver can
     /// hold resident, an archive for everything else.
     private enum Payload {
@@ -170,7 +185,7 @@ final class ClipboardTransferSender: Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?,
-        onSourceUnreadable: (@Sendable () -> Void)?,
+        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)?,
         onComplete: (@Sendable (_ success: Bool) -> Void)?
     ) {
         // Declared first so it ends last: the interval covers the whole
@@ -236,7 +251,7 @@ final class ClipboardTransferSender: Sendable {
             guard isCurrent(generation) else { try raise(.superseded) }
         }
         let counted = Locked(0)
-        var failure: (code: ClipboardStreamAbortCode, stalled: Bool)?
+        var failure: StreamFailure?
         do {
             switch payload {
             case .raw(let data):
@@ -250,14 +265,18 @@ final class ClipboardTransferSender: Sendable {
             // The writer is asked too: on the archived path a local stop this
             // side raised is what surfaces, and the stalled write underneath it
             // is what decides whether a trailer can still cross.
-            failure = (
-                code(for: error),
-                Self.isWriteStall(error) || Self.isWriteStall(writer.failure)
-            )
+            let abortCode = code(for: error)
+            let readFailure = (error as? ClipboardSourceReadFailure)?.within(
+                representation.filename)
+            failure = StreamFailure(
+                code: abortCode,
+                stalled: Self.isWriteStall(error) || Self.isWriteStall(writer.failure),
+                readFailure: readFailure)
+            logStop(code: abortCode, error: error, readFailure: readFailure)
         }
         // Ahead of the trailer, so an owner counting what it could not send has
         // this transfer counted before the peer can see how it ended.
-        if failure?.code == .readError { onSourceUnreadable?() }
+        if let failure, failure.code == .readError { onSourceUnreadable?(failure.readFailure) }
 
         // A trailer is skipped only after a stalled write: the peer's receive
         // buffer is full and it is not draining, so the reason has nowhere to go
@@ -267,7 +286,8 @@ final class ClipboardTransferSender: Sendable {
         if failure?.stalled != true {
             let trailer =
                 failure.map {
-                    ClipboardTransferTrailer(ending: .aborted(rawCode: $0.code.rawValue))
+                    ClipboardTransferTrailer(
+                        ending: .aborted(rawCode: $0.code.rawValue, readFailure: $0.readFailure))
                 } ?? ClipboardTransferTrailer(ending: .complete(digest: writer.digest()))
             // Best-effort: a connection that died under the payload cannot carry
             // the reason it died for, and the peer already knows.
@@ -331,7 +351,7 @@ final class ClipboardTransferSender: Sendable {
     /// Decides how `representation` crosses, or refuses the transfer.
     private func classify(
         _ representation: ClipboardContent.Representation, isInline: Bool, fd: Int32,
-        onSourceUnreadable: (@Sendable () -> Void)?
+        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)?
     ) -> Payload? {
         switch representation.source {
         case .inMemory(let data) where isInline && data.count <= maxResidentInlineBytes:
@@ -352,9 +372,17 @@ final class ClipboardTransferSender: Sendable {
                         url, name: Self.entryName(for: representation),
                         byteCount: currentByteCount))
             }
-            guard let data = try? Data(contentsOf: url) else {
-                onSourceUnreadable?()
-                refuse(fd: fd, code: .readError, message: "Cannot read source file")
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch {
+                let readFailure = ClipboardSourceReadFailure(
+                    itemPath: representation.filename, reason: .init(error))
+                logStop(code: .readError, error: error, readFailure: readFailure)
+                onSourceUnreadable?(readFailure)
+                refuse(
+                    fd: fd, code: .readError, message: "Cannot read source file",
+                    readFailure: readFailure)
                 return nil
             }
             guard data.count <= maxResidentInlineBytes else {
@@ -366,7 +394,7 @@ final class ClipboardTransferSender: Sendable {
             // The sender is only ever handed materialized reps we offered; a
             // not-yet-pulled placeholder has no bytes to stream.
             assertionFailure("Cannot stream a pending-remote representation")
-            onSourceUnreadable?()
+            onSourceUnreadable?(nil)
             refuse(
                 fd: fd, code: .readError,
                 message: "Cannot stream a pending-remote representation")
@@ -485,8 +513,34 @@ final class ClipboardTransferSender: Sendable {
 
     /// Answers a request this side will not serve: a reply naming the reason,
     /// no payload, no trailer.
-    private func refuse(fd: Int32, code: ClipboardStreamAbortCode, message: String) {
+    private func refuse(
+        fd: Int32, code: ClipboardStreamAbortCode, message: String,
+        readFailure: ClipboardSourceReadFailure? = nil
+    ) {
         try? ClipboardDataConnection.writeFrame(
-            .clipboardTransferRefusal(transferID: transferID, code: code, message: message), fd: fd)
+            .clipboardTransferRefusal(
+                transferID: transferID, code: code, message: message, readFailure: readFailure),
+            fd: fd)
+    }
+
+    /// Records a source this side could not read, with the error behind a
+    /// failure that names no item.
+    private func logStop(
+        code: ClipboardStreamAbortCode, error: any Error, readFailure: ClipboardSourceReadFailure?
+    ) {
+        guard code == .readError else { return }
+        if let readFailure {
+            Self.logger.log(
+                .error,
+                "Clipboard send \(self.transferID, privacy: .public): couldn't read '\(readFailure.itemPath, privacy: .private)' — \(readFailure.description, privacy: .public)"
+            )
+        } else {
+            // `String(describing:)`: a plain Swift enum whose payload
+            // `localizedDescription` drops.
+            Self.logger.log(
+                .error,
+                "Clipboard send \(self.transferID, privacy: .public) couldn't read its source: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 }

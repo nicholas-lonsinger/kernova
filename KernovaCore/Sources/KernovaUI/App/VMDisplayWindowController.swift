@@ -74,16 +74,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
         let backing = VMDisplayBackingView()
         backing.onResume = onResume
-        backing.dropAvailability = { [weak instance] in
-            instance?.displayDropAvailability ?? .none
-        }
-        backing.onDropFiles = { [weak instance] urls, stagedIn in
-            instance?.sendDroppedFilesToGuest(urls, stagedIn: stagedIn) ?? false
-        }
-        backing.onDropUnreadable = { [weak instance] in
-            instance?.reportUnreadableDropToGuest()
-        }
-        backing.applyDropRegistration()
+        backing.transferHost = { [weak instance] in instance }
         backing.update(
             display: instance.session?.virtualMachineSession?.displayHandle,
             isPaused: instance.isLivePaused,
@@ -222,13 +213,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 // and a fullscreen transition, which moves what system-key
                 // forwarding resolves to — reaches the live view.
                 _ = self.instance.displayViewSettings
-                // Everything `displayDropAvailability` reads, so the display
-                // registers and unregisters as a drag destination when the guest
-                // agent comes and goes, the VM pauses, or the toggle flips.
-                _ = self.instance.configuration.dropFilesEnabled
-                _ = self.instance.lastSeenAgentVersion
-                _ = self.instance.vsockDropService?.isConnected
-                _ = self.instance.vsockControlService?.guestSupportsDropFiles
                 _ = self.instance.hasLiveEphemeralSession
                 _ = self.instance.name
             },
@@ -245,7 +229,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                         transitionText: status.transitionLabel,
                         settings: self.instance.displayViewSettings
                     )
-                    self.backingView.applyDropRegistration()
                     self.updateToolbarItems()
                     self.updateWindowTitle()
                 }

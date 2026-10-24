@@ -73,22 +73,26 @@ private final class UnreadableReps: Sendable {
 /// The peer decides what it pulls and when — a paste can take two waves minutes
 /// apart — so transfers are declared as they are asked for, never up front.
 ///
-/// The two channels differ in exactly one thing here, and it is the reason
-/// `kind` is read off the session rather than passed twice: a clipboard offer
-/// **supersedes** the one before it, while every drop is an independent job the
-/// user asked for separately.
+/// What differs between a clipboard offer, a host's drop, and a guest's drag
+/// out — whether an offer supersedes the last, when its readout opens, whether
+/// it has a claim deadline, what a Cancel or the session's end does to it — is
+/// read off the session's ``ClipboardOfferDiscipline`` rather than branched on
+/// here.
 @MainActor
 final class ClipboardOutboundOffers {
     /// One offer this side has made and can still serve.
     private final class Entry {
         let generation: UInt64
-        let content: ClipboardContent
+        /// What the offer serves; a drag's folders take their measured sizes
+        /// after the offer went out (``sendFolderSizes(generation:byteCounts:)``).
+        var content: ClipboardContent
         /// The generation the offer is still wanted at, read from each
         /// transfer's own queue; zeroed once it is not, which aborts its
         /// transfers.
         let live: Locked<UInt64>
-        /// The readout measuring this offer, opened up front for a drop and on
-        /// the peer's first request for a clipboard offer.
+        /// The readout measuring this offer — opened with it under an
+        /// up-front readout, on the peer's first request under a per-entry one,
+        /// and never under the shared paste readout, which is held apart.
         var operation: ClipboardTransferOperation?
         /// Whether the user called the offer off, so later requests are refused
         /// rather than answered.
@@ -127,7 +131,7 @@ final class ClipboardOutboundOffers {
     private let peerName: String
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
-    /// What a drop's deadline is measured on — its only trigger, since by
+    /// What a claim deadline is measured on — its only trigger, since by
     /// definition nothing arrives to drive it.
     private let clock: any EngineClock
 
@@ -142,8 +146,9 @@ final class ClipboardOutboundOffers {
     ///
     /// A drop's bytes can be staged somewhere only its owner knows about, and the
     /// peer pulls them long after the drag is over, so this is the moment they
-    /// stop being needed. Never raised for a clipboard offer, which the peer may
-    /// paste from again.
+    /// stop being needed. Raised only where the discipline reports a settle:
+    /// never for a clipboard offer, which the peer may paste from again, nor for
+    /// a drag out, which stages nothing.
     var onDropSettled: @MainActor (UInt64) -> Void = { _ in }
 
     private var entries: [UInt64: Entry] = [:]
@@ -161,7 +166,7 @@ final class ClipboardOutboundOffers {
 
     private var lastOfferedDigestStorage: Data?
 
-    private var kind: ClipboardControlSession.Kind { session.kind }
+    private var discipline: ClipboardOfferDiscipline { session.outboundDiscipline }
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardOutboundOffers")
@@ -210,9 +215,11 @@ final class ClipboardOutboundOffers {
     /// The generation is committed only once the frame is away, so a failed send
     /// leaves nothing registered for the peer to request. A clipboard offer
     /// dedups against the digest it last announced and retires the one before it;
-    /// a drop is registered alongside whatever is already streaming, and opens
-    /// its readout before the send so a failure has something to report on, then
-    /// announces itself as queued once the offer is away.
+    /// a drop or a drag out is registered alongside whatever is already live. A
+    /// drop opens its readout before the send so a failure has something to
+    /// report on, then announces itself as queued once the offer is away; a drag
+    /// out opens none until the peer pulls, so a drag that stays in the guest
+    /// leaves nothing on screen.
     ///
     /// `skippedBeforeOffer` is how many of the gesture's items this side already
     /// knows it cannot send. A drop's verdict counts them alongside the ones that
@@ -222,7 +229,7 @@ final class ClipboardOutboundOffers {
     func offer(
         _ content: ClipboardContent, skippedBeforeOffer: Int = 0
     ) -> ClipboardEndpoint.OfferOutcome {
-        if kind == .clipboard, content.digest == lastOfferedDigestStorage { return .duplicate }
+        if discipline.dedups, content.digest == lastOfferedDigestStorage { return .duplicate }
         // Cap to the 16-bit rep-index limit a transfer id can address; the
         // uncapped digest stays the dedup key, so unchanged content isn't
         // re-offered.
@@ -238,7 +245,8 @@ final class ClipboardOutboundOffers {
 
         let generation = nextGenerationStorage
         let operation: ClipboardTransferOperation? =
-            kind == .drop ? makeDropOperation(generation: generation, content: offered) : nil
+            discipline.readout == .upFront
+            ? makeUpFrontOperation(generation: generation, content: offered) : nil
         do {
             try session.sendOffer(
                 generation: generation,
@@ -254,7 +262,7 @@ final class ClipboardOutboundOffers {
         }
 
         nextGenerationStorage += 1
-        if kind == .clipboard, let previous = entries[currentGeneration] {
+        if discipline.supersedes, let previous = entries[currentGeneration] {
             retire(previous)
             session.outbox?.cancel(generation: previous.generation)
         }
@@ -266,17 +274,15 @@ final class ClipboardOutboundOffers {
         // The peer serves drops one job at a time, so a batch offered while
         // another is streaming waits its turn. Announcing it keeps it counted on
         // the readout that is showing instead of invisible until its first byte.
-        if kind == .drop {
-            operation?.markQueued()
-            armClaimDeadlines()
-        }
-        if kind == .clipboard {
+        operation?.markQueued()
+        armClaimDeadlines()
+        if discipline.supersedes {
             currentGeneration = generation
-            lastOfferedDigestStorage = content.digest
             // What the peer has just been handed is the news; the report the
             // previous gesture left standing described an offer this replaces.
             reporter.clearFinished()
         }
+        if discipline.dedups { lastOfferedDigestStorage = content.digest }
         onActivity(.offerSent)
         Self.logger.log(
             .notice,
@@ -307,7 +313,7 @@ final class ClipboardOutboundOffers {
     /// nothing.
     @discardableResult
     func release() -> Bool {
-        guard kind == .clipboard, let entry = entries[currentGeneration] else { return false }
+        guard discipline.supersedes, let entry = entries[currentGeneration] else { return false }
         do {
             try session.sendRelease(generation: entry.generation)
         } catch {
@@ -326,6 +332,62 @@ final class ClipboardOutboundOffers {
         Self.logger.log(
             .notice,
             "Released offer gen=\(entry.generation, privacy: .public) to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        return true
+    }
+
+    /// Withdraws the drag offered under `generation`, reporting whether one was
+    /// live and the withdrawal reached the peer.
+    ///
+    /// For a flow whose owner withdraws by generation (a drag out); anywhere
+    /// else it does nothing. Whatever is streaming from the offer is called
+    /// off, and a later request for it is refused stale. Idempotent.
+    @discardableResult
+    func withdraw(generation: UInt64) -> Bool {
+        guard discipline.ownerWithdraws, let entry = entries[generation] else { return false }
+        do {
+            try session.sendRelease(generation: generation)
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to withdraw offer gen=\(generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        retire(entry)
+        session.outbox?.cancel(generation: generation)
+        Self.logger.log(
+            .notice,
+            "Withdrew offer gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        return true
+    }
+
+    /// Records `byteCounts` — the measured sizes of the offer's source
+    /// directories, keyed by index — as their estimates and tells the peer,
+    /// reporting whether the offer was still live and the sizes went out.
+    ///
+    /// For a drag out, whose offer lists no folder's contents. An index that
+    /// names no source directory is dropped. The estimates are recorded before
+    /// the send, so a pull the sizes unblock is served against them.
+    @discardableResult
+    func sendFolderSizes(generation: UInt64, byteCounts: [Int: Int]) -> Bool {
+        guard let entry = entries[generation] else { return false }
+        let sources = entry.content.directorySources
+        let folders = byteCounts.filter { sources[$0.key] != nil }
+        entry.content = entry.content.withDirectoryEstimates(folders)
+        do {
+            try session.sendDragSizes(generation: generation, folderByteCounts: folders)
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to send the folder sizes of gen=\(generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        Self.logger.log(
+            .notice,
+            "Sent the sizes of \(folders.count, privacy: .public) folder(s) to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(folders.values.reduce(0, &+), privacy: .public) bytes)"
         )
         return true
     }
@@ -390,7 +452,7 @@ final class ClipboardOutboundOffers {
             return
         }
 
-        if kind == .drop, !entry.isClaimed {
+        if discipline.hasClaimDeadline, !entry.isClaimed {
             entry.isClaimed = true
             // Something is streaming now, so every batch behind it is waiting its
             // turn rather than going unclaimed — the guest serves one job at a
@@ -404,7 +466,9 @@ final class ClipboardOutboundOffers {
         let live = entry.live
         let activity = entry.activity
         let unreadable = entry.unreadable
-        let isClipboard = kind == .clipboard
+        // Nothing on this side knows the peer has stopped asking, so unless the
+        // peer's verdict ends the readout, the idle gap is what calls it over.
+        let finishesWhenIdle = discipline.readout != .upFront
         let expectedBytes = UInt64(max(0, representation.byteCount))
         let unitName = unitName(for: representation)
         // The readout hears about the transfer from inside `serve`, once it has
@@ -416,9 +480,9 @@ final class ClipboardOutboundOffers {
             generation: request.generation,
             representation: representation,
             maxAcceptByteCount: request.maxAcceptByteCount,
-            // A drop always lands as a file in the guest's Downloads; nothing
-            // about it is pasteboard-inline.
-            isInline: isClipboard && representation.shouldInlineOnPasteboard,
+            // A dropped or dragged item always lands as a file; nothing about
+            // it is pasteboard-inline.
+            isInline: discipline.servesInline && representation.shouldInlineOnPasteboard,
             isCurrent: { generation in live.withLock { $0 == generation } },
             link: link,
             onBegin: {
@@ -431,20 +495,25 @@ final class ClipboardOutboundOffers {
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
-            // One item this side cannot read never cancels the batch: the peer
-            // skips it and keeps pulling, and this is what lets the verdict name
-            // how many were left behind.
-            onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
+            // One item this side cannot read never cancels the batch from this
+            // side; whether the rest still cross is the peer's call — a drop
+            // skips it and keeps pulling, a drag-out ends the whole drag. This
+            // is what lets the verdict name how many were left behind. The
+            // readout hears which item, so an ending that would otherwise
+            // complete reports it instead.
+            onSourceUnreadable: { failure in
+                unreadable.record(repIndex: repIndex)
+                operation.unitFailed(id: xid, .sourceUnreadable(failure))
+            },
             // No `activity` count here: activity is bytes moving, and a
             // transfer's end is the start of the wait for the peer's next move
             // — its next pull, or its `DropComplete` — which is exactly what
             // the liveness window is there to bound.
             onComplete: { success in
                 operation.unitEnded(id: xid, succeeded: success)
-                // Nothing on this side knows the peer has stopped asking, so the
-                // idle gap is what calls a paste over. A drop's readout spans the
-                // whole set and ends with the peer's `DropComplete`.
-                if isClipboard { operation.finishWhenIdle() }
+                // A drop's readout spans the whole set and ends with the peer's
+                // `DropComplete` instead.
+                if finishesWhenIdle { operation.finishWhenIdle() }
             })
         guard served else {
             Self.logger.log(
@@ -468,17 +537,11 @@ final class ClipboardOutboundOffers {
     /// A clipboard offer survives: the peer can paste again and pull the same
     /// representations, exactly as it can after any retired transfer — what it
     /// can no longer do is resume the wave the user just stopped, so later
-    /// requests are refused stale. A drop is the gesture itself, so cancelling
-    /// it retires the whole job.
+    /// requests are refused stale. A drop or a drag out is the gesture itself,
+    /// so cancelling it retires the whole offer and tells the peer.
     func cancel(generation: UInt64) {
         guard let entry = entries[generation] else { return }
-        switch kind {
-        case .clipboard:
-            // With no outbox there is nothing streaming to call off.
-            guard let outbox = session.outbox else { return }
-            entry.isCancelled = true
-            outbox.cancel(generation: generation)
-        case .drop:
+        if discipline.cancelRetiresOffer {
             entry.isCancelled = true
             // Zeroed first, so a transfer between writes sees the job is gone
             // and aborts itself rather than racing the explicit cancel below.
@@ -486,11 +549,16 @@ final class ClipboardOutboundOffers {
             session.outbox?.cancel(generation: generation)
             try? session.sendRelease(generation: generation)
             forget(entry)
-            onDropSettled(generation)
+            if discipline.reportsSettle { onDropSettled(generation) }
             // The readout dwells at the fraction it stopped on, so the cancel is
             // visibly what happened.
             entry.operation?.finish(.cancelled)
             armClaimDeadlines()
+        } else {
+            // With no outbox there is nothing streaming to call off.
+            guard let outbox = session.outbox else { return }
+            entry.isCancelled = true
+            outbox.cancel(generation: generation)
         }
         Self.logger.log(
             .notice,
@@ -526,6 +594,19 @@ final class ClipboardOutboundOffers {
             )
             entry.operation?.finish(.failed(.peerReported(code)))
         }
+    }
+
+    /// Retires the drag the peer is done with: nothing will pull from it again,
+    /// so its readout ends here and anything still streaming from it is called
+    /// off.
+    func handleDragComplete(_ complete: Kernova_V1_DragComplete) {
+        guard let entry = entries[complete.generation] else { return }
+        retire(entry)
+        session.outbox?.cancel(generation: complete.generation)
+        Self.logger.log(
+            .notice,
+            "'\(self.peerName, privacy: .public)' is done with the drag (gen=\(complete.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+        )
     }
 
     /// Ends the readout of a drop the peer served to its end, saying how many of
@@ -564,15 +645,18 @@ final class ClipboardOutboundOffers {
     ///
     /// A drop still open is a gesture made on this Mac whose files never landed,
     /// so it is owed an answer here; one already called off is not — the user
-    /// knows. A clipboard offer's readout is abandoned rather than failed: the
-    /// peer's paste, not this side, is what it was measuring.
+    /// knows. A clipboard offer's or a drag out's readout is abandoned rather
+    /// than failed: the peer's paste or drop, not this side, is what it was
+    /// measuring.
     func endSession() {
-        if kind == .drop {
-            for entry in entries.values {
-                onDropSettled(entry.generation)
+        for entry in entries.values {
+            if discipline.reportsSettle { onDropSettled(entry.generation) }
+            if discipline.failsOnSessionEnd {
                 guard !entry.isCancelled else { continue }
                 entry.operation?.finish(
                     .failed(.interrupted(fileCount: entry.gesturedCount)))
+            } else {
+                entry.operation?.abandon()
             }
         }
         pasteOperation?.operation.abandon()
@@ -586,12 +670,13 @@ final class ClipboardOutboundOffers {
 
     // MARK: - Private
 
-    // MARK: - The unclaimed-drop deadline
+    // MARK: - The claim deadline
 
-    /// Puts every drop on the deadline its state calls for: the one the peer is
-    /// serving on a liveness window of its own, and one the peer has not begun
-    /// on the unclaimed clock — the latter only while nothing is streaming,
-    /// since the peer serves drops one job at a time.
+    /// Puts every offer on the deadline its state calls for, where the
+    /// discipline has one (a drop): the one the peer is serving on a liveness
+    /// window of its own, and one the peer has not begun on the unclaimed clock
+    /// — the latter only while nothing is streaming, since the peer serves
+    /// drops one job at a time.
     ///
     /// A drop's readout is closed by the peer's `DropComplete`, so a peer that
     /// never pulls, or that stops pulling with a job open, leaves the gesture
@@ -600,7 +685,7 @@ final class ClipboardOutboundOffers {
     /// keeps one wedged there from suppressing the deadline of every batch
     /// behind it.
     private func armClaimDeadlines() {
-        guard kind == .drop else { return }
+        guard discipline.hasClaimDeadline else { return }
         let isServing = entries.values.contains(where: \.isClaimed)
         for entry in entries.values where entry.isClaimed || !isServing {
             armClaimDeadline(for: entry)
@@ -645,7 +730,7 @@ final class ClipboardOutboundOffers {
         // The peer may be wedged rather than gone, so the release is what stops
         // it pulling an offer this side has already answered for.
         try? session.sendRelease(generation: generation)
-        onDropSettled(generation)
+        if discipline.reportsSettle { onDropSettled(generation) }
         entry.operation?.finish(.failed(wasClaimed ? .timedOut : .unclaimed))
         Self.logger.log(
             .warning,
@@ -655,10 +740,17 @@ final class ClipboardOutboundOffers {
     }
 
     /// Drops `entry` from the live set and ends the transfers still riding it.
+    ///
+    /// The readout an entry carries here is a drag out's — a clipboard offer's
+    /// is held apart, and a drop never retires this way — and it ends as its
+    /// idle gap would have, failed if one of its transfers failed to read: the
+    /// peer will ask it for nothing more, and the entry is the readout's only
+    /// owner.
     private func retire(_ entry: Entry) {
         entry.live.withLock { $0 = 0 }
         forget(entry)
         if entry.generation == currentGeneration { currentGeneration = 0 }
+        entry.operation?.finish(.completed)
     }
 
     /// Removes `entry` from the live set, calling off its deadline with it.
@@ -668,41 +760,53 @@ final class ClipboardOutboundOffers {
         entries[entry.generation] = nil
     }
 
-    /// The readout serving `entry`, opening one when a clipboard offer's first
-    /// request arrives.
+    /// The readout serving `entry`, opening one on the peer's request where
+    /// the discipline opens it then.
     ///
     /// Every clipboard operation is a `.peerPaste`: the peer asks for bytes only
     /// from the pasteboard promise callback of a paste inside it, so this readout
     /// is the only thing explaining why the app the user pasted into is waiting.
-    /// A finished one is replaced rather than reused — the waves can be minutes
-    /// apart, far longer than the idle gap, and reusing an ended operation drops
-    /// the second wave's progress entirely.
+    /// A drag out's is per offer, so two drags the peer pulls from at once never
+    /// abandon each other's. A finished one is replaced rather than reused — the
+    /// waves can be minutes apart, far longer than the idle gap, and reusing an
+    /// ended operation drops the second wave's progress entirely.
     private func operation(for entry: Entry) -> ClipboardTransferOperation? {
-        guard kind == .clipboard else {
+        switch discipline.readout {
+        case .upFront:
             guard let operation = entry.operation else {
                 Self.logger.log(
                     .fault,
-                    "Drop gen=\(entry.generation, privacy: .public) has no readout — refusing its request"
+                    "Offer gen=\(entry.generation, privacy: .public) has no readout — refusing its request"
                 )
-                assertionFailure("Drop generation \(entry.generation) has no readout")
+                assertionFailure("Offer generation \(entry.generation) has no readout")
                 return nil
             }
             return operation
+        case .perEntryOnFirstRequest:
+            if let existing = entry.operation, existing.isLive { return existing }
+            let operation = makeOnRequestOperation(generation: entry.generation)
+            entry.operation = operation
+            return operation
+        case .sharedPeerPaste:
+            if let existing = pasteOperation, existing.generation == entry.generation,
+                existing.operation.isLive
+            {
+                return existing.operation
+            }
+            pasteOperation?.operation.abandon()
+            let operation = makeOnRequestOperation(generation: entry.generation)
+            pasteOperation = (generation: entry.generation, operation: operation)
+            return operation
         }
-        if let existing = pasteOperation, existing.generation == entry.generation,
-            existing.operation.isLive
-        {
-            return existing.operation
-        }
-        pasteOperation?.operation.abandon()
-        let generation = entry.generation
-        let operation = ClipboardTransferOperation(
-            gesture: .peerPaste, direction: .outbound, peerName: peerName,
+    }
+
+    /// A readout opened by the peer's request, with nothing known up front.
+    private func makeOnRequestOperation(generation: UInt64) -> ClipboardTransferOperation {
+        ClipboardTransferOperation(
+            gesture: discipline.servingGesture, direction: .outbound, peerName: peerName,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
             onCancelRequested: cancelHandler(generation: generation),
             reporter: reporter)
-        pasteOperation = (generation: generation, operation: operation)
-        return operation
     }
 
     /// What a Cancel on `generation`'s readout runs.
@@ -715,13 +819,13 @@ final class ClipboardOutboundOffers {
         }
     }
 
-    /// Opens the readout spanning one drop, with the set's totals as the floor so
-    /// the bar's denominator is every dropped file rather than each in turn.
-    private func makeDropOperation(
+    /// Opens the readout spanning one offer, with the set's totals as the floor
+    /// so the bar's denominator is every dropped file rather than each in turn.
+    private func makeUpFrontOperation(
         generation: UInt64, content: ClipboardContent
     ) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
-            gesture: .drop, direction: .outbound, peerName: peerName,
+            gesture: discipline.servingGesture, direction: .outbound, peerName: peerName,
             expectedBytes: content.representations.reduce(UInt64(0)) {
                 $0 &+ UInt64(max(0, $1.byteCount))
             },
@@ -731,36 +835,25 @@ final class ClipboardOutboundOffers {
             reporter: reporter)
     }
 
-    /// The readout label for one representation: a drop always names its file,
-    /// while an inline clipboard rep has no name to show.
+    /// The readout label for one representation: a dropped or dragged item
+    /// always names its file, while an inline clipboard rep has no name to show.
     private func unitName(for representation: ClipboardContent.Representation) -> String? {
-        switch kind {
-        case .clipboard: representation.filename.isEmpty ? nil : representation.filename
-        case .drop: representation.filename
-        }
+        guard !discipline.namesEveryUnit else { return representation.filename }
+        return representation.filename.isEmpty ? nil : representation.filename
     }
 
     private func staleMessage(for generation: UInt64) -> String {
         if entries[generation]?.isCancelled == true {
             return "The transfer for generation \(generation) was cancelled"
         }
-        switch kind {
-        case .clipboard: return "Request for superseded generation \(generation)"
-        case .drop: return "No live drop for generation \(generation)"
-        }
+        return discipline.staleMessage(generation: generation)
     }
 
     private func rangeMessage(_ repIndex: Int) -> String {
-        switch kind {
-        case .clipboard: "Representation index \(repIndex) out of range"
-        case .drop: "Item index \(repIndex) out of range"
-        }
+        discipline.rangeMessage(repIndex: repIndex)
     }
 
     private func utiMessage(_ uti: String) -> String {
-        switch kind {
-        case .clipboard: "Requested UTI '\(uti)' does not match offered representation"
-        case .drop: "Requested UTI '\(uti)' does not match the dropped item"
-        }
+        discipline.utiMessage(uti: uti)
     }
 }

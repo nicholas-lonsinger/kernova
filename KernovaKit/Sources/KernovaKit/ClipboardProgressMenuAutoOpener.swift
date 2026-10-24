@@ -35,6 +35,9 @@ public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
     private var openedThisOperation = false
     /// Whether the dropdown currently on screen is the one this opener popped.
     private var openedByThisOpener = false
+    /// Whether this opener has asked to close its dropdown and it has not yet
+    /// closed — so the dropdown is on screen, but nothing new shows in it.
+    public private(set) var isClosingDropdown = false
 
     /// Creates an opener with nothing in flight.
     public init(
@@ -64,6 +67,7 @@ public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
                 openedByThisOpener = false
             }
             guard readoutActive, menuIsOpen, openedByThisOpener else { return .none }
+            isClosingDropdown = true
             return .close
         }
         // A readout arriving while none was showing starts a new operation.
@@ -102,6 +106,7 @@ public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
     /// rest of the operation, so the dropdown never re-opens over them.
     public mutating func menuClosed() {
         openedByThisOpener = false
+        isClosingDropdown = false
     }
 
     /// Whether the transfer has been running long enough, and has enough left to
@@ -110,7 +115,7 @@ public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
         guard readout.elapsedSeconds >= minimumElapsedToOpen else { return false }
         // Without a total there is no estimate to weigh, so the elapsed floor is
         // the whole test.
-        guard readout.totalBytes > 0 else { return true }
+        guard readout.totalBytes > 0, !readout.awaitsSize else { return true }
         // Every byte is in and only the terminal is outstanding. Checked before
         // consulting the estimate because `secondsRemaining` reports `nil` both
         // here and before a rate exists, and those two mean opposite things.

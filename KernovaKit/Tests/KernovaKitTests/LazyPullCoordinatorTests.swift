@@ -143,6 +143,37 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
+    @Test("a main-thread hold with no event loop available is refused, not parked")
+    @MainActor
+    func mainThreadHoldWithoutEventLoopIsRefused() {
+        // The same stand-in as the pull's: a wait source that declines.
+        let coordinator = LazyPullCoordinator(eventLoopWait: { nil })
+
+        guard case .mainThreadUnavailable = coordinator.hold(until: OneShotLatch()) else {
+            Issue.record("Expected the hold to be refused")
+            return
+        }
+    }
+
+    @Test("an off-main hold parks until the latch opens, and one already open returns at once")
+    func offMainHoldParksUntilTheLatchOpens() async {
+        let coordinator = LazyPullCoordinator(eventLoopWait: { nil })
+        let latch = OneShotLatch()
+        armTestSessionActivity()
+        let held = Task {
+            await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                let thread = Thread { cont.resume(returning: coordinator.hold(until: latch) == nil) }
+                thread.name = "LazyPullCoordinatorTests.hold"
+                thread.start()
+            }
+        }
+
+        latch.open()
+
+        #expect(await held.value)
+        #expect(coordinator.hold(until: latch) == nil)
+    }
+
     // MARK: - Slot machinery
 
     @Test("pull surfaces an abort delivered while it waits")
@@ -695,9 +726,8 @@ struct LazyPullCoordinatorTests {
         let arrivals = Tally()
         let box = RepBox()
         let gate = AsyncGate()
-        // A raw payload spanning several socket reads: its wire bytes are the
-        // payload, so each read the receiver takes is both an arrival and a
-        // figure.
+        // A raw payload spanning several socket reads: each read is an arrival,
+        // and its wire bytes are the payload, so each release is a figure.
         let bytes = patternedBytes(
             count: 3 * ClipboardStreamTuning.dataReadBufferBytes + 7, multiplier: 7, offset: 1)
         harness.inbox.awaitTransfer(
@@ -719,7 +749,7 @@ struct LazyPullCoordinatorTests {
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == bytes)
         #expect(progress.value > 1)
-        #expect(arrivals.value == progress.value)
+        #expect(arrivals.value > 1)
         // The callback carries cumulative bytes: monotonic, constant total, final
         // == the full payload.
         #expect(progress.isMonotonic)

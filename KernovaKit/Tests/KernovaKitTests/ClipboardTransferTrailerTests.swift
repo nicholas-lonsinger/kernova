@@ -6,7 +6,7 @@ import Testing
 @testable import KernovaKit
 import KernovaSynchronization
 
-/// The two detectors a data connection has: the 33-byte trailer that says how a
+/// The two detectors a data connection has: the trailer that says how a
 /// payload ended, and the reader that holds those bytes back so the payload the
 /// consumer sees ends exactly where the sender ended it.
 @Suite("ClipboardTransferTrailer and ClipboardPayloadReader", .caseScoped)
@@ -83,9 +83,9 @@ struct ClipboardTransferTrailerTests {
         #expect(ClipboardTransferTrailer.parse(Data(count: count)) == nil)
     }
 
-    /// The spelling is the peer's, and 32 bytes is all the trailer has for it,
-    /// so a longer one crosses as its first 32 bytes rather than overrunning.
-    @Test("an abort code past 32 bytes is truncated to what the trailer holds")
+    /// The spelling is the peer's, and 30 bytes is all the trailer has for it,
+    /// so a longer one crosses as its first 30 bytes rather than overrunning.
+    @Test("an abort code past 30 bytes is truncated to what the trailer holds")
     func longAbortCodeIsTruncated() throws {
         let code = String(repeating: "z", count: 40)
         let encoded = ClipboardTransferTrailer(ending: .aborted(rawCode: code)).encoded
@@ -93,7 +93,40 @@ struct ClipboardTransferTrailerTests {
         #expect(encoded.count == ClipboardTransferTrailer.byteCount)
         #expect(
             ClipboardTransferTrailer.parse(encoded)?.ending
-                == .aborted(rawCode: String(repeating: "z", count: 32)))
+                == .aborted(rawCode: String(repeating: "z", count: 30)))
+    }
+
+    @Test("an abort trailer round-trips the item its sender could not read")
+    func abortTrailerRoundTripsItsReadFailure() throws {
+        let readFailure = ClipboardSourceReadFailure(
+            itemPath: "pbear/Library/Mail", reason: .posix(EPERM))
+        let encoded = ClipboardTransferTrailer(
+            ending: .aborted(rawCode: "read.error", readFailure: readFailure)
+        ).encoded
+
+        #expect(encoded.count > ClipboardTransferTrailer.byteCount)
+        #expect(ClipboardTransferTrailer.byteCount(endingWith: Data(count: 7) + encoded) == encoded.count)
+        #expect(
+            ClipboardTransferTrailer.parse(encoded)?.ending
+                == .aborted(rawCode: "read.error", readFailure: readFailure))
+    }
+
+    /// A path no trailer could hold still names the item, by its own name.
+    @Test("a read failure too long for the trailer crosses as the item's own name")
+    func overlongReadFailureCrossesAsItsName() throws {
+        let deep = Array(repeating: "folder", count: 1000).joined(separator: "/") + "/Mail"
+        let encoded = ClipboardTransferTrailer(
+            ending: .aborted(
+                rawCode: "read.error",
+                readFailure: ClipboardSourceReadFailure(itemPath: deep, reason: .posix(EACCES)))
+        ).encoded
+
+        #expect(encoded.count <= ClipboardTransferTrailer.maximumByteCount)
+        #expect(
+            ClipboardTransferTrailer.parse(encoded)?.ending
+                == .aborted(
+                    rawCode: "read.error",
+                    readFailure: ClipboardSourceReadFailure(itemPath: "Mail", reason: .posix(EACCES))))
     }
 
     // MARK: - Holding the trailer back
@@ -115,6 +148,23 @@ struct ClipboardTransferTrailerTests {
         // The only corruption detector this transport has, taken over exactly
         // the bytes the consumer got.
         #expect(reader.digest() == sha256(payload))
+        #expect(try reader.trailer() == trailer)
+    }
+
+    @Test("the reader holds back exactly a trailer that carries a read failure")
+    func readerHoldsADetailedTrailerBack() throws {
+        let payload = patternedBytes(count: 9000, multiplier: 7, offset: 5)
+        let trailer = ClipboardTransferTrailer(
+            ending: .aborted(
+                rawCode: "read.error",
+                readFailure: ClipboardSourceReadFailure(itemPath: "Project/locked", reason: .posix(EACCES))))
+        let fd = try stream(payload + trailer.encoded)
+        defer { ClipboardDataConnection.end(fd: fd) }
+        let reader = ClipboardPayloadReader(fd: fd, bufferBytes: 1024)
+
+        let taken = try readAll(reader)
+
+        #expect(taken == payload)
         #expect(try reader.trailer() == trailer)
     }
 

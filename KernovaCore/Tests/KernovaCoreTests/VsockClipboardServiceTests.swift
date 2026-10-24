@@ -499,7 +499,7 @@ struct VsockClipboardServiceTests {
     /// For every `ClipboardRequest` the host sends, it dials a data connection
     /// into the service — as a macOS guest, which only ever initiates, does —
     /// and serves the bytes registered for that `(generation, repIndex)` on it:
-    /// the reply, the payload, the 33-byte trailer, then EOF. Lets a test drive
+    /// the reply, the payload, the trailer, then EOF. Lets a test drive
     /// `materializeForPreview()` / `materializeForCopy()` — which block on the
     /// host's pull continuations — without hand-sequencing each transfer.
     ///
@@ -3072,13 +3072,20 @@ struct VsockClipboardServiceTests {
     @Test(
         "a preview pull aborted mid-stream reports the failed transfer",
         arguments: [
-            ClipboardStreamAbortCode.readError, .digestMismatch, .sizeMismatch, .stallTimeout,
+            ClipboardStreamAbortCode.digestMismatch, .sizeMismatch, .stallTimeout,
             .writeError, .payloadInvalid, .sendFailed,
         ])
     func previewPullAbortSurfacesIssue(code: ClipboardStreamAbortCode) async throws {
         let finish = try await previewPullAbortedByGuest(code: code)
         #expect(finish?.failure == .transferFailed)
         // #880: a failed preview never claims a paste happened.
+        #expect(finish?.gesture == .preview)
+    }
+
+    @Test("a preview pull the guest could not read reports the unreadable source")
+    func previewPullReadAbortSurfacesUnreadableSource() async throws {
+        let finish = try await previewPullAbortedByGuest(code: .readError)
+        #expect(finish?.failure == .sourceUnreadable(nil))
         #expect(finish?.gesture == .preview)
     }
 

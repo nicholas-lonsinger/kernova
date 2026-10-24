@@ -43,7 +43,9 @@ struct ClipboardTransferFailureTests {
             }
         case .extractError:
             #expect(failure == .unpackFailed)
-        case .requestRange, .requestUTI, .requestCancelled, .readError, .sendFailed,
+        case .readError:
+            #expect(failure == .sourceUnreadable(nil))
+        case .requestRange, .requestUTI, .requestCancelled, .sendFailed,
             .sizeOverrun, .sizeMismatch, .digestMismatch, .payloadUnsupported, .payloadInvalid,
             .writeError, .stageError, .mapError, .stallTimeout, .pasteTimeout:
             #expect(failure == .transferFailed)
@@ -76,12 +78,11 @@ struct ClipboardTransferFailureTests {
 
     @Test("every gesture someone waits on outranks every gesture they can leave")
     func awaitedGesturesOutrankTheRest() {
-        for gesture in [
-            ClipboardTransferGesture.paste, .peerPaste, .preview, .copy, .forward, .drop,
-        ] where gesture.isAwaited {
-            for other in [
-                ClipboardTransferGesture.paste, .peerPaste, .preview, .copy, .forward, .drop,
-            ] where !other.isAwaited {
+        let every: [ClipboardTransferGesture] = [
+            .paste, .peerPaste, .preview, .copy, .forward, .drop, .dragOut,
+        ]
+        for gesture in every where gesture.isAwaited {
+            for other in every where !other.isAwaited {
                 #expect(
                     gesture.readoutRank > other.readoutRank,
                     "\(gesture) is waited on, so it outranks \(other)")
@@ -92,5 +93,10 @@ struct ClipboardTransferFailureTests {
         #expect(
             ClipboardTransferGesture.peerPaste.readoutRank
                 > ClipboardTransferGesture.drop.readoutRank)
+        // Files dragged out are missing where they were dropped the same way.
+        #expect(ClipboardTransferGesture.dragOut.isAwaited)
+        #expect(
+            ClipboardTransferGesture.dragOut.readoutRank
+                == ClipboardTransferGesture.drop.readoutRank)
     }
 }
