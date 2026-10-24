@@ -977,19 +977,20 @@ struct GuestDragOutTests {
         let content = try #require(window.contentView)
         let (box, icon, label, name) = try hud(in: window)
         let middle = NSPoint(x: content.bounds.midX, y: content.bounds.midY)
+        let halfPixel = 0.5 / window.backingScaleFactor
 
         #expect(label.stringValue == "Copy to Mac")
         #expect(box.material == .hudWindow)
         #expect(box.state == .active)
-        #expect(abs(box.frame.midX - middle.x) < 0.5)
-        #expect(abs(box.frame.midY - middle.y) < 0.5)
+        #expect(abs(box.frame.midX - middle.x) <= halfPixel)
+        #expect(abs(box.frame.midY - middle.y) <= halfPixel)
         #expect(icon.frame.size == NSSize(width: 128, height: 128))
         #expect(abs(box.bounds.maxY - icon.frame.maxY - 24) < 0.5)
         #expect(abs(icon.frame.minY - label.frame.maxY - 10) < 0.5)
         #expect(abs(label.frame.minY - name.frame.maxY - 4) < 0.5)
         #expect(abs(name.frame.minY - 24) < 0.5)
         for row in [icon, label, name] as [NSView] {
-            #expect(abs(row.frame.midX - box.bounds.midX) < 0.5)
+            #expect(abs(row.frame.midX - box.bounds.midX) <= halfPixel)
             #expect(row.frame.minX >= 23.5)
         }
     }
