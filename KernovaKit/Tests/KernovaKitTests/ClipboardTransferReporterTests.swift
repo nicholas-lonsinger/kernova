@@ -265,7 +265,7 @@ struct ClipboardTransferReporterTests {
         // Passthrough could not forward every item this side's user copied, and
         // said so.
         let refusal = finish(
-            .itemsSkipped(note: "Skipped 1 unreadable item"), gesture: .forward, at: refusedAt)
+            .itemsSkipped(count: 1), gesture: .forward, at: refusedAt)
         reporter.finish(refusal)
 
         // The guest then pastes what did get across. Its bar takes the readout.
@@ -294,7 +294,7 @@ struct ClipboardTransferReporterTests {
         let refusedAt = Date(timeIntervalSince1970: 100)
 
         let refusal = finish(
-            .itemsSkipped(note: "Skipped 1 unreadable item"), gesture: .forward, at: refusedAt)
+            .itemsSkipped(count: 1), gesture: .forward, at: refusedAt)
         reporter.finish(refusal)
 
         // The guest pastes the file that did get across, and *that* transfer

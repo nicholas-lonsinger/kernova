@@ -221,17 +221,17 @@ final class ClipboardPassthroughCoordinator {
         if lastPasteboardChangeCount != Self.unobservedChangeCount { reporter.gestureBegan() }
         let allowsBinary = service.supportsBinaryRepresentations
         switch ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary) {
-        case .content(let content, let note):
-            recordSettled(changeCount, offer(content, note: note, to: service))
+        case .content(let content, let skipped):
+            recordSettled(changeCount, offer(content, skipped: skipped, to: service))
         case .pendingFiles(let urls, let unresolved):
             resolvingChangeCount = changeCount
             resolveAndForward(
                 urls, unresolved: unresolved, allowsBinary: allowsBinary, changeCount: changeCount)
-        case .rejected(let message, let unreadable):
+        case .rejected(let refusal):
             // A verdict on this copy: re-reading the same pasteboard reaches it
             // again.
             lastPasteboardChangeCount = changeCount
-            report(rejection: message, unreadable: unreadable)
+            report(refusal)
         }
     }
 
@@ -275,11 +275,11 @@ final class ClipboardPassthroughCoordinator {
             // resolve; recording nothing leaves the copy for the next poll.
             guard let service = self.instance?.clipboardService else { return }
             switch resolved {
-            case .content(let content, let note):
-                self.recordSettled(changeCount, self.offer(content, note: note, to: service))
-            case .rejected(let message, let unreadable):
+            case .content(let content, let skipped):
+                self.recordSettled(changeCount, self.offer(content, skipped: skipped, to: service))
+            case .rejected(let refusal):
                 self.lastPasteboardChangeCount = changeCount
-                self.report(rejection: message, unreadable: unreadable)
+                self.report(refusal)
             case .pendingFiles:
                 self.lastPasteboardChangeCount = changeCount
                 Self.logger.log(.fault, "Resolving copied files yielded another pending-files intake")
@@ -294,43 +294,42 @@ final class ClipboardPassthroughCoordinator {
     /// A policy verdict — an empty clipboard, a privacy marker, a text-only
     /// transport refusing a file copy — leaves nothing to report, and the
     /// text-only one would otherwise fire on every file the user copies.
-    private func report(rejection message: String, unreadable: Bool) {
-        guard unreadable else { return }
-        reportUnforwarded(message)
+    private func report(_ refusal: ClipboardIntakeRefusal) {
+        guard case .unreadable = refusal else { return }
+        reportUnforwarded(.itemsUnreadable)
     }
 
-    /// Offers intake output to the guest, raising the intake's skip note when it
-    /// carried one, and reports what became of the grab.
+    /// Offers intake output to the guest, raising the items it left out when
+    /// there were any, and reports what became of the grab.
     ///
-    /// The note is raised *after* the grab, which clears the issue on a
+    /// The skip is raised *after* the grab, which clears the issue on a
     /// successful offer, and only on `.settled`: an undelivered forward left
     /// nothing behind for the user to act on yet, and reporting each attempt
     /// would file one transfer report per poll until the retry lands.
     private func offer(
-        _ content: ClipboardContent, note: String?, to service: any ClipboardServicing
+        _ content: ClipboardContent, skipped: Int, to service: any ClipboardServicing
     ) -> ClipboardGrabOutcome {
         service.clipboardContent = content
         let outcome = service.grabIfChanged()
-        if outcome == .settled, let note {
-            reportUnforwarded(note)
+        if outcome == .settled, skipped > 0 {
+            reportUnforwarded(.itemsSkipped(count: skipped))
         }
         return outcome
     }
 
-    /// Raises an intake outcome the user is owed — a partial copy's skip note,
-    /// or the rejection when nothing resolved at all — as a finished forward.
+    /// Raises an intake loss the user is owed — a partial copy's skipped items,
+    /// or a copy none of whose items could be read — as a finished forward.
     ///
     /// The window shows these inline for its own paste/drop gestures; this poll
     /// has no gesture to answer, so the report is the only surface they get.
-    private func reportUnforwarded(_ note: String) {
+    private func reportUnforwarded(_ failure: ClipboardTransferFailure) {
         let name = instance?.name ?? "?"
         Self.logger.log(
             .warning,
-            "Clipboard passthrough could not forward every copied item for '\(name, privacy: .public)': \(note, privacy: .public)"
+            "Clipboard passthrough could not forward every copied item for '\(name, privacy: .public)': \(String(describing: failure), privacy: .public)"
         )
         reporter.finish(
-            ClipboardTransferFinish(
-                gesture: .forward, outcome: .failed(.itemsSkipped(note: note)), peerName: name))
+            ClipboardTransferFinish(gesture: .forward, outcome: .failed(failure), peerName: name))
     }
 
     // MARK: - Guest → host (inbound)

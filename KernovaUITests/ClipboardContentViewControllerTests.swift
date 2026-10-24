@@ -953,6 +953,24 @@ struct ClipboardContentChipTests {
         #expect(!vc.indicatorTextForTesting.isEmpty)
         #expect(vc.contentChipTextForTesting == chip)
     }
+
+    @Test("a Paste whose only copied file is gone says the copied item couldn't be read")
+    func pasteOfAGoneFileNamesTheCopy() {
+        // Never created: the scratch directory itself doesn't exist yet.
+        let gone = TestScratchDirectory(prefix: "kernova-chip-paste").url
+            .appendingPathComponent("gone.txt")
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(gone.absoluteString, forType: .fileURL)
+        pasteboard.writeObjects([item])
+        let (vc, _) = makeController(content: .empty, pasteboard: pasteboard)
+
+        vc.paste(nil)
+
+        #expect(vc.indicatorTextForTesting == "Couldn't read the copied item")
+    }
 }
 
 /// Minimal in-memory `ClipboardServicing` for driving the controller without a

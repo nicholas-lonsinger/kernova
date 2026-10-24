@@ -90,9 +90,9 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
     /// Items this side could not read were left out of what it sent, and the
-    /// rest crossed; `note` is the sentence the raising side words it in.
-    case itemsSkipped(note: String)
-    /// None of the dropped items could be read, so nothing was sent.
+    /// rest crossed; `count` is how many.
+    case itemsSkipped(count: Int)
+    /// None of the gesture's items could be read, so nothing was sent.
     case itemsUnreadable
     /// The drop offer itself could not be sent.
     case sendFailed
@@ -102,17 +102,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
 }
 
 extension ClipboardTransferFailure {
-    /// The refusal a drop raises for `count` items it could not send, whether
-    /// they were left out of the offer or failed to be read once the guest
-    /// asked for them.
-    public static func itemsSkipped(count: Int) -> ClipboardTransferFailure {
-        .itemsSkipped(
-            note: count == 1
-                ? "One item couldn\u{2019}t be read, so it wasn\u{2019}t sent to the VM. The rest were."
-                : "\(count) items couldn\u{2019}t be read, so they weren\u{2019}t sent to the VM. The rest were."
-        )
-    }
-
     /// The failure a `diskFull` abort carries, from whatever numbers it knew.
     public static func diskFull(from info: ClipboardStreamAbortInfo) -> ClipboardTransferFailure {
         .diskFull(

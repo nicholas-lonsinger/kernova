@@ -314,7 +314,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         try await h.reports.waitForFailure()
         #expect(h.service.grabbed.last?.representations.map(\.filename) == ["kept.txt"])
-        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
+        #expect(h.reports.failure == .itemsSkipped(count: 1))
     }
 
     @Test("a forward whose every item went unreadable surfaces the rejection")
@@ -333,7 +333,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         try await h.reports.waitForFailure()
         #expect(h.service.grabbed.isEmpty)
-        #expect(h.reports.failure == .itemsSkipped(note: "Couldn't read the dropped item"))
+        #expect(h.reports.failure == .itemsUnreadable)
     }
 
     @Test("a file deleted before the poll reads the pasteboard is reported too")
@@ -355,7 +355,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         try await h.reports.waitForFailure()
         #expect(h.service.grabbed.last?.representations.map(\.filename) == ["kept.txt"])
-        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
+        #expect(h.reports.failure == .itemsSkipped(count: 1))
     }
 
     @Test("a copy whose every file vanished before the poll surfaces the rejection")
@@ -374,7 +374,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         try await h.reports.waitForFailure()
         #expect(h.service.grabbed.isEmpty)
-        #expect(h.reports.failure == .itemsSkipped(note: "Couldn't read the dropped item"))
+        #expect(h.reports.failure == .itemsUnreadable)
     }
 
     @Test("a second copy losing the same item is announced again, not collapsed into the first")
@@ -401,7 +401,7 @@ struct ClipboardPassthroughCoordinatorTests {
         try await h.resolves.wait(untilCompleted: 2)
 
         #expect(h.reports.refusals.count == 2)
-        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
+        #expect(h.reports.failure == .itemsSkipped(count: 1))
     }
 
     @Test("a text-only transport's blanket file rejection is not reported")
@@ -559,7 +559,7 @@ struct ClipboardPassthroughCoordinatorTests {
         try await h.resolves.wait(untilCompleted: 2)
 
         #expect(h.reports.refusals.count == 1)
-        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
+        #expect(h.reports.failure == .itemsSkipped(count: 1))
     }
 
     @Test("A transient-marked snapshot is not forwarded")

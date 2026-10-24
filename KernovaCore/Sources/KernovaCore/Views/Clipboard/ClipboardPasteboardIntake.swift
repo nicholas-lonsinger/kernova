@@ -2,19 +2,14 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Result of reading a pasteboard into the clipboard buffer.
+/// What the intake made of a pasteboard: a cause and a count, never a sentence —
+/// each surface words it for its own gesture.
 package enum ClipboardIntakeResult: Equatable, Sendable {
-    /// Usable content. `note` carries a user-visible caveat when some
-    /// representations were skipped (e.g. an oversized TIFF dropped while
-    /// its PNG sibling survived).
-    case content(ClipboardContent, note: String?)
-    /// Nothing usable; `message` says why in user-facing terms.
-    ///
-    /// `unreadable` is `true` only when representations were present and could
-    /// not be read — a loss the user is owed a report for. A policy verdict (an
-    /// empty clipboard, a privacy marker, a text-only transport refusing a file)
-    /// is `false`: nothing was there to lose.
-    case rejected(message: String, unreadable: Bool)
+    /// Usable content; `skipped` counts the gesture's items it leaves out
+    /// because they could not be read.
+    case content(ClipboardContent, skipped: Int)
+    /// Nothing usable, and why.
+    case rejected(ClipboardIntakeRefusal)
     /// Files whose bytes still have to be read off the main actor via
     /// `read(filesAt:)` before they become `.content`.
     ///
@@ -25,18 +20,43 @@ package enum ClipboardIntakeResult: Equatable, Sendable {
     case pendingFiles([URL], unresolved: Int)
 }
 
-/// The host's wording for what `ClipboardPasteboardReader` made of a gesture —
-/// the Paste button, responder-chain `paste:`, drag-and-drop, and the
-/// passthrough poll.
+/// Why a pasteboard yielded nothing usable.
 ///
-/// Every rule about what may cross lives in the reader, shared with the guest
-/// agent and the drop service; this layer only says what the window shows.
+/// Only `.unreadable` is a loss the user is owed a report for: items were there
+/// and could not be read. Every other case is a policy verdict — nothing was
+/// there to lose.
+package enum ClipboardIntakeRefusal: Equatable, Sendable {
+    /// The pasteboard held no item.
+    case empty
+    /// An `org.nspasteboard.*` privacy marker dropped the snapshot wholesale.
+    case suppressed(ClipboardSnapshotPolicy.SkipReason)
+    /// A text-only transport was handed something other than text.
+    case textOnlyTransport
+    /// The items held nothing shareable.
+    case nothingShareable
+    /// `count` items were there and none could be read.
+    case unreadable(count: Int)
+}
+
+/// The host gesture a clipboard-window intake answers, which decides its wording.
+package enum ClipboardIntakeGesture: Sendable {
+    /// Paste — the button or responder-chain `paste:` — reading the Mac clipboard.
+    case paste
+    /// A drop on the clipboard window, a received file promise included.
+    case drop
+}
+
+/// Reads a pasteboard for one of the host's gestures — the clipboard window's
+/// Paste and drop, and the passthrough poll — into a cause and a count.
+///
+/// Every rule about what may cross lives in `ClipboardPasteboardReader`, shared
+/// with the guest agent and the drop service. `message(for:gesture:)` and
+/// `skipNote(count:)` are the clipboard window's wording; the passthrough poll
+/// reports losses as transfer failures instead.
 @MainActor
 package enum ClipboardPasteboardIntake {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardPasteboardIntake")
-
-    package nonisolated static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
 
     /// Reads `pasteboard` into clipboard content.
     package static func read(
@@ -44,24 +64,24 @@ package enum ClipboardPasteboardIntake {
     ) -> ClipboardIntakeResult {
         switch ClipboardPasteboardReader.readSnapshot(from: pasteboard, allowsBinary: allowsBinary) {
         case .empty:
-            return .rejected(message: "The Mac clipboard is empty", unreadable: false)
+            return .rejected(.empty)
         case .suppressed(let reason):
-            return .rejected(message: Self.suppressionMessage(for: reason), unreadable: false)
+            return .rejected(.suppressed(reason))
         case .textOnlyRefusal:
-            return .rejected(message: Self.textOnlyTransportMessage, unreadable: false)
+            return .rejected(.textOnlyTransport)
         case .pendingFiles(let urls, let unresolved):
             return .pendingFiles(urls, unresolved: unresolved)
         case .content(let content, let skipped):
-            return .content(content, note: Self.skipNote(forSkipped: skipped))
+            return .content(content, skipped: skipped)
         case .nothingOfferable(let lost, let unreadable):
-            guard lost == 0 else {
+            if lost > 0 {
                 // Every file the copy named is gone and no inline flavor stood
                 // in for one — the same total loss `read(filesAt:)` reports.
-                return .rejected(
-                    message: Self.unreadableItemsMessage(count: lost), unreadable: true)
+                return .rejected(.unreadable(count: lost))
             }
-            return .rejected(
-                message: "The Mac clipboard has no shareable content", unreadable: unreadable)
+            // The inline snapshot reads item 0 only, so the representations
+            // that wouldn't hand over are one item's.
+            return .rejected(unreadable ? .unreadable(count: 1) : .nothingShareable)
         }
     }
 
@@ -69,18 +89,15 @@ package enum ClipboardPasteboardIntake {
     /// actor because the stat and the folder estimate walk are I/O.
     ///
     /// `unresolved` is the count `read(from:)` already dropped for having no
-    /// file left on disk, folded into the same note so one report covers every
+    /// file left on disk, folded into the same count so one report covers every
     /// item the copy lost on either side of the actor hop.
     package nonisolated static func read(
         filesAt urls: [URL], unresolved: Int = 0, allowsBinary: Bool
     ) async -> ClipboardIntakeResult {
-        guard allowsBinary else {
-            return .rejected(message: Self.textOnlyTransportMessage, unreadable: false)
-        }
+        guard allowsBinary else { return .rejected(.textOnlyTransport) }
         let intake = ClipboardPasteboardReader.resolve(filesAt: urls, unresolved: unresolved)
         guard !intake.representations.isEmpty else {
-            return .rejected(
-                message: Self.unreadableItemsMessage(count: intake.skipped), unreadable: true)
+            return .rejected(.unreadable(count: intake.skipped))
         }
         if intake.skipped > 0 {
             logger.log(
@@ -88,36 +105,40 @@ package enum ClipboardPasteboardIntake {
                 "Skipped \(intake.skipped, privacy: .public) unreadable copied item(s)")
         }
         return .content(
-            ClipboardContent(representations: intake.representations),
-            note: Self.skipNote(forSkipped: intake.skipped))
+            ClipboardContent(representations: intake.representations), skipped: intake.skipped)
     }
 
-    /// The user-facing reason a snapshot was dropped wholesale by an
-    /// `org.nspasteboard.*` privacy marker.
-    private static func suppressionMessage(
-        for reason: ClipboardSnapshotPolicy.SkipReason
+    /// The clipboard window's line for `refusal`, worded for `gesture`.
+    package nonisolated static func message(
+        for refusal: ClipboardIntakeRefusal, gesture: ClipboardIntakeGesture
     ) -> String {
-        switch reason {
-        case .transientSnapshot:
-            return "Transient clipboard content isn't shared"
-        case .autoGeneratedSnapshot:
-            return "Auto-generated clipboard content isn't shared"
-        case .transientMarkerType, .fileReferenceType, .emptyData:
+        let paste = gesture == .paste
+        switch refusal {
+        case .empty:
+            return paste ? "The Mac clipboard is empty" : "The drop was empty"
+        case .suppressed(.transientSnapshot):
+            return paste ? "Transient clipboard content isn't shared" : "Transient content isn't shared"
+        case .suppressed(.autoGeneratedSnapshot):
+            return paste
+                ? "Auto-generated clipboard content isn't shared" : "Auto-generated content isn't shared"
+        case .suppressed(.transientMarkerType), .suppressed(.fileReferenceType), .suppressed(.emptyData):
             // `disposition(forTypes:)` only ever suppresses with the two
             // snapshot reasons above; the rest are per-representation skips.
-            return "This clipboard content isn't shared"
+            return paste ? "This clipboard content isn't shared" : "This content isn't shared"
+        case .textOnlyTransport:
+            return "Only text can be shared with Linux guests"
+        case .nothingShareable:
+            return paste ? "The Mac clipboard has no shareable content" : "The drop has no shareable content"
+        case .unreadable(let count):
+            let noun = paste ? "copied" : "dropped"
+            return count > 1 ? "Couldn't read the \(noun) items" : "Couldn't read the \(noun) item"
         }
     }
 
-    /// The note shown when a copy went through with `count` of its items lost,
-    /// or `nil` when none were.
-    nonisolated private static func skipNote(forSkipped count: Int) -> String? {
+    /// The clipboard window's caveat for content that left `count` items out,
+    /// or `nil` when it left none.
+    package nonisolated static func skipNote(count: Int) -> String? {
         guard count > 0 else { return nil }
         return "Skipped \(count) unreadable item\(count == 1 ? "" : "s")"
-    }
-
-    /// The rejection shown when *every* item of a copy was lost.
-    nonisolated private static func unreadableItemsMessage(count: Int) -> String {
-        count > 1 ? "Couldn't read the dropped items" : "Couldn't read the dropped item"
     }
 }

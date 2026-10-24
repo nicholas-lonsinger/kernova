@@ -99,13 +99,6 @@ struct VsockDropServiceTests {
         var wording: ClipboardTransferWording? {
             reports.finish.flatMap { ClipboardTransferWording.wording(for: $0, vmName: "Drop VM") }
         }
-
-        /// The note a drop that skipped `count` of its items raises.
-        func skippedNote(count: Int = 1) -> String {
-            count == 1
-                ? "One item couldn\u{2019}t be read, so it wasn\u{2019}t sent to the VM. The rest were."
-                : "\(count) items couldn\u{2019}t be read, so they weren\u{2019}t sent to the VM. The rest were."
-        }
     }
 
     // MARK: - Fixtures
@@ -273,7 +266,7 @@ struct VsockDropServiceTests {
         #expect(offer.repInfo.map(\.filename) == ["notes.txt"])
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
-        #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(harness.failure == .itemsSkipped(count: 1))
     }
 
     @Test("a file the user cannot open is skipped, and the rest still goes")
@@ -293,7 +286,7 @@ struct VsockDropServiceTests {
         #expect(offer.repInfo.map(\.filename) == ["notes.txt"])
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
-        #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(harness.failure == .itemsSkipped(count: 1))
     }
 
     @Test("a link that resolves is sent as its target's content under its own name")
@@ -338,7 +331,7 @@ struct VsockDropServiceTests {
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
 
-        #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(harness.failure == .itemsSkipped(count: 1))
         #expect(harness.reports.refusals.count == 1)
     }
 
@@ -468,7 +461,7 @@ struct VsockDropServiceTests {
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
         // What went missing is named, rather than the whole drop reading as lost.
-        #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(harness.failure == .itemsSkipped(count: 1))
         let wording = try #require(harness.wording)
         #expect(wording.headline == "Some files not copied to \u{201C}Drop VM\u{201D}.")
         #expect(wording.menuLine == "Drop: some files weren't sent")
@@ -529,7 +522,7 @@ struct VsockDropServiceTests {
         // The verdict counts both stages, rather than restating whichever one
         // spoke last — and it is the only thing the user is interrupted with.
         try await harness.reports.wait {
-            harness.failure == .itemsSkipped(note: harness.skippedNote(count: 2))
+            harness.failure == .itemsSkipped(count: 2)
         }
         #expect(harness.reports.refusals.count == 1)
     }
@@ -568,7 +561,7 @@ struct VsockDropServiceTests {
         defer { harness.tearDown() }
 
         let first = try await dropLosingOneItem(harness, generation: 1)
-        #expect(first.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(first.failure == .itemsSkipped(count: 1))
 
         // A clean drag in between, which the guest serves to its end.
         let plain = try makeFile(in: scratch.url, named: "plain.txt", bytes: Data("plain".utf8))
@@ -584,7 +577,7 @@ struct VsockDropServiceTests {
         // separate gesture over separate files — so it is owed its own message
         // rather than collapsed into the one still standing.
         let third = try await dropLosingOneItem(harness, generation: 3)
-        #expect(third.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(third.failure == .itemsSkipped(count: 1))
         #expect(third.date != first.date)
     }
 
