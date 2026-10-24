@@ -40,6 +40,10 @@ package protocol GuestDragDisplay: AnyObject {
     /// does not fire. The exit point itself stays where it was.
     func parkNearExitPoint()
 
+    /// Moves the guest pointer back to the center, where the catcher became
+    /// the drag's target, with a constructed drag event.
+    func returnToCatcherTarget()
+
     /// Releases the guest's button where the last event the display sent put
     /// the guest pointer, with a constructed mouse-up, which drops the guest's
     /// drag on whatever is under it.
@@ -130,8 +134,9 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 ///
 /// While the drag is out on the Mac, each showing of the catcher that becomes
 /// its target parks the guest pointer, and the guest's drag image with it,
-/// just inside where the drag left the display; a release onto the catcher
-/// lands there.
+/// just inside where the drag left the display. A release onto the catcher
+/// lands only where it reported `TARGETED`, so it first moves the guest pointer
+/// back from the park to the center.
 ///
 /// The guest's drag stays live, its button held, for as long as the Mac
 /// session runs: over this VM's display the catcher stands down and the guest
@@ -649,13 +654,19 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// Releases the guest's button at `spot`, which only ``Phase/ready`` and
     /// ``Phase/carried(_:)`` reach, and so at most once.
     private func release(at spot: ReleaseSpot) {
+        let parked: Bool
         switch phase {
-        case .ready, .carried: break
+        case .ready, .carried(.outside(targeted: true)): parked = true
+        case .carried: parked = false
         case .handingOff, .released, .unreleased, .abandoned: return
         }
         phase = .released(at: spot)
         stopBounds()
-        if spot == .exitPoint { display?.returnToExitPoint() }
+        switch spot {
+        case .catcher: if parked { display?.returnToCatcherTarget() }
+        case .exitPoint: display?.returnToExitPoint()
+        case .dropPoint: break
+        }
         display?.injectRelease()
         Self.logger.log(
             .notice,

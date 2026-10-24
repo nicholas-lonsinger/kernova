@@ -34,6 +34,7 @@ struct VsockDropServiceDragOutTests {
         case drag(CGPoint)
         case returnToExit
         case park
+        case returnToTarget
         case beginSession
         case release
         case resume
@@ -52,6 +53,7 @@ struct VsockDropServiceDragOutTests {
         func injectDrag(at point: CGPoint) { record(.drag(point)) }
         func returnToExitPoint() { record(.returnToExit) }
         func parkNearExitPoint() { record(.park) }
+        func returnToCatcherTarget() { record(.returnToTarget) }
         func injectRelease() { record(.release) }
         func resumeForwarding() { record(.resume) }
 
@@ -485,13 +487,13 @@ struct VsockDropServiceDragOutTests {
 
         take.withheldMouseUp()
 
-        // Onto the catcher where the park left the guest pointer.
-        #expect(harness.display.calls == [.nudge(.center), .park, .release])
+        // Onto the catcher where it was targeted, back from the park.
+        #expect(harness.display.calls == [.nudge(.center), .park, .returnToTarget, .release])
         #expect(take.phase == .released(at: .catcher))
     }
 
-    @Test("a release onto the catcher once the session is out lands where the park left the guest pointer")
-    func catcherReleaseFollowsThePark() async throws {
+    @Test("a release onto the catcher once the session is out returns from the park to where it was targeted")
+    func catcherReleaseReturnsFromThePark() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
         let take = try await harness.carriedTake([try makeFile(named: "a.txt", contents: "a")])
@@ -499,7 +501,8 @@ struct VsockDropServiceDragOutTests {
         take.hostSessionEnded(dropped: true)
 
         #expect(take.phase == .released(at: .catcher))
-        #expect(harness.display.calls == [.nudge(.center), .park, .beginSession, .release])
+        #expect(
+            harness.display.calls == [.nudge(.center), .park, .beginSession, .returnToTarget, .release])
     }
 
     @Test("a released take never releases again")

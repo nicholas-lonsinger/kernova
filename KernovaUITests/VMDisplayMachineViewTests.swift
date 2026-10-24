@@ -301,7 +301,7 @@ struct VMDisplayMachineViewTests {
     }
 
     @Test(
-        "a park drags the guest pointer to the exit point held 8 points in from every edge, and the release follows it",
+        "a park drags the guest pointer to the exit point held 8 points in from every edge",
         arguments: [
             (exit: NSPoint(x: 150, y: 60), parked: NSPoint(x: 150, y: 60)),
             (exit: NSPoint(x: 3, y: 50), parked: NSPoint(x: 8, y: 50)),
@@ -316,12 +316,28 @@ struct VMDisplayMachineViewTests {
         let before = view.forwarded.count
 
         view.parkNearExitPoint()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: spot.parked)
+            ])
+    }
+
+    @Test("a release onto the catcher after a park returns to the center first")
+    func catcherReleaseAfterAParkLandsAtTheCenter() throws {
+        let view = makeView()
+        try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
+        view.injectNudge(.offset)
+        view.parkNearExitPoint()
+        let before = view.forwarded.count
+
+        view.returnToCatcherTarget()
         view.injectRelease()
 
         #expect(
             Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: spot.parked),
-                .init(type: .leftMouseUp, location: spot.parked),
+                .init(type: .leftMouseDragged, location: NSPoint(x: 100, y: 50)),
+                .init(type: .leftMouseUp, location: NSPoint(x: 100, y: 50)),
             ])
     }
 

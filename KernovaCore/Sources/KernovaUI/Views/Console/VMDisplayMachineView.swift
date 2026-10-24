@@ -166,6 +166,10 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         inject(.leftMouseDragged, at: parked)
     }
 
+    func returnToCatcherTarget() {
+        inject(.leftMouseDragged, at: nudgePoint(.center))
+    }
+
     func injectRelease() {
         press = .idle
         inject(.leftMouseUp, at: guestPointer ?? nudgePoint(.center))
