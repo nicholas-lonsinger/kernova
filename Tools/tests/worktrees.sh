@@ -221,7 +221,7 @@ reused_reason=$(claude_lock reused-pid "$owner" 'Thu Jan 1 00:00:00 1970')
 git -C "$ab" worktree add -q -b worktree-reused-pid "$abw/reused-pid"
 git -C "$ab" worktree lock --reason "$reused_reason" "$abw/reused-pid"
 
-# Removed with the worktree, but kept as a branch: only worktree-* is deleted.
+# Kept as a branch once the worktree is gone: only worktree-* is deleted.
 git -C "$ab" worktree add -q -b feature-kept "$abw/feature"
 
 # Content never on main, but the commit itself is on an origin branch (an open
@@ -231,6 +231,43 @@ commit_file "$abw/pushed" pushed.txt pushed
 git -C "$ab" update-ref refs/remotes/origin/feat/pushed worktree-pushed
 git -C "$ab" worktree add -q -b worktree-pushed-ahead "$abw/pushed-ahead" worktree-pushed
 commit_file "$abw/pushed-ahead" ahead.txt ahead
+
+# Content never on main nor on an origin branch, but in a pull request's head,
+# which the remote keeps after the PR's branch is gone: the commit itself, with a
+# review commit after it; the same patch picked onto another base; the same
+# message with a revised patch; and a picked patch merged with the PR holding it,
+# whose merge no PR holds. A PR head this clone never fetched is skipped.
+origin="$tmp/origin.git"
+git init -q --bare "$origin"
+git -C "$ab" remote add origin "$origin"
+# pull_head <N> <commit> — <commit> as PR #<N>'s head on the fixture remote.
+pull_head() { git -C "$ab" push -q "$origin" "$2:refs/pull/$1/head"; }
+# picked <commit> <onto> — <commit>'s patch committed onto <onto>.
+picked() {
+    local tree
+    tree=$(git -C "$ab" merge-tree --write-tree --merge-base="$1~1" "$2" "$1") || return 1
+    git -C "$ab" commit-tree -p "$2" -m picked "$tree"
+}
+git -C "$ab" worktree add -q -b worktree-pr-head "$abw/pr-head"
+commit_file "$abw/pr-head" pr-head.txt one
+pull_head 7 "$(git -C "$ab" commit-tree -p worktree-pr-head -m review 'worktree-pr-head^{tree}')"
+git -C "$ab" worktree add -q -b worktree-pr-patch "$abw/pr-patch"
+commit_file "$abw/pr-patch" pr-patch.txt one
+pull_head 8 "$(picked worktree-pr-patch main~1)"
+git -C "$ab" worktree add -q -b worktree-pr-revised "$abw/pr-revised"
+commit_file "$abw/pr-revised" revised.txt first
+pull_head 9 worktree-pr-revised
+printf 'second\n' >"$abw/pr-revised/revised.txt"
+git -C "$abw/pr-revised" commit -q -a --amend --no-edit
+git -C "$ab" worktree add -q -b worktree-pr-merge "$abw/pr-merge"
+commit_file "$abw/pr-merge" pr-merge.txt one
+pr_merge_pick=$(picked worktree-pr-merge main~1)
+pull_head 10 "$pr_merge_pick"
+git -C "$abw/pr-merge" merge -q --no-ff -m merge "$pr_merge_pick"
+elsewhere="$tmp/elsewhere"
+new_checkout "$elsewhere"
+commit_file "$elsewhere" elsewhere.txt elsewhere
+git -C "$elsewhere" push -q "$origin" main:refs/pull/11/head
 
 git -C "$ab" worktree add -q --detach "$abw/live-lock"
 git -C "$ab" worktree lock --reason "$(claude_lock live-lock "$owner" "$owner_start")" "$abw/live-lock"
@@ -376,19 +413,20 @@ else
     pass
 fi
 
-abandoned_set=("$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pushed" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock")
+abandoned_set=("$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pr-head" "$abw/pr-patch" "$abw/pushed" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock")
 expect_abandoned "abandoned, from the primary" "$ab" "${abandoned_set[@]}"
 expect_abandoned "abandoned, from a linked worktree" "$abw/dirty" "${abandoned_set[@]}"
 # The checkout the layout is read from is never abandoned: removing it would
 # delete the script reading it.
 expect_abandoned "abandoned, from an abandoned worktree" "$abw/detached" \
-    "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pushed" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock"
+    "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pr-head" "$abw/pr-patch" "$abw/pushed" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock"
 
 # A default_ref that does not resolve vouches for no content: what stays
-# abandoned is what an origin branch contains — feat/pushed descends from main.
+# abandoned is what an origin branch or PR head holds — feat/pushed descends
+# from main, so it holds edited-after's patch as main's own commit.
 git -C "$ab" update-ref -d "$default_ref"
 expect_abandoned "no origin/main" "$ab" \
-    "$abw/detached" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pushed" "$abw/reused-pid" "$abw/stale-lock"
+    "$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/pr-head" "$abw/pr-patch" "$abw/pushed" "$abw/reused-pid" "$abw/stale-lock"
 
 
 # The fixture's Trash: dispose moves a worktree here, keeping everything in it.
@@ -398,10 +436,11 @@ to_fixture_trash() { mv "$1" "$fixture_trash/"; }
 leave_in_place() { :; }
 always_held() { printf 'PID 1 (fixture)\n'; }
 
-# report_output <fix> [<holders>] — the report section's lines, one marker word
-# each. Run in a subshell so its helpers do not replace this file's pass/fail
+# section_output <command>... — a report section's lines, one marker word each.
+# Run in a subshell so its helpers do not replace this file's pass/fail
 # counters.
-report_output() {
+section_output() {
+    # shellcheck disable=SC2329 # called by the section command "$@" runs
     (
         pass() { printf 'pass: %s\n' "$1"; }
         warn() { printf 'warn: %s\n' "$1"; }
@@ -410,8 +449,13 @@ report_output() {
         detail() { printf 'detail: %s\n' "$1"; }
         pretty_path() { printf '%s' "$1"; }
         disk_size() { printf '1K'; }
-        report_abandoned_worktrees "$ab" "$1" "${2:-holder_blocked_lines}" to_fixture_trash
+        "$@"
     )
+}
+
+# report_output <fix> [<holders>] — the abandoned-worktree section's lines.
+report_output() {
+    section_output report_abandoned_worktrees "$ab" "$1" "${2:-holder_blocked_lines}" to_fixture_trash
 }
 skipped='warn: Skipped the abandoned-worktree check: origin/main does not resolve'
 check "no origin/main: report" "$(report_output 0)" "$skipped"
@@ -427,6 +471,10 @@ check "with origin/main: report" "$(printf '%s\n' "$report" | sed -n '1p')" \
     "ghost: Abandoned worktree (clean, content on origin/main): $abw/detached — 1K"
 check "pushed: report" "$(printf '%s\n' "$report" | grep -F "$abw/pushed")" \
     "ghost: Abandoned worktree (clean, HEAD on origin/feat/pushed): $abw/pushed — 1K"
+check "in a PR head: report" "$(printf '%s\n' "$report" | grep -F "$abw/pr-head")" \
+    "ghost: Abandoned worktree (clean, HEAD on PR #7): $abw/pr-head — 1K"
+check "patch in a PR head: report" "$(printf '%s\n' "$report" | grep -F "$abw/pr-patch")" \
+    "ghost: Abandoned worktree (clean, patches on PR #8): $abw/pr-patch — 1K"
 
 # The process working in `held` is named, and the worktree is not removable.
 check "in use: report" "$(printf '%s\n' "$report" | grep -A2 -F "$abw/held")" \
@@ -454,42 +502,31 @@ check "all held: nothing fixed" "$(printf '%s\n' "$held_report" | grep -c '^fixe
 read_worktree_layout "$ab"
 check "all held: nothing removed" "$worktree_paths" "$before"
 
-# expect_removed <name> <worktree> <branch-deleted> — removal succeeds, the
-# directory is in the fixture Trash and no longer registered, and
-# removed_branch is <branch-deleted>.
+# expect_removed <name> <worktree> — removal succeeds, and the directory is in
+# the fixture Trash and no longer registered.
 expect_removed() {
     read_worktree_layout "$ab"
     if remove_abandoned_worktree "$ab" "$ab" "$2" holder_blocked_lines to_fixture_trash; then pass; else fail "$1: removal refused"; fi
     if [ -e "$2" ]; then fail "$1: directory survived"; else pass; fi
     if [ -d "$fixture_trash/${2##*/}" ]; then pass; else fail "$1: not in the Trash"; fi
     if worktree_registered "$2"; then fail "$1: still registered"; else pass; fi
-    check "$1: branch deleted" "$removed_branch" "$3"
 }
 
-# The upstream `git push -u` records goes with the branch, so a later branch of
-# the same name does not inherit it.
-git -C "$ab" config branch.worktree-squashed.remote origin
-git -C "$ab" config branch.worktree-squashed.merge refs/heads/feat/squashed
-expect_removed "squash-merged" "$abw/squashed" worktree-squashed
+expect_removed "squash-merged" "$abw/squashed"
 if git -C "$ab" rev-parse -q --verify refs/heads/worktree-squashed >/dev/null; then
-    fail "squash-merged: branch survived"
-else
-    pass
-fi
-check "squash-merged: branch config" \
-    "$(git -C "$ab" config --get-regexp '^branch\.worktree-squashed\.')" ''
-expect_removed "detached at main" "$abw/detached" ''
-expect_removed "stale claude lock" "$abw/stale-lock" worktree-stale-lock
-expect_removed "squash-merged, then edited on main" "$abw/edited-after" worktree-edited-after
-expect_removed "non-worktree branch" "$abw/feature" ''
-expect_removed "pushed" "$abw/pushed" worktree-pushed
-if git -C "$ab" rev-parse -q --verify refs/heads/feature-kept >/dev/null; then
     pass
 else
-    fail "non-worktree branch: feature-kept was deleted"
+    fail "squash-merged: the worktree pass deleted its branch"
 fi
+expect_removed "detached at main" "$abw/detached"
+expect_removed "stale claude lock" "$abw/stale-lock"
+expect_removed "squash-merged, then edited on main" "$abw/edited-after"
+expect_removed "non-worktree branch" "$abw/feature"
+expect_removed "pushed" "$abw/pushed"
+expect_removed "in a PR head" "$abw/pr-head"
+expect_removed "patch in a PR head" "$abw/pr-patch"
 # Ignored files travel with the directory rather than being deleted.
-expect_removed "ignored files" "$abw/ignored" ''
+expect_removed "ignored files" "$abw/ignored"
 if [ -f "$fixture_trash/ignored/DerivedData/product" ]; then pass; else fail "ignored files: lost"; fi
 
 # A stale lock lifted for an attempt that leaves the directory is put back.
@@ -514,6 +551,54 @@ if remove_abandoned_worktree "$ab" "$ab" "$tmp/outside" holder_blocked_lines to_
 if [ -d "$tmp/outside" ]; then pass; else fail "outside: directory gone"; fi
 
 expect_abandoned "after removal" "$ab" "$abw/held" "$abw/open-file"
+
+# ---- orphaned worktree branches ----------------------------------------------------
+
+# The removed worktrees' worktree-* branches are orphaned once their work is on
+# the remote. Not orphaned: a branch a registered worktree has checked out
+# (worktree-reused-pid, …), any other name (feature-kept), and one whose work
+# the remote does not hold (worktree-unheld, the never-merged diverged commit).
+git -C "$ab" branch worktree-unheld worktree-diverged
+orphan_set=(refs/heads/worktree-edited-after refs/heads/worktree-pr-head refs/heads/worktree-pr-patch refs/heads/worktree-pushed refs/heads/worktree-squashed refs/heads/worktree-stale-lock)
+read_worktree_layout "$ab"
+orphaned_worktree_branches
+check "orphaned branches" "$(printf '%s\n' ${orphaned_branches[@]+"${orphaned_branches[@]}"})" "$(printf '%s\n' "${orphan_set[@]}")"
+
+git -C "$ab" update-ref -d "$default_ref"
+check "orphaned branches, no origin/main" "$(section_output report_orphaned_branches "$ab" 1)" \
+    'warn: Skipped the orphaned-branch check: origin/main does not resolve'
+git -C "$ab" update-ref "$default_ref" main
+
+branch_report=$(section_output report_orphaned_branches "$ab" 0)
+check "orphaned branch: report" "$(printf '%s\n' "$branch_report" | grep -F ': worktree-squashed')" \
+    'ghost: Orphaned worktree branch (content on origin/main): worktree-squashed'
+check "orphaned branch in a PR head: report" "$(printf '%s\n' "$branch_report" | grep -F ': worktree-pr-head')" \
+    'ghost: Orphaned worktree branch (HEAD on PR #7): worktree-pr-head'
+
+# Deleted only while it is still unchecked-out and still at the tip that was judged.
+read_worktree_layout "$ab"
+if delete_orphaned_branch "$ab" refs/heads/worktree-squashed "$(git -C "$ab" rev-parse main)"; then
+    fail "moved branch: deleted"
+else
+    pass
+fi
+if delete_orphaned_branch "$ab" refs/heads/worktree-reused-pid "$(git -C "$ab" rev-parse worktree-reused-pid)"; then
+    fail "checked-out branch: deleted"
+else
+    pass
+fi
+
+# The upstream `git push -u` records goes with the branch, so a later branch of
+# the same name does not inherit it.
+git -C "$ab" config branch.worktree-squashed.remote origin
+git -C "$ab" config branch.worktree-squashed.merge refs/heads/feat/squashed
+check "orphaned branches: repair" "$(section_output report_orphaned_branches "$ab" 1 | grep -c '^fixed: deleted branch ')" "${#orphan_set[@]}"
+check "orphaned branches: left" "$(git -C "$ab" for-each-ref --format='%(refname)' refs/heads/feature-kept refs/heads/worktree-reused-pid refs/heads/worktree-unheld refs/heads/worktree-squashed)" \
+    "refs/heads/feature-kept
+refs/heads/worktree-reused-pid
+refs/heads/worktree-unheld"
+check "orphaned branch: config" "$(git -C "$ab" config --get-regexp '^branch\.worktree-squashed\.')" ''
+check "orphaned branches: after repair" "$(section_output report_orphaned_branches "$ab" 0)" 'pass: No orphaned worktree-* branches'
 
 # ---- holders ---------------------------------------------------------------------
 

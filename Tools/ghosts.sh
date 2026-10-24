@@ -35,10 +35,13 @@
 #     live Claude Code session or subagent holds their lock, no session runs
 #     inside them, nothing is uncommitted, and their HEAD is already on
 #     GitHub: its content on origin/main — PRs merge by squash, so a finished
-#     branch never reads as merged by ancestry — or the commit itself on an
-#     origin branch
+#     branch never reads as merged by ancestry — or its commits, or their
+#     patches, on an origin branch or a pull request's head
 #     (Tools/lib/worktrees.sh has the criteria); one a process still uses is
 #     reported with its holders and never removed
+#   - `worktree-*` branches — the ones Claude Code creates for its worktrees —
+#     that no registered worktree has checked out, once their tip is on GitHub
+#     by the same criteria
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
 #     CFBundleVersion outranks the installed /Applications copy — unlike the
 #     dead-path ghosts above, Launch Services elects these by highest
@@ -461,6 +464,8 @@ if read_worktree_layout "$REPO_ROOT"; then
     # the same run. An in-checkout DerivedData/ is evicted here, since it goes
     # with the directory.
     report_abandoned_worktrees "$REPO_ROOT" "$FIX" holder_blocked_lines dispose_worktree
+    # After the worktree pass, so the branch of a worktree it removed goes too.
+    report_orphaned_branches "$REPO_ROOT" "$FIX"
 fi
 
 # ---- orphaned DerivedData build arenas ----------------------------------------
