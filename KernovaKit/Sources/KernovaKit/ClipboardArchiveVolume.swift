@@ -46,8 +46,9 @@ struct ClipboardArchiveSettableAttributes {
     var isEmpty: Bool { creation == nil && modification == nil && mode == nil && flags == nil }
 }
 
-/// The file-system calls the archive extractor and the staged-tree remover
-/// make, with the same naming rules as ``ClipboardArchiveVolume``.
+/// The file-system calls the archive extractor, the staged-tree remover and
+/// a staged item's landing make, with the same naming rules as
+/// ``ClipboardArchiveVolume``.
 protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
     /// Creates the directory `name` in `directory`, searchable and writable
     /// by its owner alone until its own mode is applied.
@@ -72,6 +73,12 @@ protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
     /// `isDirectory`, otherwise anything else, a symlink itself rather than
     /// its target.
     func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(Errno)
+    /// Renames `name` in `directory` to `newName` in `newDirectory`, failing
+    /// when anything already has the new name — `EXDEV` when the two are on
+    /// different volumes, `ENOTSUP` when the volume cannot rename without
+    /// replacing.
+    func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(Errno)
 }
 
 /// The volumes this Mac mounts, through the `*at` system calls.
@@ -242,6 +249,17 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
     func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(Errno) {
         try Self.check(
             Self.withName(name) { unlinkat(directory, $0, isDirectory ? AT_REMOVEDIR : 0) })
+    }
+
+    func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(Errno)
+    {
+        try Self.check(
+            Self.withName(name) { name in
+                Self.withName(newName) {
+                    renameatx_np(directory, name, newDirectory, $0, UInt32(RENAME_EXCL))
+                }
+            })
     }
 
     // MARK: - Private

@@ -1,6 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaLogging
 import System
 
 /// An arriving entry that breaks a rule every archive the sender writes keeps,
@@ -28,18 +29,13 @@ struct ClipboardArchiveMalformedEntry: Error, Equatable {
 }
 
 extension ClipboardArchiveCodec {
-    /// Creates every regular-file, directory and symlink entry `decodeStream`
-    /// delivers under `destination`, an existing empty directory.
+    /// Creates the entries `decodeStream` delivers under `destination`, an
+    /// existing empty directory, through a ``TreeMaterializer``, the root
+    /// entry's attributes landing on `destination` itself.
     ///
-    /// Any other entry — a FIFO, socket, device node, or a type no file
-    /// system object has — creates nothing and fails nothing, and the entries
-    /// after it still land. The peer chooses every entry's type, so the
-    /// receiver is the one place that rule can hold.
-    ///
-    /// Each entry is created relative to its parent's open descriptor and
-    /// never through a symlink, so neither path length nor depth bounds what
-    /// lands. A directory's own attributes are applied once its contents have
-    /// ended, the root entry's last of all, on `destination` itself.
+    /// The peer chooses every entry's type, so the materializer's leaving out
+    /// all but regular files, directories and symlinks is the one place that
+    /// rule can hold.
     ///
     /// - Throws: ``ClipboardItemFailure`` naming the entry, relative to the
     ///   archive's root, that could not be created, written or given its
@@ -49,7 +45,42 @@ extension ClipboardArchiveCodec {
     static func extractEntries<Volume: ClipboardArchiveWritableVolume>(
         from decodeStream: ArchiveStream, into destination: String, on volume: Volume
     ) throws {
-        try TreeExtract(volume: volume, decodeStream: decodeStream).run(into: destination)
+        try TreeMaterializer.materialize(.existingDirectory(destination), on: volume) { materializer in
+            let buffer = UnsafeMutableRawBufferPointer.allocate(
+                byteCount: fileReadBlockSize, alignment: 16)
+            defer { buffer.deallocate() }
+            while let header = try decodeStream.readHeader() {
+                guard let fields = ClipboardArchiveEntryFields(header) else {
+                    throw ClipboardArchiveMalformedEntry(path: "", rule: .path)
+                }
+                guard let blobs = fields.blobs else {
+                    throw ClipboardArchiveMalformedEntry(
+                        path: displayPath(fields.path ?? []), rule: .blobKey)
+                }
+                try materializer.take(fields) { data in
+                    try readBlobs(blobs, from: decodeStream, into: buffer, data: data)
+                }
+            }
+        }
+    }
+
+    /// Reads every blob in `blobs`, in order and in full, in pieces of at most
+    /// `buffer.count` bytes, handing `body` each piece of the first `DAT`.
+    private static func readBlobs(
+        _ blobs: [ClipboardArchiveEntryFields.Blob], from decodeStream: ArchiveStream,
+        into buffer: UnsafeMutableRawBufferPointer, data body: (UnsafeRawBufferPointer) throws -> Void
+    ) throws {
+        let dataIndex = blobs.firstIndex(where: \.isData)
+        for (index, blob) in blobs.enumerated() {
+            var remaining = blob.size
+            while remaining > 0 {
+                let piece = UnsafeMutableRawBufferPointer(
+                    rebasing: buffer[..<Int(min(UInt64(buffer.count), remaining))])
+                try decodeStream.readBlob(key: blob.key, into: piece)
+                if index == dataIndex { try body(UnsafeRawBufferPointer(piece)) }
+                remaining -= UInt64(piece.count)
+            }
+        }
     }
 
     /// The flags an entry's `FLG` may set on what lands.
@@ -65,7 +96,9 @@ extension ClipboardArchiveCodec {
 
 private let pathSeparator = UInt8(ascii: "/")
 
-/// The attributes an arriving entry asks for, applied after its content.
+private let logger = KernovaLogger(subsystem: "app.kernova", category: "TreeMaterializer")
+
+/// The attributes an entry asks for, applied after its content.
 private struct EntryAttributes {
     var group: UInt64?
     var settable: ClipboardArchiveSettableAttributes
@@ -81,71 +114,200 @@ private struct EntryAttributes {
     }
 }
 
-/// One extract's writes, against one volume and one decode stream.
-private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
-    let volume: Volume
-    let decodeStream: ArchiveStream
+/// Creates a tree's entries as a source delivers them — the root entry, with
+/// an empty path, first, and each directory ahead of its contents.
+///
+/// Each entry is created relative to its parent's open descriptor and never
+/// through a symlink, so neither path length nor depth bounds what lands; a
+/// ``DirectoryCursor`` holds the place, so at most two directories are open.
+/// Only regular files, directories and symlinks are created — any other entry
+/// — a FIFO, socket, device node, or a type no file system object has —
+/// creates nothing and fails nothing, and the entries after it still land.
+/// A directory's own attributes are applied once its contents have ended, the
+/// root entry's last of all.
+///
+/// A source is the archive ``ClipboardArchiveCodec/extractEntries(from:into:on:)``
+/// decodes, or a ``ClipboardArchiveCodec/TreeWalk`` of a tree on disk.
+final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardArchiveEntrySink {
+    /// Where the root entry lands.
+    enum Top {
+        /// An existing directory, which the root entry's attributes are
+        /// applied to, and the entries are created in. The root entry is
+        /// optional, and is a directory when present.
+        case existingDirectory(String)
+        /// A path nothing occupies, where the root entry — a file, directory
+        /// or symlink, and required — is created, never replacing what is
+        /// there. Its folder is never opened.
+        case newItem(String)
+    }
 
-    /// A directory the extract is inside: the attributes its entry asked for.
+    /// Creates what `feed` delivers, through ``take(_:content:)``, at `top`.
+    ///
+    /// - Throws: ``ClipboardItemFailure`` naming the entry, relative to the
+    ///   root, that could not be created, written or given its attributes —
+    ///   `EEXIST` with an empty path when something occupies a `.newItem` top
+    ///   — or ``ClipboardArchiveMalformedEntry`` for an entry out of order;
+    ///   or what `feed` threw. Into an existing directory, what was created
+    ///   stays for the caller to remove; a new item that was created is
+    ///   removed whole first.
+    static func materialize(
+        _ top: Top, on volume: Volume, from feed: (TreeMaterializer) throws -> Void
+    ) throws {
+        let materializer = try TreeMaterializer(top, on: volume)
+        do {
+            defer { materializer.cursor?.close() }
+            try feed(materializer)
+            try materializer.finish()
+        } catch {
+            if case .newItem(let path) = top, materializer.createdTop {
+                do {
+                    try StagedItemRemoval.remove(at: URL(fileURLWithPath: path), on: volume)
+                } catch let removal {
+                    logger.log(
+                        .error,
+                        "Could not remove an unfinished copy: \(String(describing: removal), privacy: .public)"
+                    )
+                }
+            }
+            throw error
+        }
+    }
+
+    private let volume: Volume
+    private let top: Top
+    /// Where the entries are created; `nil` until a `.newItem` directory
+    /// root is, and for one that is not a directory.
+    private var cursor: DirectoryCursor<Volume, Frame>?
+    /// The path of the directory the cursor is at, empty at the top.
+    private var here: [UInt8] = []
+    private var rootAttributes: EntryAttributes?
+    private var isFirst = true
+    /// Whether a `.newItem` root was created at the top.
+    private var createdTop = false
+
+    /// A directory the materializer is inside: the attributes its entry asked
+    /// for.
     private struct Frame {
         let attributes: EntryAttributes?
     }
 
-    func run(into destination: String) throws {
-        let top = try attempt([]) { () throws(Errno) in
+    /// What ``create(_:named:at:in:content:created:)`` made.
+    private enum Created {
+        /// A directory, open, its attributes not yet applied.
+        case directory(descriptor: Int32, status: stat)
+        /// A file or symlink, its attributes applied.
+        case item
+        /// Nothing, for a type left out.
+        case nothing
+    }
+
+    private init(_ top: Top, on volume: Volume) throws {
+        self.volume = volume
+        self.top = top
+        guard case .existingDirectory(let destination) = top else { return }
+        let descriptor = try Self.attempt([]) { () throws(Errno) in
             try volume.openDirectory(Array(destination.utf8), in: AT_FDCWD)
         }
-        let topStatus: stat
         do {
-            topStatus = try attempt([]) { () throws(Errno) in try volume.status(of: top) }
+            let status = try Self.attempt([]) { () throws(Errno) in try volume.status(of: descriptor) }
+            cursor = DirectoryCursor(
+                volume: volume, descriptor: descriptor, status: status, frame: Frame(attributes: nil))
         } catch {
-            volume.close(top)
+            volume.close(descriptor)
             throw error
         }
-        var cursor = DirectoryCursor(
-            volume: volume, descriptor: top, status: topStatus, frame: Frame(attributes: nil))
-        defer { cursor.close() }
-        // The path of the directory the cursor is at, empty at the destination.
-        var here: [UInt8] = []
-        var rootAttributes: EntryAttributes?
-        var isFirst = true
+    }
 
-        let buffer = UnsafeMutableRawBufferPointer.allocate(
-            byteCount: ClipboardArchiveCodec.fileReadBlockSize, alignment: 16)
-        defer { buffer.deallocate() }
+    /// Takes the entry `header` describes; ``take(_:content:)`` has the
+    /// contract.
+    func take(
+        _ header: ArchiveHeader, content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void
+    ) throws {
+        guard let fields = ClipboardArchiveEntryFields(header) else {
+            throw ClipboardArchiveMalformedEntry(path: "", rule: .path)
+        }
+        try take(fields, content: content)
+    }
 
-        while let header = try decodeStream.readHeader() {
-            guard let fields = ClipboardArchiveEntryFields(header), let path = fields.path else {
-                throw ClipboardArchiveMalformedEntry(path: "", rule: .path)
-            }
-            guard let blobs = fields.blobs else {
-                throw ClipboardArchiveMalformedEntry(
-                    path: ClipboardArchiveCodec.displayPath(path), rule: .blobKey)
-            }
-            let wasFirst = isFirst
-            isFirst = false
-            guard !path.isEmpty else {
-                guard wasFirst, fields.type == UInt64(ArchiveHeader.EntryType.directory.rawValue)
-                else { throw ClipboardArchiveMalformedEntry(path: "", rule: .root) }
-                rootAttributes = EntryAttributes(fields)
-                try read(blobs, into: buffer) { _ in }
-                continue
-            }
-            let (parent, name) = try Self.split(path)
-            try climb(&cursor, from: &here, to: parent, for: path)
-            if let directory = try create(
-                fields, blobs: blobs, named: name, at: path, in: cursor.descriptor, buffer)
-            {
+    /// Creates the entry `fields` describes, running `content` once — unless
+    /// the entry fails first — with the closure that puts each piece of a
+    /// regular file's data into it, and discards the data of any other entry.
+    func take(
+        _ fields: ClipboardArchiveEntryFields,
+        content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void
+    ) throws {
+        guard let path = fields.path else { throw ClipboardArchiveMalformedEntry(path: "", rule: .path) }
+        let wasFirst = isFirst
+        isFirst = false
+        guard !path.isEmpty else {
+            guard wasFirst else { throw ClipboardArchiveMalformedEntry(path: "", rule: .root) }
+            try takeRoot(fields, content: content)
+            return
+        }
+        guard cursor != nil else {
+            // A `.newItem` top whose root has not come, or is not a directory.
+            throw ClipboardArchiveMalformedEntry(
+                path: ClipboardArchiveCodec.displayPath(path), rule: wasFirst ? .root : .parent)
+        }
+        let (parent, name) = try Self.split(path)
+        _ = try withCursor { cursor in
+            try climb(&cursor, to: parent, for: path)
+            let created = try create(fields, named: name, at: path, in: cursor.descriptor, content: content)
+            if case .directory(let descriptor, let status) = created {
                 cursor.descend(
-                    into: directory.descriptor, status: directory.status,
-                    frame: Frame(attributes: EntryAttributes(fields)))
+                    into: descriptor, status: status, frame: Frame(attributes: EntryAttributes(fields)))
                 here = path
             }
         }
-        try climb(&cursor, from: &here, to: [], for: [])
-        if let rootAttributes {
-            try apply(rootAttributes, to: .descriptor(cursor.descriptor), path: [])
+    }
+
+    /// Runs `body` on the cursor, returning `nil` when there is none.
+    private func withCursor<Result>(
+        _ body: (inout DirectoryCursor<Volume, Frame>) throws -> Result
+    ) rethrows -> Result? {
+        guard var held = cursor else { return nil }
+        defer { cursor = held }
+        return try body(&held)
+    }
+
+    private func takeRoot(
+        _ fields: ClipboardArchiveEntryFields,
+        content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void
+    ) throws {
+        switch top {
+        case .existingDirectory:
+            guard fields.type == UInt64(ArchiveHeader.EntryType.directory.rawValue) else {
+                throw ClipboardArchiveMalformedEntry(path: "", rule: .root)
+            }
+            rootAttributes = EntryAttributes(fields)
+            try content { _ in }
+        case .newItem(let destination):
+            let created = try create(
+                fields, named: Array(destination.utf8), at: [], in: AT_FDCWD, content: content
+            ) { self.createdTop = true }
+            switch created {
+            case .directory(let descriptor, let status):
+                cursor = DirectoryCursor(
+                    volume: volume, descriptor: descriptor, status: status, frame: Frame(attributes: nil))
+                rootAttributes = EntryAttributes(fields)
+            case .item:
+                break
+            case .nothing:
+                throw ClipboardItemFailure(itemPath: "", reason: .posix(EFTYPE))
+            }
         }
+    }
+
+    /// Climbs back to the top, applying each directory's attributes as it is
+    /// left, the root entry's last.
+    private func finish() throws {
+        let climbed: Void? = try withCursor { cursor in
+            try climb(&cursor, to: [], for: [])
+            if let rootAttributes {
+                try apply(rootAttributes, to: .descriptor(cursor.descriptor), path: [])
+            }
+        }
+        if climbed == nil, !createdTop { throw ClipboardArchiveMalformedEntry(path: "", rule: .root) }
     }
 
     /// `path`'s parent and own name.
@@ -165,14 +327,13 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
         return (Array(path[..<slash]), Array(path[(slash + 1)...]))
     }
 
-    /// Moves the cursor up from `here` to `parent`, applying each directory's
-    /// attributes as the extract leaves it.
+    /// Moves `cursor` up from ``here`` to `parent`, applying each
+    /// directory's attributes as the materializer leaves it.
     ///
     /// - Throws: ``ClipboardArchiveMalformedEntry`` for the entry at `path`
-    ///   when `parent` is neither `here` nor above it.
+    ///   when `parent` is neither ``here`` nor above it.
     private func climb(
-        _ cursor: inout DirectoryCursor<Volume, Frame>, from here: inout [UInt8], to parent: [UInt8],
-        for path: [UInt8]
+        _ cursor: inout DirectoryCursor<Volume, Frame>, to parent: [UInt8], for path: [UInt8]
     ) throws {
         guard here != parent else { return }
         guard
@@ -198,32 +359,31 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
         }
     }
 
-    /// Creates the entry `fields` describes as `name` in `directory`, reading
-    /// all of its `blobs`.
-    ///
-    /// - Returns: for a directory, that directory, open, its attributes not
-    ///   yet applied; otherwise `nil`, with a file or symlink created and its
-    ///   attributes applied, or nothing created for any other type.
+    /// Creates the entry `fields` describes as `name` in `directory`, calling
+    /// `created` as soon as something exists under that name.
     private func create(
-        _ fields: ClipboardArchiveEntryFields, blobs: [ClipboardArchiveEntryFields.Blob],
-        named name: [UInt8], at path: [UInt8], in directory: Int32,
-        _ buffer: UnsafeMutableRawBufferPointer
-    ) throws -> (descriptor: Int32, status: stat)? {
+        _ fields: ClipboardArchiveEntryFields, named name: [UInt8], at path: [UInt8],
+        in directory: Int32,
+        content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void,
+        created: () -> Void = {}
+    ) throws -> Created {
         let type = fields.type.flatMap { UInt32(exactly: $0) }.flatMap(ArchiveHeader.EntryType.init)
         guard type != .regularFile else {
-            try writeRegularFile(fields, blobs: blobs, named: name, at: path, in: directory, buffer)
-            return nil
+            try writeRegularFile(
+                fields, named: name, at: path, in: directory, content: content, created: created)
+            return .item
         }
-        try read(blobs, into: buffer) { _ in }
+        try content { _ in }
         switch type {
         case .directory?:
-            try attempt(path) { () throws(Errno) in try volume.makeDirectory(name, in: directory) }
-            let opened = try attempt(path) { () throws(Errno) in
+            try Self.attempt(path) { () throws(Errno) in try volume.makeDirectory(name, in: directory) }
+            created()
+            let opened = try Self.attempt(path) { () throws(Errno) in
                 try volume.openDirectory(name, in: directory)
             }
             do {
-                let status = try attempt(path) { () throws(Errno) in try volume.status(of: opened) }
-                return (opened, status)
+                let status = try Self.attempt(path) { () throws(Errno) in try volume.status(of: opened) }
+                return .directory(descriptor: opened, status: status)
             } catch {
                 volume.close(opened)
                 throw error
@@ -233,51 +393,35 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
                 throw ClipboardArchiveMalformedEntry(
                     path: ClipboardArchiveCodec.displayPath(path), rule: .linkTarget)
             }
-            try attempt(path) { () throws(Errno) in
+            try Self.attempt(path) { () throws(Errno) in
                 try volume.makeSymlink(name, to: target, in: directory)
             }
+            created()
             try apply(EntryAttributes(fields), to: .name(name, in: directory), path: path)
+            return .item
         default:
-            // Left out: nothing is created.
-            break
-        }
-        return nil
-    }
-
-    /// Reads every blob in `blobs`, in order and in full, in pieces of at most
-    /// `buffer.count` bytes, handing `body` each piece of the first `DAT`.
-    private func read(
-        _ blobs: [ClipboardArchiveEntryFields.Blob], into buffer: UnsafeMutableRawBufferPointer,
-        data body: (UnsafeRawBufferPointer) throws -> Void
-    ) throws {
-        let dataIndex = blobs.firstIndex(where: \.isData)
-        for (index, blob) in blobs.enumerated() {
-            var remaining = blob.size
-            while remaining > 0 {
-                let piece = UnsafeMutableRawBufferPointer(
-                    rebasing: buffer[..<Int(min(UInt64(buffer.count), remaining))])
-                try decodeStream.readBlob(key: blob.key, into: piece)
-                if index == dataIndex { try body(UnsafeRawBufferPointer(piece)) }
-                remaining -= UInt64(piece.count)
-            }
+            return .nothing
         }
     }
 
-    /// Creates the regular file `name` in `directory` holding the entry's
-    /// first `DAT`, then applies its attributes.
+    /// Creates the regular file `name` in `directory` holding the data
+    /// `content` delivers, then applies its attributes.
     private func writeRegularFile(
-        _ fields: ClipboardArchiveEntryFields, blobs: [ClipboardArchiveEntryFields.Blob],
-        named name: [UInt8], at path: [UInt8], in directory: Int32,
-        _ buffer: UnsafeMutableRawBufferPointer
+        _ fields: ClipboardArchiveEntryFields, named name: [UInt8], at path: [UInt8],
+        in directory: Int32,
+        content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void,
+        created: () -> Void
     ) throws {
-        let file = try attempt(path) { () throws(Errno) in try volume.createFile(name, in: directory) }
+        let file = try Self.attempt(path) { () throws(Errno) in
+            try volume.createFile(name, in: directory)
+        }
+        created()
         do {
-            try read(blobs, into: buffer) { piece in
+            try content { piece in
                 var written = 0
                 while written < piece.count {
-                    let count = try attempt(path) { () throws(Errno) in
-                        try volume.write(
-                            file, from: UnsafeRawBufferPointer(rebasing: piece[written...]))
+                    let count = try Self.attempt(path) { () throws(Errno) in
+                        try volume.write(file, from: UnsafeRawBufferPointer(rebasing: piece[written...]))
                     }
                     // `write(2)` returns 0 only for a zero-byte request.
                     guard count > 0 else {
@@ -294,7 +438,7 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
         }
         // With `F_NOCACHE` and no `fsync`, a write failure can surface only
         // here.
-        try attempt(path) { () throws(Errno) in try volume.closeWritten(file) }
+        try Self.attempt(path) { () throws(Errno) in try volume.closeWritten(file) }
     }
 
     /// Applies `attributes` to `target`, the entry at `path`: the group first,
@@ -317,12 +461,12 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
             }
         }
         guard !attributes.settable.isEmpty else { return }
-        try attempt(path) { () throws(Errno) in
+        try Self.attempt(path) { () throws(Errno) in
             try volume.setAttributes(attributes.settable, of: target)
         }
     }
 
-    private func attempt<Result>(
+    private static func attempt<Result>(
         _ path: [UInt8], _ body: () throws(Errno) -> Result
     ) throws(ClipboardItemFailure) -> Result {
         do {

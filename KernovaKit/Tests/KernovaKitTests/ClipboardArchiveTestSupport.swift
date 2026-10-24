@@ -102,10 +102,11 @@ func extractFailure(
 // MARK: - A volume that counts and fails
 
 /// The local volume, counting the directories it holds open and optionally
-/// failing every write with one `errno`.
+/// failing every write, or every rename, with one `errno`.
 final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
     private let base = ClipboardArchiveLocalVolume()
     private let writeFailure: Errno?
+    private let renameFailure: Errno?
 
     private struct Directories {
         var open: Set<Int32> = []
@@ -120,8 +121,9 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
     /// How many directories are open now.
     var openDirectoryCount: Int { directories.withLock { $0.open.count } }
 
-    init(failingWritesWith writeFailure: Errno? = nil) {
+    init(failingWritesWith writeFailure: Errno? = nil, failingRenamesWith renameFailure: Errno? = nil) {
         self.writeFailure = writeFailure
+        self.renameFailure = renameFailure
     }
 
     func openDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
@@ -189,6 +191,13 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
 
     func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(Errno) {
         try base.remove(name, in: directory, isDirectory: isDirectory)
+    }
+
+    func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(Errno)
+    {
+        if let renameFailure { throw renameFailure }
+        try base.rename(name, in: directory, to: newName, in: newDirectory)
     }
 }
 

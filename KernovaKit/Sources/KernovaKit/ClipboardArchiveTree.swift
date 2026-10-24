@@ -93,6 +93,30 @@ struct ClipboardArchiveEntryHeader {
     }
 }
 
+// MARK: - Sinks
+
+/// Where a ``ClipboardArchiveCodec/TreeWalk`` puts the entries it visits: an
+/// archive being encoded, or a ``TreeMaterializer`` creating them.
+protocol ClipboardArchiveEntrySink {
+    /// Takes the entry `header` describes, then runs `content` once, which
+    /// hands each piece of a regular file's data to the closure it is given.
+    func take(
+        _ header: ArchiveHeader, content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void
+    ) throws
+}
+
+/// An encode stream as a walk's sink: each header, then its data as `DAT`.
+struct ClipboardArchiveEncoding: ClipboardArchiveEntrySink {
+    let encodeStream: ArchiveStream
+
+    func take(
+        _ header: ArchiveHeader, content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void
+    ) throws {
+        try encodeStream.writeHeader(header)
+        try content { piece in try encodeStream.writeBlob(key: .init("DAT"), from: piece) }
+    }
+}
+
 // MARK: - Walk
 
 extension ClipboardArchiveCodec {
@@ -111,29 +135,20 @@ extension ClipboardArchiveCodec {
     static func writeFileEntry(
         _ url: URL, name: String, byteCount: Int, to encodeStream: ArchiveStream
     ) throws {
-        let walk = TreeWalk(volume: ClipboardArchiveLocalVolume(), encodeStream: encodeStream)
+        let walk = TreeWalk(
+            volume: ClipboardArchiveLocalVolume(), sink: ClipboardArchiveEncoding(encodeStream: encodeStream))
         try walk.writeRegularFile(
             Array(url.path.utf8), in: AT_FDCWD, path: Array(name.utf8), failurePath: [],
             byteCount: byteCount)
     }
 
-    /// Writes the tree rooted at `root` — the root's own entry, with an empty
-    /// `PAT`, then every entry beneath it, each directory ahead of its contents
-    /// and siblings in byte order — with the fields of
-    /// ``ClipboardArchive/fieldKeys``.
+    /// Writes the tree rooted at `root` into `encodeStream`, as
+    /// ``walkTree(at:into:on:)`` visits it.
     ///
     /// Walked here rather than by `writeDirectoryContents`, which reports a file
     /// it cannot open only as `ArchiveError.ioError` and archives a directory it
     /// cannot list as an empty one, raising nothing
     /// (docs/research/2026-10-22-applearchive-folder-encoder-read-failures.md).
-    ///
-    /// The walk moves through the tree on a ``DirectoryCursor``, so neither
-    /// depth nor path length bounds the tree it can archive.
-    ///
-    /// - Throws: ``ClipboardItemFailure`` naming the first entry, relative
-    ///   to `root`, that could not be described, listed, or read — or, with no
-    ///   reason, the directory that was no longer where the walk left it. The
-    ///   walk stops there: nothing is skipped.
     static func writeTree(at root: String, to encodeStream: ArchiveStream) throws {
         try writeTree(at: root, to: encodeStream, on: ClipboardArchiveLocalVolume())
     }
@@ -142,7 +157,25 @@ extension ClipboardArchiveCodec {
     static func writeTree<Volume: ClipboardArchiveVolume>(
         at root: String, to encodeStream: ArchiveStream, on volume: Volume
     ) throws {
-        let walk = TreeWalk(volume: volume, encodeStream: encodeStream)
+        try walkTree(at: root, into: ClipboardArchiveEncoding(encodeStream: encodeStream), on: volume)
+    }
+
+    /// Hands `sink` the tree rooted at `root` — the root's own entry, with an
+    /// empty `PAT`, then every entry beneath it, each directory ahead of its
+    /// contents and siblings in byte order — with the fields of
+    /// ``ClipboardArchive/fieldKeys``.
+    ///
+    /// The walk moves through the tree on a ``DirectoryCursor``, so neither
+    /// depth nor path length bounds the tree it can visit.
+    ///
+    /// - Throws: ``ClipboardItemFailure`` naming the first entry, relative
+    ///   to `root`, that could not be described, listed, or read — or, with no
+    ///   reason, the directory that was no longer where the walk left it — or
+    ///   what `sink` threw. The walk stops there: nothing is skipped.
+    static func walkTree<Volume: ClipboardArchiveVolume, Sink: ClipboardArchiveEntrySink>(
+        at root: String, into sink: Sink, on volume: Volume
+    ) throws {
+        let walk = TreeWalk(volume: volume, sink: sink)
         guard let top = try walk.writeEntry(Array(root.utf8), in: AT_FDCWD, path: []) else { return }
         var cursor = DirectoryCursor(
             volume: volume, descriptor: top.descriptor, status: top.status, frame: top.directory)
@@ -166,7 +199,7 @@ extension ClipboardArchiveCodec {
         }
     }
 
-    /// A directory whose entry is written and whose contents are not yet.
+    /// A directory whose entry is handed over and whose contents are not yet.
     struct TreeDirectory {
         let path: [UInt8]
         /// The names still to write, the next one last.
@@ -180,16 +213,17 @@ extension ClipboardArchiveCodec {
         let directory: TreeDirectory
     }
 
-    /// One walk's writes, against one volume and one encode stream.
-    struct TreeWalk<Volume: ClipboardArchiveVolume> {
+    /// One walk's reads, against one volume, and what it hands one sink.
+    struct TreeWalk<Volume: ClipboardArchiveVolume, Sink: ClipboardArchiveEntrySink> {
         let volume: Volume
-        let encodeStream: ArchiveStream
+        let sink: Sink
 
-        /// Writes the entry `name` in `directory`, at `path` in the archive.
+        /// Hands the sink the entry `name` in `directory`, at `path` in the
+        /// tree.
         ///
         /// - Returns: for a directory holding anything, that directory, open;
         ///   otherwise `nil`, with the entry — and for an empty directory,
-        ///   everything in it — written.
+        ///   everything in it — handed over.
         func writeEntry(_ name: [UInt8], in directory: Int32, path: [UInt8]) throws
             -> OpenedTreeDirectory?
         {
@@ -208,8 +242,7 @@ extension ClipboardArchiveCodec {
                     let opened = try attempt(path) { () throws(Errno) in
                         try volume.status(of: descriptor)
                     }
-                    try encodeStream.writeHeader(
-                        ClipboardArchiveEntryHeader(path: path, status: opened).make())
+                    try sink.take(ClipboardArchiveEntryHeader(path: path, status: opened).make()) { _ in }
                     let names = try attempt(path) { () throws(Errno) in
                         try volume.names(in: descriptor)
                     }
@@ -229,18 +262,19 @@ extension ClipboardArchiveCodec {
                 let target = try attempt(path) { () throws(Errno) in
                     try volume.linkTarget(of: name, in: directory)
                 }
-                try encodeStream.writeHeader(
-                    ClipboardArchiveEntryHeader(path: path, status: status, linkTarget: target).make())
+                try sink.take(
+                    ClipboardArchiveEntryHeader(path: path, status: status, linkTarget: target).make()
+                ) { _ in }
                 return nil
             default:
                 // A FIFO, device or socket is an entry, never a read.
-                try encodeStream.writeHeader(ClipboardArchiveEntryHeader(path: path, status: status).make())
+                try sink.take(ClipboardArchiveEntryHeader(path: path, status: status).make()) { _ in }
                 return nil
             }
         }
 
-        /// Writes the regular file `name` in `directory` as the entry `path`,
-        /// carrying `byteCount` bytes, or its size when `nil`.
+        /// Hands the sink the regular file `name` in `directory` as the entry
+        /// `path`, carrying `byteCount` bytes, or its size when `nil`.
         ///
         /// Header and bytes both come from the one descriptor, so the entry
         /// describes exactly the file it carries. The read policy is plain,
@@ -266,29 +300,29 @@ extension ClipboardArchiveCodec {
                     itemPath: ClipboardArchiveCodec.displayPath(failurePath), reason: .posix(EFTYPE))
             }
             let byteCount = byteCount ?? Int(status.st_size)
-            try encodeStream.writeHeader(
-                ClipboardArchiveEntryHeader(path: path, status: status, byteCount: byteCount).make())
-
-            var remaining = byteCount
-            let buffer = UnsafeMutableRawBufferPointer.allocate(
-                byteCount: min(ClipboardArchiveCodec.fileReadBlockSize, max(1, byteCount)), alignment: 16)
-            defer { buffer.deallocate() }
-            while remaining > 0 {
-                let got = try attempt(failurePath) { () throws(Errno) in
-                    try volume.read(
-                        descriptor,
-                        into: UnsafeMutableRawBufferPointer(
-                            rebasing: buffer[..<min(buffer.count, remaining)]))
+            try sink.take(
+                ClipboardArchiveEntryHeader(path: path, status: status, byteCount: byteCount).make()
+            ) { data in
+                var remaining = byteCount
+                let buffer = UnsafeMutableRawBufferPointer.allocate(
+                    byteCount: min(ClipboardArchiveCodec.fileReadBlockSize, max(1, byteCount)), alignment: 16)
+                defer { buffer.deallocate() }
+                while remaining > 0 {
+                    let got = try attempt(failurePath) { () throws(Errno) in
+                        try volume.read(
+                            descriptor,
+                            into: UnsafeMutableRawBufferPointer(
+                                rebasing: buffer[..<min(buffer.count, remaining)]))
+                    }
+                    // The file ending before the byte count its header declared
+                    // would leave the entry short.
+                    guard got > 0 else {
+                        throw ClipboardItemFailure(
+                            itemPath: ClipboardArchiveCodec.displayPath(failurePath), reason: .endedEarly)
+                    }
+                    try data(UnsafeRawBufferPointer(rebasing: buffer[..<got]))
+                    remaining -= got
                 }
-                // The file ending before the byte count its header declared
-                // would leave the entry short.
-                guard got > 0 else {
-                    throw ClipboardItemFailure(
-                        itemPath: ClipboardArchiveCodec.displayPath(failurePath), reason: .endedEarly)
-                }
-                try encodeStream.writeBlob(
-                    key: .init("DAT"), from: UnsafeRawBufferPointer(rebasing: buffer[..<got]))
-                remaining -= got
             }
         }
 
