@@ -1,5 +1,6 @@
 import AppKit
 @testable import KernovaUI
+import KernovaKit
 import Testing
 
 @Suite("InfoPopoverContentViewController Tests", .caseScoped)

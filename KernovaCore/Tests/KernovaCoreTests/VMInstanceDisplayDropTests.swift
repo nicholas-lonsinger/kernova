@@ -253,10 +253,10 @@ struct VMInstanceDisplayDropTests {
         }
         #expect(shown.gesture == .drop)
         #expect(shown.isCancellable)
-        // And that readout opens the dropdown on its own, so the drop is seen
-        // without the user going looking for it.
-        var opener = ClipboardProgressMenuAutoOpener()
-        #expect(opener.readoutChanged(shown, menuIsOpen: false, canOpen: true) == .open)
+        // And that readout reveals itself in the status item's callout, so the
+        // drop is seen without the user going looking for it.
+        var reveal = ClipboardProgressAutoReveal()
+        #expect(reveal.readoutChanged(shown, dropdownIsOpen: false, reveal: { true }) == .shown)
         // The Cancel it carries reaches the drop through the same report.
         #expect(instance.clipboardTransfers.cancel(shown.operationID))
         withExtendedLifetime(operation) {}

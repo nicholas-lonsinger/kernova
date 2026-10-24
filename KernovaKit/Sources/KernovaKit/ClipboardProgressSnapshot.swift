@@ -42,7 +42,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// estimated (no rate yet, or nothing left to move).
     public let secondsRemaining: Double?
     /// The user action this operation serves, which decides its headline and
-    /// whether its readout may open a status-item dropdown by itself.
+    /// whether its readout may show in the status item's callout by itself.
     public let gesture: ClipboardTransferGesture
     /// How long this operation has been running.
     public let elapsedSeconds: TimeInterval

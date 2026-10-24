@@ -6,8 +6,9 @@ import Foundation
 /// Use this — never a `Task` — for anything entering a nested event-tracking loop
 /// (a menu, a modal session, a drag): the main-queue drain is not re-entrant, so
 /// a block parked in a nested loop starves every later `DispatchQueue.main.async`
-/// and `Task { @MainActor }` (observed as a paste readout frozen for an
-/// auto-opened menu's lifetime). A run-loop block leaves that drain free.
+/// and `Task { @MainActor }` (observed as a paste readout frozen for as long as
+/// a status-item menu opened from a main-queue block stayed open). A run-loop
+/// block leaves that drain free.
 @MainActor
 public func performOnMainRunLoop(_ body: @escaping @MainActor () -> Void) {
     RunLoop.main.perform(inModes: [.common]) {

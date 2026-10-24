@@ -2,24 +2,20 @@ import AppKit
 import KernovaLogging
 
 /// Presents a transfer's progress readout inside a menu-bar status item's
-/// dropdown, and runs the one-shot automatic open that reveals it.
+/// dropdown, and reveals it once in the status item's callout so it is seen
+/// without a click.
 ///
 /// A status-item controller keeps its own icon and menu structure, drives this
-/// from its `NSMenuDelegate` callbacks, and reads `snapshot` back to compose the
-/// icon ring and tooltip.
+/// from its `menuNeedsUpdate`, and reads `snapshot` back to compose the icon
+/// ring and tooltip.
 @MainActor
 public final class ClipboardProgressStatusItemPresenter {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardProgressStatusItem")
 
-    private let statusItem: NSStatusItem
     private let menu: NSMenu
-    /// Run just before the presenter pops the dropdown open by itself.
-    ///
-    /// The host dismisses its soft-quit reminder here: a live reminder detaches
-    /// the dropdown while it is anchored, so the automatic click would land on
-    /// the reminder's dismissal handler instead of opening the menu.
-    private let willAutoOpen: (() -> Void)?
+    /// The status item's popover slot, which the reveal shows its callout in.
+    private let slot: any StatusItemCalloutSlot
 
     /// Stops the operation the readout is showing, named by the identity that
     /// readout carried. `nil` leaves every readout without a Cancel button.
@@ -28,41 +24,43 @@ public final class ClipboardProgressStatusItemPresenter {
     /// The readout on screen, or `nil` when there is none.
     public private(set) var snapshot: ClipboardProgressSnapshot?
 
-    /// Whether the dropdown on screen is the one the readout opened, closing
-    /// because the readout ended: a line staged for it now is never seen in it.
-    public var isClosingDropdown: Bool { autoOpener.isClosingDropdown }
-
     /// The dropdown's live readout, built on first use and then kept so it
     /// updates in place rather than being rebuilt under the cursor.
-    private lazy var view = ClipboardProgressMenuItemView()
+    private lazy var dropdownReadout = ClipboardProgressReadoutView(surface: .dropdownItem)
     private lazy var item: NSMenuItem = {
         let item = NSMenuItem()
-        item.view = view
+        item.view = dropdownReadout
         item.isEnabled = false
         return item
     }()
     private let separator = NSMenuItem.separator()
 
-    private var autoOpener = ClipboardProgressMenuAutoOpener()
-    /// Whether the dropdown is currently on screen, which the auto-opener needs
-    /// and `NSMenu` doesn't expose.
-    private var menuIsOpen = false
-    /// Set between asking for an automatic open and the resulting `menuWillOpen`,
-    /// so the opener can tell its own dropdown from one the user summoned.
-    private var pendingAutoOpen = false
+    /// The callout's live readout, kept the same way.
+    private lazy var calloutReadout = ClipboardProgressReadoutView(surface: .callout)
+    private lazy var calloutContent: NSViewController = {
+        let content = NSViewController()
+        content.view = calloutReadout
+        content.preferredContentSize = calloutReadout.frame.size
+        return content
+    }()
+    /// The callout's showing, kept after it ends so the readout clearing can
+    /// close it without closing whatever replaced it.
+    private var calloutShowing: TransientStatusItemPopover.Showing?
 
-    /// Creates a presenter bound to a status item and its dropdown.
+    private var autoReveal = ClipboardProgressAutoReveal()
+
+    /// Creates a presenter bound to a status item's dropdown and its popover
+    /// slot.
     ///
     /// `onCancel` stops the operation whose identity it is handed — the one the
     /// readout on screen was rendered for; the button appears only while that
     /// readout reports itself cancellable.
     public init(
-        statusItem: NSStatusItem, menu: NSMenu, willAutoOpen: (() -> Void)? = nil,
+        menu: NSMenu, slot: any StatusItemCalloutSlot,
         onCancel: ((ClipboardTransferOperationID) -> Void)? = nil
     ) {
-        self.statusItem = statusItem
         self.menu = menu
-        self.willAutoOpen = willAutoOpen
+        self.slot = slot
         self.onCancel = onCancel
     }
 
@@ -88,28 +86,45 @@ public final class ClipboardProgressStatusItemPresenter {
         }
         self.snapshot = rendered
         if let rendered {
-            view.apply(rendered)
-            view.onCancel = allowsCancel ? cancelHandler(for: rendered.operationID) : nil
+            let id = rendered.operationID
+            dropdownReadout.apply(rendered)
+            dropdownReadout.onCancel =
+                allowsCancel
+                ? cancelHandler(for: id, closingSurface: { [weak self] in self?.menu.cancelTracking() })
+                : nil
+            calloutReadout.apply(rendered)
+            calloutReadout.onCancel =
+                allowsCancel
+                ? cancelHandler(for: id, closingSurface: { [weak self] in self?.dismissCallout() })
+                : nil
         }
         syncItems()
-        applyAutoOpen(rendered)
+        if rendered == nil {
+            let closed = dismissCallout()
+            Self.logger.log(
+                .info,
+                "Readout cleared — callout \(closed ? "dismissed" : "not up", privacy: .public)")
+        }
+        revealIfEarned(rendered)
     }
 
-    /// The click handler installed on the readout: dismiss the dropdown the user
+    /// The click handler installed on a readout: close the surface the user
     /// clicked in, then cancel the operation that readout was rendered for.
     ///
     /// `id` is bound here rather than resolved at click time, so the click stops
     /// what the user was looking at even if a newer transfer has published since.
     ///
-    /// The dropdown goes first because the cancel's own effect on the readout
+    /// The surface goes first because the cancel's own effect on the readout
     /// arrives asynchronously — the transfers abort, the session ends below
-    /// 100 %, and the linger clears it — so leaving the menu up would strand the
-    /// user in front of a row that keeps ticking for a moment after they stopped
+    /// 100 %, and the linger clears it — so leaving it up would strand the user
+    /// in front of a readout that keeps ticking for a moment after they stopped
     /// it.
-    private func cancelHandler(for id: ClipboardTransferOperationID) -> (() -> Void)? {
+    private func cancelHandler(
+        for id: ClipboardTransferOperationID, closingSurface: @escaping () -> Void
+    ) -> (() -> Void)? {
         guard let onCancel else { return nil }
-        return { [weak self] in
-            self?.menu.cancelTracking()
+        return {
+            closingSurface()
             onCancel(id)
         }
     }
@@ -123,66 +138,12 @@ public final class ClipboardProgressStatusItemPresenter {
         insertItems()
     }
 
-    /// Records that the dropdown opened, distinguishing an automatic open from
-    /// one the user summoned.
-    ///
-    /// Call from the controller's `menuWillOpen`.
-    public func menuWillOpen() {
-        menuIsOpen = true
-        autoOpener.menuOpened(automatically: pendingAutoOpen)
-        pendingAutoOpen = false
-    }
-
-    /// Records that the dropdown closed, including a user dismissal.
-    ///
-    /// Call from the controller's `menuDidClose`.
-    public func menuDidClose() {
-        menuIsOpen = false
-        autoOpener.menuClosed()
-    }
-
-    /// Whether an automatic open may click the status-item button right now.
-    ///
-    /// An already-open dropdown blocks it because `performClick` **toggles**: the
-    /// click would dismiss the menu instead of revealing anything, and a menu
-    /// opened before the line was staged does not contain that line anyway.
-    public nonisolated static func allowsAutomaticOpen(
-        isVisible: Bool, isOnScreen: Bool, menuIsOpen: Bool
-    ) -> Bool {
-        isVisible && isOnScreen && !menuIsOpen
-    }
-
-    /// Pops the dropdown open so a line the controller has just staged is seen
-    /// without a click, through the same guarded path the readout's own automatic
-    /// open uses.
-    ///
-    /// The caller writes the state the dropdown renders **before** calling this,
-    /// so `menuNeedsUpdate` builds the line into the menu this opens.
-    /// `stillStaged` is re-checked inside the run-loop turn, where the reason to
-    /// open may already be gone.
-    public func revealDropdown(while stillStaged: @escaping @MainActor () -> Bool) {
-        let visible = statusItem.isVisible
-        let onScreen = statusItem.isButtonOnScreen
-        guard
-            Self.allowsAutomaticOpen(
-                isVisible: visible, isOnScreen: onScreen, menuIsOpen: menuIsOpen)
-        else {
-            Self.logger.log(
-                .info,
-                "Staged-line reveal skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(self.menuIsOpen, privacy: .public)"
-            )
-            return
-        }
-        Self.logger.log(.info, "Opening the dropdown to reveal a staged line")
-        openDropdown(while: stillStaged)
-    }
-
     // MARK: - Private
 
     /// Adds or removes the readout rows from a dropdown that is already on
     /// screen; a closed one is rebuilt by `menuNeedsUpdate` when it next opens.
     private func syncItems() {
-        guard menuIsOpen else { return }
+        guard slot.isDropdownOpen else { return }
         if snapshot != nil {
             insertItems()
         } else {
@@ -202,74 +163,60 @@ public final class ClipboardProgressStatusItemPresenter {
         }
     }
 
-    /// Runs the auto-opener's decision for the current readout.
-    private func applyAutoOpen(_ readout: ClipboardProgressSnapshot?) {
-        let visible = statusItem.isVisible
-        let onScreen = statusItem.isButtonOnScreen
-        let canOpen = visible && onScreen
-        let action = autoOpener.readoutChanged(readout, menuIsOpen: menuIsOpen, canOpen: canOpen)
-        log(action, readout: readout, visible: visible, onScreen: onScreen)
-        switch action {
-        case .none:
-            break
-        case .open:
-            // The transfer can end inside that turn (a cancel lands as a pull
-            // failure); opening for a readout that is already gone would leave a
-            // dropdown nothing will close.
-            openDropdown(while: { [weak self] in self?.snapshot != nil })
-        case .close:
-            menu.cancelTracking()
-        }
+    /// Closes the readout's callout if it still holds the slot; `false` when it
+    /// was not up.
+    @discardableResult
+    private func dismissCallout() -> Bool {
+        guard let showing = calloutShowing else { return false }
+        calloutShowing = nil
+        return slot.dismiss(showing)
     }
 
-    /// Clicks the status-item button on the next run-loop turn, unless
-    /// `stillWanted` reports the reason for opening has passed.
-    private func openDropdown(while stillWanted: @escaping @MainActor () -> Bool) {
-        // Host-only: detach the dropdown from the soft-quit reminder so the click
-        // below opens the menu rather than the reminder's dismissal.
-        willAutoOpen?()
-        // Never defer this with `Task { @MainActor }`: `performClick` parks inside
-        // a nested menu-tracking loop until the dropdown closes, and parking there
-        // from a main-queue block starves every later main-queue update, freezing
-        // the ring and readout.
-        performOnMainRunLoop { [weak self] in
-            guard let self, stillWanted() else { return }
-            self.pendingAutoOpen = true
-            self.statusItem.button?.performClick(nil)
-            // Covers a click that opened nothing: a flag left set would mislabel
-            // the *user's* next dropdown as ours and close it under them. An open
-            // already consumed it in `menuWillOpen`.
-            self.pendingAutoOpen = false
+    /// Runs the reveal decision for the current readout, showing the callout
+    /// when the readout earns it.
+    private func revealIfEarned(_ readout: ClipboardProgressSnapshot?) {
+        let dropdownOpen = slot.isDropdownOpen
+        var skip: TransientStatusItemPopover.SkipReason?
+        let decision = autoReveal.readoutChanged(readout, dropdownIsOpen: dropdownOpen) {
+            switch slot.show(calloutContent, for: nil) {
+            case .shown(let showing):
+                calloutShowing = showing
+                return true
+            case .skipped(let reason):
+                skip = reason
+                return false
+            }
         }
+        // A clear has logged its own line.
+        guard let readout else { return }
+        log(decision, skip: skip, readout: readout, dropdownOpen: dropdownOpen)
     }
 
     /// Records the decision with the inputs that made it — one line per delivered
     /// readout, a rate the tracker's throttle already bounds.
+    ///
+    /// Only `.shown` is `.info`: a reveal the slot skipped is retried on every
+    /// update until it goes up, so it repeats at the throttle rate as `.none`
+    /// does.
     private func log(
-        _ action: ClipboardProgressMenuAction, readout: ClipboardProgressSnapshot?, visible: Bool,
-        onScreen: Bool
+        _ decision: ClipboardProgressRevealDecision, skip: TransientStatusItemPopover.SkipReason?,
+        readout: ClipboardProgressSnapshot, dropdownOpen: Bool
     ) {
-        guard let readout else {
-            Self.logger.log(
-                .info,
-                "Readout cleared — dropdown \(action == .close ? "closed" : "left alone", privacy: .public)"
-            )
-            return
-        }
         let level: KernovaLogLevel =
-            switch action {
-            case .none: .debug
-            case .open, .close: .info
+            switch decision {
+            case .none, .notShown: .debug
+            case .shown: .info
             }
+        let skipped = skip.map { " — skipped: \($0)" } ?? ""
         Self.logger.log(
             level,
             """
-            Auto-open \(String(describing: action), privacy: .public) — gesture=\(String(describing: readout.gesture), privacy: .public), \
+            Readout callout \(String(describing: decision), privacy: .public)\(skipped, privacy: .public) — \
+            gesture=\(String(describing: readout.gesture), privacy: .public), \
             elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
             \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes, \
-            menuOpen=\(self.menuIsOpen, privacy: .public), canOpen=\(visible && onScreen, privacy: .public) \
-            (visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public))
+            menuOpen=\(dropdownOpen, privacy: .public)
             """
         )
     }

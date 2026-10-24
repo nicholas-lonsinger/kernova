@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 
 /// Popover content shown when the user clicks the sidebar agent-status
 /// button (the small SF Symbol or spinner next to each VM row).

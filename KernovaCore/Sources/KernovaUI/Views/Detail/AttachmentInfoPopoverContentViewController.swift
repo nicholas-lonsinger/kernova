@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 
 /// Popover content shown by an attachment row's "Get Info" context-menu item
 /// (storage disks and removable media alike).

@@ -1,6 +1,8 @@
 import AppKit
-@testable import KernovaUI
+import KernovaTestSupport
 import Testing
+
+@testable import KernovaKit
 
 @Suite("CalloutStyle Tests", .caseScoped)
 @MainActor

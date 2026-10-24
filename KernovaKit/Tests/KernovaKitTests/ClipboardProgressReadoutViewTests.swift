@@ -4,10 +4,11 @@ import Testing
 
 @testable import KernovaKit
 
-/// Unit tests for the Cancel affordance on the dropdown's transfer readout.
-@Suite("ClipboardProgressMenuItemView", .caseScoped)
+/// Unit tests for the transfer readout the status item's dropdown and callout
+/// both show.
+@Suite("ClipboardProgressReadoutView", .caseScoped)
 @MainActor
-struct ClipboardProgressMenuItemViewTests {
+struct ClipboardProgressReadoutViewTests {
     private func makeSnapshot(isCancellable: Bool, pendingBehind: Int = 0)
         -> ClipboardProgressSnapshot
     {
@@ -20,7 +21,7 @@ struct ClipboardProgressMenuItemViewTests {
 
     @Test("the button is hidden until a cancel handler is installed")
     func hidesTheButtonWithoutAHandler() {
-        let view = ClipboardProgressMenuItemView()
+        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
         #expect(view.cancelButtonForTesting.isHidden)
 
         view.onCancel = {}
@@ -32,7 +33,7 @@ struct ClipboardProgressMenuItemViewTests {
 
     @Test("clicking the button runs the handler installed at click time")
     func clickRunsTheCurrentHandler() {
-        let view = ClipboardProgressMenuItemView()
+        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
         var first = 0
         var second = 0
         view.onCancel = { first += 1 }
@@ -46,12 +47,13 @@ struct ClipboardProgressMenuItemViewTests {
         #expect(second == 1)
     }
 
-    @Test("the item is tall enough for the row that carries the button")
-    func measuresWithTheButtonInPlace() {
-        // `NSMenu` takes a custom item's height from the frame once, so the
-        // measurement has to include a button the first cancellable readout will
-        // reveal.
-        let view = ClipboardProgressMenuItemView()
+    @Test(
+        "the readout is tall enough for the row that carries the button",
+        arguments: [ClipboardProgressReadoutView.Surface.dropdownItem, .callout])
+    func measuresWithTheButtonInPlace(surface: ClipboardProgressReadoutView.Surface) {
+        // Both surfaces take the height from the frame once, so the measurement
+        // has to include a button the first cancellable readout will reveal.
+        let view = ClipboardProgressReadoutView(surface: surface)
         let withoutButton = view.fittingSize.height
         view.onCancel = {}
         view.layoutSubtreeIfNeeded()
@@ -62,7 +64,7 @@ struct ClipboardProgressMenuItemViewTests {
 
     @Test("applying a snapshot renders it without disturbing the handler")
     func applyKeepsTheHandler() {
-        let view = ClipboardProgressMenuItemView()
+        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
         view.onCancel = {}
         view.apply(makeSnapshot(isCancellable: true))
 
@@ -70,9 +72,11 @@ struct ClipboardProgressMenuItemViewTests {
         #expect(view.accessibilityLabel()?.isEmpty == false)
     }
 
-    @Test("the readout says what is queued behind it, and costs no height to say so")
-    func rendersWhatIsPendingBehindTheReadout() {
-        let view = ClipboardProgressMenuItemView()
+    @Test(
+        "the readout says what is queued behind it, and costs no height to say so",
+        arguments: [ClipboardProgressReadoutView.Surface.dropdownItem, .callout])
+    func rendersWhatIsPendingBehindTheReadout(surface: ClipboardProgressReadoutView.Surface) {
+        let view = ClipboardProgressReadoutView(surface: surface)
         let height = view.frame.height
 
         view.apply(makeSnapshot(isCancellable: true))
@@ -82,14 +86,14 @@ struct ClipboardProgressMenuItemViewTests {
         view.layoutSubtreeIfNeeded()
 
         #expect(view.accessibilityLabel()?.contains("2 more transfers pending") == true)
-        // The menu takes this height once, so the line has to share a row.
+        // The surface takes this height once, so the line has to share a row.
         #expect(view.frame.height == height)
     }
 
     @Test("the bar shows a snapshot applied while the view has no window")
     func barShowsASnapshotAppliedOffScreen() {
         // The status item's dropdown applies snapshots before it opens.
-        let view = ClipboardProgressMenuItemView()
+        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
         #expect(view.window == nil)
 
         view.apply(makeSnapshot(isCancellable: true))
@@ -99,7 +103,7 @@ struct ClipboardProgressMenuItemViewTests {
 
     @Test("a readout awaiting its total shows no fraction, and a sized one shows its fraction again")
     func awaitedSizeShowsNoFraction() {
-        let view = ClipboardProgressMenuItemView()
+        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
         view.apply(
             ClipboardProgressSnapshot(
                 direction: .inbound, peerName: "VM", currentItemName: "Home", filesCompleted: 0,
@@ -111,5 +115,18 @@ struct ClipboardProgressMenuItemViewTests {
         view.apply(makeSnapshot(isCancellable: true))
         #expect(!view.barIsIndeterminateForTesting)
         #expect(view.barFractionForTesting == 0.1)
+    }
+
+    @Test("the callout readout is as wide as every callout")
+    func calloutTakesTheCalloutWidth() {
+        #expect(ClipboardProgressReadoutView(surface: .callout).frame.width == CalloutStyle.width)
+    }
+
+    @Test("Cancel acts on the click that also activates its app")
+    func cancelTakesTheFirstClick() {
+        // The guest agent is never the active app, so a Cancel that only
+        // activated it would let the transfer run on.
+        let view = ClipboardProgressReadoutView(surface: .callout)
+        #expect(view.cancelButtonForTesting.acceptsFirstMouse(for: nil))
     }
 }
