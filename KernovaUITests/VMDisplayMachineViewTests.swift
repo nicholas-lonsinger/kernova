@@ -137,27 +137,6 @@ struct VMDisplayMachineViewTests {
 
     // MARK: - What the take injects
 
-    @Test("nudges go to the center and one point right of it, and the release to the last nudge")
-    func injectedEventsLandAtTheCenter() throws {
-        let view = makeView()
-        let take = makeTake()
-        host.nextTake = take
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        let before = view.forwarded.count
-
-        view.injectNudge(.center)
-        view.injectNudge(.offset)
-        view.injectRelease()
-
-        #expect(
-            Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: NSPoint(x: 100, y: 50)),
-                .init(type: .leftMouseDragged, location: NSPoint(x: 101, y: 50)),
-                .init(type: .leftMouseUp, location: NSPoint(x: 101, y: 50)),
-            ])
-    }
-
     @Test("after the release, the physical mouse-up is not a second release")
     func physicalMouseUpAfterTheReleaseIsSwallowed() throws {
         let view = makeView()
@@ -222,7 +201,7 @@ struct VMDisplayMachineViewTests {
         host.nextTake = take
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        view.injectNudge(.center)
+        view.injectNudge(.exitPoint)
         let before = view.forwarded.count
 
         view.injectDrag(at: NSPoint(x: 30, y: 40))
@@ -245,7 +224,7 @@ struct VMDisplayMachineViewTests {
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 190, y: 70))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        view.injectNudge(.center)
+        view.injectNudge(.offset)
         let before = view.forwarded.count
 
         view.returnToExitPoint()
@@ -265,7 +244,7 @@ struct VMDisplayMachineViewTests {
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
         view.injectDrag(at: NSPoint(x: 5, y: 6))
-        view.injectNudge(.center)
+        view.injectNudge(.exitPoint)
         let before = view.forwarded.count
 
         view.returnToExitPoint()
@@ -289,7 +268,7 @@ struct VMDisplayMachineViewTests {
         #expect(view.forwarded.count == before)
     }
 
-    // MARK: - The park
+    // MARK: - The nudge
 
     /// Presses on the display and drags to `exit` — forwarded there, past the
     /// edge included while no drag is on offer — then takes the drag over.
@@ -301,51 +280,55 @@ struct VMDisplayMachineViewTests {
     }
 
     @Test(
-        "a park drags the guest pointer to the exit point held 8 points in from every edge",
+        "nudges go to the exit point held 8 points in from every edge and one point from it toward the center, and the release to the last nudge",
         arguments: [
-            (exit: NSPoint(x: 150, y: 60), parked: NSPoint(x: 150, y: 60)),
-            (exit: NSPoint(x: 3, y: 50), parked: NSPoint(x: 8, y: 50)),
-            (exit: NSPoint(x: 250, y: 50), parked: NSPoint(x: 192, y: 50)),
-            (exit: NSPoint(x: 100, y: 104), parked: NSPoint(x: 100, y: 92)),
-            (exit: NSPoint(x: -20, y: -5), parked: NSPoint(x: 8, y: 8)),
+            (exit: NSPoint(x: 150, y: 60), base: NSPoint(x: 150, y: 60), offset: NSPoint(x: 149, y: 59)),
+            (exit: NSPoint(x: 3, y: 50), base: NSPoint(x: 8, y: 50), offset: NSPoint(x: 9, y: 51)),
+            (exit: NSPoint(x: 250, y: 50), base: NSPoint(x: 192, y: 50), offset: NSPoint(x: 191, y: 51)),
+            (exit: NSPoint(x: 100, y: 104), base: NSPoint(x: 100, y: 92), offset: NSPoint(x: 101, y: 91)),
+            (exit: NSPoint(x: 120, y: -5), base: NSPoint(x: 120, y: 8), offset: NSPoint(x: 119, y: 9)),
+            (exit: NSPoint(x: -20, y: -5), base: NSPoint(x: 8, y: 8), offset: NSPoint(x: 9, y: 9)),
+            (exit: NSPoint(x: 230, y: 120), base: NSPoint(x: 192, y: 92), offset: NSPoint(x: 191, y: 91)),
         ])
-    func parkHoldsTheExitPointInside(_ spot: (exit: NSPoint, parked: NSPoint)) throws {
+    func nudgesHoldTheExitPointInside(_ spot: (exit: NSPoint, base: NSPoint, offset: NSPoint)) throws {
         let view = makeView()
         try pressLeaving(at: spot.exit, view: view)
-        view.injectNudge(.center)
         let before = view.forwarded.count
 
-        view.parkNearExitPoint()
-
-        #expect(
-            Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: spot.parked)
-            ])
-    }
-
-    @Test("a release onto the catcher after a park returns to the center first")
-    func catcherReleaseAfterAParkLandsAtTheCenter() throws {
-        let view = makeView()
-        try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
+        view.injectNudge(.exitPoint)
         view.injectNudge(.offset)
-        view.parkNearExitPoint()
-        let before = view.forwarded.count
-
-        view.returnToCatcherTarget()
         view.injectRelease()
 
         #expect(
             Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: NSPoint(x: 100, y: 50)),
-                .init(type: .leftMouseUp, location: NSPoint(x: 100, y: 50)),
+                .init(type: .leftMouseDragged, location: spot.base),
+                .init(type: .leftMouseDragged, location: spot.offset),
+                .init(type: .leftMouseUp, location: spot.offset),
             ])
     }
 
-    @Test("a park leaves the exit point exact: the return before a release goes back to it unclamped")
-    func parkLeavesTheExitPointExact() throws {
+    @Test("a release after the exit-point nudge lands at that nudge's point")
+    func releaseAfterTheExitPointNudgeLandsThere() throws {
         let view = makeView()
         try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
-        view.parkNearExitPoint()
+        view.injectNudge(.offset)
+        let before = view.forwarded.count
+
+        view.injectNudge(.exitPoint)
+        view.injectRelease()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: NSPoint(x: 192, y: 50)),
+                .init(type: .leftMouseUp, location: NSPoint(x: 192, y: 50)),
+            ])
+    }
+
+    @Test("a nudge leaves the exit point exact: the return before a release goes back to it unclamped")
+    func nudgeLeavesTheExitPointExact() throws {
+        let view = makeView()
+        try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
+        view.injectNudge(.exitPoint)
         let before = view.forwarded.count
 
         view.returnToExitPoint()
@@ -358,14 +341,14 @@ struct VMDisplayMachineViewTests {
             ])
     }
 
-    @Test("a park goes near the session's last position over the display")
-    func parkFollowsTheSession() throws {
+    @Test("a nudge goes near the session's last position over the display")
+    func nudgeFollowsTheSession() throws {
         let view = makeView()
         try pressLeaving(at: NSPoint(x: 150, y: 60), view: view)
         view.injectDrag(at: NSPoint(x: 197, y: 40))
         let before = view.forwarded.count
 
-        view.parkNearExitPoint()
+        view.injectNudge(.exitPoint)
 
         #expect(
             Array(view.forwarded.dropFirst(before)) == [

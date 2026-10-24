@@ -4,16 +4,20 @@ import KernovaLogging
 
 /// Where a nudge puts the guest pointer.
 package enum GuestDragNudge: Equatable, Sendable {
-    /// The display's center: the one point certain to be on the guest's
-    /// framebuffer however the view letterboxes it, and under the guest's
-    /// catcher, which covers the whole guest screen.
-    case center
-    /// One point right of the center, so a nudge after a nudge is motion the
-    /// guest drag manager hit-tests again.
+    /// Where the drag left the display, held 8 points in from every edge of
+    /// the view. Past the guest screen, in a letterbox area, Virtualization
+    /// puts the guest pointer at the nearest point of the screen's edge
+    /// (docs/research/2026-10-23-vz-letterbox-pointer-mapping.md), so it is on
+    /// the guest screen either way, under the guest's catcher, which covers
+    /// the whole screen.
+    case exitPoint
+    /// One point from ``exitPoint`` toward the view's center on each axis, so
+    /// a nudge after a nudge is motion the guest drag manager hit-tests again;
+    /// where ``exitPoint`` maps to the screen's edge, that motion runs along it.
     case offset
 
     /// The variant the nudge after this one uses.
-    var next: GuestDragNudge { self == .center ? .offset : .center }
+    var next: GuestDragNudge { self == .exitPoint ? .offset : .exitPoint }
 }
 
 /// The VM display a take over drives: it withholds the press while the guest
@@ -33,16 +37,6 @@ package protocol GuestDragDisplay: AnyObject {
     /// the last physical event the display forwarded put it, or the last
     /// ``injectDrag(at:)`` — when it is anywhere else.
     func returnToExitPoint()
-
-    /// Moves the guest pointer, with a constructed drag event, to just inside
-    /// the display's edge where the drag left it: the exit point held a margin
-    /// in from every edge, so an auto-hidden Dock or a hot corner in the guest
-    /// does not fire. The exit point itself stays where it was.
-    func parkNearExitPoint()
-
-    /// Moves the guest pointer back to the center, where the catcher became
-    /// the drag's target, with a constructed drag event.
-    func returnToCatcherTarget()
 
     /// Releases the guest's button where the last event the display sent put
     /// the guest pointer, with a constructed mouse-up, which drops the guest's
@@ -132,12 +126,6 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// take the drop, where the drag left the display. Before the press goes back
 /// to the guest, the guest pointer returns to that exit point.
 ///
-/// While the drag is out on the Mac, each showing of the catcher that becomes
-/// its target parks the guest pointer, and the guest's drag image with it,
-/// just inside where the drag left the display. A release onto the catcher
-/// lands only where it reported `TARGETED`, so it first moves the guest pointer
-/// back from the park to the center.
-///
 /// The guest's drag stays live, its button held, for as long as the Mac
 /// session runs: over this VM's display the catcher stands down and the guest
 /// pointer follows the session, so a drag that comes back drops inside the
@@ -160,9 +148,8 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         /// `DragTake` is out and the press is withheld; `armed` once the guest
         /// reported its catcher up under the pointer.
         case handingOff(armed: Bool)
-        /// The guest reported its catcher as the drag's target and the guest
-        /// pointer is parked, so the next physical event may begin the Mac
-        /// session or release onto it.
+        /// The guest reported its catcher as the drag's target, so the next
+        /// physical event may begin the Mac session or release onto it.
         case ready
         /// A Mac drag session carries the items, and the guest's button is
         /// still held.
@@ -181,7 +168,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// Where the Mac session carrying the guest's drag stands.
     package enum Carriage: Equatable, Sendable {
         /// Off this VM's display; `targeted` while the guest's catcher, shown,
-        /// is the drag's target and the guest pointer is parked.
+        /// is the drag's target.
         case outside(targeted: Bool)
         /// Over this VM's display: the catcher is stood down, and the guest
         /// pointer follows the session.
@@ -225,7 +212,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     private let holds: @MainActor () -> Bool
     private let onFinished: @MainActor (GuestDragTake) -> Void
 
-    @ObservationIgnored private var nextNudge: GuestDragNudge = .center
+    @ObservationIgnored private var nextNudge: GuestDragNudge = .exitPoint
     @ObservationIgnored private var deadline: Task<Void, Never>?
     @ObservationIgnored private var holdsWatch: ObservationLoop?
 
@@ -450,13 +437,11 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             case .handingOff:
                 phase = .ready
                 stopDeadline()
-                display?.parkNearExitPoint()
                 Self.logger.log(
                     .notice,
                     "The guest's catcher is the target of drag gen=\(self.generation, privacy: .public)")
             case .carried(.outside(targeted: false)):
                 phase = .carried(.outside(targeted: true))
-                display?.parkNearExitPoint()
                 Self.logger.log(
                     .notice,
                     "The guest's catcher, shown again, is the target of drag gen=\(self.generation, privacy: .public)"
@@ -654,19 +639,13 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// Releases the guest's button at `spot`, which only ``Phase/ready`` and
     /// ``Phase/carried(_:)`` reach, and so at most once.
     private func release(at spot: ReleaseSpot) {
-        let parked: Bool
         switch phase {
-        case .ready, .carried(.outside(targeted: true)): parked = true
-        case .carried: parked = false
+        case .ready, .carried: break
         case .handingOff, .released, .unreleased, .abandoned: return
         }
         phase = .released(at: spot)
         stopBounds()
-        switch spot {
-        case .catcher: if parked { display?.returnToCatcherTarget() }
-        case .exitPoint: display?.returnToExitPoint()
-        case .dropPoint: break
-        }
+        if spot == .exitPoint { display?.returnToExitPoint() }
         display?.injectRelease()
         Self.logger.log(
             .notice,

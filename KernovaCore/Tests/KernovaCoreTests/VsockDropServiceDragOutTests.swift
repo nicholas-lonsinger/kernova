@@ -33,8 +33,6 @@ struct VsockDropServiceDragOutTests {
         case nudge(GuestDragNudge)
         case drag(CGPoint)
         case returnToExit
-        case park
-        case returnToTarget
         case beginSession
         case release
         case resume
@@ -47,13 +45,10 @@ struct VsockDropServiceDragOutTests {
         let changed = AsyncGate()
 
         var releaseCount: Int { calls.filter { $0 == .release }.count }
-        var parkCount: Int { calls.filter { $0 == .park }.count }
 
         func injectNudge(_ nudge: GuestDragNudge) { record(.nudge(nudge)) }
         func injectDrag(at point: CGPoint) { record(.drag(point)) }
         func returnToExitPoint() { record(.returnToExit) }
-        func parkNearExitPoint() { record(.park) }
-        func returnToCatcherTarget() { record(.returnToTarget) }
         func injectRelease() { record(.release) }
         func resumeForwarding() { record(.resume) }
 
@@ -451,14 +446,14 @@ struct VsockDropServiceDragOutTests {
         #expect(harness.display.calls.isEmpty)
 
         try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
-        #expect(harness.display.calls == [.nudge(.center)])
+        #expect(harness.display.calls == [.nudge(.exitPoint)])
 
         take.withheldDrag()
         take.withheldDrag()
-        #expect(harness.display.calls == [.nudge(.center), .nudge(.offset), .nudge(.center)])
+        #expect(harness.display.calls == [.nudge(.exitPoint), .nudge(.offset), .nudge(.exitPoint)])
     }
 
-    @Test("TARGETED readies the take and parks, and the next withheld drag begins the session without a release")
+    @Test("TARGETED readies the take, and the next withheld drag begins the session without a release")
     func targetedBeginsTheSessionWithoutARelease() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
@@ -466,11 +461,11 @@ struct VsockDropServiceDragOutTests {
         try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
 
         try await harness.handOff(.targeted, for: take, reaching: .ready)
-        #expect(harness.display.calls == [.nudge(.center), .park])
+        #expect(harness.display.calls == [.nudge(.exitPoint)])
 
         take.withheldDrag()
 
-        #expect(harness.display.calls == [.nudge(.center), .park, .beginSession])
+        #expect(harness.display.calls == [.nudge(.exitPoint), .beginSession])
         #expect(take.phase == .carried(.outside(targeted: true)))
         // The guest's drag is still live, so nothing tells its catcher to go.
         try await harness.hostToGuestBarrier(scratch: scratch.url)
@@ -487,22 +482,8 @@ struct VsockDropServiceDragOutTests {
 
         take.withheldMouseUp()
 
-        // Onto the catcher where it was targeted, back from the park.
-        #expect(harness.display.calls == [.nudge(.center), .park, .returnToTarget, .release])
+        #expect(harness.display.calls == [.nudge(.exitPoint), .release])
         #expect(take.phase == .released(at: .catcher))
-    }
-
-    @Test("a release onto the catcher once the session is out returns from the park to where it was targeted")
-    func catcherReleaseReturnsFromThePark() async throws {
-        let harness = try Harness()
-        defer { harness.tearDown() }
-        let take = try await harness.carriedTake([try makeFile(named: "a.txt", contents: "a")])
-
-        take.hostSessionEnded(dropped: true)
-
-        #expect(take.phase == .released(at: .catcher))
-        #expect(
-            harness.display.calls == [.nudge(.center), .park, .beginSession, .returnToTarget, .release])
     }
 
     @Test("a released take never releases again")
@@ -572,7 +553,6 @@ struct VsockDropServiceDragOutTests {
         // before the press is the guest's again.
         #expect(harness.display.calls.suffix(2) == [.returnToExit, .resume])
         #expect(harness.display.releaseCount == 0)
-        #expect(harness.display.parkCount == 0)
         #expect(!harness.display.calls.contains(.beginSession))
         if failure != .channelLost {
             try await harness.waitForComplete(take.generation)
@@ -764,7 +744,7 @@ struct VsockDropServiceDragOutTests {
         #expect(take.phase == .carried(.outside(targeted: false)))
         // The user's own motion re-nudges until the catcher is the target.
         take.hostSessionMoved()
-        #expect(harness.display.calls.last == .nudge(.center))
+        #expect(harness.display.calls.last == .nudge(.exitPoint))
 
         try await harness.handOff(.targeted, for: take, reaching: .carried(.outside(targeted: true)))
         let nudges = harness.display.calls.count
@@ -774,36 +754,6 @@ struct VsockDropServiceDragOutTests {
         take.hostSessionEnded(dropped: true)
         #expect(take.phase == .released(at: .catcher))
         #expect(harness.display.calls.last == .release)
-    }
-
-    @Test("each showing out on the Mac parks the guest pointer once, after its TARGETED, and never over the display")
-    func eachShowingParksOnce() async throws {
-        let harness = try Harness()
-        defer { harness.tearDown() }
-        let take = try await harness.offerAndTake([try makeFile(named: "a.txt", contents: "a")])
-        try await harness.handOff(.armed, for: take, reaching: .handingOff(armed: true))
-        take.withheldDrag()
-        #expect(harness.display.parkCount == 0)
-
-        try await harness.handOff(.targeted, for: take, reaching: .ready)
-        #expect(harness.display.calls.last == .park)
-        take.withheldDrag()
-        #expect(take.phase == .carried(.outside(targeted: true)))
-
-        #expect(take.hostSession(over: harness.display, at: CGPoint(x: 10, y: 20)))
-        #expect(take.hostSession(over: harness.display, at: CGPoint(x: 12, y: 22)))
-        take.hostSessionLeft(harness.display)
-        try await harness.handOff(.armed, for: take, until: .nudge(.center), times: 2)
-        take.hostSessionMoved()
-        #expect(harness.display.parkCount == 1)
-
-        try await harness.handOff(.targeted, for: take, reaching: .carried(.outside(targeted: true)))
-        #expect(Array(harness.display.calls.suffix(2)) == [.nudge(.offset), .park])
-        // A TARGETED repeated for the same showing parks nothing more; the
-        // catch after it on the same channel says it has arrived.
-        harness.guest.sendDragHandOff(generation: take.generation, step: .targeted)
-        try await harness.handOff(.caught, for: take, reaching: .unreleased)
-        #expect(harness.display.parkCount == 2)
     }
 
     @Test("a session that ends untargeted waits for TARGETED, then releases onto the catcher")
@@ -823,10 +773,6 @@ struct VsockDropServiceDragOutTests {
         try await harness.waitForDisplay(.release)
         #expect(take.phase == .released(at: .catcher))
         #expect(!harness.display.calls.contains(.returnToExit))
-        // A showing up only for the release parks nothing: the release
-        // follows its nudge.
-        #expect(Array(harness.display.calls.suffix(2)) == [.nudge(.offset), .release])
-        #expect(harness.display.parkCount == 1)
     }
 
     @Test("a session cancelled over its display shows the catcher again and waits for it")
@@ -845,8 +791,6 @@ struct VsockDropServiceDragOutTests {
         harness.guest.sendDragHandOff(generation: take.generation, step: .targeted)
         try await harness.waitForDisplay(.release)
         #expect(take.phase == .released(at: .catcher))
-        #expect(Array(harness.display.calls.suffix(2)) == [.nudge(.offset), .release])
-        #expect(harness.display.parkCount == 1)
     }
 
     /// Every way the catcher can fail to take a drag whose session ended.

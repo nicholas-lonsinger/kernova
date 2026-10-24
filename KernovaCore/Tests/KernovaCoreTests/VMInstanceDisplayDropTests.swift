@@ -273,8 +273,6 @@ struct VMInstanceDisplayDropTests {
         func injectNudge(_ nudge: GuestDragNudge) {}
         func injectDrag(at point: CGPoint) {}
         func returnToExitPoint() {}
-        func parkNearExitPoint() {}
-        func returnToCatcherTarget() {}
         func injectRelease() {}
         func beginHostSession(carrying take: any GuestDragTaking) -> Bool { false }
 

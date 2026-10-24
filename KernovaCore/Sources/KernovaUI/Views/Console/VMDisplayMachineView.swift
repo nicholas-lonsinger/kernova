@@ -49,16 +49,19 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     private var withheldDrag: NSEvent?
 
     /// Where the last event this view sent the guest put its pointer, which
-    /// is where a release goes.
-    private var guestPointer: NSPoint?
+    /// is where a release goes. Each press's `mouseDown` sets it before any
+    /// take can exist.
+    private var guestPointer = NSPoint.zero
 
     /// Where the drag left the display: the last physical event forwarded, or
     /// the last point a Mac session put the guest pointer over the display.
-    private var exitPoint: NSPoint?
+    /// Each press's `mouseDown` sets it before any take can exist.
+    private var exitPoint = NSPoint.zero
 
-    /// How far in from each edge of the display a park holds the guest
-    /// pointer.
-    private static let parkInset: CGFloat = 8
+    /// How far in from each edge of the display a nudge holds the guest
+    /// pointer, so an auto-hidden Dock or a hot corner in the guest does not
+    /// fire.
+    private static let nudgeInset: CGFloat = 8
 
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMDisplayMachineView")
@@ -71,8 +74,6 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         case .idle, .tracking, .forwarding: break
         }
         press = .tracking
-        guestPointer = nil
-        exitPoint = nil
         transferHost()?.displayPressBegan()
         forwardPhysical(event)
     }
@@ -153,26 +154,13 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     }
 
     func returnToExitPoint() {
-        guard let exitPoint, exitPoint != guestPointer else { return }
+        guard exitPoint != guestPointer else { return }
         inject(.leftMouseDragged, at: exitPoint)
-    }
-
-    func parkNearExitPoint() {
-        guard let exitPoint else { return }
-        let inset = Self.parkInset
-        let parked = NSPoint(
-            x: min(max(exitPoint.x, bounds.minX + inset), bounds.maxX - inset),
-            y: min(max(exitPoint.y, bounds.minY + inset), bounds.maxY - inset))
-        inject(.leftMouseDragged, at: parked)
-    }
-
-    func returnToCatcherTarget() {
-        inject(.leftMouseDragged, at: nudgePoint(.center))
     }
 
     func injectRelease() {
         press = .idle
-        inject(.leftMouseUp, at: guestPointer ?? nudgePoint(.center))
+        inject(.leftMouseUp, at: guestPointer)
     }
 
     func beginHostSession(carrying take: any GuestDragTaking) -> Bool {
@@ -236,10 +224,17 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
 
     /// Where `nudge` puts the guest pointer, in this view's coordinates.
     func nudgePoint(_ nudge: GuestDragNudge) -> NSPoint {
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        let inset = Self.nudgeInset
+        let base = NSPoint(
+            x: min(max(exitPoint.x, bounds.minX + inset), bounds.maxX - inset),
+            y: min(max(exitPoint.y, bounds.minY + inset), bounds.maxY - inset))
         switch nudge {
-        case .center: return center
-        case .offset: return NSPoint(x: center.x + 1, y: center.y)
+        case .exitPoint:
+            return base
+        case .offset:
+            return NSPoint(
+                x: base.x + (bounds.midX >= base.x ? 1 : -1),
+                y: base.y + (bounds.midY >= base.y ? 1 : -1))
         }
     }
 

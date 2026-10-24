@@ -218,9 +218,8 @@ private final class CatcherView: NSView {
 
 /// The "Copy to Mac" box, at the screen's center.
 ///
-/// The host parks the guest pointer, and with it the drag image its source
-/// draws, just inside the edge the drag left the VM's display by, after a
-/// moment at the center while the catcher takes the drag; the box sits at the
+/// The host holds the guest pointer, and with it the drag image its source
+/// draws, by the edge the drag left the VM's display by; the box sits at the
 /// center. Decoration only: no point in it takes a hit test, so the whole
 /// screen stays the catcher's drag destination and click target.
 private final class CatcherHUD: NSVisualEffectView {
