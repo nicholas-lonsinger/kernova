@@ -85,6 +85,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
 
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
+    private let dragNamingDeadline: TimeInterval
     private let clock: any EngineClock
 
     // `nonisolated` so a log line can be written from any thread; `Logger` is
@@ -123,6 +124,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        dragNamingDeadline: TimeInterval = GuestDragTake.namingDeadline,
         directoryByteCount: @escaping @Sendable (URL) -> Int = {
             ClipboardArchive.estimatedByteCount(at: $0)
         },
@@ -137,6 +139,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         self.runOffMainActor = runOffMainActor
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
+        self.dragNamingDeadline = dragNamingDeadline
         self.clock = clock
         let staging = ClipboardFileStaging(
             label: "host-drag-\(stagingKey)", root: stagingRoot, receivingOn: .drop, as: .host,
@@ -356,7 +359,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         let take = GuestDragTake(
             drag: drag, endpoint: endpoint, display: display, reporter: reporter, peerName: label,
             progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
-            clock: clock, holds: holds,
+            namingDeadline: dragNamingDeadline, clock: clock, holds: holds,
             onFinished: { [weak self, dragStaging] take in
                 self?.takes[take.generation] = nil
                 dragStaging.discardGeneration(take.generation)

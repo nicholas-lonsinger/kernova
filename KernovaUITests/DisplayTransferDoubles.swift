@@ -54,6 +54,7 @@ final class FakeTake: GuestDragTaking {
         case hostSessionLeft
         case hostSessionDropped(CGPoint)
         case hostSessionEnded(dropped: Bool)
+        case namedItemsForInAppDestination
     }
 
     nonisolated let generation: UInt64 = 1
@@ -68,6 +69,8 @@ final class FakeTake: GuestDragTaking {
     var onPointerReturned: () -> Void = {}
     /// Runs when the Mac session ends.
     var onHostSessionEnded: () -> Void = {}
+    /// Answers an in-app destination's naming, as a take would.
+    var onNameItems: () -> Bool = { true }
     /// Whether the take carries the Mac session over a display, so a drop
     /// there goes to the guest.
     var carriesOverDisplay = false
@@ -127,6 +130,15 @@ final class FakeTake: GuestDragTaking {
     func hostSessionEnded(dropped: Bool) {
         events.append(.hostSessionEnded(dropped: dropped))
         onHostSessionEnded()
+    }
+
+    nonisolated func filename(forItemAt index: Int) -> String {
+        items[index].filename ?? "File"
+    }
+
+    func nameItemsForInAppDestination() -> Bool {
+        events.append(.namedItemsForInAppDestination)
+        return onNameItems()
     }
 
     nonisolated func writeItem(at index: Int, to destination: URL) throws {

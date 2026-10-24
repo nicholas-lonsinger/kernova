@@ -344,6 +344,7 @@ final class VMDisplayBackingView: NSView {
             guard !urls.isEmpty else { return false }
             return sendToGuest(urls, stagedIn: nil)
         }
+        guard DisplayDragOutSource.nameItems(of: sender) else { return false }
         receivePromises(receivers, alongside: urls)
         // The promised files are written asynchronously, so the drag ends taken
         // and the offer follows once they land.

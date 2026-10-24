@@ -116,6 +116,12 @@ final class GuestDragItemWriter {
         cancel()
     }
 
+    /// The drag's promised items could not be named for a destination about to
+    /// call them in, which then never asks: ends the transfers and reports it.
+    func failNaming() {
+        fail(.dragItemUnnamed)
+    }
+
     // MARK: - Writing items
 
     /// Writes item `index` to exactly `destination`, blocking until it lands;
@@ -175,6 +181,14 @@ final class GuestDragItemWriter {
         guard items.indices.contains(index) else {
             return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
         }
+        let item = items[index]
+        if terminal == nil, item.isPromised,
+            endpoint.resolvedDragNames(generation: generation)?[item.repIndex] == nil
+        {
+            // The destination was handed a stand-in name
+            // (`GuestDragTake.filename(forItemAt:)`), which no write fills.
+            endTransfers(on: .dragItemUnnamed, reported: false)
+        }
         if let terminal {
             if case .failed(let failure, reported: false) = terminal {
                 self.terminal = .failed(failure, reported: true)
@@ -189,7 +203,7 @@ final class GuestDragItemWriter {
             return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
         }
         writesInFlight += 1
-        return .success((items[index].repIndex, liveReadout()))
+        return .success((item.repIndex, liveReadout()))
     }
 
     /// Settles one write, returning the error its caller throws, if any.

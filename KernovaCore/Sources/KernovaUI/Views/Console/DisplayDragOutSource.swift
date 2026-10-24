@@ -32,20 +32,18 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         return queue
     }()
 
-    /// What one promise names: which item it is, what it is called, and the
-    /// source that writes it.
+    /// What one promise names: which item it is, and the source that names
+    /// and writes it.
     ///
     /// Carried as the provider's `userInfo`, which the provider holds strongly,
     /// because its `delegate` is weak and a destination can ask for the file
     /// after the session that carried it has ended.
     final class PromisedItem: Sendable {
         let index: Int
-        let filename: String?
         let source: DisplayDragOutSource
 
-        init(index: Int, filename: String?, source: DisplayDragOutSource) {
+        init(index: Int, source: DisplayDragOutSource) {
             self.index = index
-            self.filename = filename
             self.source = source
         }
     }
@@ -67,7 +65,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         let draggingItems = take.items.indices.map { index in
             let item = take.items[index]
             let provider = NSFilePromiseProvider(fileType: item.type.identifier, delegate: self)
-            provider.userInfo = PromisedItem(index: index, filename: item.filename, source: self)
+            provider.userInfo = PromisedItem(index: index, source: self)
             let draggingItem = NSDraggingItem(pasteboardWriter: provider)
             draggingItem.setDraggingFrame(frame, contents: NSWorkspace.shared.icon(for: item.type))
             return draggingItem
@@ -125,6 +123,19 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
         take.hostSessionEnded(dropped: dropped)
     }
 
+    // MARK: - Destinations in this app
+
+    /// Has a drag out of a VM display name its promised items before a
+    /// destination in this app calls them in, reporting whether the drop may
+    /// go ahead; any other drag may.
+    ///
+    /// ``GuestDragTaking/nameItemsForInAppDestination()`` has why the names
+    /// come first.
+    static func nameItems(of sender: any NSDraggingInfo) -> Bool {
+        guard let source = sender.draggingSource as? DisplayDragOutSource else { return true }
+        return source.take.nameItemsForInAppDestination()
+    }
+
     // MARK: - NSFilePromiseProviderDelegate
 
     // Every method here is `nonisolated`: AppKit asks from whichever queue is
@@ -136,7 +147,8 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
     nonisolated func filePromiseProvider(
         _ filePromiseProvider: NSFilePromiseProvider, fileNameForType fileType: String
     ) -> String {
-        (filePromiseProvider.userInfo as? PromisedItem)?.filename ?? "File"
+        guard let promised = filePromiseProvider.userInfo as? PromisedItem else { return "File" }
+        return promised.source.take.filename(forItemAt: promised.index)
     }
 
     nonisolated func filePromiseProvider(

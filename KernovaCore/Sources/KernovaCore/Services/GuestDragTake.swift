@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import UniformTypeIdentifiers
 
 /// Where a nudge puts the guest pointer.
 package enum GuestDragNudge: Equatable, Sendable {
@@ -105,6 +106,23 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// The Mac drag session ended; `dropped` is whether a destination took it.
     func hostSessionEnded(dropped: Bool)
 
+    /// What item `index` is called where a Mac destination writes it, asking
+    /// the guest for a promised item's name when nothing has yet — from any
+    /// thread, holding it for a bounded time.
+    ///
+    /// A promised item the guest could not name gets a stand-in name, and its
+    /// write then fails.
+    nonisolated func filename(forItemAt index: Int) -> String
+
+    /// Has the guest name the drag's promised items before a destination in
+    /// this app calls them in, holding the main thread for a bounded time,
+    /// and reports whether they are named; a failure is reported as the drag's.
+    ///
+    /// An in-app destination's provider can be asked for names off the main
+    /// thread while the main thread waits in `receivePromisedFiles`, and the
+    /// release naming needs runs on the main thread.
+    func nameItemsForInAppDestination() -> Bool
+
     /// Writes item `index` to exactly `destination`, blocking until it lands.
     ///
     /// For an `NSFilePromiseProvider` operation queue: never the main thread.
@@ -132,6 +150,13 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// guest. `NSDraggingSession` cannot be withdrawn, so the session begins only
 /// from ``Phase/ready``, which only `TARGETED` enters, and every failure before
 /// it hands the press back.
+///
+/// A promised item has no name until the guest's catcher calls it in, so the
+/// first Mac destination to ask for one has the guest name them all: the take
+/// asks (`DragResolve`), and releases the guest's button onto its catcher once
+/// the guest answers that the catcher calls them in on that drop. A
+/// destination that took the drop without asking yet has them named as the
+/// session ends, so its later ask is answered at once.
 @MainActor
 @Observable
 package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
@@ -142,6 +167,13 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// A bound on a peer Kernova does not own; the catcher normally reports
     /// within a frame or two of the first nudge.
     package static let handOffDeadline: TimeInterval = 3
+
+    /// How long a Mac destination asking for a promised item's name waits for
+    /// the guest to name it.
+    ///
+    /// A bound on a peer Kernova does not own; Photos and Safari promises in a
+    /// macOS 26.6.2 guest were named 4–16 ms after the catcher called them in.
+    package static let namingDeadline: TimeInterval = 2
 
     /// Where the hand-off stands.
     package enum Phase: Equatable, Sendable {
@@ -205,6 +237,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
 
     nonisolated private let endpoint: ClipboardEndpoint
     nonisolated private let writer: GuestDragItemWriter
+    nonisolated private let namingDeadline: TimeInterval
     @ObservationIgnored private weak var display: (any GuestDragDisplay)?
     private let reporter: ClipboardTransferReporter
     private let peerName: String
@@ -250,6 +283,20 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     @ObservationIgnored private var isRetired = false
     @ObservationIgnored private var isFinished = false
 
+    // MARK: Naming promised items
+
+    /// What the take decided about asking the guest to name the drag's
+    /// promised items; `nil` until something needs them.
+    private enum Naming {
+        /// The guest was asked; every later ask joins that one.
+        case asked
+        /// A destination asked while the catcher was not the drag's target and
+        /// holds a stand-in name, so nothing asks the guest any more.
+        case forgone
+    }
+
+    @ObservationIgnored private var naming: Naming?
+
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "GuestDragTake")
 
@@ -262,7 +309,8 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     init(
         drag: ClipboardInboundDrag, endpoint: ClipboardEndpoint, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
-        progressRevealDelay: TimeInterval, progressIdleGap: TimeInterval, clock: any EngineClock,
+        progressRevealDelay: TimeInterval, progressIdleGap: TimeInterval,
+        namingDeadline: TimeInterval = GuestDragTake.namingDeadline, clock: any EngineClock,
         holds: @escaping @MainActor () -> Bool,
         onFinished: @escaping @MainActor (GuestDragTake) -> Void
     ) {
@@ -273,6 +321,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             generation: drag.generation, items: drag.items, endpoint: endpoint, reporter: reporter,
             peerName: peerName, progressRevealDelay: progressRevealDelay,
             progressIdleGap: progressIdleGap)
+        self.namingDeadline = namingDeadline
         self.display = display
         self.reporter = reporter
         self.peerName = peerName
@@ -396,6 +445,13 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
 
     package func hostSessionEnded(dropped: Bool) {
         if !dropped { noDestinationAsks = true }
+        if phase == .carried(.outside(targeted: true)), namingOwed {
+            // The destination may ask for the names only once the session is
+            // over, so the guest names them now, on the release that ends its
+            // drag.
+            naming = .asked
+            _ = resolveNames(releasingFrom: phase)
+        }
         guard case .carried(let carriage) = phase else { return retireIfDone() }
         switch carriage {
         case .outside(targeted: true):
@@ -447,6 +503,11 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
                     "The guest's catcher, shown again, is the target of drag gen=\(self.generation, privacy: .public)"
                 )
             case .carried(.ended):
+                if namingOwed {
+                    stopDeadline()
+                    naming = .asked
+                    _ = resolveNames(releasingFrom: phase)
+                }
                 release(at: .catcher)
             case .ready, .carried, .released, .unreleased, .abandoned:
                 break
@@ -746,6 +807,109 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// carries them, and it neither ended with nothing taking it nor was
     /// dropped into the guest.
     private var destinationMayAsk: Bool { hasHostSession && !noDestinationAsks }
+
+    // MARK: - Naming promised items
+
+    /// A promised item's name comes from the guest only while the catcher is
+    /// the drag's target. A destination asking at any other moment gets a
+    /// stand-in at once rather than having the catcher re-targeted, which
+    /// takes the take's own nudges on the main actor this wait may be holding:
+    /// a Mac drop within a frame or two of the session leaving the display
+    /// again is that case.
+    nonisolated package func filename(forItemAt index: Int) -> String {
+        guard items.indices.contains(index) else { return Self.genericStem(isDirectory: false) }
+        let item = items[index]
+        if let filename = item.filename { return filename }
+        return promisedNames()?[item.repIndex] ?? Self.standInName(for: item)
+    }
+
+    package func nameItemsForInAppDestination() -> Bool {
+        guard items.contains(where: \.isPromised) else { return true }
+        guard promisedNames() != nil else {
+            writer.failNaming()
+            return false
+        }
+        return true
+    }
+
+    /// Whether a destination that took the drop may yet ask for promised items
+    /// nothing has asked the guest to name.
+    private var namingOwed: Bool {
+        destinationMayAsk && naming == nil && items.contains(where: \.isPromised)
+    }
+
+    /// The names the guest gave the promised items — asking for them while the
+    /// catcher is the drag's target, when nothing has yet — or `nil` when they
+    /// cannot be had.
+    nonisolated private func promisedNames() -> [Int: String]? {
+        if let names = endpoint.resolvedDragNames(generation: generation) { return names }
+        let targeted = Phase.carried(.outside(targeted: true))
+        guard MainActorBridge.sync({ self.admitNaming(from: targeted) }) else { return nil }
+        return resolveNames(releasingFrom: targeted)
+    }
+
+    /// Whether the guest is asked for names now: a first ask decides, by
+    /// whether the take is in `expected`, and every later one follows it.
+    private func admitNaming(from expected: Phase) -> Bool {
+        if let naming { return naming == .asked }
+        guard phase == expected else {
+            naming = .forgone
+            Self.logger.log(
+                .warning,
+                "A Mac destination asked for the names of drag gen=\(self.generation, privacy: .public)'s promised items while the guest's catcher was not its target; they get stand-in names"
+            )
+            return false
+        }
+        naming = .asked
+        return true
+    }
+
+    /// Has the guest name the promised items, its button released from
+    /// `expected` once the catcher will call them in, returning the names or
+    /// `nil` when they could not be had.
+    nonisolated private func resolveNames(releasingFrom expected: Phase) -> [Int: String]? {
+        let result = endpoint.resolveDragNames(
+            generation: generation, deadline: .now() + namingDeadline
+        ) {
+            MainActorBridge.sync { self.releaseForNaming(from: expected) }
+        }
+        switch result {
+        case .success(let names):
+            return names
+        case .failure(let failure):
+            Self.logger.log(
+                .warning,
+                "The guest did not name drag gen=\(self.generation, privacy: .public)'s promised items: \(String(describing: failure), privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    /// Releases the guest's button onto its catcher, which answered that it
+    /// calls the promises in on this drop — unless the take has moved on from
+    /// `expected`, where its own paths release.
+    private func releaseForNaming(from expected: Phase) {
+        guard phase == expected else {
+            Self.logger.log(
+                .notice,
+                "Drag gen=\(self.generation, privacy: .public) moved on before the guest's catcher was ready to call its promises in; no release for them"
+            )
+            return
+        }
+        release(at: .catcher)
+    }
+
+    /// What a promised item the guest did not name is called: a generic stem
+    /// with its declared type's extension.
+    nonisolated static func standInName(for item: ClipboardDraggedItem) -> String {
+        let stem = genericStem(isDirectory: item.isDirectory)
+        guard let pathExtension = item.type.preferredFilenameExtension else { return stem }
+        return "\(stem).\(pathExtension)"
+    }
+
+    nonisolated private static func genericStem(isDirectory: Bool) -> String {
+        ClipboardDraggedItem.safeFilename("", isDirectory: isDirectory)
+    }
 
     // MARK: - Writing items
 

@@ -507,8 +507,7 @@ struct DisplayDragOutSourceTests {
 
         let answers = await Task.detached {
             let provider = NSFilePromiseProvider(fileType: "public.plain-text", delegate: source)
-            provider.userInfo = DisplayDragOutSource.PromisedItem(
-                index: 0, filename: "report.txt", source: source)
+            provider.userInfo = DisplayDragOutSource.PromisedItem(index: 0, source: source)
             return (
                 source.filePromiseProvider(provider, fileNameForType: provider.fileType),
                 source.operationQueue(for: provider).maxConcurrentOperationCount
