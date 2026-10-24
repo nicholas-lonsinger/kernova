@@ -967,7 +967,7 @@ struct GuestDragOutTests {
     }
 
     @Test(
-        "the catcher's box sits centered below the screen's middle, clear of the drag image there",
+        "the catcher's box sits centered below the screen's middle",
         arguments: [
             NSRect(x: 0, y: 0, width: 1440, height: 900),
             NSRect(x: 1440, y: -82, width: 1511, height: 983),
@@ -1013,9 +1013,20 @@ struct GuestDragOutTests {
         let (window, _) = catcherWindow(for: [URL(fileURLWithPath: "/\(name)")])
         let (box, _, _, nameLabel) = try hud(in: window)
 
-        #expect(nameLabel.frame.width <= 272)
+        #expect(abs(nameLabel.alignmentRect(forFrame: nameLabel.frame).width - 272) < 0.5)
         #expect(nameLabel.lineBreakMode == .byTruncatingMiddle)
-        #expect(box.frame.width <= 272 + 48)
+        #expect(abs(box.frame.width - (272 + 48)) < 0.5)
+    }
+
+    @Test("a name wider than the icon but within the name line's widest shows whole, widening the box")
+    func catcherHUDWidensForAName() throws {
+        let (window, _) = catcherWindow(for: [URL(fileURLWithPath: "/Quarterly report draft, final v3.txt")])
+        let (box, icon, _, nameLabel) = try hud(in: window)
+        let whole = nameLabel.intrinsicContentSize.width
+        try #require(whole > icon.frame.width && whole < 272)
+
+        #expect(abs(nameLabel.alignmentRect(forFrame: nameLabel.frame).width - whole) < 0.5)
+        #expect(abs(box.frame.width - (whole + 48)) < 0.5)
     }
 
     @Test(

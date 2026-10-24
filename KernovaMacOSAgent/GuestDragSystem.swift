@@ -216,12 +216,10 @@ private final class CatcherView: NSView {
     }
 }
 
-/// The "Copy to Mac" box: the taken items' icon, the title, and the items'
-/// name or count, centered horizontally with its top 72 points below the
-/// screen's middle.
+/// The "Copy to Mac" box, below the guest's drag image.
 ///
-/// The host parks the guest pointer at the screen's center, so the guest's
-/// drag image hangs there; the box sits below it and never touches it.
+/// The host parks the guest pointer at the screen's center, so the drag image
+/// hangs there, drawn as its source draws it; the box sits below that point.
 /// Decoration only: no point in it takes a hit test, so the whole screen stays
 /// the catcher's drag destination and click target.
 private final class CatcherHUD: NSVisualEffectView {
@@ -250,7 +248,6 @@ private final class CatcherHUD: NSVisualEffectView {
         nameLabel.textColor = .secondaryLabelColor
         nameLabel.lineBreakMode = .byTruncatingMiddle
         nameLabel.maximumNumberOfLines = 1
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let rows: [NSView] = [iconView, title, nameLabel]
         for row in rows {
             row.translatesAutoresizingMaskIntoConstraints = false
