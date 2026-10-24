@@ -721,7 +721,8 @@ struct ClipboardEndpointDragTests {
             ])
 
         let steps: [ClipboardDragHandOffStep] = [
-            .armed, .targeted, .resolving, .caught, .failed(.dragTakeRefused, message: "no copy"),
+            .armed, .targeted, .resolving, .resolveRefused, .caught,
+            .failed(.dragTakeRefused, message: "no copy"),
         ]
         for step in steps {
             pair.guest.endpoint.sendDragHandOff(generation: 7, step: step)

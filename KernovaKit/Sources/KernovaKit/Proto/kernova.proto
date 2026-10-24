@@ -502,9 +502,10 @@ message DragOffer {
   // Indices into `rep_info` of the items the drag carries as file promises,
   // which exist only once a destination calls them in. Each declares only its
   // promised type in `uti`, with an empty `filename`, a `byte_count` of 0, and
-  // `is_directory` set when that type conforms to `public.directory`. The
-  // guest names them in `DragNames` once the host's `DragResolve` has them
-  // called in, and sizes each in `DragSizes` once it is written.
+  // `is_directory` set when that type conforms to `public.directory`. Once the
+  // host's `DragResolve` has them called in, the guest names each in
+  // `DragNames` as it is called in, and sizes each in `DragSizes` once it is
+  // written.
   repeated uint32 promised = 3;
 }
 
@@ -561,6 +562,10 @@ message DragHandOff {
     // the drop lands on it. The one step after which the host releases the
     // guest's button to resolve them.
     STAGE_RESOLVING = 5;
+    // Answers a `DragResolve` the catcher will not act on — it holds no such
+    // take, or the drag is not on it, or it was caught or refused. The take
+    // stands as it was: this says nothing about the hand-off.
+    STAGE_RESOLVE_REFUSED = 6;
   }
   Stage stage = 2;
 
@@ -592,14 +597,15 @@ message DragSizes {
 // Host->guest: a Mac destination wants the promised items of the drag for
 // `generation`. The guest answers `DragHandOff{STAGE_RESOLVING}` once its
 // catcher will call them in on the drop the host then releases onto it, or
-// `STAGE_FAILED`, and sends `DragNames` once they are called in.
+// `STAGE_RESOLVE_REFUSED`, and sends `DragNames` as they are called in.
 message DragResolve {
   uint64 generation = 1;
 }
 
-// Guest->host: the names the promised items of the drag for `generation` took
-// when the catcher called them in, keyed by each item's index in the offer. An
-// index left out could not be named.
+// Guest->host: names for promised items of the drag for `generation`, sent as
+// the catcher calls each in, keyed by the item's index in the offer. Each
+// frame names only the items it lists, and names accumulate across frames; an
+// empty name means that item will not be named.
 message DragNames {
   uint64 generation = 1;
   map<uint32, string> filenames = 2;

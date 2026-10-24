@@ -11,6 +11,11 @@ import KernovaLogging
 /// the drag (`DragComplete`, or the connection ending) and every reader
 /// callback has come back — not before, since a host still pulling reads from
 /// it and a source still writing writes into it.
+///
+/// Each promised item is named to the host by its receiver's first file name
+/// as its call-in returns, and resolved by the file of that name alone: when a
+/// receiver names several, the order its reader callbacks arrive in pairs
+/// nothing.
 @MainActor
 final class GuestDragPromises {
     nonisolated private static let logger = KernovaLogger(
@@ -25,6 +30,12 @@ final class GuestDragPromises {
         let folder: URL
         /// Each promised item's receiver, by the item's index in the offer.
         let receivers: [Int: any FilePromiseReceiving]
+        /// The name each promised item went to the host under, by the same
+        /// index; empty for one that named nothing.
+        var sentNames: [Int: String] = [:]
+        /// The promised items the host has been told are resolved or
+        /// unavailable — a folder from when its measure begins.
+        var settled: Set<Int> = []
         /// The reader callbacks each receiver owes, by the same index.
         var tally: FilePromiseTally<Int>
         /// The promised folders whose tree is being measured.
@@ -59,6 +70,11 @@ final class GuestDragPromises {
 
     private var callIns: [UInt64: CallIn] = [:]
 
+    /// Where a drag's folder is removed, off the main actor: once it leaves
+    /// ``callIns`` nothing on the main actor can reach it.
+    nonisolated private let removals = DispatchQueue(
+        label: "app.kernova.macosagent.drag-out-promises.removal", qos: .utility)
+
     /// The connection ended: reads still owed only settle, and tell nobody.
     private var stopped = false
 
@@ -71,12 +87,14 @@ final class GuestDragPromises {
     // MARK: - Calling in
 
     /// Calls in the promises a drop of the drag `claim` names carries, read in
-    /// drag order as `receivers`, and sends the host the names they took.
+    /// drag order as `receivers`, and sends the host each one's name as its
+    /// call-in returns.
     ///
     /// The receivers pair with the drag's promised items in order; any other
     /// count leaves which is which unknown, so then none is called in and
-    /// every promised item is unavailable. `DragNames` goes out on every path:
-    /// the host holds a Mac destination waiting for it.
+    /// every promised item is unavailable. Every promised item is named on
+    /// every path, empty when it has no name: the host holds a Mac destination
+    /// waiting for each.
     func callIn(_ claim: GuestDragWatcher.Claim, receivers: [any FilePromiseReceiving]) {
         let generation = claim.generation
         let promised = claim.items.indices.filter { claim.items[$0].fileURL == nil }
@@ -102,6 +120,7 @@ final class GuestDragPromises {
             return
         }
         let callIn = CallIn(folder: folder, receivers: Dictionary(uniqueKeysWithValues: zip(promised, receivers)))
+        callIn.hostDone = stopped
         callIns[generation] = callIn
         for (index, receiver) in zip(promised, receivers) {
             let expectsFolder = claim.items[index].isDirectoryPromise
@@ -111,75 +130,104 @@ final class GuestDragPromises {
                 let landing = PromiseLanding(at: url, error: error, expectingFolder: expectsFolder)
                 MainActorBridge.async { self.read(landing, at: url, item: index, of: generation) }
             }
+            // Its reads hop to this actor, so none runs before its name is
+            // recorded.
+            let name = Self.name(of: receiver, item: index, generation: generation)
+            callIn.sentNames[index] = name
+            _ = peer.sendDragNames(generation: generation, filenames: [index: name])
         }
-        _ = peer.sendDragNames(generation: generation, filenames: names(of: callIn, generation: generation))
     }
 
-    /// Each receiver's first file name, by item; the names a receiver fills
-    /// in while its call-in runs.
-    private func names(of callIn: CallIn, generation: UInt64) -> [Int: String] {
-        var names: [Int: String] = [:]
-        for (index, receiver) in callIn.receivers {
-            let fileNames = receiver.fileNames
-            guard let first = fileNames.first else {
-                Self.logger.log(
-                    .warning,
-                    "Promised item \(index, privacy: .public) named no file when called in (gen=\(generation, privacy: .public))"
-                )
-                continue
-            }
-            names[index] = first
-            if fileNames.count > 1 {
-                Self.logger.log(
-                    .warning,
-                    "Promised item \(index, privacy: .public) names \(fileNames.count, privacy: .public) files; only the first goes to the host (gen=\(generation, privacy: .public))"
-                )
-            }
+    /// The receiver's first file name, as its call-in left it, or empty when
+    /// it named nothing.
+    private static func name(
+        of receiver: any FilePromiseReceiving, item index: Int, generation: UInt64
+    ) -> String {
+        let fileNames = receiver.fileNames
+        guard let first = fileNames.first else {
+            logger.log(
+                .warning,
+                "Promised item \(index, privacy: .public) named no file when called in (gen=\(generation, privacy: .public))"
+            )
+            return ""
         }
-        return names
+        if fileNames.count > 1 {
+            logger.log(
+                .warning,
+                "Promised item \(index, privacy: .public) names \(fileNames.count, privacy: .public) files; only the first goes to the host (gen=\(generation, privacy: .public))"
+            )
+        }
+        return first
     }
 
     /// Answers a call-in that called nothing in: `promised` will never be
-    /// written, and the host is told the names it waits on are none.
+    /// written, and the host is told none of them will be named.
     private func giveUp(_ promised: [Int], of generation: UInt64) {
         if !promised.isEmpty {
             _ = peer.markPromisedDragItemsUnavailable(generation: generation, repIndices: promised)
         }
-        _ = peer.sendDragNames(generation: generation, filenames: [:])
+        _ = peer.sendDragNames(
+            generation: generation, filenames: Dictionary(uniqueKeysWithValues: promised.map { ($0, "") }))
     }
 
     // MARK: - Reads
 
-    /// One reader callback of item `index`. Only each receiver's first counts;
-    /// any later file it writes stays in the folder until the folder goes.
+    /// One reader callback of item `index`: the file named to the host
+    /// resolves it; any other stays in the folder until the folder goes.
+    ///
+    /// The item is unavailable when its receiver names at most one file and
+    /// the callback failed, or once the receiver has delivered every callback
+    /// it owes without the named file — a failure from a receiver naming
+    /// several cannot be paired with a file, since AppKit says to ignore its
+    /// URL. Once the host is done with the drag, a callback is only counted.
     private func read(_ landing: PromiseLanding, at url: URL, item index: Int, of generation: UInt64) {
         guard let callIn = callIns[generation] else { return }
-        let count = callIn.tally.record(from: index, naming: callIn.receivers[index]?.fileNames.count ?? 0)
+        let fileCount = callIn.receivers[index]?.fileNames.count ?? 0
+        callIn.tally.record(from: index, naming: fileCount)
         defer { releaseIfDone(generation) }
-        guard count == 1 else {
-            Self.logger.log(
-                .notice,
-                "Promised item \(index, privacy: .public) wrote a further file, which stays in the guest (gen=\(generation, privacy: .public))"
-            )
-            return
-        }
-        guard !stopped else { return }
+        guard !callIn.hostDone, !callIn.settled.contains(index) else { return }
+        let name = callIn.sentNames[index] ?? ""
         switch landing {
-        case .file(let byteCount):
-            _ = peer.resolvePromisedDragItem(
-                generation: generation, repIndex: index, fileURL: url, byteCount: byteCount)
-        case .folder:
-            callIn.measuring.insert(index)
-            input.measureFolders([index: url]) { [self] sizes in
-                measured(sizes[index], at: url, item: index, of: generation)
-            }
-        case .failed(let reason):
+        case .failed(let reason) where fileCount <= 1:
             Self.logger.log(
                 .warning,
                 "Promised item \(index, privacy: .public) was not written (gen=\(generation, privacy: .public)): \(reason, privacy: .public)"
             )
-            _ = peer.markPromisedDragItemsUnavailable(generation: generation, repIndices: [index])
+            return markUnavailable(index, of: callIn, generation: generation)
+        case .file(let byteCount) where !name.isEmpty && url.lastPathComponent == name:
+            callIn.settled.insert(index)
+            _ = peer.resolvePromisedDragItem(
+                generation: generation, repIndex: index, fileURL: url, byteCount: byteCount)
+            return
+        case .folder where !name.isEmpty && url.lastPathComponent == name:
+            callIn.settled.insert(index)
+            callIn.measuring.insert(index)
+            input.measureFolders([index: url]) { [self] sizes in
+                measured(sizes[index], at: url, item: index, of: generation)
+            }
+            return
+        case .failed(let reason):
+            Self.logger.log(
+                .notice,
+                "A file of promised item \(index, privacy: .public) was not written (gen=\(generation, privacy: .public)): \(reason, privacy: .public)"
+            )
+        case .file, .folder:
+            Self.logger.log(
+                .notice,
+                "Promised item \(index, privacy: .public) wrote a file other than the one it was named by, which stays in the guest (gen=\(generation, privacy: .public))"
+            )
         }
+        guard callIn.tally.hasDeliveredAll(from: index) else { return }
+        Self.logger.log(
+            .warning,
+            "Promised item \(index, privacy: .public) delivered every file without the one it was named by (gen=\(generation, privacy: .public))"
+        )
+        markUnavailable(index, of: callIn, generation: generation)
+    }
+
+    private func markUnavailable(_ index: Int, of callIn: CallIn, generation: UInt64) {
+        callIn.settled.insert(index)
+        _ = peer.markPromisedDragItemsUnavailable(generation: generation, repIndices: [index])
     }
 
     /// A promised folder's tree came back measured.
@@ -187,7 +235,7 @@ final class GuestDragPromises {
         guard let callIn = callIns[generation] else { return }
         callIn.measuring.remove(index)
         defer { releaseIfDone(generation) }
-        guard !stopped else { return }
+        guard !callIn.hostDone else { return }
         _ = peer.resolvePromisedDragItem(
             generation: generation, repIndex: index, fileURL: url, byteCount: byteCount ?? 0)
     }
@@ -213,15 +261,25 @@ final class GuestDragPromises {
     private func releaseIfDone(_ generation: UInt64) {
         guard let callIn = callIns[generation], callIn.hostDone, callIn.readsSettled else { return }
         callIns[generation] = nil
-        do {
-            try FileManager.default.removeItem(at: callIn.folder)
-        } catch {
-            Self.logger.log(
-                .warning,
-                "Could not remove the promises' folder (gen=\(generation, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-            )
+        let folder = callIn.folder
+        removals.async {
+            do {
+                try FileManager.default.removeItem(at: folder)
+            } catch {
+                Self.logger.log(
+                    .warning,
+                    "Could not remove the promises' folder (gen=\(generation, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
+
+    #if DEBUG
+    /// Test seam: returns once every folder removal queued so far is done.
+    func waitForFolderRemovalsForTesting() {
+        removals.sync {}
+    }
+    #endif
 }
 
 /// What one reader callback landed, read on the reader queue.

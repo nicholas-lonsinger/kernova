@@ -74,7 +74,7 @@ struct DragFrameTests {
     @Test(
         "every hand-off step round-trips, carrying a code only when it failed",
         arguments: [
-            ClipboardDragHandOffStep.armed, .targeted, .caught, .resolving,
+            ClipboardDragHandOffStep.armed, .targeted, .caught, .resolving, .resolveRefused,
             .failed(.dragTakeStale, message: "the press is over"),
             .failed(nil, message: ""),
         ])

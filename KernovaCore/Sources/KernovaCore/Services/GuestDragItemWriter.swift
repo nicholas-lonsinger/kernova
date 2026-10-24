@@ -15,6 +15,10 @@ protocol GuestDragItemWriterOwner: AnyObject {
     /// carries them and the take is not yet retired.
     var acceptsWrites: Bool { get }
 
+    /// Whether promised item `repIndex` is called by a stand-in name where a
+    /// destination writes it, which no write fills.
+    func takesStandInName(repIndex: Int) -> Bool
+
     /// A write settled, or the writes were cancelled.
     func writesSettled()
 }
@@ -182,11 +186,7 @@ final class GuestDragItemWriter {
             return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
         }
         let item = items[index]
-        if terminal == nil, item.isPromised,
-            endpoint.resolvedDragNames(generation: generation)?[item.repIndex] == nil
-        {
-            // The destination was handed a stand-in name
-            // (`GuestDragTake.filename(forItemAt:)`), which no write fills.
+        if terminal == nil, item.isPromised, owner?.takesStandInName(repIndex: item.repIndex) == true {
             endTransfers(on: .dragItemUnnamed, reported: false)
         }
         if let terminal {

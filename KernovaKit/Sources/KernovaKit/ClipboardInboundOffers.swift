@@ -510,17 +510,22 @@ public final class ClipboardInboundOffers {
         var waiting = 0
     }
 
-    /// Gives the drag's promised items the names the peer reports they took,
-    /// so a pull stages each under its own.
+    /// Gives the promised items a `DragNames` lists the names the peer
+    /// reports they took, so a pull stages each under its own. An item keeps
+    /// the first name it is given, and an empty name names nothing.
     public func handleDragNames(_ names: Kernova_V1_DragNames) {
         guard let entry = entries[names.generation] else { return }
-        let promised = Dictionary(
-            uniqueKeysWithValues: entry.promised.map { ($0, entry.reps[$0].isDirectory) })
-        let sanitized = ClipboardDragNaming.sanitizedNames(names.filenames, promised: promised)
-        for (index, name) in sanitized { entry.reps[index].filename = name }
+        var named = 0
+        for (key, name) in names.filenames where !name.isEmpty {
+            let index = Int(key)
+            guard entry.promised.contains(index), entry.reps[index].filename.isEmpty else { continue }
+            entry.reps[index].filename = ClipboardDraggedItem.safeFilename(
+                name, isDirectory: entry.reps[index].isDirectory)
+            named += 1
+        }
         Self.logger.log(
-            .notice,
-            "'\(self.peerName, privacy: .public)' named \(sanitized.count, privacy: .public) of the drag's \(promised.count, privacy: .public) promised item(s) (gen=\(names.generation, privacy: .public), conn=\(self.tag, privacy: .public))"
+            .debug,
+            "'\(self.peerName, privacy: .public)' named \(named, privacy: .public) of the \(names.filenames.count, privacy: .public) promised item(s) a DragNames lists (gen=\(names.generation, privacy: .public), conn=\(self.tag, privacy: .public))"
         )
     }
 
@@ -549,6 +554,8 @@ public final class ClipboardInboundOffers {
             switch ClipboardDragHandOffStep(handOff) {
             case .resolving:
                 dragNaming.acknowledged(generation: handOff.generation)
+            case .resolveRefused:
+                dragNaming.failed(generation: handOff.generation, .resolveRefused)
             case .failed(let code, _):
                 dragNaming.failed(generation: handOff.generation, .handOffFailed(code))
             case .armed, .targeted, .caught:
@@ -563,37 +570,44 @@ public final class ClipboardInboundOffers {
         }
     }
 
-    /// Names `generation`'s promised items — see
-    /// ``ClipboardDragNaming/resolve(generation:deadline:send:releasingGuestButton:)``.
-    nonisolated func resolveDragNames(
+    /// Starts naming `generation`'s promised items — see
+    /// ``ClipboardDragNaming/begin(generation:deadline:send:releasingGuestButton:)``.
+    nonisolated func beginDragNaming(
         generation: UInt64, deadline: DispatchTime, releasingGuestButton: () -> Void
-    ) -> Result<[Int: String], ClipboardDragNamingFailure> {
-        let result = dragNaming.resolve(
-            generation: generation, deadline: deadline,
-            send: {
-                do {
-                    try session.sendDragResolve(generation: generation)
-                } catch {
-                    Self.logger.log(
-                        .warning,
-                        "Failed to ask '\(self.peerName, privacy: .public)' to name the promised items of gen=\(generation, privacy: .public) (conn=\(self.tag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-                    )
-                    return false
-                }
-                Self.logger.log(
-                    .notice,
-                    "Asked '\(self.peerName, privacy: .public)' to name the promised items of gen=\(generation, privacy: .public) (conn=\(self.tag, privacy: .public))"
-                )
-                return true
-            },
+    ) -> ClipboardDragNamingFailure? {
+        dragNaming.begin(
+            generation: generation, deadline: deadline, send: { sendDragResolve(generation) },
             releasingGuestButton: releasingGuestButton)
-        if case .failure(let failure) = result {
+    }
+
+    /// Names promised item `repIndex` of `generation` — see
+    /// ``ClipboardDragNaming/resolveName(generation:repIndex:deadline:send:releasingGuestButton:)``.
+    nonisolated func resolveDragName(
+        generation: UInt64, repIndex: Int, deadline: DispatchTime,
+        releasingGuestButton: () -> Void
+    ) -> Result<String, ClipboardDragNamingFailure> {
+        dragNaming.resolveName(
+            generation: generation, repIndex: repIndex, deadline: deadline,
+            send: { sendDragResolve(generation) }, releasingGuestButton: releasingGuestButton)
+    }
+
+    /// Asks the peer to have `generation`'s promised items called in,
+    /// reporting whether the ask went out.
+    nonisolated private func sendDragResolve(_ generation: UInt64) -> Bool {
+        do {
+            try session.sendDragResolve(generation: generation)
+        } catch {
             Self.logger.log(
                 .warning,
-                "The promised items of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' went unnamed (conn=\(self.tag, privacy: .public)): \(String(describing: failure), privacy: .public)"
+                "Failed to ask '\(self.peerName, privacy: .public)' to name the promised items of gen=\(generation, privacy: .public) (conn=\(self.tag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
+            return false
         }
-        return result
+        Self.logger.log(
+            .notice,
+            "Asked '\(self.peerName, privacy: .public)' to name the promised items of gen=\(generation, privacy: .public) (conn=\(self.tag, privacy: .public))"
+        )
+        return true
     }
 
     /// Calls off the drop or drag the peer has withdrawn, keeping whatever

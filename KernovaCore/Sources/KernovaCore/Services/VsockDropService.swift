@@ -114,6 +114,10 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
     #if DEBUG
     var lifecycleTasksForTesting: [Task<Void, Never>] { endpoint.lifecycleTasksForTesting }
     var dragStagingForTesting: ClipboardFileStaging { dragStaging }
+
+    /// Test seam: ends the endpoint's session as the channel's own end does
+    /// before its hop to the main actor, leaving every take unaware.
+    func endEndpointSessionForTesting() { endpoint.stop() }
     #endif
 
     // MARK: - Init

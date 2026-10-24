@@ -151,6 +151,7 @@ extension Frame {
             case .targeted: $0.stage = .targeted
             case .caught: $0.stage = .caught
             case .resolving: $0.stage = .resolving
+            case .resolveRefused: $0.stage = .resolveRefused
             case .failed(let code, let message):
                 $0.stage = .failed
                 if let code { $0.code = code.rawValue }
@@ -187,8 +188,9 @@ extension Frame {
         return frame
     }
 
-    /// A `DragNames` carrying the names the promised items of the drag for
-    /// `generation` took, keyed by each item's index in the offer.
+    /// A `DragNames` naming the promised items of the drag for `generation`
+    /// it lists, keyed by each item's index in the offer; an empty name says
+    /// the item will not be named.
     public static func dragNames(generation: UInt64, filenames: [Int: String]) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1

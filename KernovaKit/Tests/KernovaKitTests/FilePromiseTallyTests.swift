@@ -51,6 +51,18 @@ struct FilePromiseTallyTests {
         #expect(tally.isQuiesced)
     }
 
+    @Test("each receiver's own callbacks are in once it has reported every file it names, whatever the others owe")
+    func oneReceiverDeliversAll() {
+        var tally = FilePromiseTally(receivers: [0, 1])
+        #expect(!tally.hasDeliveredAll(from: 0))
+        tally.record(from: 0, naming: 2)
+        #expect(!tally.hasDeliveredAll(from: 0))
+        tally.record(from: 0, naming: 2)
+        #expect(tally.hasDeliveredAll(from: 0))
+        #expect(!tally.hasDeliveredAll(from: 1))
+        #expect(!tally.isQuiesced)
+    }
+
     @Test("a tally of no receivers is quiesced from the start")
     func noReceiversIsQuiesced() {
         #expect(FilePromiseTally<Int>(receivers: []).isQuiesced)

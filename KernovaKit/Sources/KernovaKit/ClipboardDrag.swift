@@ -15,6 +15,10 @@ public enum ClipboardDragHandOffStep: Equatable, Sendable {
     /// promises in when the drop lands on it — the one step after which the
     /// host releases the guest's button to resolve them.
     case resolving
+    /// Answers a `DragResolve` the catcher will not act on, leaving its take
+    /// as it was: unlike ``failed(_:message:)``, it says nothing about the
+    /// hand-off.
+    case resolveRefused
     /// The hand-off cannot complete. `code` is `nil` for one this build does
     /// not define; `message` is peer-supplied log detail, never UI.
     case failed(ClipboardErrorCode?, message: String)
@@ -29,6 +33,7 @@ public enum ClipboardDragHandOffStep: Equatable, Sendable {
         case .targeted: self = .targeted
         case .caught: self = .caught
         case .resolving: self = .resolving
+        case .resolveRefused: self = .resolveRefused
         case .failed, .unspecified, .UNRECOGNIZED:
             self = .failed(ClipboardErrorCode(rawValue: handOff.code), message: handOff.message)
         }
@@ -59,7 +64,7 @@ public struct ClipboardDraggedItem: Equatable, Sendable {
     /// A single path component: never empty, `.`, `..`, or containing `/`.
     ///
     /// `nil` for a promised item, which has no name until the guest calls it
-    /// in — ``ClipboardEndpoint/resolveDragNames(generation:deadline:releasingGuestButton:)``.
+    /// in — ``ClipboardEndpoint/resolveDragName(generation:repIndex:deadline:releasingGuestButton:)``.
     public let filename: String?
     /// A type conforming to `public.data` for a file, or to `public.directory`
     /// for a folder — `NSFilePromiseProvider` raises for a file type that
@@ -116,11 +121,16 @@ public enum ClipboardDragNamingFailure: Error, Equatable, Sendable {
     /// The guest answered with `STAGE_FAILED`; `code` is `nil` for one this
     /// build does not define.
     case handOffFailed(ClipboardErrorCode?)
+    /// The guest's catcher refused the `DragResolve` (`STAGE_RESOLVE_REFUSED`).
+    case resolveRefused
+    /// The guest said this item will not be named; the drag's other items
+    /// may still be.
+    case unnamed
     /// The connection ended.
     case sessionEnded
     /// The drag is not live on this connection: retired, withdrawn, or never
     /// offered here.
     case dragNotLive
-    /// The caller's deadline passed first.
+    /// A caller's deadline passed first.
     case timedOut
 }

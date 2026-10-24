@@ -537,13 +537,13 @@ public final class ClipboardEndpoint {
         return outbound.offerDrag(items)
     }
 
-    /// Sends the names the promised items of the drag offered under
-    /// `generation` took when the catcher called them in, keyed by each item's
-    /// index, reporting whether the drag was live and the names went out.
-    /// Guest drop channel only.
+    /// Sends names for promised items of the drag offered under `generation`
+    /// as the catcher calls them in, keyed by each item's index, reporting
+    /// whether the drag was live and the names went out. Guest drop channel
+    /// only.
     ///
-    /// The host is waiting on this frame, so send it even with no names; a
-    /// promised item left out reads as one that could not be named.
+    /// Each frame names only the items it lists, and the host waits on each
+    /// item's own: an empty name tells it that item will not be named.
     @discardableResult
     public func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
         guard role == .guest, kind == .drop else { return false }
@@ -579,39 +579,57 @@ public final class ClipboardEndpoint {
 
     // MARK: - Promised items (host side)
 
-    /// The names the promised items of the drag offered under `generation`
-    /// took, keyed by `repIndex`, or `nil` until they have arrived. Never
-    /// waits.
-    nonisolated public func resolvedDragNames(generation: UInt64) -> [Int: String]? {
-        guard role == .host, kind == .drop else { return nil }
-        return inbound.dragNaming.names(generation: generation)
+    /// Starts naming the promised items of the drag offered under
+    /// `generation` without waiting for any name, holding the calling thread
+    /// until the guest's button is released, the naming fails, or `deadline`
+    /// passes. Host drop channel only.
+    ///
+    /// The drag's first ask — this or
+    /// ``resolveDragName(generation:repIndex:deadline:releasingGuestButton:)``
+    /// — sends `DragResolve`, waits for the guest's `STAGE_RESOLVING`, and runs
+    /// `releasingGuestButton` on the calling thread so the guest drops onto
+    /// its catcher. Any later ask, and a drag with no promised items, returns
+    /// at once and runs nothing.
+    ///
+    /// The hold parks the calling thread, whichever it is, and never runs the
+    /// event loop, so nothing runs inside the caller while it waits.
+    ///
+    /// - Returns: `nil` once the exchange is under way, or what failed the
+    ///   drag's naming: the guest answering `STAGE_FAILED` or
+    ///   `STAGE_RESOLVE_REFUSED`, withdrawing the drag, the drag retired, the
+    ///   session ended, or a deadline passing.
+    nonisolated public func beginDragNaming(
+        generation: UInt64, deadline: DispatchTime, releasingGuestButton: () -> Void
+    ) -> ClipboardDragNamingFailure? {
+        guard role == .host, kind == .drop else { return .dragNotLive }
+        return inbound.beginDragNaming(
+            generation: generation, deadline: deadline,
+            releasingGuestButton: releasingGuestButton)
     }
 
-    /// Names the promised items of the drag offered under `generation`,
-    /// holding the calling thread — any thread, the main thread inside a
-    /// tracking loop included — until the guest names them, fails, or
-    /// `deadline` passes. Host drop channel only.
+    /// Names promised item `repIndex` of the drag offered under `generation`,
+    /// holding the calling thread — parked, as
+    /// ``beginDragNaming(generation:deadline:releasingGuestButton:)`` holds it
+    /// — until the guest names it, says it will not, the drag's naming fails,
+    /// or `deadline` passes. Host drop channel only.
     ///
-    /// The first call sends `DragResolve`, waits for the guest's
-    /// `STAGE_RESOLVING`, runs `releasingGuestButton` on the calling thread so
-    /// the guest drops onto its catcher, then waits for `DragNames`. A call
-    /// while that runs joins it, waiting to its own deadline, and runs nothing.
-    /// Once settled — names, a failure, or the deadline passing — every later
-    /// call returns the same at once, until the drag is retired.
+    /// The drag's first ask starts the exchange as `beginDragNaming` does;
+    /// every ask then waits for its own item's `DragNames`. An item already
+    /// settled is answered at once with the same result. A failure of the
+    /// drag's naming fails every item not yet named, and `deadline` passing is
+    /// one, so a later ask does not wait out a deadline of its own.
     ///
-    /// Fails fast when the guest answers `STAGE_FAILED` or withdraws the drag,
-    /// the drag is retired, or the session ends. A drag with no promised items
-    /// is named at once, with nothing sent and nothing released.
-    ///
-    /// - Returns: each named item's sanitized name
-    ///   (``ClipboardDraggedItem/safeFilename(_:isDirectory:)``), by `repIndex`;
-    ///   an item the guest could not name is absent.
-    nonisolated public func resolveDragNames(
-        generation: UInt64, deadline: DispatchTime, releasingGuestButton: () -> Void
-    ) -> Result<[Int: String], ClipboardDragNamingFailure> {
+    /// - Returns: the item's name, made safe
+    ///   (``ClipboardDraggedItem/safeFilename(_:isDirectory:)``), or
+    ///   ``ClipboardDragNamingFailure/unnamed`` when the guest said it will not
+    ///   name this item.
+    nonisolated public func resolveDragName(
+        generation: UInt64, repIndex: Int, deadline: DispatchTime,
+        releasingGuestButton: () -> Void
+    ) -> Result<String, ClipboardDragNamingFailure> {
         guard role == .host, kind == .drop else { return .failure(.dragNotLive) }
-        return inbound.resolveDragNames(
-            generation: generation, deadline: deadline,
+        return inbound.resolveDragName(
+            generation: generation, repIndex: repIndex, deadline: deadline,
             releasingGuestButton: releasingGuestButton)
     }
 
@@ -830,15 +848,6 @@ public final class ClipboardEndpoint {
         inbound.sizeWaitBeganForTesting.withLock { $0 = body }
     }
 
-    /// Test seam: has drag naming on this connection take its wait from
-    /// `vend` — `{ nil }` parks even the main thread, as inside a tracking
-    /// loop.
-    nonisolated func setDragNamingEventLoopWaitForTesting(
-        _ vend: @escaping @Sendable () -> NestedEventLoopWait?
-    ) {
-        inbound.dragNaming.setEventLoopWaitForTesting(vend)
-    }
-
     /// Test seam: how many inbound pulls this connection has started.
     public var inboundPullsStartedForTesting: Int { inbound.pullsStartedForTesting }
 
@@ -914,8 +923,8 @@ public protocol ClipboardEndpointDelegate: AnyObject {
     /// `generation`: the guest answers
     /// ``ClipboardEndpoint/sendDragHandOff(generation:step:)`` with `.resolving`
     /// once its catcher will call them in on the drop the host then releases,
-    /// or `.failed`, and sends ``ClipboardEndpoint/sendDragNames(generation:filenames:)``
-    /// once they are called in. Guest drop channel only.
+    /// or `.resolveRefused`, and sends ``ClipboardEndpoint/sendDragNames(generation:filenames:)``
+    /// as they are called in. Guest drop channel only.
     func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragResolve generation: UInt64)
 
     /// An offer this side was holding stopped being servable. `generation` is

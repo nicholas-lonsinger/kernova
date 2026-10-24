@@ -231,15 +231,13 @@ struct VsockGuestDropAgentDragOutTests {
             ClipboardDragHandOffStep(armed) == .armed
         else { throw TestFailure("Expected ARMED first") }
         // The drag has not entered the catcher, so nothing may be released
-        // onto it: the resolve fails.
+        // onto it: the resolve is refused.
         try harness.host.send(.dragResolve(generation: offer.generation))
 
         guard case .dragHandOff(let answer) = try await nextFrame(from: harness.host).payload else {
             throw TestFailure("Expected a DragHandOff answering the resolve")
         }
-        guard case .failed(.dragTakeFailed, _) = ClipboardDragHandOffStep(answer) else {
-            throw TestFailure("Expected the resolve to fail, got \(ClipboardDragHandOffStep(answer))")
-        }
+        #expect(ClipboardDragHandOffStep(answer) == .resolveRefused)
     }
 
     @Test("a host that takes no promises is offered no drag carrying one")

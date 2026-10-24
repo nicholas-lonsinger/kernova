@@ -117,6 +117,9 @@ final class GuestDragOut {
     /// Test seam: the catcher, whose drag callbacks a test delivers itself in
     /// place of a window server's.
     var catcherForTesting: GuestDragCatcher { catcher }
+
+    /// Test seam: the drag's called-in promises.
+    var promisesForTesting: GuestDragPromises { promises }
     #endif
 }
 

@@ -259,6 +259,8 @@ final class FakePromiseReceiver: FilePromiseReceiving {
     private(set) var fileNames: [String] = []
     /// Where it was called in to, once it was.
     private(set) var destination: URL?
+    /// Called as it is called in, before its call-in returns.
+    var onCalledIn: (() -> Void)?
     private var reader: ((URL, (any Error)?) -> Void)?
 
     init(names: [String]) {
@@ -274,6 +276,7 @@ final class FakePromiseReceiver: FilePromiseReceiving {
         self.destination = destination
         self.reader = reader
         fileNames = names
+        onCalledIn?()
     }
 
     /// Writes its file named `name` holding `contents`, and reports it.

@@ -19,7 +19,10 @@ import KernovaLogging
 /// `resolving` while it is targeted: the host releases the button for that
 /// drop alone, and every other drop on the surface calls nothing in. The ask
 /// holds for the showing it came in, as `targeted` does: standing the surface
-/// down drops it.
+/// down drops it. An ask the catcher cannot act on is answered
+/// `resolveRefused`, never `failed`: the host completes a take once it hears
+/// `failed`, so a `failed` the take did not mean would let a completion
+/// overtake the release and take the surface down under it.
 ///
 /// Once `targeted` is out the host may already have released the button, and
 /// that release is a real drop under the guest pointer, so a refusal after
@@ -181,22 +184,29 @@ final class GuestDragCatcher {
     /// A Mac destination wants the names of `generation`'s promised items:
     /// marks the current showing to call them in at the catch and reports
     /// `resolving`, which only a take whose drag is on the surface — targeted,
-    /// neither caught nor refused — can be. Anything else fails the request
-    /// and leaves any live take alone, and the host releases nothing.
+    /// neither caught nor refused — can be. Anything else is answered
+    /// `resolveRefused`, leaving any live take as it was, and the host
+    /// releases nothing.
     func resolve(generation: UInt64) {
         guard let current = take, current.claim.generation == generation else {
-            refuse(generation: generation, code: .dragTakeStale, message: "The catcher holds no such take")
+            refuseResolve(generation: generation, because: "The catcher holds no such take")
             return
         }
         guard current.showing?.entered == true, !current.caught, !current.refused else {
-            refuse(
-                generation: generation, code: .dragTakeFailed,
-                message: "The drag is not on the catcher to call its promises in")
+            refuseResolve(
+                generation: generation, because: "The drag is not on the catcher to call its promises in")
             return
         }
         take?.showing?.callsIn = true
         send(.resolving, for: generation)
         Self.logger.log(.notice, "Catcher will call the drag's promises in (gen=\(generation, privacy: .public))")
+    }
+
+    private func refuseResolve(generation: UInt64, because reason: String) {
+        Self.logger.log(
+            .notice,
+            "Refused the host's resolve (gen=\(generation, privacy: .public)): \(reason, privacy: .public)")
+        send(.resolveRefused, for: generation)
     }
 
     /// A click reached the surface, so no drag is in flight to catch: the

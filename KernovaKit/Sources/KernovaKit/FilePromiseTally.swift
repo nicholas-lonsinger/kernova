@@ -44,6 +44,13 @@ public struct FilePromiseTally<Key: Hashable> {
         isQuiesced = isQuiesced || owed.allSatisfy { key, owes in reported[key, default: 0] >= owes }
         return count
     }
+
+    /// Whether the receiver `key` names has delivered every callback it owes
+    /// as of its last one. Unlike ``isQuiesced``, not a latch: a receiver
+    /// that names more files later owes more.
+    public func hasDeliveredAll(from key: Key) -> Bool {
+        reported[key, default: 0] >= owed[key, default: 1]
+    }
 }
 
 extension FilePromiseTally: Sendable where Key: Sendable {}

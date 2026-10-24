@@ -446,12 +446,12 @@ final class ClipboardOutboundOffers {
 
     // MARK: - Promised drag items
 
-    /// Tells the peer the names the drag's promised items took when they were
+    /// Tells the peer the names promised items of the drag took as they were
     /// called in, reporting whether the drag was live and the names went out.
     ///
-    /// A name for an index that is not promised is dropped, and a promised
-    /// item left out reads as one that could not be named. Sent even with no
-    /// names: the peer is waiting on this frame.
+    /// A name for an index that is not promised is dropped; the frame names
+    /// only the items it lists, an empty name saying that item will not be
+    /// named.
     @discardableResult
     func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
         guard let entry = entries[generation] else { return false }
@@ -466,7 +466,7 @@ final class ClipboardOutboundOffers {
             return false
         }
         Self.logger.log(
-            .notice,
+            .info,
             "Sent the names of \(named.count, privacy: .public) of \(entry.promises.count, privacy: .public) promised item(s) to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
         return true

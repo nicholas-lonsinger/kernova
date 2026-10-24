@@ -1009,7 +1009,7 @@ struct GuestDragOutTests {
         FileManager.default.fileExists(atPath: url.path)
     }
 
-    @Test("a DragResolve is answered resolving only while the taken drag is on the catcher")
+    @Test("a DragResolve is answered resolving only while the taken drag is on the catcher, and refused otherwise")
     func resolveNeedsATargetedTake() throws {
         let plain = try file("plain.txt")
         let rig = Rig()
@@ -1017,17 +1017,12 @@ struct GuestDragOutTests {
         rig.dragOut.take(generation: 1)
 
         rig.dragOut.resolve(generation: 1)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected an armed but untargeted take to fail the resolve, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolveRefused))
         rig.dragOut.resolve(generation: 2)
-        guard case .handOff(2, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a resolve of no take to be stale, got \(rig.peer.handOffs)")
-            return
-        }
-        // A refused resolve leaves the take standing.
+        #expect(rig.peer.handOffs.last == .handOff(generation: 2, step: .resolveRefused))
+        // A refused resolve leaves the take standing, and fails nothing.
         #expect(rig.surface.isShown)
+        #expect(!rig.peer.handOffs.contains { if case .handOff(_, .failed) = $0 { true } else { false } })
 
         let items: [GuestDragItem] = [.file(plain), .promise(uti: "public.heic")]
         #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(items: items)) == .copy)
@@ -1036,10 +1031,7 @@ struct GuestDragOutTests {
 
         rig.dragOut.setCatcherShown(false, generation: 1)
         rig.dragOut.resolve(generation: 1)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a stood-down take to fail the resolve, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolveRefused))
     }
 
     @Test("a drop the host did not ask to resolve calls nothing in and reads no promise")
@@ -1094,31 +1086,35 @@ struct GuestDragOutTests {
         #expect(!exists(rig.promiseFolders))
     }
 
-    @Test("a drop the host resolved calls each promise in and names it by its first file, ahead of caught")
+    @Test("a resolved drop names each promise by its first file as its call-in returns, ahead of caught")
     func theCallInNamesThePromises() throws {
-        let rig = try promiseRig(["public.heic", "public.jpeg"])
+        let rig = try promiseRig(["public.heic", "public.jpeg", "public.png"])
         let catcher = rig.dragOut.catcherForTesting
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
         let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
+        let unnamed = FakePromiseReceiver(names: [])
+        var sentBeforeBurst: [FakeGuestDragPeer.Event] = []
+        burst.onCalledIn = { sentBeforeBurst = rig.peer.events }
         rig.dragOut.resolve(generation: 1)
 
-        #expect(catcher.performDragOperation { [photo, burst] })
+        #expect(catcher.performDragOperation { [photo, burst, unnamed] })
 
         let folder = try #require(photo.destination)
         #expect(burst.destination == folder)
         #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
         #expect(exists(folder))
+        // The first item's name was out before the second was called in.
+        #expect(sentBeforeBurst.last == .named(generation: 1, filenames: [1: "IMG_0001.HEIC"]))
         #expect(
-            rig.peer.events.suffix(2) == [
-                .named(generation: 1, filenames: [1: "IMG_0001.HEIC", 2: "IMG_0002.JPG"]),
+            rig.peer.events.suffix(4) == [
+                .named(generation: 1, filenames: [1: "IMG_0001.HEIC"]),
+                .named(generation: 1, filenames: [2: "IMG_0002.JPG"]),
+                .named(generation: 1, filenames: [3: ""]),
                 .handOff(generation: 1, step: .caught),
             ])
         // Caught, the take resolves nothing more.
         rig.dragOut.resolve(generation: 1)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a resolve after the catch to fail, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolveRefused))
     }
 
     @Test("a drop carrying another count of promises than the drag calls none in and names none")
@@ -1132,7 +1128,8 @@ struct GuestDragOutTests {
         #expect(!only.wasCalledIn)
         #expect(
             rig.peer.events.suffix(3) == [
-                .unavailable(generation: 1, repIndices: [1, 2]), .named(generation: 1, filenames: [:]),
+                .unavailable(generation: 1, repIndices: [1, 2]),
+                .named(generation: 1, filenames: [1: "", 2: ""]),
                 .handOff(generation: 1, step: .caught),
             ])
     }
@@ -1154,6 +1151,60 @@ struct GuestDragOutTests {
                 .resolved(generation: 1, repIndex: 1, filename: "IMG_0001.HEIC", byteCount: 1_234),
                 .unavailable(generation: 1, repIndices: [2]),
             ])
+    }
+
+    @Test("a receiver naming several files resolves its item by the file named, whatever order they land in")
+    func aSeveralFileReceiverResolvesByName() async throws {
+        let rig = try promiseRig(["public.jpeg"])
+        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [burst] }
+
+        try burst.write("IMG_0003.JPG", contents: Data(count: 3))
+        await drainMainQueue()
+        #expect(!rig.peer.events.contains { if case .resolved = $0 { true } else { false } })
+
+        try burst.write("IMG_0002.JPG", contents: Data(count: 2))
+        await drainMainQueue()
+        #expect(rig.peer.events.last == .resolved(generation: 1, repIndex: 1, filename: "IMG_0002.JPG", byteCount: 2))
+    }
+
+    @Test("a receiver naming several files whose named file never lands is unavailable once its callbacks are in")
+    func aSeveralFileReceiverWithoutItsNamedFileIsUnavailable() async throws {
+        let rig = try promiseRig(["public.jpeg"])
+        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [burst] }
+
+        // An error from a receiver naming several files pairs with none of
+        // them, so it settles nothing by itself.
+        try burst.fail("IMG_0002.JPG")
+        await drainMainQueue()
+        #expect(!rig.peer.events.contains { if case .unavailable = $0 { true } else { false } })
+
+        try burst.write("IMG_0003.JPG", contents: Data(count: 3))
+        await drainMainQueue()
+        #expect(rig.peer.events.last == .unavailable(generation: 1, repIndices: [1]))
+    }
+
+    @Test("a landing after the host is done with the drag is neither resolved nor measured")
+    func aLandingAfterCompletionIsOnlyCounted() async throws {
+        let rig = try promiseRig(["public.folder"])
+        let album = FakePromiseReceiver(names: ["Album"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [album] }
+        let folder = try #require(album.destination)
+        rig.dragOut.complete(generation: 1)
+        let reported = rig.peer.events
+
+        try album.writeFolder("Album")
+        await drainMainQueue()
+
+        #expect(rig.input.pendingMeasureFolders.isEmpty)
+        #expect(rig.peer.events == reported)
+        // Counted, it lets the folder go.
+        rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
+        #expect(!exists(folder))
     }
 
     @Test("a promised folder resolves once its tree is measured")
@@ -1210,6 +1261,7 @@ struct GuestDragOutTests {
             rig.dragOut.complete(generation: 1)
         }
 
+        rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(!exists(folder))
     }
 
@@ -1227,6 +1279,7 @@ struct GuestDragOutTests {
         try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
         await drainMainQueue()
 
+        rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(!exists(folder))
         #expect(rig.peer.events == reported)
     }

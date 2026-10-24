@@ -1541,8 +1541,8 @@ struct VsockDropServiceDragOutTests {
         let take = try await harness.carriedTake(of: Self.photos)
         try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"], for: take)
 
-        // Holds the main thread, as the session's end does, until the names
-        // are in.
+        // Holds the main thread, as the session's end does, until the guest's
+        // button is released for the call-in.
         take.hostSessionEnded(dropped: true)
 
         #expect(take.phase == .released(at: .catcher))
@@ -1559,7 +1559,7 @@ struct VsockDropServiceDragOutTests {
         let take = try await harness.carriedTake(of: Self.photos)
         #expect(take.hostSession(over: harness.display, at: CGPoint(x: 10, y: 10)))
         take.hostSessionLeft(harness.display)
-        try harness.answerResolves(naming: [0: "IMG_0001.jpeg"], for: take)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: ""], for: take)
         try await harness.handOff(.armed, for: take, until: .nudge(.offset), times: 1)
         take.hostSessionEnded(dropped: true)
         #expect(take.phase == .carried(.ended))
@@ -1570,6 +1570,81 @@ struct VsockDropServiceDragOutTests {
         #expect(take.filename(forItemAt: 0) == "IMG_0001.jpeg")
         // Unnamed by the guest, so a stand-in.
         #expect(take.filename(forItemAt: 1) == "File.png")
+    }
+
+    /// The longest a test holds the main thread itself: far below
+    /// `testWaitBackstop`, so a hop that never returns fails this test alone.
+    private static let mainHoldWindow: TimeInterval = 5
+
+    @Test("names settled for an in-app destination answer off-main asks after the session ends, main held")
+    func inAppNamesOutliveTheSession() async throws {
+        let harness = try Harness(tapsWire: true)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"], for: take)
+        #expect(take.nameItemsForInAppDestination())
+        harness.service.endEndpointSessionForTesting()
+
+        // The main thread waits here as it does in an in-app destination's
+        // `receivePromisedFiles`, while AppKit asks the provider for names on
+        // a queue of its own: an ask that hopped to the main actor would
+        // never return.
+        let names = Locked<[String]>([])
+        #expect(
+            holdingTheMainThread {
+                names.withLock { $0 = [take.filename(forItemAt: 0), take.filename(forItemAt: 1)] }
+            })
+        #expect(names.withLock { $0 } == ["IMG_0001.jpeg", "IMG_0002.png"])
+    }
+
+    /// Runs `body` on another thread while this one — the main thread — waits
+    /// for it, reporting whether it returned within ``mainHoldWindow``.
+    private func holdingTheMainThread(_ body: @escaping @Sendable () -> Void) -> Bool {
+        let answered = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            body()
+            answered.signal()
+        }
+        return answered.wait(timeout: .now() + Self.mainHoldWindow) == .success
+    }
+
+    @Test("a write that begins after the session ended, before the take hears of it, is interrupted, not unnamed")
+    func aWriteAfterTheSessionEndsIsInterrupted() async throws {
+        let harness = try Harness(tapsWire: true)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"], for: take)
+        #expect(await harness.filename(take, item: 0) == "IMG_0001.jpeg")
+
+        harness.service.endEndpointSessionForTesting()
+
+        let destination = try makeDestination().appendingPathComponent("IMG_0001.jpeg")
+        #expect(await harness.write(take, item: 0, to: destination) == .failed(.interrupted(fileCount: nil)))
+    }
+
+    @Test("a refused resolve leaves the hand-off as it was: the drag completes only once the guest reports its catch")
+    func refusedResolveLeavesTheHandOff() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        let name = Task { await harness.filename(take, item: 0) }
+        try await harness.guestRecorder.wait { !harness.guestRecorder.resolves.isEmpty }
+        harness.guest.sendDragHandOff(generation: take.generation, step: .resolveRefused)
+        #expect(await name.value == "File.jpeg")
+        #expect(harness.display.releaseCount == 0)
+
+        // The step reaches the take on the main actor too; delivered here, it
+        // is in ahead of the release whatever the hop's timing.
+        take.handOff(.resolveRefused)
+        #expect(take.phase == .carried(.outside(targeted: true)))
+        take.hostSessionEnded(dropped: false)
+        #expect(take.phase == .released(at: .catcher))
+        take.handOff(.resolveRefused)
+
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(!harness.guestRecorder.completedDrags.contains(take.generation))
+        harness.guest.sendDragHandOff(generation: take.generation, step: .caught)
+        try await harness.waitForComplete(take.generation)
     }
 
     @Test("a session that ended with nothing dropped releases without asking for names")

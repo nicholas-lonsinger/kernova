@@ -2,41 +2,40 @@ import Foundation
 import KernovaSynchronization
 
 /// The host's naming of the promised items in the guest's drags: asking for
-/// them (`DragResolve`), the guest's answer (`STAGE_RESOLVING` or
-/// `STAGE_FAILED`), and the names they took (`DragNames`).
+/// them (`DragResolve`), the guest's answer (`STAGE_RESOLVING`, or a refusal),
+/// and the names they take (`DragNames`), item by item.
 ///
 /// Every reply is recorded here on the session's reader thread, before any hop
-/// to the main actor: the thread waiting for the names can be the main thread
+/// to the main actor: the thread waiting for a name can be the main thread
 /// itself, held inside the Mac drag's tracking loop, which runs nothing queued
 /// to main until it returns.
 ///
-/// A drag's first terminal — its names, or a failure — stands until the drag
-/// is retired, so every later ask is answered at once with the same result.
+/// An item's name, or the guest saying it will not name it, stands until the
+/// drag is retired. So does a failure of the whole drag — the hand-off
+/// failing, the resolve refused, a deadline passing — for every item not
+/// already settled, so later asks are answered at once.
 final class ClipboardDragNaming: Sendable {
-    /// Where one drag's naming is.
-    private enum Phase: Sendable {
+    /// Where one drag's `DragResolve` exchange is.
+    private enum Exchange: Sendable {
         /// Nothing has asked.
         case idle
         /// `DragResolve` is away; the guest has not answered.
         case requested
-        /// The guest answered `STAGE_RESOLVING`; its names have not arrived.
+        /// The guest answered `STAGE_RESOLVING`, so its names follow.
         case acknowledged
-        case named([Int: String])
-        case failed(ClipboardDragNamingFailure)
-
-        var isTerminal: Bool {
-            switch self {
-            case .named, .failed: true
-            case .idle, .requested, .acknowledged: false
-            }
-        }
     }
 
     /// One drag the guest offered, from its `DragOffer` to its retirement.
     private struct Record: Sendable {
         /// Each promised item's index, and whether it is a directory.
         let promised: [Int: Bool]
-        var phase: Phase = .idle
+        var exchange: Exchange = .idle
+        /// Each promised item the guest has named, its name made safe.
+        var names: [Int: String] = [:]
+        /// The promised items the guest said it will not name.
+        var unnamed: Set<Int> = []
+        /// What failed the whole drag's naming, first only.
+        var failure: ClipboardDragNamingFailure?
     }
 
     private struct State: Sendable {
@@ -48,34 +47,7 @@ final class ClipboardDragNaming: Sendable {
         var lastWaiter: UInt64 = 0
     }
 
-    /// What a waiting thread sees of its drag.
-    private enum Observation: Sendable {
-        case requested
-        case acknowledged
-        case settled(Result<[Int: String], ClipboardDragNamingFailure>)
-    }
-
     private let state = Locked(State())
-
-    /// Vends the event-loop wait a resolve on the calling thread runs, or `nil`
-    /// where it parks.
-    private let eventLoopWait: Locked<@Sendable () -> NestedEventLoopWait?>
-
-    init(
-        eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait? = {
-            NestedEventLoopWait.current()
-        }
-    ) {
-        self.eventLoopWait = Locked(eventLoopWait)
-    }
-
-    #if DEBUG
-    /// Test seam: replaces where a resolve takes its wait from — `{ nil }`
-    /// parks even the main thread, as inside a tracking loop.
-    func setEventLoopWaitForTesting(_ vend: @escaping @Sendable () -> NestedEventLoopWait?) {
-        eventLoopWait.withLock { $0 = vend }
-    }
-    #endif
 
     // MARK: - What the guest says, on the reader thread
 
@@ -91,35 +63,47 @@ final class ClipboardDragNaming: Sendable {
 
     /// The guest answered `STAGE_RESOLVING`: the button may be released.
     func acknowledged(generation: UInt64) {
-        transition(generation) { phase in
-            guard case .requested = phase else { return false }
-            phase = .acknowledged
+        transition(generation) { record in
+            guard case .requested = record.exchange else { return false }
+            record.exchange = .acknowledged
             return true
         }
     }
 
-    /// The guest sent the names its promised items took, as `DragNames`
-    /// carries them.
+    /// The guest sent one `DragNames`, naming the promised items it lists; an
+    /// empty name says that item will not be named. An item keeps the first
+    /// word it is given.
     func named(generation: UInt64, filenames: [UInt32: String]) {
-        transition(generation) { phase, promised in
-            guard !phase.isTerminal else { return false }
-            phase = .named(Self.sanitizedNames(filenames, promised: promised))
-            return true
+        transition(generation) { record in
+            var changed = false
+            for (key, name) in filenames {
+                let index = Int(key)
+                guard let isDirectory = record.promised[index], record.names[index] == nil,
+                    !record.unnamed.contains(index)
+                else { continue }
+                if name.isEmpty {
+                    record.unnamed.insert(index)
+                } else {
+                    record.names[index] = ClipboardDraggedItem.safeFilename(name, isDirectory: isDirectory)
+                }
+                changed = true
+            }
+            return changed
         }
     }
 
-    /// The drag can no longer be named, for `failure`.
+    /// The drag's items can no longer be named, for `failure`.
     func failed(generation: UInt64, _ failure: ClipboardDragNamingFailure) {
-        transition(generation) { phase in
-            guard !phase.isTerminal else { return false }
-            phase = .failed(failure)
+        transition(generation) { record in
+            guard record.failure == nil else { return false }
+            record.failure = failure
             return true
         }
     }
 
     // MARK: - What the owner decides, on any thread
 
-    /// Forgets a drag that is retired, failing a resolve still waiting on it.
+    /// Forgets a drag that is retired, failing every ask still waiting on it.
     func retire(generation: UInt64) {
         let wakeups = state.withLock { state -> [@Sendable () -> Void] in
             guard state.records.removeValue(forKey: generation) != nil else { return [] }
@@ -128,8 +112,8 @@ final class ClipboardDragNaming: Sendable {
         for wake in wakeups { wake() }
     }
 
-    /// Forgets every drag because the connection is over, failing every
-    /// resolve still waiting and every one asked from now on.
+    /// Forgets every drag because the connection is over, failing every ask
+    /// still waiting and every one made from now on.
     func endSession() {
         let wakeups = state.withLock { state -> [@Sendable () -> Void] in
             state.hasEnded = true
@@ -139,174 +123,164 @@ final class ClipboardDragNaming: Sendable {
         for wake in wakeups { wake() }
     }
 
-    // MARK: - Reading the names
+    // MARK: - Asking
 
-    /// The names `generation`'s promised items took, or `nil` until they have
-    /// arrived.
-    func names(generation: UInt64) -> [Int: String]? {
-        state.withLock { state in
-            guard case .named(let names) = state.records[generation]?.phase else { return nil }
-            return names
-        }
-    }
-
-    /// Names `generation`'s promised items, holding the calling thread until
-    /// the guest names them, fails, or `deadline` passes.
+    /// Starts naming `generation`'s promised items without waiting for any
+    /// name, holding the calling thread until the button is released, the
+    /// naming fails, or `deadline` passes.
     ///
-    /// The first caller runs the exchange: `send` puts `DragResolve` on the
+    /// The drag's first ask runs the exchange: `send` puts `DragResolve` on the
     /// wire, reporting whether it went out, and once the guest answers
-    /// `STAGE_RESOLVING`, `releasingGuestButton` runs on the calling thread. A
-    /// caller arriving while that is in flight joins it, waiting to its own
-    /// deadline. A drag with no promised items is named at once, with nothing.
+    /// `STAGE_RESOLVING`, `releasingGuestButton` runs on the calling thread.
+    /// Any later ask, and a drag with no promised items, returns at once.
     ///
-    /// The hold runs the event loop on the main run loop's base and parks
-    /// anywhere else — the main thread inside a tracking loop included. That
+    /// The hold parks the calling thread on every thread, the main thread at
+    /// the run loop's base included, and is bounded by `deadline`. It never
+    /// runs the event loop, so nothing — a destination's own ask among it —
+    /// runs inside the take that asked while it waits mid-transition. That
     /// park is the one exception to ``LazyPullCoordinator``'s "the main thread
     /// is never parked", which is written for byte transfers: AppKit asks a
-    /// promise for its name synchronously and offers no asynchronous form, the
-    /// park is bounded by `deadline`, and the guest's answer measured in
-    /// milliseconds — `NSFilePromiseReceiver.fileNames` was filled 4–16 ms
-    /// after `receivePromisedFiles` began, for Photos and Safari promises in a
-    /// macOS 26.6.2 guest.
-    func resolve(
+    /// promise for its name synchronously and offers no asynchronous form, and
+    /// the guest's answer is measured in milliseconds —
+    /// `NSFilePromiseReceiver.fileNames` was filled 4–16 ms after
+    /// `receivePromisedFiles` began, for Photos and Safari promises in a macOS
+    /// 26.6.2 guest.
+    ///
+    /// - Returns: `nil` once the exchange is under way, or what failed the
+    ///   drag's naming.
+    func begin(
         generation: UInt64, deadline: DispatchTime, send: () -> Bool,
         releasingGuestButton: () -> Void
-    ) -> Result<[Int: String], ClipboardDragNamingFailure> {
+    ) -> ClipboardDragNamingFailure? {
         enum Start {
-            case settled(Result<[Int: String], ClipboardDragNamingFailure>)
+            case underWay
             case initiate
-            case join
+            case failed(ClipboardDragNamingFailure)
         }
         let start = state.withLock { state -> Start in
-            if let settled = Self.settled(state, generation: generation) {
-                return .settled(settled)
-            }
-            guard var record = state.records[generation], case .idle = record.phase else {
-                return .join
-            }
-            guard !record.promised.isEmpty else {
-                record.phase = .named([:])
-                state.records[generation] = record
-                return .settled(.success([:]))
-            }
-            record.phase = .requested
+            if let failure = Self.dragFailure(state, generation: generation) { return .failed(failure) }
+            guard var record = state.records[generation], !record.promised.isEmpty,
+                case .idle = record.exchange
+            else { return .underWay }
+            record.exchange = .requested
             state.records[generation] = record
             return .initiate
         }
-        if case .settled(let result) = start { return result }
+        switch start {
+        case .underWay: return nil
+        case .failed(let failure): return failure
+        case .initiate: break
+        }
+        guard send() else {
+            failed(generation: generation, .sessionEnded)
+            return dragFailure(generation: generation) ?? .sessionEnded
+        }
+        enum Answer {
+            case acknowledged
+            case failed(ClipboardDragNamingFailure)
+        }
+        let answer = hold(deadline: deadline) { () -> Answer? in
+            self.state.withLock { state in
+                if let failure = Self.dragFailure(state, generation: generation) {
+                    return .failed(failure)
+                }
+                guard case .acknowledged = state.records[generation]?.exchange else { return nil }
+                return .acknowledged
+            }
+        }
+        switch answer {
+        case nil:
+            failed(generation: generation, .timedOut)
+            return dragFailure(generation: generation) ?? .timedOut
+        case .failed(let failure)?:
+            return failure
+        case .acknowledged?:
+            releasingGuestButton()
+            return nil
+        }
+    }
 
-        let semaphore = DispatchSemaphore(value: 0)
-        let eventLoop = eventLoopWait.withLock { $0 }()
-        let waiter = state.withLock { state -> UInt64 in
-            state.lastWaiter &+= 1
-            state.wakeups[state.lastWaiter] = {
-                semaphore.signal()
-                eventLoop?.wake()
-            }
-            return state.lastWaiter
+    /// Names promised item `repIndex` of `generation`, holding the calling
+    /// thread — parked, as ``begin(generation:deadline:send:releasingGuestButton:)``
+    /// holds it — until the guest names it, says it will not, the drag's
+    /// naming fails, or `deadline` passes.
+    ///
+    /// The drag's first ask starts the exchange as `begin` does; every ask
+    /// then waits for its own item's `DragNames`. An item settled already is
+    /// answered at once. `deadline` passing fails the whole drag.
+    func resolveName(
+        generation: UInt64, repIndex: Int, deadline: DispatchTime, send: () -> Bool,
+        releasingGuestButton: () -> Void
+    ) -> Result<String, ClipboardDragNamingFailure> {
+        if let settled = settledName(generation: generation, repIndex: repIndex) { return settled }
+        if let failure = begin(
+            generation: generation, deadline: deadline, send: send,
+            releasingGuestButton: releasingGuestButton)
+        {
+            return settledName(generation: generation, repIndex: repIndex) ?? .failure(failure)
         }
-        defer { _ = state.withLock { $0.wakeups.removeValue(forKey: waiter) } }
-
-        if case .initiate = start {
-            guard send() else {
-                failed(generation: generation, .sessionEnded)
-                return settledResult(generation: generation)
-            }
-            let answer = ThreadHold.hold(
-                eventLoop: eventLoop, semaphore: semaphore, deadline: deadline
-            ) { () -> Observation? in
-                let observation = self.observe(generation: generation)
-                if case .requested = observation { return nil }
-                return observation
-            }
-            switch answer {
-            case nil: return timeOut(generation: generation)
-            case .settled(let result)?: return result
-            case .acknowledged?: releasingGuestButton()
-            case .requested?: break
-            }
+        let waited = hold(deadline: deadline) {
+            self.settledName(generation: generation, repIndex: repIndex)
         }
-        let settled = ThreadHold.hold(
-            eventLoop: eventLoop, semaphore: semaphore, deadline: deadline
-        ) { () -> Result<[Int: String], ClipboardDragNamingFailure>? in
-            guard case .settled(let result) = self.observe(generation: generation) else {
-                return nil
-            }
-            return result
-        }
-        return settled ?? timeOut(generation: generation)
+        if let waited { return waited }
+        failed(generation: generation, .timedOut)
+        return settledName(generation: generation, repIndex: repIndex) ?? .failure(.timedOut)
     }
 
     // MARK: - Private
 
-    /// `names` reduced to safe path components, keeping only the promised
-    /// items' and dropping an empty name, which names nothing.
-    static func sanitizedNames(
-        _ names: [UInt32: String], promised: [Int: Bool]
-    ) -> [Int: String] {
-        var sanitized: [Int: String] = [:]
-        for (key, name) in names where !name.isEmpty {
-            let index = Int(key)
-            guard let isDirectory = promised[index] else { continue }
-            sanitized[index] = ClipboardDraggedItem.safeFilename(name, isDirectory: isDirectory)
+    /// Holds the calling thread, parked, until `resolved` returns a value or
+    /// `deadline` passes, woken by every change to any drag.
+    private func hold<Value>(
+        deadline: DispatchTime, until resolved: @Sendable () -> Value?
+    ) -> Value? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let waiter = state.withLock { state -> UInt64 in
+            state.lastWaiter &+= 1
+            state.wakeups[state.lastWaiter] = { semaphore.signal() }
+            return state.lastWaiter
         }
-        return sanitized
+        defer { _ = state.withLock { $0.wakeups.removeValue(forKey: waiter) } }
+        return ThreadHold.hold(
+            eventLoop: nil, semaphore: semaphore, deadline: deadline, until: resolved)
     }
 
-    /// Applies `change` to `generation`'s phase, waking every waiter when it
+    /// Applies `change` to `generation`'s record, waking every waiter when it
     /// reports a change.
-    private func transition(
-        _ generation: UInt64, _ change: (inout Phase, [Int: Bool]) -> Bool
-    ) {
+    private func transition(_ generation: UInt64, _ change: (inout Record) -> Bool) {
         let wakeups = state.withLock { state -> [@Sendable () -> Void] in
-            guard var record = state.records[generation],
-                change(&record.phase, record.promised)
-            else { return [] }
+            guard var record = state.records[generation], change(&record) else { return [] }
             state.records[generation] = record
             return Array(state.wakeups.values)
         }
         for wake in wakeups { wake() }
     }
 
-    private func transition(_ generation: UInt64, _ change: (inout Phase) -> Bool) {
-        transition(generation) { phase, _ in change(&phase) }
+    private func dragFailure(generation: UInt64) -> ClipboardDragNamingFailure? {
+        state.withLock { Self.dragFailure($0, generation: generation) }
     }
 
-    /// Records the deadline passing as `generation`'s failure, unless it has
-    /// already settled, and returns how it settled.
-    private func timeOut(
-        generation: UInt64
-    ) -> Result<[Int: String], ClipboardDragNamingFailure> {
-        failed(generation: generation, .timedOut)
-        return settledResult(generation: generation)
-    }
-
-    private func settledResult(
-        generation: UInt64
-    ) -> Result<[Int: String], ClipboardDragNamingFailure> {
-        state.withLock { Self.settled($0, generation: generation) } ?? .failure(.timedOut)
-    }
-
-    private func observe(generation: UInt64) -> Observation {
+    /// How item `repIndex` of `generation` settled, or `nil` while it can
+    /// still be named.
+    private func settledName(
+        generation: UInt64, repIndex: Int
+    ) -> Result<String, ClipboardDragNamingFailure>? {
         state.withLock { state in
-            if let settled = Self.settled(state, generation: generation) {
-                return .settled(settled)
-            }
-            if case .acknowledged = state.records[generation]?.phase { return .acknowledged }
-            return .requested
+            guard !state.hasEnded else { return .failure(.sessionEnded) }
+            guard let record = state.records[generation] else { return .failure(.dragNotLive) }
+            guard record.promised[repIndex] != nil else { return .failure(.unnamed) }
+            if let name = record.names[repIndex] { return .success(name) }
+            if record.unnamed.contains(repIndex) { return .failure(.unnamed) }
+            return record.failure.map { .failure($0) }
         }
     }
 
-    /// How `generation`'s naming settled, or `nil` while it is still open.
-    private static func settled(
+    /// What failed `generation`'s whole naming, or `nil` while it can go on.
+    private static func dragFailure(
         _ state: State, generation: UInt64
-    ) -> Result<[Int: String], ClipboardDragNamingFailure>? {
-        guard !state.hasEnded else { return .failure(.sessionEnded) }
-        guard let record = state.records[generation] else { return .failure(.dragNotLive) }
-        switch record.phase {
-        case .named(let names): return .success(names)
-        case .failed(let failure): return .failure(failure)
-        case .idle, .requested, .acknowledged: return nil
-        }
+    ) -> ClipboardDragNamingFailure? {
+        guard !state.hasEnded else { return .sessionEnded }
+        guard let record = state.records[generation] else { return .dragNotLive }
+        return record.failure
     }
 }

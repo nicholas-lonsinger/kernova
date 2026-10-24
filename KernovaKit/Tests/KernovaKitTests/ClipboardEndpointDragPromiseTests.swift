@@ -73,24 +73,22 @@ struct ClipboardEndpointDragPromiseTests {
         #expect(drag.items.map(\.isDirectory) == [false, false, true])
         // A promise has no size until the guest writes it.
         #expect(harness.endpoint.inboundByteCount(generation: 1) == 8)
-        #expect(harness.endpoint.resolvedDragNames(generation: 1) == nil)
     }
 
     // MARK: - Naming, the main thread parked
 
-    @Test("the names reach a resolve parked on the main thread, which releases the guest's button on it")
+    @Test("a name reaches an ask parked on the main thread, which releases the guest's button on it")
     func resolveWhileTheMainThreadIsParked() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
-        harness.endpoint.setDragNamingEventLoopWaitForTesting { nil }
         let answered = answerResolve(on: harness) { peer in
             try peer.send(.dragHandOff(generation: 1, step: .resolving))
         }
         let peer = harness.peer
         let releases = Locked<[Bool]>([])
 
-        let result = harness.endpoint.resolveDragNames(
-            generation: 1, deadline: .now() + Self.mainHoldWindow
+        let result = harness.endpoint.resolveDragName(
+            generation: 1, repIndex: 1, deadline: .now() + Self.mainHoldWindow
         ) {
             releases.withLock { $0.append(Thread.isMainThread) }
             // The names follow the guest's drop, which this release causes.
@@ -101,36 +99,37 @@ struct ClipboardEndpointDragPromiseTests {
         }
 
         try await answered.value
-        #expect(result == .success([1: "IMG_0001.jpeg", 2: "Album"]))
+        #expect(result == .success("IMG_0001.jpeg"))
         #expect(releases.withLock { $0 } == [true])
-        #expect(harness.endpoint.resolvedDragNames(generation: 1) == [1: "IMG_0001.jpeg", 2: "Album"])
 
-        // A second ask is answered from what the first settled: nothing is
-        // sent and nothing released again.
+        // A later ask is answered from what arrived: nothing is sent and
+        // nothing released again.
         let before = harness.recorder.count
-        let again = harness.endpoint.resolveDragNames(
-            generation: 1, deadline: .now() + Self.mainHoldWindow
+        let again = harness.endpoint.resolveDragName(
+            generation: 1, repIndex: 2, deadline: .now() + Self.mainHoldWindow
         ) { releases.withLock { $0.append(Thread.isMainThread) } }
-        #expect(again == result)
+        #expect(again == .success("Album"))
+        #expect(
+            harness.endpoint.resolveDragName(generation: 1, repIndex: 1, deadline: .now()) {}
+                == .success("IMG_0001.jpeg"))
         #expect(releases.withLock { $0 }.count == 1)
         try await harness.recorder.expectNoNewFrames(
             sinceCount: before, aheadOfMarkerOn: harness.side.channel)
         #expect(resolveCount(harness) == 1)
     }
 
-    @Test("the guest's STAGE_FAILED fails a parked resolve, with nothing released")
+    @Test("the guest's STAGE_FAILED fails a parked ask, with nothing released")
     func handOffFailureFailsTheResolve() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
-        harness.endpoint.setDragNamingEventLoopWaitForTesting { nil }
         let answered = answerResolve(on: harness) { peer in
             try peer.send(
                 .dragHandOff(generation: 1, step: .failed(.dragTakeRefused, message: "no catcher")))
         }
         let releases = Locked(0)
 
-        let result = harness.endpoint.resolveDragNames(
-            generation: 1, deadline: .now() + Self.mainHoldWindow
+        let result = harness.endpoint.resolveDragName(
+            generation: 1, repIndex: 1, deadline: .now() + Self.mainHoldWindow
         ) { releases.withLock { $0 += 1 } }
 
         try await answered.value
@@ -140,59 +139,84 @@ struct ClipboardEndpointDragPromiseTests {
         try await harness.side.recorder.wait { !harness.side.recorder.handOffs.isEmpty }
     }
 
-    @Test("the guest withdrawing the drag fails a parked resolve")
+    @Test("the guest refusing the resolve fails the drag's naming, every item, with nothing released")
+    func refusedResolveFailsTheNaming() async throws {
+        let harness = try await hostHoldingPromises()
+        defer { harness.tearDown() }
+        let answered = answerResolve(on: harness) { peer in
+            try peer.send(.dragHandOff(generation: 1, step: .resolveRefused))
+        }
+        let releases = Locked(0)
+
+        let result = harness.endpoint.beginDragNaming(
+            generation: 1, deadline: .now() + Self.mainHoldWindow
+        ) { releases.withLock { $0 += 1 } }
+
+        try await answered.value
+        #expect(result == .resolveRefused)
+        #expect(
+            harness.endpoint.resolveDragName(generation: 1, repIndex: 2, deadline: .now()) {
+                releases.withLock { $0 += 1 }
+            } == .failure(.resolveRefused))
+        #expect(releases.withLock { $0 } == 0)
+        try await harness.side.recorder.wait {
+            harness.side.recorder.handOffs.map(\.step) == [.resolveRefused]
+        }
+    }
+
+    @Test("the guest withdrawing the drag fails a parked ask")
     func withdrawalFailsTheResolve() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
-        harness.endpoint.setDragNamingEventLoopWaitForTesting { nil }
         let answered = answerResolve(on: harness) { peer in
             try peer.send(.dragRelease(generation: 1))
         }
 
-        let result = harness.endpoint.resolveDragNames(
-            generation: 1, deadline: .now() + Self.mainHoldWindow
+        let result = harness.endpoint.resolveDragName(
+            generation: 1, repIndex: 1, deadline: .now() + Self.mainHoldWindow
         ) {}
 
         try await answered.value
         #expect(result == .failure(.dragNotLive))
     }
 
-    @Test("the session ending fails a parked resolve, and every later one")
+    @Test("the session ending fails a parked ask, and every later one")
     func sessionEndFailsTheResolve() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
-        harness.endpoint.setDragNamingEventLoopWaitForTesting { nil }
         let answered = answerResolve(on: harness) { peer in peer.close() }
 
-        let result = harness.endpoint.resolveDragNames(
-            generation: 1, deadline: .now() + Self.mainHoldWindow
+        let result = harness.endpoint.resolveDragName(
+            generation: 1, repIndex: 1, deadline: .now() + Self.mainHoldWindow
         ) {}
 
         try await answered.value
         #expect(result == .failure(.sessionEnded))
         #expect(
-            harness.endpoint.resolveDragNames(generation: 1, deadline: .now()) {}
+            harness.endpoint.resolveDragName(generation: 1, repIndex: 2, deadline: .now()) {}
                 == .failure(.sessionEnded))
+        #expect(harness.endpoint.beginDragNaming(generation: 1, deadline: .now()) {} == .sessionEnded)
     }
 
-    @Test("the deadline fails a resolve the guest never answers, and that failure stands")
+    @Test("a deadline passing fails the whole drag: a later ask for another item neither waits nor asks again")
     func deadlineFailsTheResolve() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
-        harness.endpoint.setDragNamingEventLoopWaitForTesting { nil }
         let releases = Locked(0)
 
         // The deadline is the behavior under test.
-        let result = harness.endpoint.resolveDragNames(generation: 1, deadline: .now() + 0.2) {
-            releases.withLock { $0 += 1 }
-        }
+        let result = harness.endpoint.resolveDragName(
+            generation: 1, repIndex: 1, deadline: .now() + 0.2
+        ) { releases.withLock { $0 += 1 } }
 
         #expect(result == .failure(.timedOut))
-        // A later ask does not wait out a deadline of its own, nor ask again.
+        let asked = DispatchTime.now()
         #expect(
-            harness.endpoint.resolveDragNames(
-                generation: 1, deadline: .now() + Self.mainHoldWindow
+            harness.endpoint.resolveDragName(
+                generation: 1, repIndex: 2, deadline: .now() + Self.mainHoldWindow
             ) { releases.withLock { $0 += 1 } } == .failure(.timedOut))
+        // Answered from the drag's failure, never from a wait of its own.
+        #expect(DispatchTime.now().uptimeNanoseconds - asked.uptimeNanoseconds < 1_000_000_000)
         #expect(releases.withLock { $0 } == 0)
         try await harness.recorder.waitForFrames { resolveCount(harness) == 1 }
         try await harness.recorder.expectNoNewFrames(
@@ -202,14 +226,16 @@ struct ClipboardEndpointDragPromiseTests {
 
     // MARK: - Naming off the main thread
 
-    @Test("retiring the drag fails a resolve waiting off the main thread")
+    @Test("retiring the drag fails an ask waiting off the main thread")
     func retirementFailsTheResolve() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
         let endpoint = harness.endpoint
         let resolution = Task {
             await offCooperativePool {
-                endpoint.resolveDragNames(generation: 1, deadline: .now() + testWaitBackstop) {}
+                endpoint.resolveDragName(
+                    generation: 1, repIndex: 1, deadline: .now() + testWaitBackstop
+                ) {}
             }
         }
         try await harness.recorder.waitForFrames { resolveCount(harness) == 1 }
@@ -218,11 +244,12 @@ struct ClipboardEndpointDragPromiseTests {
 
         #expect(await resolution.value == .failure(.dragNotLive))
         #expect(
-            endpoint.resolveDragNames(generation: 1, deadline: .now()) {} == .failure(.dragNotLive))
+            endpoint.resolveDragName(generation: 1, repIndex: 1, deadline: .now()) {}
+                == .failure(.dragNotLive))
     }
 
-    @Test("a resolve asked while one is in flight joins it: one ask, one release, the same names")
-    func aSecondResolveJoinsTheFirst() async throws {
+    @Test("asks for two items share one resolve and one release, and each returns as its own name arrives")
+    func eachAskWaitsForItsOwnName() async throws {
         let harness = try await hostHoldingPromises()
         defer { harness.tearDown() }
         let endpoint = harness.endpoint
@@ -230,7 +257,9 @@ struct ClipboardEndpointDragPromiseTests {
         let released = AsyncGate()
         let first = Task {
             await offCooperativePool {
-                endpoint.resolveDragNames(generation: 1, deadline: .now() + testWaitBackstop) {
+                endpoint.resolveDragName(
+                    generation: 1, repIndex: 1, deadline: .now() + testWaitBackstop
+                ) {
                     releases.withLock { $0 += 1 }
                     released.notify()
                 }
@@ -239,23 +268,98 @@ struct ClipboardEndpointDragPromiseTests {
         try await harness.recorder.waitForFrames { resolveCount(harness) == 1 }
         let second = Task {
             await offCooperativePool {
-                endpoint.resolveDragNames(generation: 1, deadline: .now() + testWaitBackstop) {
-                    releases.withLock { $0 += 1 }
-                }
+                endpoint.resolveDragName(
+                    generation: 1, repIndex: 2, deadline: .now() + testWaitBackstop
+                ) { releases.withLock { $0 += 1 } }
             }
         }
 
         try harness.send(.dragHandOff(generation: 1, step: .resolving))
         try await released.wait { releases.withLock { $0 } == 1 }
+        // The later item is named first; its ask does not wait for the other.
+        try harness.send(.dragNames(generation: 1, filenames: [2: "Album"]))
+        #expect(await second.value == .success("Album"))
         try harness.send(.dragNames(generation: 1, filenames: [1: "IMG_0002.jpeg"]))
-
-        #expect(await first.value == .success([1: "IMG_0002.jpeg"]))
-        #expect(await second.value == .success([1: "IMG_0002.jpeg"]))
+        #expect(await first.value == .success("IMG_0002.jpeg"))
         #expect(releases.withLock { $0 } == 1)
         #expect(resolveCount(harness) == 1)
     }
 
-    @Test("a drag with no promised items is named at once, with nothing asked")
+    @Test("an empty name fails only its own item")
+    func anEmptyNameFailsOnlyItsItem() async throws {
+        let harness = try await hostHoldingPromises()
+        defer { harness.tearDown() }
+        let endpoint = harness.endpoint
+        let peer = harness.peer
+        let answered = answerResolve(on: harness) { peer in
+            try peer.send(.dragHandOff(generation: 1, step: .resolving))
+        }
+        let unnamed = Task {
+            await offCooperativePool {
+                endpoint.resolveDragName(
+                    generation: 1, repIndex: 1, deadline: .now() + testWaitBackstop
+                ) { try? peer.send(.dragNames(generation: 1, filenames: [1: ""])) }
+            }
+        }
+        try await answered.value
+        #expect(await unnamed.value == .failure(.unnamed))
+
+        try harness.send(.dragNames(generation: 1, filenames: [2: "Album"]))
+
+        #expect(
+            await offCooperativePool {
+                endpoint.resolveDragName(
+                    generation: 1, repIndex: 2, deadline: .now() + testWaitBackstop
+                ) {}
+            } == .success("Album"))
+        // A later name for the item it already settled changes nothing.
+        try harness.send(.dragNames(generation: 1, filenames: [1: "late.jpeg"]))
+        try harness.send(.dragNames(generation: 1, filenames: [2: "Renamed"]))
+        // Frames are observed in order, so once this step reaches the owner
+        // the names before it were taken.
+        try harness.send(.dragHandOff(generation: 1, step: .armed))
+        try await harness.side.recorder.wait { harness.side.recorder.handOffs.count == 2 }
+        #expect(
+            endpoint.resolveDragName(generation: 1, repIndex: 1, deadline: .now()) {}
+                == .failure(.unnamed))
+        #expect(
+            endpoint.resolveDragName(generation: 1, repIndex: 2, deadline: .now()) {}
+                == .success("Album"))
+    }
+
+    @Test("beginning a naming releases once the guest answers and waits for no name; a later ask waits for its own")
+    func beginningReleasesWithoutWaitingForNames() async throws {
+        let harness = try await hostHoldingPromises()
+        defer { harness.tearDown() }
+        let endpoint = harness.endpoint
+        let answered = answerResolve(on: harness) { peer in
+            try peer.send(.dragHandOff(generation: 1, step: .resolving))
+        }
+        let releases = Locked(0)
+
+        let began = harness.endpoint.beginDragNaming(
+            generation: 1, deadline: .now() + Self.mainHoldWindow
+        ) { releases.withLock { $0 += 1 } }
+
+        try await answered.value
+        #expect(began == nil)
+        #expect(releases.withLock { $0 } == 1)
+        // A second start is under way already: nothing sent or released.
+        #expect(endpoint.beginDragNaming(generation: 1, deadline: .now()) { releases.withLock { $0 += 1 } } == nil)
+        let name = Task {
+            await offCooperativePool {
+                endpoint.resolveDragName(
+                    generation: 1, repIndex: 1, deadline: .now() + testWaitBackstop
+                ) { releases.withLock { $0 += 1 } }
+            }
+        }
+        try harness.send(.dragNames(generation: 1, filenames: [1: "IMG_0003.jpeg"]))
+        #expect(await name.value == .success("IMG_0003.jpeg"))
+        #expect(releases.withLock { $0 } == 1)
+        #expect(resolveCount(harness) == 1)
+    }
+
+    @Test("a drag with no promised items starts no naming, and asks nothing")
     func aDragWithoutPromisesNeedsNoNames() async throws {
         let harness = try RawPeerHarness(role: .host, kind: .drop)
         defer { harness.tearDown() }
@@ -263,11 +367,15 @@ struct ClipboardEndpointDragPromiseTests {
         try await harness.side.recorder.waitForDrag()
         let before = harness.recorder.count
 
-        let result = harness.endpoint.resolveDragNames(generation: 1, deadline: .now()) {
+        let began = harness.endpoint.beginDragNaming(generation: 1, deadline: .now()) {
+            Issue.record("Nothing is promised, so nothing is released")
+        }
+        let name = harness.endpoint.resolveDragName(generation: 1, repIndex: 0, deadline: .now()) {
             Issue.record("Nothing is promised, so nothing is released")
         }
 
-        #expect(result == .success([:]))
+        #expect(began == nil)
+        #expect(name == .failure(.unnamed))
         try await harness.recorder.expectNoNewFrames(
             sinceCount: before, aheadOfMarkerOn: harness.side.channel)
     }
@@ -477,8 +585,10 @@ struct ClipboardEndpointDragPromiseTests {
 
         let guest = try guestOfferingAPromise()
         defer { guest.tearDown() }
-        #expect(guest.endpoint.resolveDragNames(generation: 1, deadline: .now()) {} == .failure(.dragNotLive))
-        #expect(guest.endpoint.resolvedDragNames(generation: 1) == nil)
+        #expect(
+            guest.endpoint.resolveDragName(generation: 1, repIndex: 1, deadline: .now()) {}
+                == .failure(.dragNotLive))
+        #expect(guest.endpoint.beginDragNaming(generation: 1, deadline: .now()) {} == .dragNotLive)
     }
 
     // MARK: - End to end
@@ -500,7 +610,7 @@ struct ClipboardEndpointDragPromiseTests {
         let releases = Locked(0)
         let resolution = Task {
             await offCooperativePool {
-                host.resolveDragNames(generation: 1, deadline: .now() + testWaitBackstop) {
+                host.resolveDragName(generation: 1, repIndex: 1, deadline: .now() + testWaitBackstop) {
                     releases.withLock { $0 += 1 }
                     released.notify()
                 }
@@ -510,7 +620,7 @@ struct ClipboardEndpointDragPromiseTests {
         pair.guest.endpoint.sendDragHandOff(generation: 1, step: .resolving)
         try await released.wait { releases.withLock { $0 } == 1 }
         #expect(pair.guest.endpoint.sendDragNames(generation: 1, filenames: [1: "IMG_0001.jpeg"]))
-        #expect(await resolution.value == .success([1: "IMG_0001.jpeg"]))
+        #expect(await resolution.value == .success("IMG_0001.jpeg"))
 
         let operation = pair.host.makeOperation(gesture: .dragOut, direction: .inbound)
         let pull = pair.host.startPull(generation: 1, repIndex: 1, operation: operation)
