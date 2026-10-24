@@ -868,13 +868,19 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// `expected` once the catcher will call them in, returning the names or
     /// `nil` when they could not be had.
     nonisolated private func resolveNames(releasingFrom expected: Phase) -> [Int: String]? {
+        let asked = DispatchTime.now()
         let result = endpoint.resolveDragNames(
-            generation: generation, deadline: .now() + namingDeadline
+            generation: generation, deadline: asked + namingDeadline
         ) {
             MainActorBridge.sync { self.releaseForNaming(from: expected) }
         }
         switch result {
         case .success(let names):
+            let elapsedMilliseconds = (DispatchTime.now().uptimeNanoseconds - asked.uptimeNanoseconds) / 1_000_000
+            Self.logger.log(
+                .notice,
+                "The guest named \(names.count, privacy: .public) promised item(s) of drag gen=\(self.generation, privacy: .public) in \(elapsedMilliseconds, privacy: .public) ms"
+            )
             return names
         case .failure(let failure):
             Self.logger.log(
