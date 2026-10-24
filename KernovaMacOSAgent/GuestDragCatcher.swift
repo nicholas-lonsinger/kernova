@@ -17,7 +17,9 @@ import KernovaLogging
 /// A take whose drag carries file promises calls them in at the catch only
 /// once the host asked with `DragResolve`, which the catcher answers
 /// `resolving` while it is targeted: the host releases the button for that
-/// drop alone, and every other drop on the surface calls nothing in.
+/// drop alone, and every other drop on the surface calls nothing in. The ask
+/// holds for the showing it came in, as `targeted` does: standing the surface
+/// down drops it.
 ///
 /// Once `targeted` is out the host may already have released the button, and
 /// that release is a real drop under the guest pointer, so a refusal after
@@ -65,6 +67,9 @@ final class GuestDragCatcher {
         /// `targeted` went out in this showing, so the host may have released
         /// the button.
         var targeted = false
+        /// The host asked for the drag's promises in this showing: the drop
+        /// calls them in.
+        var callsIn = false
     }
 
     /// The drag a take armed the catcher for.
@@ -78,8 +83,6 @@ final class GuestDragCatcher {
         var refused = false
         /// The drag ended on the surface; its items stay pullable.
         var caught = false
-        /// The host asked for the drag's promises: the drop calls them in.
-        var callsIn = false
     }
 
     private let peer: any GuestDragOutPeer
@@ -176,10 +179,10 @@ final class GuestDragCatcher {
     }
 
     /// A Mac destination wants the names of `generation`'s promised items:
-    /// marks the take to call them in at the catch and reports `resolving`,
-    /// which only a take whose drag is on the surface — targeted, neither
-    /// caught nor refused — can be. Anything else fails the request and
-    /// leaves any live take alone, and the host releases nothing.
+    /// marks the current showing to call them in at the catch and reports
+    /// `resolving`, which only a take whose drag is on the surface — targeted,
+    /// neither caught nor refused — can be. Anything else fails the request
+    /// and leaves any live take alone, and the host releases nothing.
     func resolve(generation: UInt64) {
         guard let current = take, current.claim.generation == generation else {
             refuse(generation: generation, code: .dragTakeStale, message: "The catcher holds no such take")
@@ -191,7 +194,7 @@ final class GuestDragCatcher {
                 message: "The drag is not on the catcher to call its promises in")
             return
         }
-        take?.callsIn = true
+        take?.showing?.callsIn = true
         send(.resolving, for: generation)
         Self.logger.log(.notice, "Catcher will call the drag's promises in (gen=\(generation, privacy: .public))")
     }
@@ -258,7 +261,8 @@ final class GuestDragCatcher {
             return []
         }
         if !showing.entered {
-            take?.showing = Showing(entered: true, targeted: true)
+            take?.showing?.entered = true
+            take?.showing?.targeted = true
             send(.targeted, for: current.claim.generation)
         }
         return .copy
@@ -286,15 +290,17 @@ final class GuestDragCatcher {
         take?.showing?.entered = false
     }
 
-    /// The drag ended on the surface. A take the host asked to resolve calls
-    /// the drop's promises in, read through `receivers`, before it reports
-    /// `caught`; any other reads nothing of them.
-    func performDragOperation(receivers: () -> [any GuestDragPromiseReceiving]) -> Bool {
-        guard let current = take, current.showing?.entered == true, !current.caught, !current.refused else {
+    /// The drag ended on the surface. A showing the host asked to resolve
+    /// calls the drop's promises in, read through `receivers`, before it
+    /// reports `caught`; any other reads nothing of them.
+    func performDragOperation(receivers: () -> [any FilePromiseReceiving]) -> Bool {
+        guard let current = take, let showing = current.showing, showing.entered, !current.caught,
+            !current.refused
+        else {
             return false
         }
         take?.caught = true
-        if current.callsIn {
+        if showing.callsIn {
             promises.callIn(current.claim, receivers: receivers())
         }
         send(.caught, for: current.claim.generation)

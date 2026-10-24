@@ -252,7 +252,7 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
 
 /// One file promise a drop carries, whose source a test plays: it names its
 /// files when called in, and writes each when the test says.
-final class FakePromiseReceiver: GuestDragPromiseReceiving {
+final class FakePromiseReceiver: FilePromiseReceiving {
     /// The names it gives its files once called in.
     private let names: [String]
 

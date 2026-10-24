@@ -1061,6 +1061,39 @@ struct GuestDragOutTests {
         #expect(!exists(rig.promiseFolders))
     }
 
+    @Test("a resolve holds only for its showing: a drop after the catcher was shown again calls nothing in")
+    func aResolveEndsWithItsShowing() throws {
+        let plain = try file("plain.txt")
+        let rig = Rig()
+        rig.pressAndDrag([fileItem(plain), promiseItem("public.heic")])
+        rig.dragOut.take(generation: 1)
+        let items: [GuestDragItem] = [.file(plain), .promise(uti: "public.heic")]
+        let catcher = rig.dragOut.catcherForTesting
+        let receiver = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        #expect(catcher.draggingEntered(caught(items: items)) == .copy)
+        rig.dragOut.resolve(generation: 1)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolving))
+
+        rig.dragOut.setCatcherShown(false, generation: 1)
+        rig.dragOut.setCatcherShown(true, generation: 1)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .armed))
+        #expect(catcher.draggingEntered(caught(items: items)) == .copy)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .targeted))
+        var readReceivers = false
+
+        let dropped = catcher.performDragOperation {
+            readReceivers = true
+            return [receiver]
+        }
+
+        #expect(dropped)
+        #expect(!readReceivers)
+        #expect(!receiver.wasCalledIn)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .caught))
+        #expect(!rig.peer.events.contains { if case .named = $0 { true } else { false } })
+        #expect(!exists(rig.promiseFolders))
+    }
+
     @Test("a drop the host resolved calls each promise in and names it by its first file, ahead of caught")
     func theCallInNamesThePromises() throws {
         let rig = try promiseRig(["public.heic", "public.jpeg"])

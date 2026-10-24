@@ -443,7 +443,7 @@ struct VMDisplayBackingViewTests {
 
     /// A promise source that writes its files where it is asked to, or fails.
     @MainActor
-    private final class StubPromiseReceiver: DisplayDropPromiseReceiving {
+    private final class StubPromiseReceiver: FilePromiseReceiving {
         struct Failure: Error {}
 
         /// When a source fills `fileNames` in — `NSFilePromiseReceiver`
@@ -497,7 +497,7 @@ struct VMDisplayBackingViewTests {
         }
     }
 
-    private func makePromiseSource(_ receivers: [any DisplayDropPromiseReceiving])
+    private func makePromiseSource(_ receivers: [any FilePromiseReceiving])
         -> DisplayDropPromiseSource
     {
         DisplayDropPromiseSource(carriesPromises: { _ in true }, receivers: { _ in receivers })

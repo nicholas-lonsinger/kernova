@@ -213,23 +213,6 @@ protocol GuestDragCatcherSurface: AnyObject {
     func hide()
 }
 
-/// One file promise a drop carries, as `NSFilePromiseReceiver` serves it.
-protocol GuestDragPromiseReceiving: AnyObject {
-    /// The names of the files the promise's source says it writes, filled
-    /// while ``receivePromisedFiles(atDestination:options:operationQueue:reader:)``
-    /// runs.
-    var fileNames: [String] { get }
-
-    /// Asks the source to write its files into `destination`, calling `reader`
-    /// on `operationQueue` once per file with the URL it landed at, or with
-    /// the error that stopped it.
-    func receivePromisedFiles(
-        atDestination destination: URL, options: [AnyHashable: Any],
-        operationQueue: OperationQueue, reader: @escaping (URL, (any Error)?) -> Void)
-}
-
-extension NSFilePromiseReceiver: GuestDragPromiseReceiving {}
-
 /// Where a drag-out's platform pieces come from: the live guest's for the
 /// agent, fakes for a test.
 struct GuestDragOutSystem: Sendable {

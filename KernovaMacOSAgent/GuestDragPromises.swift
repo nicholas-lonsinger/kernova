@@ -24,28 +24,23 @@ final class GuestDragPromises {
     private final class CallIn {
         let folder: URL
         /// Each promised item's receiver, by the item's index in the offer.
-        let receivers: [Int: any GuestDragPromiseReceiving]
-        /// How many reader callbacks each receiver has delivered.
-        var callbacks: [Int: Int] = [:]
+        let receivers: [Int: any FilePromiseReceiving]
+        /// The reader callbacks each receiver owes, by the same index.
+        var tally: FilePromiseTally<Int>
         /// The promised folders whose tree is being measured.
         var measuring: Set<Int> = []
         /// The host is done with the drag, or the connection ended.
         var hostDone = false
 
-        init(folder: URL, receivers: [Int: any GuestDragPromiseReceiving]) {
+        init(folder: URL, receivers: [Int: any FilePromiseReceiving]) {
             self.folder = folder
             self.receivers = receivers
+            self.tally = FilePromiseTally(receivers: receivers.keys)
         }
 
-        /// Every receiver has called back once for each file it named — once
-        /// at least, since a source can name nothing up front — and no
-        /// measure is in flight.
-        var readsSettled: Bool {
-            measuring.isEmpty
-                && receivers.allSatisfy { index, receiver in
-                    (callbacks[index] ?? 0) >= max(1, receiver.fileNames.count)
-                }
-        }
+        /// Every receiver has delivered every callback it owes and no measure
+        /// is in flight.
+        var readsSettled: Bool { measuring.isEmpty && tally.isQuiesced }
     }
 
     private let peer: any GuestDragOutPeer
@@ -82,7 +77,7 @@ final class GuestDragPromises {
     /// count leaves which is which unknown, so then none is called in and
     /// every promised item is unavailable. `DragNames` goes out on every path:
     /// the host holds a Mac destination waiting for it.
-    func callIn(_ claim: GuestDragWatcher.Claim, receivers: [any GuestDragPromiseReceiving]) {
+    func callIn(_ claim: GuestDragWatcher.Claim, receivers: [any FilePromiseReceiving]) {
         let generation = claim.generation
         let promised = claim.items.indices.filter { claim.items[$0].fileURL == nil }
         guard !promised.isEmpty, receivers.count == promised.count else {
@@ -159,8 +154,7 @@ final class GuestDragPromises {
     /// any later file it writes stays in the folder until the folder goes.
     private func read(_ landing: PromiseLanding, at url: URL, item index: Int, of generation: UInt64) {
         guard let callIn = callIns[generation] else { return }
-        let count = (callIn.callbacks[index] ?? 0) + 1
-        callIn.callbacks[index] = count
+        let count = callIn.tally.record(from: index, naming: callIn.receivers[index]?.fileNames.count ?? 0)
         defer { releaseIfDone(generation) }
         guard count == 1 else {
             Self.logger.log(
