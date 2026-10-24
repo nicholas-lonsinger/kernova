@@ -10,8 +10,9 @@ import KernovaSynchronization
 ///
 /// A minted counter rather than the object's address: an address is reused once
 /// the operation it named is gone, and a surface holding the readout it last
-/// rendered would then cancel a stranger.
-public struct ClipboardTransferOperationID: Hashable, Sendable {
+/// rendered would then cancel a stranger. Ordered by minting: an operation
+/// started later compares greater.
+public struct ClipboardTransferOperationID: Hashable, Comparable, Sendable {
     private static let lastMinted = Locked<UInt64>(0)
 
     private let value: UInt64
@@ -31,6 +32,9 @@ public struct ClipboardTransferOperationID: Hashable, Sendable {
     /// preview built by hand. Cancelling it reaches nothing, which is the point:
     /// there is nothing behind it to stop.
     public static let unattached = ClipboardTransferOperationID(value: 0)
+
+    /// Whether `lhs` was minted before `rhs`.
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.value < rhs.value }
 }
 
 /// One user-visible clipboard operation, aggregating every transfer it makes

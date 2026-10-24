@@ -20,6 +20,12 @@ public enum ClipboardProgressRevealDecision: Equatable, Sendable {
 /// drag out, whose files are not where the user put them until it lands. It
 /// waits until the transfer has run for `minimumElapsedToReveal` with at least
 /// `minimumRemainingToReveal` still to go.
+///
+/// Spending is keyed on the readout's operation, never on gaps in the report:
+/// once an operation's reveal is spent, neither it nor any operation started
+/// before it reveals again, so a readout that clears and returns — a
+/// concurrent refusal publishing in between — or a surface that goes back to an
+/// older operation never re-raises a callout the user already had.
 public struct ClipboardProgressAutoReveal: Equatable, Sendable {
     /// How long a transfer must have been running before it may reveal itself.
     public static let defaultMinimumElapsedToReveal: TimeInterval = 1
@@ -31,10 +37,8 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
     private let minimumElapsedToReveal: TimeInterval
     private let minimumRemainingToReveal: TimeInterval
 
-    /// Whether a readout is currently showing.
-    private var readoutActive = false
-    /// Whether the operation on screen has already had its one reveal.
-    private var revealedThisOperation = false
+    /// The latest-started operation whose reveal is spent.
+    private var lastSpent: ClipboardTransferOperationID?
 
     /// Creates a decider with nothing in flight.
     public init(
@@ -48,7 +52,7 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
     }
 
     /// Folds in a change to the delivered readout, calling `reveal` when this
-    /// readout earns the operation's one reveal.
+    /// readout earns its operation's one reveal.
     ///
     /// `readout` is the snapshot being shown (`nil` when the readout clears) and
     /// `dropdownIsOpen` whether the dropdown, which carries the readout itself,
@@ -59,17 +63,8 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
     public mutating func readoutChanged(
         _ readout: ClipboardProgressSnapshot?, dropdownIsOpen: Bool, reveal: () -> Bool
     ) -> ClipboardProgressRevealDecision {
-        guard let readout else {
-            readoutActive = false
-            revealedThisOperation = false
-            return .none
-        }
-        // A readout arriving while none was showing starts a new operation.
-        if !readoutActive {
-            readoutActive = true
-            revealedThisOperation = false
-        }
-        guard !revealedThisOperation else { return .none }
+        guard let readout else { return .none }
+        if let lastSpent, readout.operationID <= lastSpent { return .none }
         // Must stay ahead of the `dropdownIsOpen` branch: a readout nobody is
         // waiting on must not spend the reveal, or a preview fetch overlapping a
         // paste would answer the paste's one chance with a dropdown the user
@@ -79,12 +74,12 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
             // The readout goes straight into the open dropdown, so the operation
             // has had its showing — spending the reveal here is what stops the
             // next update from raising a callout once the user dismisses it.
-            revealedThisOperation = true
+            lastSpent = readout.operationID
             return .none
         }
         guard isWorthRevealing(readout) else { return .none }
         guard reveal() else { return .notShown }
-        revealedThisOperation = true
+        lastSpent = readout.operationID
         return .shown
     }
 

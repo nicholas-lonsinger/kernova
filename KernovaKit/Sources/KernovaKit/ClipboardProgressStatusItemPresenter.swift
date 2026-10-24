@@ -15,7 +15,7 @@ public final class ClipboardProgressStatusItemPresenter {
 
     private let menu: NSMenu
     /// The status item's popover slot, which the reveal shows its callout in.
-    private let slot: TransientStatusItemPopover
+    private let slot: any StatusItemCalloutSlot
 
     /// Stops the operation the readout is showing, named by the identity that
     /// readout carried. `nil` leaves every readout without a Cancel button.
@@ -56,7 +56,7 @@ public final class ClipboardProgressStatusItemPresenter {
     /// readout on screen was rendered for; the button appears only while that
     /// readout reports itself cancellable.
     public init(
-        menu: NSMenu, slot: TransientStatusItemPopover,
+        menu: NSMenu, slot: any StatusItemCalloutSlot,
         onCancel: ((ClipboardTransferOperationID) -> Void)? = nil
     ) {
         self.menu = menu
@@ -177,7 +177,7 @@ public final class ClipboardProgressStatusItemPresenter {
     private func revealIfEarned(_ readout: ClipboardProgressSnapshot?) {
         let dropdownOpen = slot.isDropdownOpen
         let decision = autoReveal.readoutChanged(readout, dropdownIsOpen: dropdownOpen) {
-            guard let showing = slot.show(calloutContent, describedAs: "Readout callout") else {
+            guard let showing = slot.show(calloutContent, for: nil, describedAs: "Readout callout") else {
                 return false
             }
             calloutShowing = showing
@@ -191,8 +191,8 @@ public final class ClipboardProgressStatusItemPresenter {
     /// Records the decision with the inputs that made it — one line per delivered
     /// readout, a rate the tracker's throttle already bounds.
     ///
-    /// A callout the status item could not carry also has the slot's own skip
-    /// line, which names why.
+    /// A callout the slot skipped also has the slot's own skip line, which
+    /// names why.
     private func log(
         _ decision: ClipboardProgressRevealDecision, readout: ClipboardProgressSnapshot,
         dropdownOpen: Bool

@@ -1,17 +1,37 @@
 import AppKit
 import KernovaLogging
 
+/// A status item's one callout slot, as the readout presenter uses it.
+///
+/// It has no unscoped dismissal: a holder ends only its own showing.
+@MainActor
+public protocol StatusItemCalloutSlot: AnyObject {
+    /// Whether the status item's dropdown is on screen.
+    var isDropdownOpen: Bool { get }
+
+    /// Shows `content` for `duration` seconds, or until dismissed when `nil`;
+    /// `nil` when the slot skipped it.
+    func show(_ content: NSViewController, for duration: TimeInterval?, describedAs description: String)
+        -> TransientStatusItemPopover.Showing?
+
+    /// Closes `showing`'s callout if it still holds the slot; `false` otherwise.
+    @discardableResult
+    func dismiss(_ showing: TransientStatusItemPopover.Showing) -> Bool
+}
+
 /// The menu-bar status item's one popover slot: a callout anchored to the
 /// item's button, for whatever Kernova shows there without the user asking.
 ///
-/// Every callout shares the anchor, so they share the slot — showing one
-/// replaces whatever the slot held. A callout is non-modal, so it never takes
-/// the user's next click; the status item's menu opens only from the user's own
-/// click. The menu is detached for as long as a callout is up and reattached on
-/// every dismissal path, and a click on the status item while a callout is up
-/// dismisses it and opens the menu.
+/// Every callout shares the anchor, so they share the slot. A callout with a
+/// duration replaces whatever the slot held; one without — up until its owner
+/// dismisses it — never displaces a timed one before its time is up, and is
+/// skipped instead. A callout is non-modal, so it never takes the user's next
+/// click; the status item's menu opens only from the user's own click. The menu
+/// is detached for as long as a callout is up and reattached on every dismissal
+/// path, and a click on the status item while a callout is up dismisses it and
+/// opens the menu.
 @MainActor
-public final class TransientStatusItemPopover: NSObject {
+public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "TransientStatusItemPopover")
 
     /// One callout's time in the slot, handed to whoever showed it.
@@ -19,16 +39,22 @@ public final class TransientStatusItemPopover: NSObject {
         fileprivate let serial: UInt64
     }
 
-    /// Which showing holds the slot.
+    /// Which showing holds the slot, and whether it is timed.
     struct Tenancy {
         private var lastSerial: UInt64 = 0
         private(set) var current: Showing?
+        /// Whether `current` ends on its own timer.
+        private var currentIsTimed = false
 
-        /// Hands the slot to a new showing, replacing whichever held it.
-        mutating func begin() -> Showing {
+        /// Hands the slot to a new showing, replacing whichever held it — or
+        /// `nil`, leaving the slot as it was, when an untimed showing would
+        /// displace a timed one still up.
+        mutating func begin(timed: Bool) -> Showing? {
+            guard timed || current == nil || !currentIsTimed else { return nil }
             lastSerial += 1
             let showing = Showing(serial: lastSerial)
             current = showing
+            currentIsTimed = timed
             return showing
         }
 
@@ -78,13 +104,14 @@ public final class TransientStatusItemPopover: NSObject {
     /// Whether the status item's dropdown is on screen.
     public var isDropdownOpen: Bool { isDropdownOpenProvider() }
 
-    /// Shows `content`, replacing whatever the slot held, for `duration` seconds
-    /// or — when `duration` is `nil` — until something dismisses it.
+    /// Shows `content` for `duration` seconds or — when `duration` is `nil` —
+    /// until something dismisses it.
     ///
     /// `nil` when the status item can't carry a popover — hidden by the app,
-    /// dropped from a crowded menu bar, or with its dropdown already open —
-    /// which the caller logs its own outcome for; `description` names the
-    /// callout in this type's own skip line.
+    /// dropped from a crowded menu bar, or with its dropdown already open — or
+    /// when an untimed callout would displace a timed one still up; the caller
+    /// logs its own outcome, and `description` names the callout in this type's
+    /// own skip line.
     @discardableResult
     public func show(
         _ content: NSViewController, for duration: TimeInterval? = nil,
@@ -98,6 +125,11 @@ public final class TransientStatusItemPopover: NSObject {
                 .info,
                 "\(description, privacy: .public) skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(dropdownOpen, privacy: .public)"
             )
+            return nil
+        }
+        guard let showing = tenancy.begin(timed: duration != nil) else {
+            Self.logger.log(
+                .info, "\(description, privacy: .public) skipped — a timed callout is up")
             return nil
         }
 
@@ -123,7 +155,6 @@ public final class TransientStatusItemPopover: NSObject {
         // own controls bound the lifetime instead.
         presenter.show(
             content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
-        let showing = tenancy.begin()
 
         if let duration {
             dismissTask = Task { @MainActor [weak self] in
