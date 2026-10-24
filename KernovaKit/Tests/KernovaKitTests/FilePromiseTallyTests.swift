@@ -1,7 +1,8 @@
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
-@Suite("FilePromiseTally")
+@Suite("FilePromiseTally", .caseScoped)
 struct FilePromiseTallyTests {
     @Test("a receiver that names nothing still owes one callback")
     func anUnnamedReceiverOwesOne() {
