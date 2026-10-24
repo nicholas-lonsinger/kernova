@@ -66,24 +66,20 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// only let the tracked set drift from the rendered one.
     private var libraryObservation: ObservationLoop?
 
-    /// The dropdown readout, its one-shot automatic open, and the shared menu
-    /// wiring for a transfer in flight.
-    ///
-    /// Dismisses any transient popover before an automatic open, so the click
-    /// reaches the reattached menu rather than the popover's dismissal handler.
+    /// The dropdown readout, its one-shot reveal in the popover slot, and the
+    /// shared menu wiring for a transfer in flight.
     private lazy var transferProgressPresenter = ClipboardProgressStatusItemPresenter(
-        statusItem: statusItem, menu: menu,
-        willAutoOpen: { [weak self] in self?.transientPopover.dismiss() },
+        menu: menu, slot: transientPopover,
         onCancel: { [weak self] id in self?.cancelTransfer(id) })
 
-    /// The status item's one transient-popover slot, shared by the soft-quit
-    /// reminder and the clipboard notice.
+    /// The status item's one transient-popover slot, shared by the transfer
+    /// readout's callout, the soft-quit reminder and the clipboard notice.
     private lazy var transientPopover = TransientStatusItemPopover(
         statusItem: statusItem, menu: menu,
         isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
 
     /// The readout last handed to the presenter, so a library change that leaves
-    /// it alone doesn't re-run the automatic-open decision.
+    /// it alone doesn't re-run the reveal decision.
     private var lastAppliedReadout: ClipboardTransferReport = .idle
 
     /// The held-alert counts the icon was last drawn for, so a library change
@@ -112,10 +108,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var noticeLedger = ClipboardNoticeLedger()
 
     /// How long a clipboard notice stays up unattended.
-    private static let clipboardNoticeDuration: Duration = .seconds(6)
+    private static let clipboardNoticeDuration: TimeInterval = 6
 
     /// How long the soft-quit reminder stays up unattended.
-    private static let softQuitReminderDuration: Duration = .seconds(4.5)
+    private static let softQuitReminderDuration: TimeInterval = 4.5
 
     init(
         viewModel: VMLibraryViewModel,
@@ -189,7 +185,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     ///
     /// The tooltip is rebuilt every pass — it also carries the running-VM count —
     /// while the readout itself is applied only when it changed, so a start or a
-    /// status transition doesn't re-run the automatic-open decision.
+    /// status transition doesn't re-run the reveal decision.
     private func transferReportsChanged() {
         let readout = AppClipboardReadout.report(for: viewModel.instances)
         if readout != lastAppliedReadout {
@@ -220,16 +216,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// the dropdown's own line is the fallback, and a refusal replayed later
     /// would interrupt for something the user has moved past. A refusal the
     /// *guest* user's gesture produced is not presented here at all — the
-    /// guest's own dropdown reveals it over there.
+    /// guest's own status item announces it over there.
     private func presentPendingNotices() {
-        let dropdown: ClipboardNoticeLedger.Dropdown =
-            !isMenuOpen ? .closed : transferProgressPresenter.isClosingDropdown ? .closing : .open
         for instance in viewModel.instances {
             guard case .finished(let finish) = instance.clipboardTransferReport,
                 finish.failure != nil, finish.gesture.isMadeHere,
                 let wording = ClipboardTransferWording.wording(
                     for: finish, vmName: instance.name),
-                noticeLedger.route(finish.date, for: instance.instanceID, dropdown: dropdown)
+                noticeLedger.route(finish.date, for: instance.instanceID, dropdownIsOpen: isMenuOpen)
                     == .notice
             else { continue }
             let instanceID = instance.instanceID
@@ -241,6 +235,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             guard
                 transientPopover.show(
                     content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
+                    != nil
             else { continue }
             Self.logger.log(
                 .notice,
@@ -264,6 +259,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         guard
             transientPopover.show(
                 content, for: Self.softQuitReminderDuration, describedAs: "Soft-quit reminder")
+                != nil
         else { return }
         Self.logger.log(.debug, "Showing soft-quit menu-bar reminder")
     }
@@ -338,7 +334,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         // Opening the dropdown means the user found the icon — the soft-quit
-        // reminder has done its job, and the notice's line is in the menu below.
+        // reminder has done its job, and the notice's line and the readout are
+        // in the menu below.
         transientPopover.dismiss()
 
         menu.removeAllItems()
@@ -367,13 +364,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        transferProgressPresenter.menuWillOpen()
     }
 
     func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
-        transferProgressPresenter.menuDidClose()
-        performOnMainRunLoop { [weak self] in self?.presentPendingNotices() }
     }
 
     /// Re-syncs the dropdown's VM rows and held-alert lines if it is on screen;

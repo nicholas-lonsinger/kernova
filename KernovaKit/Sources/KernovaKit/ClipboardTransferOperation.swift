@@ -47,9 +47,9 @@ public struct ClipboardTransferOperationID: Hashable, Sendable {
 public final class ClipboardTransferOperation: Sendable {
     /// How long an operation must have been running before its progress shows.
     ///
-    /// Uniform across every passive surface; the status-item dropdown, which
-    /// interrupts by opening itself, carries its own much stricter gate in
-    /// `ClipboardProgressMenuAutoOpener`.
+    /// Uniform across every passive surface; the status item's callout, which
+    /// shows itself unsummoned, carries its own much stricter gate in
+    /// `ClipboardProgressAutoReveal`.
     public static let defaultRevealDelay: TimeInterval = 0.3
 
     /// How long a peer-driven operation may sit with nothing in flight before

@@ -1,27 +1,56 @@
 import AppKit
 
-/// The live transfer readout inside a status-item dropdown, for a transfer
-/// running in the background.
+/// The live readout of a transfer running in the background, laid out for the
+/// status item's dropdown or its callout.
 ///
-/// Every label must stay single-line and truncate rather than wrap: a menu item
-/// that changed height while its menu was open would re-lay-out the dropdown
-/// under the user's cursor. The Cancel button is the view's only control; the
-/// menu item carrying it is disabled, and a custom view's own subviews track
-/// mouse events regardless of that.
+/// Every label must stay single-line and truncate rather than wrap: the readout
+/// takes its height once, at init, and must not change it while either surface
+/// shows it — a menu item that changed height while its menu was open would
+/// re-lay-out the dropdown under the user's cursor. The Cancel button is the
+/// view's only control; the menu item carrying it is disabled, and a custom
+/// view's own subviews track mouse events regardless of that.
 @MainActor
-public final class ClipboardProgressMenuItemView: NSView {
-    /// Content width — fits a headline naming a VM plus the byte-progress line
-    /// and its file counter.
-    private static let contentWidth: CGFloat = 312
-    /// Leading inset aligning the readout with the dropdown's ordinary item
-    /// titles, whose text starts clear of the checkmark gutter.
-    private static let leadingInset: CGFloat = 21
-    private static let trailingInset: CGFloat = 12
-    private static let verticalInset: CGFloat = 6
+public final class ClipboardProgressReadoutView: NSView {
+    /// The surface the readout sits in, which sets its width and insets.
+    public enum Surface: Sendable {
+        /// An item in the status item's dropdown, aligned with the menu's
+        /// ordinary item titles.
+        case dropdownItem
+        /// The status item's callout, padded and sized as every callout is.
+        case callout
+    }
+
+    /// A surface's width and the insets from its edges to the readout's rows.
+    private struct Metrics {
+        let width: CGFloat
+        let leading: CGFloat
+        let trailing: CGFloat
+        let vertical: CGFloat
+
+        init(_ surface: Surface) {
+            switch surface {
+            case .dropdownItem:
+                // Fits a headline naming a VM plus the byte-progress line and its
+                // file counter; the leading inset starts the rows where the
+                // menu's item titles start, clear of the checkmark gutter.
+                width = 312
+                leading = 21
+                trailing = 12
+                vertical = 6
+            case .callout:
+                width = CalloutStyle.width
+                leading = CalloutStyle.padding
+                trailing = CalloutStyle.padding
+                vertical = CalloutStyle.padding
+            }
+        }
+    }
+
     private static let rowSpacing: CGFloat = 4
 
+    private let metrics: Metrics
     private let headline = NSTextField(labelWithString: "")
-    private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+    private let cancelButton = FirstClickButton(title: "Cancel", target: nil, action: nil)
     private let bar = NSProgressIndicator()
     private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
@@ -37,27 +66,30 @@ public final class ClipboardProgressMenuItemView: NSView {
         didSet { cancelButton.isHidden = onCancel == nil }
     }
 
-    /// Creates the readout, sized to its content.
-    public init() {
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 1))
+    /// Creates the readout for `surface`, sized to its content.
+    ///
+    /// The frame is the readout's whole size: a dropdown item takes it from the
+    /// frame, and a callout's content size is pinned to it.
+    public init(surface: Surface) {
+        metrics = Metrics(surface)
+        super.init(frame: NSRect(x: 0, y: 0, width: metrics.width, height: 1))
         let stack = buildLayout()
-        // NSMenu sizes a custom item from its view's frame, so settle the height
-        // once here. Measure the stack, not `self`, whose fitting size depends on
-        // how the menu later treats this view's autoresizing.
+        // Settle the height once here. Measure the stack, not `self`, whose
+        // fitting size depends on how the surface later treats this view's
+        // autoresizing.
         frame.size = NSSize(
-            width: Self.contentWidth,
-            height: stack.fittingSize.height + Self.verticalInset * 2)
+            width: metrics.width,
+            height: stack.fittingSize.height + metrics.vertical * 2)
         // Measured with the button in place, then hidden: `NSStackView` drops a
-        // hidden view from layout, so measuring without it would size the item
-        // too short for the first readout that *can* be cancelled — and an
-        // `NSMenu` takes a custom item's height from the frame, once.
+        // hidden view from layout, so measuring without it would size the
+        // readout too short for the first one that *can* be cancelled.
         cancelButton.isHidden = true
         pendingNote.isHidden = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("ClipboardProgressMenuItemView does not support NSCoder")
+        fatalError("ClipboardProgressReadoutView does not support NSCoder")
     }
 
     /// Builds the row hierarchy and returns the outer stack, so the caller can
@@ -88,9 +120,9 @@ public final class ClipboardProgressMenuItemView: NSView {
             label.textColor = .secondaryLabelColor
             label.lineBreakMode = .byTruncatingMiddle
         }
-        // Shares the time row's line rather than taking one of its own: the menu
-        // takes this view's height once, so a row that comes and goes has to cost
-        // nothing vertically.
+        // Shares the time row's line rather than taking one of its own: the
+        // readout's height is settled once, so a row that comes and goes has to
+        // cost nothing vertically.
         pendingNote.alignment = .right
         pendingNote.lineBreakMode = .byClipping
         pendingNote.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -130,24 +162,24 @@ public final class ClipboardProgressMenuItemView: NSView {
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalInset),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.verticalInset),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.leadingInset),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.trailingInset),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: metrics.vertical),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -metrics.vertical),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: metrics.leading),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -metrics.trailing),
             headlineRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             byteRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             timeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Pin the content width so the rows lay out (and the height measures)
-            // against the width the menu will actually give this view.
+            // against the width the surface will actually give this view.
             stack.widthAnchor.constraint(
-                equalToConstant: Self.contentWidth - Self.leadingInset - Self.trailingInset),
+                equalToConstant: metrics.width - metrics.leading - metrics.trailing),
         ])
         return stack
     }
 
     /// Applies a snapshot in place, so the readout keeps advancing while its
-    /// menu is open.
+    /// surface is on screen.
     public func apply(_ snapshot: ClipboardProgressSnapshot) {
         headline.stringValue = ClipboardProgressFormat.headline(
             direction: snapshot.direction, peerName: snapshot.peerName,
@@ -183,7 +215,7 @@ public final class ClipboardProgressMenuItemView: NSView {
 
     #if DEBUG
     /// Test seam: the Cancel button, so a test can assert its visibility and
-    /// drive its action without a live menu.
+    /// drive its action without a live surface.
     public var cancelButtonForTesting: NSButton { cancelButton }
 
     /// Test seam: the fraction the bar shows.
@@ -195,4 +227,13 @@ public final class ClipboardProgressMenuItemView: NSView {
     /// Test seam: the byte line.
     public var byteProgressForTesting: String { byteProgress.stringValue }
     #endif
+
+    /// The Cancel button, taking the click that also activates its app.
+    ///
+    /// The callout is up while its app is often not active — the guest agent
+    /// never is, and the host isn't after a drop onto Finder — and a Cancel that
+    /// only activated the app would let the transfer run on.
+    private final class FirstClickButton: NSButton {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    }
 }

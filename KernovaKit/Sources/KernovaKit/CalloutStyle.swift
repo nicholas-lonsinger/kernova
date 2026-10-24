@@ -1,30 +1,30 @@
 import AppKit
 
 /// Shared design tokens for callout-style popovers.
-enum CalloutStyle {
+public enum CalloutStyle {
     /// Standard popover content width.
-    static let width: CGFloat = 340
+    public static let width: CGFloat = 340
 
     /// Inset from popover edges to the content stack.
-    static let padding: CGFloat = 16
+    public static let padding: CGFloat = 16
 
     /// Vertical spacing between rows in the content stack.
-    static let verticalSpacing: CGFloat = 10
+    public static let verticalSpacing: CGFloat = 10
 
     /// Width available to body content inside the padded callout (`width - 2 * padding`).
     ///
     /// Use for `preferredMaxLayoutWidth` on wrapping labels so they grow
     /// vertically instead of horizontally.
-    static let bodyWidth: CGFloat = width - padding * 2
+    public static let bodyWidth: CGFloat = width - padding * 2
 
     /// Font for headline rows (e.g. the bold title at the top of a callout).
-    static var headlineFont: NSFont { .preferredFont(forTextStyle: .headline) }
+    public static var headlineFont: NSFont { .preferredFont(forTextStyle: .headline) }
 
     /// Font for body rows.
-    static var bodyFont: NSFont { .preferredFont(forTextStyle: .callout) }
+    public static var bodyFont: NSFont { .preferredFont(forTextStyle: .callout) }
 
     /// Font for code: a code row, or a code span inside a body row.
-    static var codeFont: NSFont {
+    public static var codeFont: NSFont {
         .monospacedSystemFont(ofSize: bodyFont.pointSize, weight: .regular)
     }
 
@@ -32,12 +32,12 @@ enum CalloutStyle {
     ///
     /// Use `.labelColor` for the lead body row, `.secondaryLabelColor`
     /// (this default) for explanatory tail rows.
-    static let bodyColor: NSColor = .secondaryLabelColor
+    public static let bodyColor: NSColor = .secondaryLabelColor
 }
 
 /// Builds a headline `NSTextField` configured for a callout's leading row.
 @MainActor
-func makeCalloutHeadline(_ text: String) -> NSTextField {
+public func makeCalloutHeadline(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = CalloutStyle.headlineFont
     label.lineBreakMode = .byWordWrapping
@@ -49,7 +49,7 @@ func makeCalloutHeadline(_ text: String) -> NSTextField {
 
 /// Builds a wrapping body `NSTextField` configured for a callout row.
 @MainActor
-func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) -> NSTextField {
+public func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.font = CalloutStyle.bodyFont
     label.textColor = color
@@ -68,7 +68,7 @@ extension NSViewController {
     ///
     /// Pair with ``syncCalloutContentSize()`` so the hosting popover tracks the
     /// height the rows measure at that width.
-    func installCalloutStack(rows: [NSView], bodyWidth: CGFloat = CalloutStyle.bodyWidth) {
+    public func installCalloutStack(rows: [NSView], bodyWidth: CGFloat = CalloutStyle.bodyWidth) {
         let stack = NSStackView(views: rows)
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -92,7 +92,7 @@ extension NSViewController {
     /// stack height under the configured width.
     ///
     /// Call from `viewDidLayout`.
-    func syncCalloutContentSize() {
+    public func syncCalloutContentSize() {
         let fittingSize = view.fittingSize
         guard preferredContentSize != fittingSize else { return }
         preferredContentSize = fittingSize
@@ -102,7 +102,7 @@ extension NSViewController {
 /// Builds a monospaced, selectable `NSTextField` for code snippets (shell
 /// commands, paths, identifiers the user is expected to copy).
 @MainActor
-func makeCalloutCode(_ text: String) -> NSTextField {
+public func makeCalloutCode(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.font = CalloutStyle.codeFont
     label.textColor = .labelColor

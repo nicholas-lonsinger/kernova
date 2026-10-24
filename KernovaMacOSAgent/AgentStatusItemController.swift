@@ -24,10 +24,23 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let onCancelTransfer: (ClipboardTransferOperationID) -> Void
     private let onQuit: () -> Void
 
+    /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
+    /// expose.
+    private var isMenuOpen = false
+
+    /// The status item's one popover slot, shared by the transfer readout's
+    /// callout and the clipboard notice.
+    private lazy var calloutSlot = TransientStatusItemPopover(
+        statusItem: statusItem, menu: menu,
+        isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
+
     /// Built lazily, since most sessions never reveal a paste readout.
     private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
-        statusItem: statusItem, menu: menu,
+        menu: menu, slot: calloutSlot,
         onCancel: { [weak self] id in self?.onCancelTransfer(id) })
+
+    /// How long a clipboard notice stays up unattended.
+    private static let clipboardNoticeDuration: TimeInterval = 6
 
     init(
         version: String,
@@ -75,17 +88,26 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Clipboard notice
 
-    /// Opens the dropdown on the clipboard notice the agent just recorded.
+    /// Shows the clipboard notice the agent just recorded as a callout on the
+    /// status item.
     ///
     /// The notice ends a gesture the user made in this guest and produces no
     /// other signal — the paste simply yields nothing, the copy simply crosses
-    /// short — so the line is revealed rather than left for whenever the menu is
-    /// next opened. The agent records the activity before raising this, so
-    /// `menuNeedsUpdate` builds the line into the dropdown this opens.
+    /// short — so the line is shown rather than left for whenever the menu is
+    /// next opened. The dropdown keeps the same line, which is the fallback when
+    /// the status item can't carry the callout.
     func clipboardNoticeRaised() {
-        pasteProgressPresenter.revealDropdown(while: { [weak self] in
-            self?.clipboardActivity().isNotice ?? false
-        })
+        let activity = clipboardActivity()
+        // Delivered asynchronously, so a later activity may already have
+        // replaced the notice.
+        guard activity.isNotice else { return }
+        let content = AgentClipboardNoticeViewController(line: AgentMenuText.clipboardLine(activity))
+        guard
+            calloutSlot.show(
+                content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
+                != nil
+        else { return }
+        Self.logger.log(.info, "Showing a clipboard notice")
     }
 
     private static func symbolName(for state: HostConnectionState) -> String {
@@ -124,6 +146,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // Opening the dropdown means the user came looking — the notice's line
+        // and the readout are in the menu below.
+        calloutSlot.dismiss()
+
         menu.removeAllItems()
 
         pasteProgressPresenter.insertItemsIfActive()
@@ -134,8 +160,8 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
 
         let activity = clipboardActivity()
-        // A notice is what the auto-open is revealing, so it reads at the top
-        // level; every other activity is state the Status submenu holds.
+        // A notice is what the callout announced, so it reads at the top level;
+        // every other activity is state the Status submenu holds.
         if activity.isNotice {
             addInfoItem(AgentMenuText.clipboardLine(activity))
             menu.addItem(.separator())
@@ -166,11 +192,11 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        pasteProgressPresenter.menuWillOpen()
+        isMenuOpen = true
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        pasteProgressPresenter.menuDidClose()
+        isMenuOpen = false
     }
 
     // MARK: - About

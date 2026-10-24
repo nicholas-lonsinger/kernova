@@ -57,8 +57,8 @@ enum ClipboardActivity: Equatable, Sendable {
     /// Host policy turned clipboard sharing off.
     case disabled
 
-    /// Whether the menu-bar surface reveals this activity by itself rather than
-    /// leaving it for the next time the user opens the dropdown.
+    /// Whether the status item announces this activity in a callout by itself
+    /// rather than leaving it for the next time the user opens the dropdown.
     ///
     /// True for the outcomes of a gesture made in this guest that produces no
     /// other signal — a paste that yields nothing, a copy that crosses nothing

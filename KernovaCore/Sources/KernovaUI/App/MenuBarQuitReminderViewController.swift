@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Content for the transient popover the menu-bar status item shows after a soft
 /// quit — a reminder that Kernova is still resident, with a "Stop Reminding Me"

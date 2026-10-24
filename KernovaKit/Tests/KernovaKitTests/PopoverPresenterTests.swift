@@ -1,6 +1,8 @@
 import AppKit
-@testable import KernovaUI
+import KernovaTestSupport
 import Testing
+
+@testable import KernovaKit
 
 /// `PopoverPresenter` exposes a thin lifecycle API around `NSPopover`.
 ///

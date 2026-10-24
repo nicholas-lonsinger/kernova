@@ -122,7 +122,7 @@ struct AgentMenuTextTests {
         for activity: ClipboardActivity in [
             .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled,
         ] {
-            #expect(!activity.isNotice, "\(activity) must not open the dropdown by itself")
+            #expect(!activity.isNotice, "\(activity) must not be announced by itself")
         }
     }
 

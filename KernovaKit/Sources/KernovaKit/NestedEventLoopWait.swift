@@ -54,7 +54,6 @@ final class NestedEventLoopWait: Sendable {
     /// AppKit loops dequeue application-defined events, and when such a loop
     /// ends, nothing returns from the wait's `nextEvent`. Menu tracking enters
     /// that way: `performClick` from `performOnMainRunLoop` in
-    /// `ClipboardProgressStatusItemPresenter.openDropdown` and
     /// `TransientStatusItemPopover.statusItemTapped`.
     static let defaultSlice: TimeInterval = 0.1
 

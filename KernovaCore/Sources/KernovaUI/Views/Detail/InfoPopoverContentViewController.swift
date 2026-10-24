@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 
 /// Popover content for an ``InfoButtonView``.
 ///

@@ -29,7 +29,7 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     public var isMadeHere: Bool { self != .peerPaste }
 
     /// Whether someone is waiting in front of a screen for this gesture to end,
-    /// which is what earns its readout the surfaces that interrupt.
+    /// which is what earns its readout the callout that shows by itself.
     ///
     /// A peer's paste holds the app it is pasting into; a drop or a drag out
     /// leaves the files missing where the user put them until it lands. The rest

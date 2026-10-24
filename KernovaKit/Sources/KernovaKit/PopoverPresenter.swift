@@ -8,13 +8,21 @@ import AppKit
 /// re-presenting, which avoids the flicker users would otherwise see when the
 /// underlying view-model state changed mid-popover.
 @MainActor
-final class PopoverPresenter: NSObject, NSPopoverDelegate {
+public final class PopoverPresenter: NSObject, NSPopoverDelegate {
     private var popover: NSPopover?
 
-    /// Called after the popover has been dismissed by any means (programmatic
-    /// ``close()``, click outside, Escape key, app deactivation under
-    /// `.transient` behavior).
-    var onClose: (() -> Void)?
+    /// Creates a presenter with no popover up.
+    public override init() {
+        super.init()
+    }
+
+    /// Called after a popover this presenter showed has been dismissed by any
+    /// means (programmatic ``close()``, click outside, Escape key, app
+    /// deactivation under `.transient` behavior).
+    ///
+    /// A popover ``close()`` dismissed reports here once its close completes,
+    /// by which time a newer one may be up, so check ``isShown``.
+    public var onClose: (() -> Void)?
 
     /// Show the popover, or update an already-shown one in place.
     ///
@@ -23,7 +31,7 @@ final class PopoverPresenter: NSObject, NSPopoverDelegate {
     /// survives clicks in the parent window, so the popover can host editable
     /// fields. A `nil` `contentSize` preserves the content controller's own
     /// `preferredContentSize`.
-    func show(
+    public func show(
         content: NSViewController,
         from anchor: NSView,
         preferredEdge: NSRectEdge = .maxY,
@@ -59,24 +67,32 @@ final class PopoverPresenter: NSObject, NSPopoverDelegate {
     }
 
     /// Dismisses the popover if visible; idempotent.
-    func close() {
+    public func close() {
         popover?.performClose(nil)
         popover = nil
     }
 
     /// `true` when a popover is currently visible.
-    var isShown: Bool {
+    public var isShown: Bool {
         popover?.isShown == true
     }
 
     // MARK: - NSPopoverDelegate
 
-    // `NSPopoverDelegate` is not declared `@MainActor` by the framework, so this
-    // callback enters from any actor context; AppKit only ever delivers it on the
-    // main thread, so `assumeIsolated` bridges back safely.
-    nonisolated func popoverDidClose(_ notification: Notification) {
+    /// Forgets the popover that closed, if it is the one up, and reports the
+    /// close through ``onClose``.
+    ///
+    /// `NSPopoverDelegate` is not declared `@MainActor` by the framework, so this
+    /// enters from any actor context; AppKit only ever delivers it on the main
+    /// thread, so `assumeIsolated` bridges back safely.
+    public nonisolated func popoverDidClose(_ notification: Notification) {
+        let closed = (notification.object as AnyObject?).map(ObjectIdentifier.init)
         MainActor.assumeIsolated {
-            popover = nil
+            // A popover `close()` already let go of finishes closing after a
+            // newer `show` may have put another one up; that one stays tracked.
+            if let popover, closed == ObjectIdentifier(popover) {
+                self.popover = nil
+            }
             onClose?()
         }
     }

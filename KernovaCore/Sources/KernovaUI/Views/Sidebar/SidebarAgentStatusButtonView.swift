@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 
 /// Trailing accessory shown in the sidebar row when the guest agent needs
 /// the user's attention.

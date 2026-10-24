@@ -348,8 +348,8 @@ final class VsockGuestClipboardAgent {
 
     /// Mirrors what the connection just did onto the menu-bar status line.
     ///
-    /// The refusal line is written before the notice, so the dropdown the notice
-    /// pops is rebuilt with the line already in it.
+    /// The refusal line is written before the notice, so the callout the notice
+    /// raises shows that line.
     private func record(_ activity: ClipboardEndpoint.Activity) {
         switch activity {
         case .offerSent:
@@ -515,8 +515,8 @@ final class VsockGuestClipboardAgent {
             "The offer to the host left \(skipped, privacy: .public) unreadable item(s) out (conn=\(self.connectionTag, privacy: .public))"
         )
         // Re-announcing a standing snapshot to a new host is nobody's gesture,
-        // and the notice opens the guest's dropdown by itself — so a reconnect
-        // over an already-partial copy must interrupt no one.
+        // and the notice shows the guest's status-item callout by itself — so a
+        // reconnect over an already-partial copy must interrupt no one.
         guard watchedItArrive else { return }
         clipboardActivityStorage = .copyPartlyCarried(skipped: skipped)
         onClipboardNotice()
