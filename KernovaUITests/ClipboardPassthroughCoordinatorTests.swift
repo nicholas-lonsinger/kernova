@@ -226,6 +226,26 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(reconnected.grabbed.map(\.text) == ["copied after the reconnect"])
     }
 
+    @Test("A service that reconnects in place forwards only copies made after it came back")
+    func copyDuringInPlaceOutageIsNotForwarded() {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        // SPICE keeps one service object across a vdagent re-handshake, so the
+        // disconnected poll is the only thing that can end the connection.
+        h.service.isConnected = false
+        h.coordinator.pollHostClipboard()
+        writeText("copied during the outage", to: h.pasteboard)
+        h.service.isConnected = true
+        h.coordinator.pollHostClipboard()
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.isEmpty)
+
+        writeText("copied after the reconnect", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.map(\.text) == ["copied after the reconnect"])
+    }
+
     @Test("The copy standing at connect is neither forwarded nor reported, even when its file is gone")
     func standingCopyAtConnectIsIgnored() throws {
         let h = makeHarness(bindsConnection: false)

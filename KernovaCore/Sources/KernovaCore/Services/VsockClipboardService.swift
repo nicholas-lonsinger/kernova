@@ -670,13 +670,10 @@ extension VsockClipboardService: ClipboardEndpointDelegate {
         reportRefusal(gesture: gesture, failure)
     }
 
-    /// Settles here rather than waiting for whatever replaces this service.
-    ///
-    /// `isConnected` is what the passthrough coordinator's poll reads to decide
-    /// whether to forward the host pasteboard *and* to record its change count,
-    /// and the guest closes this channel on every agent reconnect, so a service
-    /// left standing would absorb the copy instead of letting the next
-    /// connection forward it.
+    /// Settles here rather than waiting for whatever replaces this service,
+    /// which may never come: until then `isConnected` would stay true over a
+    /// dead channel, and the clipboard window and passthrough's poll would both
+    /// act on a guest that is gone.
     func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
         settle(reason: .channelLost)
     }

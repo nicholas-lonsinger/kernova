@@ -55,10 +55,10 @@ final class ClipboardPassthroughCoordinator {
         /// the guest holds that copy, or nothing about it can change by offering
         /// it again.
         ///
-        /// Every path that advances this must first hear a delivery verdict from
-        /// the transport (`ClipboardGrabOutcome`), because consuming a count the
-        /// guest never received loses the copy outright: later polls read the
-        /// change count as unchanged and skip.
+        /// A forward advances this only once the transport gives a delivery
+        /// verdict (`ClipboardGrabOutcome`): consuming the count of a copy the
+        /// guest never received loses the copy outright, since later polls read
+        /// the change count as unchanged and skip.
         var settledChangeCount: Int
 
         /// The change count of the forward whose off-actor file resolve is still
@@ -266,11 +266,8 @@ final class ClipboardPassthroughCoordinator {
             }
             guard let self, self.outbound === connection, let service = connection.service
             else { return }
-            // The host clipboard moved on during the walk: this content is
-            // nobody's copy now, and settling its count would roll the record
-            // backwards over whatever replaced it — which an inbound publish's
-            // own count cannot recover from, since the next poll absorbs that as
-            // our own write rather than forwarding it.
+            // The host clipboard moved on during the walk, so this content is
+            // nobody's copy now; the next poll takes whatever replaced it.
             guard self.pasteboard.changeCount == changeCount else { return }
             switch resolved {
             case .content(let content, let skipped):
