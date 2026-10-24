@@ -176,36 +176,43 @@ public final class ClipboardProgressStatusItemPresenter {
     /// when the readout earns it.
     private func revealIfEarned(_ readout: ClipboardProgressSnapshot?) {
         let dropdownOpen = slot.isDropdownOpen
+        var skip: TransientStatusItemPopover.SkipReason?
         let decision = autoReveal.readoutChanged(readout, dropdownIsOpen: dropdownOpen) {
-            guard let showing = slot.show(calloutContent, for: nil, describedAs: "Readout callout") else {
+            switch slot.show(calloutContent, for: nil) {
+            case .shown(let showing):
+                calloutShowing = showing
+                return true
+            case .skipped(let reason):
+                skip = reason
                 return false
             }
-            calloutShowing = showing
-            return true
         }
         // A clear has logged its own line.
         guard let readout else { return }
-        log(decision, readout: readout, dropdownOpen: dropdownOpen)
+        log(decision, skip: skip, readout: readout, dropdownOpen: dropdownOpen)
     }
 
     /// Records the decision with the inputs that made it — one line per delivered
     /// readout, a rate the tracker's throttle already bounds.
     ///
-    /// A callout the slot skipped also has the slot's own skip line, which
-    /// names why.
+    /// Only `.shown` is `.info`: a reveal the slot skipped is retried on every
+    /// update until it goes up, so it repeats at the throttle rate as `.none`
+    /// does.
     private func log(
-        _ decision: ClipboardProgressRevealDecision, readout: ClipboardProgressSnapshot,
-        dropdownOpen: Bool
+        _ decision: ClipboardProgressRevealDecision, skip: TransientStatusItemPopover.SkipReason?,
+        readout: ClipboardProgressSnapshot, dropdownOpen: Bool
     ) {
         let level: KernovaLogLevel =
             switch decision {
-            case .none: .debug
-            case .shown, .notShown: .info
+            case .none, .notShown: .debug
+            case .shown: .info
             }
+        let skipped = skip.map { " — skipped: \($0)" } ?? ""
         Self.logger.log(
             level,
             """
-            Readout callout \(String(describing: decision), privacy: .public) — gesture=\(String(describing: readout.gesture), privacy: .public), \
+            Readout callout \(String(describing: decision), privacy: .public)\(skipped, privacy: .public) — \
+            gesture=\(String(describing: readout.gesture), privacy: .public), \
             elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
             \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes, \

@@ -26,12 +26,17 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         var current: TransientStatusItemPopover.Showing? { tenancy.current }
 
-        func show(
-            _ content: NSViewController, for duration: TimeInterval?, describedAs description: String
-        ) -> TransientStatusItemPopover.Showing? {
-            guard canCarry, let showing = tenancy.begin(timed: duration != nil) else { return nil }
+        func show(_ content: NSViewController, for duration: TimeInterval?)
+            -> TransientStatusItemPopover.ShowResult
+        {
+            guard canCarry else {
+                return .skipped(.unreachable(visible: true, onScreen: false, menuOpen: false))
+            }
+            guard let showing = tenancy.begin(timed: duration != nil) else {
+                return .skipped(.timedCalloutUp)
+            }
             shown.append(content)
-            return showing
+            return .shown(showing)
         }
 
         func dismiss(_ showing: TransientStatusItemPopover.Showing) -> Bool {
@@ -42,7 +47,8 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         /// Puts a timed callout up — a notice — as another owner would.
         func showNotice() -> TransientStatusItemPopover.Showing? {
-            show(NSViewController(), for: 6, describedAs: "Notice")
+            guard case .shown(let showing) = show(NSViewController(), for: 6) else { return nil }
+            return showing
         }
 
         /// Ends a showing the way its own timer would.

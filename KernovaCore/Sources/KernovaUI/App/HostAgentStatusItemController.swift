@@ -232,11 +232,15 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 self.transientPopover.dismiss()
                 self.onOpenClipboard(instanceID)
             }
-            guard
-                transientPopover.show(
-                    content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
-                    != nil
-            else { continue }
+            if case .skipped(let reason) = transientPopover.show(
+                content, for: Self.clipboardNoticeDuration)
+            {
+                Self.logger.log(
+                    .info,
+                    "Clipboard notice for '\(instance.name, privacy: .public)' skipped — \(String(describing: reason), privacy: .public)"
+                )
+                continue
+            }
             Self.logger.log(
                 .notice,
                 "Showing a clipboard notice for '\(instance.name, privacy: .public)'")
@@ -256,11 +260,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             Self.logger.log(.info, "Soft-quit menu-bar reminder silenced by the user")
             self.transientPopover.dismiss()
         })
-        guard
-            transientPopover.show(
-                content, for: Self.softQuitReminderDuration, describedAs: "Soft-quit reminder")
-                != nil
-        else { return }
+        if case .skipped(let reason) = transientPopover.show(
+            content, for: Self.softQuitReminderDuration)
+        {
+            Self.logger.log(
+                .info,
+                "Soft-quit reminder skipped — \(String(describing: reason), privacy: .public)")
+            return
+        }
         Self.logger.log(.debug, "Showing soft-quit menu-bar reminder")
     }
 

@@ -1,5 +1,4 @@
 import AppKit
-import KernovaLogging
 
 /// A status item's one callout slot, as the readout presenter uses it.
 ///
@@ -9,10 +8,10 @@ public protocol StatusItemCalloutSlot: AnyObject {
     /// Whether the status item's dropdown is on screen.
     var isDropdownOpen: Bool { get }
 
-    /// Shows `content` for `duration` seconds, or until dismissed when `nil`;
-    /// `nil` when the slot skipped it.
-    func show(_ content: NSViewController, for duration: TimeInterval?, describedAs description: String)
-        -> TransientStatusItemPopover.Showing?
+    /// Shows `content` for `duration` seconds, or until dismissed when `nil`,
+    /// and says whether it went up; the caller logs the outcome.
+    func show(_ content: NSViewController, for duration: TimeInterval?)
+        -> TransientStatusItemPopover.ShowResult
 
     /// Closes `showing`'s callout if it still holds the slot; `false` otherwise.
     @discardableResult
@@ -32,11 +31,36 @@ public protocol StatusItemCalloutSlot: AnyObject {
 /// opens the menu.
 @MainActor
 public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "TransientStatusItemPopover")
-
     /// One callout's time in the slot, handed to whoever showed it.
     public struct Showing: Hashable, Sendable {
         fileprivate let serial: UInt64
+    }
+
+    /// Why the slot skipped a callout.
+    public enum SkipReason: Equatable, Sendable, CustomStringConvertible {
+        /// The status item can't carry a popover: hidden by the app, dropped
+        /// from a crowded menu bar, or with its dropdown already open.
+        case unreachable(visible: Bool, onScreen: Bool, menuOpen: Bool)
+        /// An untimed callout would displace a timed one still up.
+        case timedCalloutUp
+
+        /// The reason as a log line names it.
+        public var description: String {
+            switch self {
+            case .unreachable(let visible, let onScreen, let menuOpen):
+                "visible=\(visible), onScreen=\(onScreen), menuOpen=\(menuOpen)"
+            case .timedCalloutUp:
+                "a timed callout is up"
+            }
+        }
+    }
+
+    /// What became of a ``show(_:for:)``.
+    public enum ShowResult: Equatable, Sendable {
+        /// The callout went up, for this showing.
+        case shown(Showing)
+        /// The callout did not go up.
+        case skipped(SkipReason)
     }
 
     /// Which showing holds the slot, and whether it is timed.
@@ -107,30 +131,17 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     /// Shows `content` for `duration` seconds or — when `duration` is `nil` —
     /// until something dismisses it.
     ///
-    /// `nil` when the status item can't carry a popover — hidden by the app,
-    /// dropped from a crowded menu bar, or with its dropdown already open — or
-    /// when an untimed callout would displace a timed one still up; the caller
-    /// logs its own outcome, and `description` names the callout in this type's
-    /// own skip line.
-    @discardableResult
-    public func show(
-        _ content: NSViewController, for duration: TimeInterval? = nil,
-        describedAs description: String
-    ) -> Showing? {
+    /// Logs nothing: the caller logs the outcome at the level its own rate
+    /// calls for.
+    public func show(_ content: NSViewController, for duration: TimeInterval? = nil) -> ShowResult {
         let visible = statusItem.isVisible
         let onScreen = statusItem.isButtonOnScreen
         let dropdownOpen = isDropdownOpen
         guard let button = statusItem.button, visible, onScreen, !dropdownOpen else {
-            Self.logger.log(
-                .info,
-                "\(description, privacy: .public) skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(dropdownOpen, privacy: .public)"
-            )
-            return nil
+            return .skipped(.unreachable(visible: visible, onScreen: onScreen, menuOpen: dropdownOpen))
         }
         guard let showing = tenancy.begin(timed: duration != nil) else {
-            Self.logger.log(
-                .info, "\(description, privacy: .public) skipped — a timed callout is up")
-            return nil
+            return .skipped(.timedCalloutUp)
         }
 
         // Re-arm cleanly if a prior callout is still up.
@@ -163,7 +174,7 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
                 self?.dismiss(showing)
             }
         }
-        return showing
+        return .shown(showing)
     }
 
     /// Closes `showing`'s callout if it still holds the slot, so an owner never

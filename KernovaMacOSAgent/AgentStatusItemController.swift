@@ -102,11 +102,11 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         // replaced the notice.
         guard activity.isNotice else { return }
         let content = AgentClipboardNoticeViewController(line: AgentMenuText.clipboardLine(activity))
-        guard
-            calloutSlot.show(
-                content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
-                != nil
-        else { return }
+        if case .skipped(let reason) = calloutSlot.show(content, for: Self.clipboardNoticeDuration) {
+            Self.logger.log(
+                .info, "Clipboard notice skipped — \(String(describing: reason), privacy: .public)")
+            return
+        }
         Self.logger.log(.info, "Showing a clipboard notice")
     }
 
