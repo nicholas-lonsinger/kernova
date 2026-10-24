@@ -51,7 +51,7 @@ let package = Package(
         .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0"),
         // Linked by KernovaCLICore alone — neither the app nor the guest agent
         // gains a dependency.
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
