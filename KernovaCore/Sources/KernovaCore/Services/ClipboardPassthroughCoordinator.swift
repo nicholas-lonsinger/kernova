@@ -2,9 +2,10 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Drives automatic clipboard passthrough for one VM: with no window open, it
-/// polls the host pasteboard and forwards copies made while the guest is
-/// connected, and writes inbound guest offers straight to the host pasteboard.
+/// Drives automatic clipboard passthrough for one VM, whether or not its
+/// clipboard window is open: it polls the host pasteboard and forwards copies
+/// made while the guest is connected, and writes inbound guest offers straight
+/// to the host pasteboard.
 ///
 /// Both directions funnel through the same choke-points the clipboard window's
 /// gestures use, so only *who triggers* them differs. Echo suppression is
