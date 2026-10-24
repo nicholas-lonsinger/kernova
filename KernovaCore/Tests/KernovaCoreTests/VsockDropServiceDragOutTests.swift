@@ -1256,7 +1256,7 @@ struct VsockDropServiceDragOutTests {
         let sealed = try WithheldPermissions(locked)
         defer { withExtendedLifetime(sealed) {} }
         let take = try await harness.releasedTake([folder])
-        let unreadable = ClipboardSourceReadFailure(
+        let unreadable = ClipboardItemFailure(
             itemPath: "Home/Library/Mail.db", reason: .posix(EACCES))
 
         let target = try makeDestination().appendingPathComponent("Home")
@@ -1286,7 +1286,7 @@ struct VsockDropServiceDragOutTests {
         let sealed = try WithheldPermissions(locked)
         defer { withExtendedLifetime(sealed) {} }
         let failure = ClipboardTransferFailure.sourceUnreadable(
-            ClipboardSourceReadFailure(itemPath: "Home/Mail.db", reason: .posix(EACCES)))
+            ClipboardItemFailure(itemPath: "Home/Mail.db", reason: .posix(EACCES)))
 
         let first = try await harness.releasedTake([folder])
         let firstTarget = try makeDestination().appendingPathComponent("Home")

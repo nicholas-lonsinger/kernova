@@ -75,7 +75,7 @@ struct ClipboardTransferWordingTests {
 
     /// A read the guest's privacy controls refused, deep inside a dragged home
     /// folder.
-    private static let mailUnreadable = ClipboardSourceReadFailure(
+    private static let mailUnreadable = ClipboardItemFailure(
         itemPath: "pbear/Library/Mail", reason: .posix(EPERM))
 
     // MARK: - Outcomes with nothing to say
@@ -279,7 +279,7 @@ struct ClipboardTransferWordingTests {
                 == "The VM couldn't read \u{201C}Mail\u{201D} (permission denied), so the drag didn't finish.")
         #expect(copy.menuLine == "Drag: the VM couldn't read \u{201C}Mail\u{201D}")
 
-        let reasons: [(ClipboardSourceReadFailure.Reason, String)] = [
+        let reasons: [(ClipboardItemFailure.Reason, String)] = [
             (.posix(EACCES), " (permission denied)"),
             (.posix(ENOENT), " (it no longer exists)"),
             (.posix(EIO), " (input/output error)"),
@@ -287,7 +287,7 @@ struct ClipboardTransferWordingTests {
             (.unknown, ""),
         ]
         for (reason, parenthetical) in reasons {
-            let failure = ClipboardSourceReadFailure(itemPath: "pbear/notes.txt", reason: reason)
+            let failure = ClipboardItemFailure(itemPath: "pbear/notes.txt", reason: reason)
             #expect(
                 try #require(wording(.sourceUnreadable(failure), .dragOut)).message
                     == "The VM couldn't read \u{201C}notes.txt\u{201D}\(parenthetical), so the drag didn't finish.")

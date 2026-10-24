@@ -327,7 +327,7 @@ package struct ClipboardTransferWording: Equatable {
     /// the one the read failed on, which may sit deep inside what the user
     /// dragged — and the reason the read gave, if it gave one.
     private static func unreadableClause(
-        _ failure: ClipboardSourceReadFailure?, reader: String
+        _ failure: ClipboardItemFailure?, reader: String
     ) -> String {
         guard let failure, !failure.itemName.isEmpty else {
             return "\(reader) couldn't read one of the items"
@@ -339,7 +339,7 @@ package struct ClipboardTransferWording: Equatable {
 
     /// The dropdown line for an item `reader` could not read.
     private static func unreadableMenuLine(
-        _ failure: ClipboardSourceReadFailure?, prefix: String, reader: String
+        _ failure: ClipboardItemFailure?, prefix: String, reader: String
     ) -> String {
         guard let failure, !failure.itemName.isEmpty else {
             return "\(prefix): \(reader.lowercasedFirst) couldn't read an item"
@@ -352,7 +352,7 @@ package struct ClipboardTransferWording: Equatable {
     ///
     /// `EPERM` and `EACCES` both mean the reader was refused the item; neither
     /// says what refused it.
-    private static func reasonPhrase(_ reason: ClipboardSourceReadFailure.Reason) -> String? {
+    private static func reasonPhrase(_ reason: ClipboardItemFailure.Reason) -> String? {
         switch reason {
         case .posix(EPERM), .posix(EACCES):
             return "permission denied"

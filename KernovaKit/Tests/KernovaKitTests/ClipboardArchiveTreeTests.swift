@@ -127,7 +127,7 @@ struct ClipboardArchiveTreeTests {
     func fifoInPlaceOfAFileIsRefused() throws {
         let fifo = scratch.url.appendingPathComponent("pipe")
         try #require(mkfifo(fifo.path, 0o644) == 0)
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(EFTYPE))) {
+        #expect(throws: ClipboardItemFailure(itemPath: "", reason: .posix(EFTYPE))) {
             _ = try ClipboardArchive.archiveBytes(of: .file(fifo, name: "pipe", byteCount: 1))
         }
     }
@@ -159,7 +159,7 @@ struct ClipboardArchiveTreeTests {
         sub.refusal = .permissionDenied
 
         #expect(
-            throws: ClipboardSourceReadFailure(itemPath: "caf\u{FFFD}/sub", reason: .posix(EACCES))
+            throws: ClipboardItemFailure(itemPath: "caf\u{FFFD}/sub", reason: .posix(EACCES))
         ) {
             _ = try encodeTree(on: volume)
         }
@@ -192,7 +192,7 @@ struct ClipboardArchiveTreeTests {
         do {
             _ = try encodeTree(on: volume)
             Issue.record("the walk archived a path no header can carry")
-        } catch let failure as ClipboardSourceReadFailure {
+        } catch let failure as ClipboardItemFailure {
             #expect(failure.reason == .posix(ENAMETOOLONG))
             #expect(failure.itemPath.utf8.count > Int(UInt16.max) - 256)
         }
@@ -209,7 +209,7 @@ struct ClipboardArchiveTreeTests {
         // `b` was moved out from under `a`: its `..` is somewhere else now.
         b.parentOverride = volume.root.add([0x6D], .directory)
 
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "a", reason: .unknown)) {
+        #expect(throws: ClipboardItemFailure(itemPath: "a", reason: .unknown)) {
             _ = try encodeTree(on: volume)
         }
         #expect(volume.open.isEmpty)

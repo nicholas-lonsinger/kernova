@@ -133,7 +133,7 @@ struct ClipboardArchiveEntryHeader {
 
     /// The header.
     ///
-    /// - Throws: ``ClipboardSourceReadFailure`` naming the entry when its type
+    /// - Throws: ``ClipboardItemFailure`` naming the entry when its type
     ///   has no archive entry type or its path and link target outgrow a
     ///   header; ``ClipboardArchive/ArchiveError/unproducibleFieldKey`` for a
     ///   key in ``ClipboardArchive/fieldKeys`` this type has no value for — a
@@ -141,11 +141,11 @@ struct ClipboardArchiveEntryHeader {
     func make() throws -> ArchiveHeader {
         let format = status.st_mode & S_IFMT
         guard let type = Self.entryType(format) else {
-            throw ClipboardSourceReadFailure(
+            throw ClipboardItemFailure(
                 itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(EFTYPE))
         }
         guard ArchiveHeaderEncoding.fits(stringBytes: path.count + (linkTarget?.count ?? 0)) else {
-            throw ClipboardSourceReadFailure(
+            throw ClipboardItemFailure(
                 itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(ENAMETOOLONG))
         }
         var encoding = ArchiveHeaderEncoding()
@@ -183,7 +183,7 @@ struct ClipboardArchiveEntryHeader {
             }
         }
         guard let header = encoding.make() else {
-            throw ClipboardSourceReadFailure(
+            throw ClipboardItemFailure(
                 itemPath: ClipboardArchiveCodec.displayPath(path), reason: .unknown)
         }
         return header
@@ -254,7 +254,7 @@ private struct ArchiveHeaderEncoding {
 // MARK: - Walk
 
 extension ClipboardArchiveCodec {
-    /// An entry path as a ``ClipboardSourceReadFailure`` names it: decoded for
+    /// An entry path as a ``ClipboardItemFailure`` names it: decoded for
     /// display, a byte that is not UTF-8 shown as U+FFFD.
     static func displayPath(_ path: [UInt8]) -> String {
         String(decoding: path, as: UTF8.self)
@@ -263,7 +263,7 @@ extension ClipboardArchiveCodec {
     /// Writes one regular-file entry named `name` carrying exactly `byteCount`
     /// bytes of the file at `url`.
     ///
-    /// - Throws: ``ClipboardSourceReadFailure`` naming the file itself (an empty
+    /// - Throws: ``ClipboardItemFailure`` naming the file itself (an empty
     ///   path) when it cannot be opened, is not a regular file, or ends before
     ///   `byteCount`.
     static func writeFileEntry(
@@ -289,7 +289,7 @@ extension ClipboardArchiveCodec {
     /// through its child's `..` and confirming it is the directory it left, so
     /// neither depth nor path length bounds the tree it can archive.
     ///
-    /// - Throws: ``ClipboardSourceReadFailure`` naming the first entry, relative
+    /// - Throws: ``ClipboardItemFailure`` naming the first entry, relative
     ///   to `root`, that could not be described, listed, or read — or, with no
     ///   reason, the directory that was no longer where the walk left it. The
     ///   walk stops there: nothing is skipped.
@@ -398,7 +398,7 @@ extension ClipboardArchiveCodec {
 
         /// Opens `parent` again through `child`'s `..`.
         ///
-        /// - Throws: ``ClipboardSourceReadFailure`` naming `parent`, with no
+        /// - Throws: ``ClipboardItemFailure`` naming `parent`, with no
         ///   reason, when `..` is no longer the directory the walk left.
         func reopen(_ parent: TreeDirectory, from child: TreeDirectory) throws -> Int32 {
             let descriptor = try attempt(parent.path) { () throws(Errno) in
@@ -409,7 +409,7 @@ extension ClipboardArchiveCodec {
                     try volume.status(of: descriptor)
                 }
                 guard status.st_dev == parent.device, status.st_ino == parent.inode else {
-                    throw ClipboardSourceReadFailure(
+                    throw ClipboardItemFailure(
                         itemPath: ClipboardArchiveCodec.displayPath(parent.path), reason: .unknown)
                 }
                 return descriptor
@@ -427,7 +427,7 @@ extension ClipboardArchiveCodec {
         /// cached reads in `fileReadBlockSize` blocks, the policy AppleArchive
         /// itself applies.
         ///
-        /// - Throws: ``ClipboardSourceReadFailure`` naming `failurePath` when
+        /// - Throws: ``ClipboardItemFailure`` naming `failurePath` when
         ///   the file cannot be opened, is not a regular file by the time it is
         ///   open, or ends before the byte count its header declared.
         func writeRegularFile(
@@ -442,7 +442,7 @@ extension ClipboardArchiveCodec {
                 try volume.status(of: descriptor)
             }
             guard (status.st_mode & S_IFMT) == S_IFREG else {
-                throw ClipboardSourceReadFailure(
+                throw ClipboardItemFailure(
                     itemPath: ClipboardArchiveCodec.displayPath(failurePath), reason: .posix(EFTYPE))
             }
             let byteCount = byteCount ?? Int(status.st_size)
@@ -463,7 +463,7 @@ extension ClipboardArchiveCodec {
                 // The file ending before the byte count its header declared
                 // would leave the entry short.
                 guard got > 0 else {
-                    throw ClipboardSourceReadFailure(
+                    throw ClipboardItemFailure(
                         itemPath: ClipboardArchiveCodec.displayPath(failurePath), reason: .endedEarly)
                 }
                 try encodeStream.writeBlob(
@@ -474,11 +474,11 @@ extension ClipboardArchiveCodec {
 
         private func attempt<Result>(
             _ path: [UInt8], _ body: () throws(Errno) -> Result
-        ) throws(ClipboardSourceReadFailure) -> Result {
+        ) throws(ClipboardItemFailure) -> Result {
             do {
                 return try body()
             } catch {
-                throw ClipboardSourceReadFailure(
+                throw ClipboardItemFailure(
                     itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(error.rawValue))
             }
         }

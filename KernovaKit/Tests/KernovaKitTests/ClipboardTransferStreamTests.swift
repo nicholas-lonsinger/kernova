@@ -438,7 +438,7 @@ struct ClipboardTransferStreamTests {
     private func runToCompletion(
         _ sender: ClipboardTransferSender, representation: ClipboardContent.Representation,
         isInline: Bool = true,
-        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil
+        onSourceUnreadable: (@Sendable (ClipboardItemFailure?) -> Void)? = nil
     ) async throws -> Bool {
         let ended = AsyncGate()
         let outcome = Locked<Bool?>(nil)

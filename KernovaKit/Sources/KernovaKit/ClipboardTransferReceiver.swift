@@ -73,7 +73,7 @@ final class ClipboardTransferReceiver: Sendable {
         let message: String
         var neededBytes: Int?
         var availableBytes: Int?
-        var readFailure: ClipboardSourceReadFailure?
+        var itemFailure: ClipboardItemFailure?
 
         init(code: ClipboardStreamAbortCode, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil) {
             self.init(
@@ -83,13 +83,13 @@ final class ClipboardTransferReceiver: Sendable {
 
         init(
             rawCode: String, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil,
-            readFailure: ClipboardSourceReadFailure? = nil
+            itemFailure: ClipboardItemFailure? = nil
         ) {
             self.rawCode = rawCode
             self.message = message
             self.neededBytes = neededBytes
             self.availableBytes = availableBytes
-            self.readFailure = readFailure
+            self.itemFailure = itemFailure
         }
     }
 
@@ -313,7 +313,7 @@ final class ClipboardTransferReceiver: Sendable {
             throw stop(
                 fromPeer: reply.refusalCode, message: reply.refusalMessage,
                 readFailure: reply.hasReadFailure
-                    ? ClipboardSourceReadFailure(wire: reply.readFailure) : nil)
+                    ? ClipboardItemFailure(wire: reply.readFailure) : nil)
         }
         let totalBytes = Int(clamping: reply.totalBytes)
         let firstByteAt = clock.now
@@ -640,7 +640,7 @@ final class ClipboardTransferReceiver: Sendable {
     /// log line of its own.
     private func stop(
         fromPeer rawCode: String, message: String = "The sender ended the transfer",
-        readFailure: ClipboardSourceReadFailure?
+        readFailure: ClipboardItemFailure?
     ) -> ReceiveStop {
         if let readFailure {
             Self.logger.log(
@@ -648,7 +648,7 @@ final class ClipboardTransferReceiver: Sendable {
                 "Clipboard transfer \(self.transferID, privacy: .public): the sender couldn't read '\(readFailure.itemPath, privacy: .private)' — \(readFailure.description, privacy: .public)"
             )
         }
-        return ReceiveStop(rawCode: rawCode, message: message, readFailure: readFailure)
+        return ReceiveStop(rawCode: rawCode, message: message, itemFailure: readFailure)
     }
 
     /// What the sender wrote to end the payload, once the consumer has stopped
@@ -743,6 +743,6 @@ final class ClipboardTransferReceiver: Sendable {
         ClipboardStreamAbortInfo(
             transferID: transferID, rawCode: stop.rawCode, message: stop.message,
             neededBytes: stop.neededBytes, availableBytes: stop.availableBytes,
-            readFailure: stop.readFailure)
+            itemFailure: stop.itemFailure)
     }
 }

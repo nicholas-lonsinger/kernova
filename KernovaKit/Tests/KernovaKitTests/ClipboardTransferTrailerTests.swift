@@ -98,7 +98,7 @@ struct ClipboardTransferTrailerTests {
 
     @Test("an abort trailer round-trips the item its sender could not read")
     func abortTrailerRoundTripsItsReadFailure() throws {
-        let readFailure = ClipboardSourceReadFailure(
+        let readFailure = ClipboardItemFailure(
             itemPath: "pbear/Library/Mail", reason: .posix(EPERM))
         let encoded = ClipboardTransferTrailer(
             ending: .aborted(rawCode: "read.error", readFailure: readFailure)
@@ -118,7 +118,7 @@ struct ClipboardTransferTrailerTests {
         let encoded = ClipboardTransferTrailer(
             ending: .aborted(
                 rawCode: "read.error",
-                readFailure: ClipboardSourceReadFailure(itemPath: deep, reason: .posix(EACCES)))
+                readFailure: ClipboardItemFailure(itemPath: deep, reason: .posix(EACCES)))
         ).encoded
 
         #expect(encoded.count <= ClipboardTransferTrailer.maximumByteCount)
@@ -126,7 +126,7 @@ struct ClipboardTransferTrailerTests {
             ClipboardTransferTrailer.parse(encoded)?.ending
                 == .aborted(
                     rawCode: "read.error",
-                    readFailure: ClipboardSourceReadFailure(itemPath: "Mail", reason: .posix(EACCES))))
+                    readFailure: ClipboardItemFailure(itemPath: "Mail", reason: .posix(EACCES))))
     }
 
     // MARK: - Holding the trailer back
@@ -157,7 +157,7 @@ struct ClipboardTransferTrailerTests {
         let trailer = ClipboardTransferTrailer(
             ending: .aborted(
                 rawCode: "read.error",
-                readFailure: ClipboardSourceReadFailure(itemPath: "Project/locked", reason: .posix(EACCES))))
+                readFailure: ClipboardItemFailure(itemPath: "Project/locked", reason: .posix(EACCES))))
         let fd = try stream(payload + trailer.encoded)
         defer { ClipboardDataConnection.end(fd: fd) }
         let reader = ClipboardPayloadReader(fd: fd, bufferBytes: 1024)

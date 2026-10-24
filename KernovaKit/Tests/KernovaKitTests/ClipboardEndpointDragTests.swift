@@ -271,7 +271,7 @@ struct ClipboardEndpointDragTests {
 
     /// What reading the sealed file in ``makeFolderWithSealedFile()`` fails
     /// with: its path from the dragged folder's own name, and the reason.
-    private static let sealedFailure = ClipboardSourceReadFailure(
+    private static let sealedFailure = ClipboardItemFailure(
         itemPath: "Home/Library/locked.db", reason: .posix(EACCES))
 
     /// A folder named `Home` whose readable files sort on both sides of one the
@@ -315,7 +315,7 @@ struct ClipboardEndpointDragTests {
         }
 
         #expect(info.code == .readError)
-        #expect(info.readFailure == Self.sealedFailure)
+        #expect(info.itemFailure == Self.sealedFailure)
         #expect(
             ClipboardTransferFailure.inboundPullAborted(info) == .sourceUnreadable(Self.sealedFailure))
         // The guest's own readout ends on the same item rather than completing.

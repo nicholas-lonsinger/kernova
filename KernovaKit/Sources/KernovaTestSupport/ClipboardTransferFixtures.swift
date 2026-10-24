@@ -192,7 +192,7 @@ public struct ReceivedTransfer: Sendable {
     }
 
     /// The item the trailer said the sender could not read, if it named one.
-    public var readFailure: ClipboardSourceReadFailure? {
+    public var readFailure: ClipboardItemFailure? {
         guard case .aborted(_, let readFailure)? = trailer?.ending else { return nil }
         return readFailure
     }

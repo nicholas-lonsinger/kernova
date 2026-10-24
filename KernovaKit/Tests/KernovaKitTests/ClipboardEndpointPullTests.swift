@@ -288,7 +288,7 @@ struct ClipboardEndpointPullTests {
         try Data("secret".utf8).write(to: locked)
         let sealed = try WithheldPermissions(locked)
         defer { withExtendedLifetime(sealed) {} }
-        let unreadable = ClipboardSourceReadFailure(
+        let unreadable = ClipboardItemFailure(
             itemPath: "Home/locked.db", reason: .posix(EACCES))
         pair.guest.endpoint.offer(ClipboardContent(representations: [folder.representation]))
         try await pair.host.recorder.waitForOffer()

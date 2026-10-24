@@ -351,20 +351,22 @@ message ClipboardTransferReply {
   uint64 total_bytes = 6;
 
   // Set on a `read.error` refusal: the item the sender could not read.
-  ClipboardReadFailure read_failure = 7;
+  ClipboardItemFailure read_failure = 7;
 }
 
-// Which item the sending side could not read, and how the read failed. Carried
-// by a `read.error` refusal, and by a `read.error` abort trailer as its detail.
-message ClipboardReadFailure {
+// Which item a transfer failed on, and how: an item the sending side could not
+// read, or an entry the receiving side could not write. Carried by a
+// `read.error` refusal, and by a `read.error` abort trailer as its detail.
+message ClipboardItemFailure {
   // The item, as a slash-separated path that starts with the representation's
   // own name — the dragged folder's name, then the path inside it.
   string item_path = 1;
 
-  // The `errno` the read failed with; 0 when it named none.
+  // The `errno` the read or write failed with; 0 when it named none.
   int32 posix_error = 2;
 
-  // The file ended before the size its archive entry declared.
+  // The file ended before the size its archive entry declared; a read failure
+  // only.
   bool ended_early = 3;
 }
 

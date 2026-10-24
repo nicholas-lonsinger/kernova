@@ -277,7 +277,7 @@ enum ClipboardArchiveCodec {
     ///   - onOutputAdvanced: consulted with the running uncompressed total;
     ///     throwing from it stops the encode.
     /// - Returns: the failure that ended the encode — a
-    ///   ``ClipboardSourceReadFailure`` naming the entry, relative to the
+    ///   ``ClipboardItemFailure`` naming the entry, relative to the
     ///   source, when the source could not be read — or `nil` when the whole
     ///   archive was written and every stream closed cleanly.
     static func encode<Sink: ArchiveByteStreamProtocol & AnyObject>(

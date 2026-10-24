@@ -1,19 +1,21 @@
 import Darwin
 import Foundation
 
-/// Which item a sending side could not read, and how the read failed.
+/// Which item a transfer failed on, and how: an item the sending side could not
+/// read, or an entry the receiving side could not write.
 ///
-/// Raised where the read happens, so the item is the one that actually failed
-/// rather than one inferred afterwards; it crosses to the receiving side as a
-/// `ClipboardReadFailure`. Its descriptions leave the item out, so a log line
+/// Raised where the read or write happens, so the item is the one that actually
+/// failed rather than one inferred afterwards; it crosses the wire as a
+/// `ClipboardItemFailure`. Its descriptions leave the item out, so a log line
 /// that interpolates one publicly names only the reason — the item is logged
 /// apart, as private.
-public struct ClipboardSourceReadFailure: Error, Equatable, Sendable {
-    /// How the read failed.
+public struct ClipboardItemFailure: Error, Equatable, Sendable {
+    /// How the read or write failed.
     public enum Reason: Equatable, Sendable {
-        /// The read failed with this `errno`.
+        /// The read or write failed with this `errno`.
         case posix(Int32)
-        /// The file ended before the size its archive entry declared.
+        /// The file ended before the size its archive entry declared; a read
+        /// failure only.
         case endedEarly
         /// The failure named no reason.
         case unknown
@@ -23,7 +25,7 @@ public struct ClipboardSourceReadFailure: Error, Equatable, Sendable {
     /// starts with the representation's own name; inside the archive codec it is
     /// relative to the source, empty for the source itself.
     public let itemPath: String
-    /// How the read failed.
+    /// How the read or write failed.
     public let reason: Reason
 
     /// The most a serialized failure may take in an abort trailer.
@@ -43,14 +45,14 @@ public struct ClipboardSourceReadFailure: Error, Equatable, Sendable {
 
     /// The same failure with its path placed under `name`, the representation's
     /// own name.
-    func within(_ name: String) -> ClipboardSourceReadFailure {
+    func within(_ name: String) -> ClipboardItemFailure {
         guard !name.isEmpty else { return self }
-        return ClipboardSourceReadFailure(
+        return ClipboardItemFailure(
             itemPath: itemPath.isEmpty ? name : "\(name)/\(itemPath)", reason: reason)
     }
 }
 
-extension ClipboardSourceReadFailure.Reason {
+extension ClipboardItemFailure.Reason {
     /// The reason `error` carries: its POSIX code where it has one.
     init(_ error: any Error) {
         if let posix = error as? POSIXError {
@@ -70,7 +72,7 @@ extension ClipboardSourceReadFailure.Reason {
     }
 }
 
-extension ClipboardSourceReadFailure: CustomStringConvertible, CustomDebugStringConvertible {
+extension ClipboardItemFailure: CustomStringConvertible, CustomDebugStringConvertible {
     /// The reason alone, with the item left out.
     public var description: String {
         switch reason {
@@ -86,9 +88,9 @@ extension ClipboardSourceReadFailure: CustomStringConvertible, CustomDebugString
 
 // MARK: - Wire
 
-extension ClipboardSourceReadFailure {
+extension ClipboardItemFailure {
     /// The failure as it crosses the wire.
-    var wire: Kernova_V1_ClipboardReadFailure {
+    var wire: Kernova_V1_ClipboardItemFailure {
         .with {
             $0.itemPath = itemPath
             switch reason {
@@ -100,7 +102,7 @@ extension ClipboardSourceReadFailure {
     }
 
     /// The failure a peer sent.
-    init(wire: Kernova_V1_ClipboardReadFailure) {
+    init(wire: Kernova_V1_ClipboardItemFailure) {
         let reason: Reason =
             wire.endedEarly ? .endedEarly : wire.posixError != 0 ? .posix(wire.posixError) : .unknown
         self.init(itemPath: wire.itemPath, reason: reason)
@@ -111,14 +113,14 @@ extension ClipboardSourceReadFailure {
     var encoded: Data {
         let full = (try? wire.serializedData()) ?? Data()
         guard full.count > Self.maximumEncodedByteCount else { return full }
-        let short = ClipboardSourceReadFailure(itemPath: itemName, reason: reason)
+        let short = ClipboardItemFailure(itemPath: itemName, reason: reason)
         let trimmed = (try? short.wire.serializedData()) ?? Data()
         return trimmed.count <= Self.maximumEncodedByteCount ? trimmed : Data()
     }
 
     /// The failure `bytes` serialize, or `nil` when they are not one.
     init?(encoded bytes: Data) {
-        guard !bytes.isEmpty, let wire = try? Kernova_V1_ClipboardReadFailure(serializedBytes: bytes)
+        guard !bytes.isEmpty, let wire = try? Kernova_V1_ClipboardItemFailure(serializedBytes: bytes)
         else { return nil }
         self.init(wire: wire)
     }

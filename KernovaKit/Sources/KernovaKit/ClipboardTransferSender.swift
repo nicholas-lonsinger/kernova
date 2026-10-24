@@ -135,7 +135,7 @@ final class ClipboardTransferSender: Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
-        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil,
+        onSourceUnreadable: (@Sendable (ClipboardItemFailure?) -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         queue.async { [self] in
@@ -169,7 +169,7 @@ final class ClipboardTransferSender: Sendable {
         /// reason nowhere to go.
         let stalled: Bool
         /// The item a `read.error` could not read, when the read named one.
-        let readFailure: ClipboardSourceReadFailure?
+        let readFailure: ClipboardItemFailure?
     }
 
     /// What crosses the wire: raw bytes for an inline payload the receiver can
@@ -185,7 +185,7 @@ final class ClipboardTransferSender: Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?,
-        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)?,
+        onSourceUnreadable: (@Sendable (ClipboardItemFailure?) -> Void)?,
         onComplete: (@Sendable (_ success: Bool) -> Void)?
     ) {
         // Declared first so it ends last: the interval covers the whole
@@ -266,7 +266,7 @@ final class ClipboardTransferSender: Sendable {
             // side raised is what surfaces, and the stalled write underneath it
             // is what decides whether a trailer can still cross.
             let abortCode = code(for: error)
-            let readFailure = (error as? ClipboardSourceReadFailure)?.within(
+            let readFailure = (error as? ClipboardItemFailure)?.within(
                 representation.filename)
             failure = StreamFailure(
                 code: abortCode,
@@ -351,7 +351,7 @@ final class ClipboardTransferSender: Sendable {
     /// Decides how `representation` crosses, or refuses the transfer.
     private func classify(
         _ representation: ClipboardContent.Representation, isInline: Bool, fd: Int32,
-        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)?
+        onSourceUnreadable: (@Sendable (ClipboardItemFailure?) -> Void)?
     ) -> Payload? {
         switch representation.source {
         case .inMemory(let data) where isInline && data.count <= maxResidentInlineBytes:
@@ -376,7 +376,7 @@ final class ClipboardTransferSender: Sendable {
             do {
                 data = try Data(contentsOf: url)
             } catch {
-                let readFailure = ClipboardSourceReadFailure(
+                let readFailure = ClipboardItemFailure(
                     itemPath: representation.filename, reason: .init(error))
                 logStop(code: .readError, error: error, readFailure: readFailure)
                 onSourceUnreadable?(readFailure)
@@ -515,7 +515,7 @@ final class ClipboardTransferSender: Sendable {
     /// no payload, no trailer.
     private func refuse(
         fd: Int32, code: ClipboardStreamAbortCode, message: String,
-        readFailure: ClipboardSourceReadFailure? = nil
+        readFailure: ClipboardItemFailure? = nil
     ) {
         try? ClipboardDataConnection.writeFrame(
             .clipboardTransferRefusal(
@@ -526,7 +526,7 @@ final class ClipboardTransferSender: Sendable {
     /// Records a source this side could not read, with the error behind a
     /// failure that names no item.
     private func logStop(
-        code: ClipboardStreamAbortCode, error: any Error, readFailure: ClipboardSourceReadFailure?
+        code: ClipboardStreamAbortCode, error: any Error, readFailure: ClipboardItemFailure?
     ) {
         guard code == .readError else { return }
         if let readFailure {

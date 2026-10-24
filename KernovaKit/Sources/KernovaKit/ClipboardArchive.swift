@@ -13,7 +13,7 @@ import KernovaSynchronization
 public enum ClipboardArchive {
     /// A stream in the archive pipeline could not be opened, or
     /// ``fieldKeys`` names a field no entry header produces. A source that cannot be read raises
-    /// ``ClipboardSourceReadFailure`` instead.
+    /// ``ClipboardItemFailure`` instead.
     public enum ArchiveError: Error {
         case openWriteStream
         case openCompressionStream
