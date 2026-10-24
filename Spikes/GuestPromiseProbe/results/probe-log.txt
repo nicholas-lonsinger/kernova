@@ -1,0 +1,68 @@
+PromiseProbe started 00:28:34.928 · macOS Version 26.6.2 (Build 25G83)
+
+DROP 1 · source Photos · 00:31:48.244 · source mask 1 · 1 pasteboard item(s)
+  item 0: promise yes · file URL 08224FB9-FCDD-4A35-9B11-F8038C3B4A21.jpeg · types com.apple.NSFilePromiseItemMetaData, com.apple.pasteboard.promised-file-name, com.apple.pasteboard.promised-suggested-file-name, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.NSFilePromiseID, com.apple.photos.object-reference.asset, public.jpeg, public.file-url, dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu, dyn.ah62d4rv4gu8y6y4usm1044pxqzb085xyqz1hk64uqm10c6xenv61a3k, com.apple.pasteboard.promised-file-url
+  r0 before call-in · fileTypes ["public.jpeg"] · fileNames []
+  r0 call-in returned +11.5 ms (call took +11.5 ms) · fileNames ["Probe A.jpg"]
+  +439.0 ms  file appeared: Probe A.jpg (354 KB so far)
+  +441.0 ms  r0 reader: Probe A.jpg 354 KB · fileNames then ["Probe A.jpg"]
+SUMMARY 1 · Photos · 1 pasteboard item(s) · 1 promise receiver(s) · 1 file type(s) declared · 1 reader callback(s)
+  r0 types ["public.jpeg"] · first name +11.5 ms (right after call-in: yes) · reads Probe A.jpg at +441.0 ms
+  files seen in the folder: Probe A.jpg +439.0 ms
+
+DROP 2 · source Photos · 00:32:19.283 · source mask 1 · 1 pasteboard item(s)
+  item 0: promise yes · file URL EA46E9F3-E81E-45B2-8442-C655326EAC52_4_5005_c.jpeg · types com.apple.NSFilePromiseItemMetaData, com.apple.pasteboard.promised-file-name, com.apple.pasteboard.promised-suggested-file-name, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.NSFilePromiseID, com.apple.photos.object-reference.asset, public.jpeg, public.file-url, dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu, dyn.ah62d4rv4gu8y6y4usm1044pxqzb085xyqz1hk64uqm10c6xenv61a3k, com.apple.pasteboard.promised-file-url
+  r0 before call-in · fileTypes ["public.jpeg"] · fileNames []
+  r0 call-in returned +9.8 ms (call took +9.8 ms) · fileNames ["Probe B.jpg"]
+  +1517.4 ms  file appeared: Probe B.jpg (253 KB so far)
+  +1519.1 ms  r0 reader: Probe B.jpg 253 KB · fileNames then ["Probe B.jpg"]
+SUMMARY 2 · Photos · 1 pasteboard item(s) · 1 promise receiver(s) · 1 file type(s) declared · 1 reader callback(s)
+  r0 types ["public.jpeg"] · first name +9.8 ms (right after call-in: yes) · reads Probe B.jpg at +1519.1 ms
+  files seen in the folder: Probe B.jpg +1517.4 ms
+
+DROP 3 · source Photos · 00:32:38.334 · source mask 1 · 1 pasteboard item(s)
+  item 0: promise yes · file URL 2072351C-1F42-403B-BE67-6EA57CC9E49B_1_102_o.jpeg · types com.apple.NSFilePromiseItemMetaData, com.apple.pasteboard.promised-file-name, com.apple.pasteboard.promised-suggested-file-name, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.NSFilePromiseID, com.apple.photos.object-reference.asset, public.jpeg, public.file-url, dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu, dyn.ah62d4rv4gu8y6y4usm1044pxqzb085xyqz1hk64uqm10c6xenv61a3k, com.apple.pasteboard.promised-file-url
+  r0 before call-in · fileTypes ["com.apple.quicktime-movie"] · fileNames []
+  r0 call-in returned +8.2 ms (call took +8.2 ms) · fileNames ["Probe Video.mov"]
+  +11026.7 ms  file appeared: Probe Video.mov (233.9 MB so far)
+  +11028.2 ms  r0 reader: Probe Video.mov 233.9 MB · fileNames then ["Probe Video.mov"]
+SUMMARY 3 · Photos · 1 pasteboard item(s) · 1 promise receiver(s) · 1 file type(s) declared · 1 reader callback(s)
+  r0 types ["com.apple.quicktime-movie"] · first name +8.2 ms (right after call-in: yes) · reads Probe Video.mov at +11028.2 ms
+  files seen in the folder: Probe Video.mov +11026.7 ms
+
+DROP 4 · source Photos · 00:33:56.389 · source mask 1 · 3 pasteboard item(s)
+  item 0: promise yes · file URL 08224FB9-FCDD-4A35-9B11-F8038C3B4A21.jpeg · types com.apple.NSFilePromiseItemMetaData, com.apple.pasteboard.promised-file-name, com.apple.pasteboard.promised-suggested-file-name, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.NSFilePromiseID, com.apple.photos.object-reference.asset, public.jpeg, public.file-url, dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu, dyn.ah62d4rv4gu8y6y4usm1044pxqzb085xyqz1hk64uqm10c6xenv61a3k, com.apple.pasteboard.promised-file-url
+  item 1: promise yes · file URL EA46E9F3-E81E-45B2-8442-C655326EAC52_1_201_a.jpeg · types com.apple.NSFilePromiseItemMetaData, com.apple.pasteboard.promised-file-name, com.apple.pasteboard.promised-suggested-file-name, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.NSFilePromiseID, com.apple.photos.object-reference.asset, public.jpeg, public.file-url
+  item 2: promise yes · file URL C9446222-3147-4A6A-A7EB-D5CE2DDB9CB0.heic · types com.apple.NSFilePromiseItemMetaData, com.apple.pasteboard.promised-file-name, com.apple.pasteboard.promised-suggested-file-name, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.NSFilePromiseID, com.apple.photos.object-reference.asset, public.heic, public.file-url
+  r0 before call-in · fileTypes ["public.jpeg"] · fileNames []
+  r1 before call-in · fileTypes ["public.jpeg"] · fileNames []
+  r2 before call-in · fileTypes ["public.jpeg"] · fileNames []
+  r0 call-in returned +4.0 ms (call took +4.0 ms) · fileNames ["Probe A.jpg"]
+  r1 call-in returned +9.9 ms (call took +4.0 ms) · fileNames ["Probe B.jpg"]
+  r2 call-in returned +15.5 ms (call took +3.9 ms) · fileNames ["Probe C.jpeg"]
+  +335.6 ms  file appeared: Probe A.jpg (354 KB so far)
+  +336.6 ms  r0 reader: Probe A.jpg 354 KB · fileNames then ["Probe A.jpg"]
+  +375.6 ms  file appeared: Probe B.jpg (253 KB so far)
+  +376.0 ms  r1 reader: Probe B.jpg 253 KB · fileNames then ["Probe B.jpg"]
+  +521.6 ms  file appeared: Probe C.jpeg (264 KB so far)
+  +522.7 ms  r2 reader: Probe C.jpeg 264 KB · fileNames then ["Probe C.jpeg"]
+SUMMARY 4 · Photos · 3 pasteboard item(s) · 3 promise receiver(s) · 3 file type(s) declared · 3 reader callback(s)
+  r0 types ["public.jpeg"] · first name +4.0 ms (right after call-in: yes) · reads Probe A.jpg at +336.6 ms
+  r1 types ["public.jpeg"] · first name +9.9 ms (right after call-in: yes) · reads Probe B.jpg at +376.0 ms
+  r2 types ["public.jpeg"] · first name +15.5 ms (right after call-in: yes) · reads Probe C.jpeg at +522.7 ms
+  files seen in the folder: Probe A.jpg +335.6 ms; Probe B.jpg +375.6 ms; Probe C.jpeg +521.6 ms
+
+DROP 5 · source Safari · 00:37:06.638 · source mask 1 · 1 pasteboard item(s)
+  item 0: promise yes · types dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu, org.webmproject.webp, com.apple.WebKit.custom-pasteboard-data, public.tiff, dyn.ah62d4rv4gu8zs3pcnzme2641rf4guzdmsv0gn64uqm10c6xenv61a3k, dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu, public.url, public.url-name, public.utf8-plain-text, com.apple.flat-rtfd, com.apple.webarchive, dyn.ah62d4rv4gu8yc6durvwwaz5fqmf0w7baqv4045p3eb2gc65yqzvg82pwquuhk8puqy, com.apple.pasteboard.promised-file-content-type, com.apple.pasteboard.promised-file-url, dyn.ah62d4rv4gu8y6y4usm1044pxqzb085xyqz1hk64uqm10c6xenv61a3k
+  r0 before call-in · fileTypes ["org.webmproject.webp"] · fileNames []
+  r0 call-in returned +6.0 ms (call took +6.0 ms) · fileNames ["FullMoon2010.jpg.webp"]
+  +15.4 ms  file appeared: FullMoon2010.jpg.webp (186 KB so far)
+  +262.4 ms  r0 reader: FullMoon2010.jpg.webp 186 KB · fileNames then ["FullMoon2010.jpg.webp"]
+SUMMARY 5 · Safari · 1 pasteboard item(s) · 1 promise receiver(s) · 1 file type(s) declared · 1 reader callback(s)
+  r0 types ["org.webmproject.webp"] · first name +6.0 ms (right after call-in: yes) · reads FullMoon2010.jpg.webp at +262.4 ms
+  files seen in the folder: FullMoon2010.jpg.webp +15.4 ms
+
+DROP 6 · source Finder · 00:37:48.623 · source mask 55 · 1 pasteboard item(s)
+  item 0: promise no · file URL Probe A.jpg · types public.file-url, com.apple.finder.node
+SUMMARY 6 · Finder · no promises · 1 plain file item(s)
+
