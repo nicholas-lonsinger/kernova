@@ -464,10 +464,12 @@ public final class ClipboardEndpoint {
     /// died took the drop with it.
     nonisolated public func sendDropComplete(
         generation: UInt64, outcome: Kernova_V1_DropComplete.Outcome,
-        code: ClipboardErrorCode? = nil, message: String = ""
+        code: ClipboardErrorCode? = nil, message: String = "",
+        itemFailure: ClipboardItemFailure? = nil
     ) {
         session.sendDropComplete(
-            generation: generation, outcome: outcome, code: code, message: message)
+            generation: generation, outcome: outcome, code: code, message: message,
+            itemFailure: itemFailure)
     }
 
     // MARK: - Dragging out (guest offers, host takes over and pulls)

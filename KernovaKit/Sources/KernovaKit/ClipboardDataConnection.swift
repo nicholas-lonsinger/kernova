@@ -325,7 +325,7 @@ extension Frame {
             $0.transferID = transferID
             $0.refusalCode = code.rawValue
             $0.refusalMessage = message
-            if let readFailure { $0.readFailure = readFailure.wire }
+            if let wire = readFailure?.boundedWire { $0.readFailure = wire }
         }
         return frame
     }

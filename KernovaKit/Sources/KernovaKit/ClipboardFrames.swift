@@ -72,11 +72,12 @@ extension Frame {
 
     /// A `DropComplete` reporting how the drop for `generation` ended.
     ///
-    /// `code` and `message` describe a failure; both are omitted for a completed
-    /// or cancelled drop.
+    /// `code`, `message` and `itemFailure` describe a failure; all are omitted
+    /// for a completed or cancelled drop.
     public static func dropComplete(
         generation: UInt64, outcome: Kernova_V1_DropComplete.Outcome,
-        code: ClipboardErrorCode? = nil, message: String = ""
+        code: ClipboardErrorCode? = nil, message: String = "",
+        itemFailure: ClipboardItemFailure? = nil
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -85,6 +86,7 @@ extension Frame {
             $0.outcome = outcome
             if let code { $0.code = code.rawValue }
             $0.message = message
+            if let wire = itemFailure?.boundedWire { $0.itemFailure = wire }
         }
         return frame
     }

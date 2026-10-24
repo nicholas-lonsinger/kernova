@@ -3092,7 +3092,7 @@ struct VsockClipboardServiceTests {
     @Test("a preview pull whose archive can't be unpacked names the unpack failure")
     func previewPullExtractAbortSurfacesUnpackFailure() async throws {
         let finish = try await previewPullAbortedByGuest(code: .extractError)
-        #expect(finish?.failure == .unpackFailed)
+        #expect(finish?.failure == .unpackFailed(nil))
         #expect(finish?.gesture == .preview)
     }
 
@@ -3134,7 +3134,7 @@ struct VsockClipboardServiceTests {
         let url = await offCooperativePool { service.serveFileURL(generation: 23, repIndex: 0) }
         #expect(url == nil)
         try await reports.waitForFailure()
-        #expect(reports.failure == .unpackFailed)
+        #expect(reports.failure == .unpackFailed(nil))
         // A streamed extract writes as it goes, so a failed one must leave
         // nothing behind for a later paste to pick up.
         #expect(materializedFiles(under: stagingRoot.root.url).isEmpty)

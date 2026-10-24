@@ -76,6 +76,37 @@ struct DropFrameTests {
         }
     }
 
+    @Test("a failed completion round-trips the entry the guest couldn't write")
+    func completeRoundTripsTheItemFailure() throws {
+        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+        let decoded = try roundTrip(
+            .dropComplete(
+                generation: 3, outcome: .failed, code: .dropUnpackFailed, itemFailure: unwritable))
+        guard case .dropComplete(let complete) = decoded.payload else {
+            Issue.record("Expected a drop completion payload")
+            return
+        }
+        #expect(complete.code == ClipboardErrorCode.dropUnpackFailed.rawValue)
+        #expect(complete.hasItemFailure)
+        #expect(ClipboardItemFailure(wire: complete.itemFailure) == unwritable)
+    }
+
+    @Test("an entry path too long to cross is carried as the entry's own name")
+    func overlongItemFailureCrossesAsItsName() throws {
+        let deep = Array(repeating: "folder", count: 1000).joined(separator: "/") + "/caf\u{E9}"
+        let decoded = try roundTrip(
+            .dropComplete(
+                generation: 3, outcome: .failed, code: .dropUnpackFailed,
+                itemFailure: ClipboardItemFailure(itemPath: deep, reason: .posix(EILSEQ))))
+        guard case .dropComplete(let complete) = decoded.payload else {
+            Issue.record("Expected a drop completion payload")
+            return
+        }
+        #expect(
+            ClipboardItemFailure(wire: complete.itemFailure)
+                == ClipboardItemFailure(itemPath: "caf\u{E9}", reason: .posix(EILSEQ)))
+    }
+
     @Test("a drop release round-trips its generation")
     func releaseRoundTrips() throws {
         var frame = Frame()

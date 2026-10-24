@@ -356,7 +356,8 @@ message ClipboardTransferReply {
 
 // Which item a transfer failed on, and how: an item the sending side could not
 // read, or an entry the receiving side could not write. Carried by a
-// `read.error` refusal, and by a `read.error` abort trailer as its detail.
+// `read.error` refusal, by a `read.error` abort trailer as its detail, and by
+// an unpack failure's `Error` or `DropComplete`.
 message ClipboardItemFailure {
   // The item, as a slash-separated path that starts with the representation's
   // own name — the dragged folder's name, then the path inside it.
@@ -433,6 +434,10 @@ message Error {
   // e.g. "clipboard.request". Populated when the error is causally linked
   // to a specific incoming message.
   optional string in_reply_to = 3;
+
+  // Set with "clipboard.paste.unpack.failed" when the receiving side named the
+  // entry it could not write.
+  ClipboardItemFailure item_failure = 4;
 }
 
 // Host->guest: the files of one drag-and-drop gesture onto the VM display.
@@ -475,6 +480,10 @@ message DropComplete {
 
   // Human-readable detail for logs. Never rendered in host UI.
   string message = 4;
+
+  // Set with "clipboard.drop.unpack.failed" when the guest named the entry it
+  // could not write.
+  ClipboardItemFailure item_failure = 5;
 }
 
 // Host->guest: the host abandons the drop for `generation` (the user cancelled,

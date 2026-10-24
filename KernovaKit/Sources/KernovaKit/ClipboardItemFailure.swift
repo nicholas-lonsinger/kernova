@@ -108,14 +108,19 @@ extension ClipboardItemFailure {
         self.init(itemPath: wire.itemPath, reason: reason)
     }
 
-    /// The serialized failure, within ``maximumEncodedByteCount``: a path too
-    /// long to fit crosses as the item's own name.
-    var encoded: Data {
-        let full = (try? wire.serializedData()) ?? Data()
-        guard full.count > Self.maximumEncodedByteCount else { return full }
+    /// The failure as it may cross the wire, within ``maximumEncodedByteCount``
+    /// serialized: a path too long to fit crosses as the item's own name, and a
+    /// name too long even for that crosses as nothing.
+    var boundedWire: Kernova_V1_ClipboardItemFailure? {
         let short = ClipboardItemFailure(itemPath: itemName, reason: reason)
-        let trimmed = (try? short.wire.serializedData()) ?? Data()
-        return trimmed.count <= Self.maximumEncodedByteCount ? trimmed : Data()
+        return [wire, short.wire].first {
+            ((try? $0.serializedData())?.count ?? .max) <= Self.maximumEncodedByteCount
+        }
+    }
+
+    /// The serialized ``boundedWire``, or nothing when it is `nil`.
+    var encoded: Data {
+        boundedWire.flatMap { try? $0.serializedData() } ?? Data()
     }
 
     /// The failure `bytes` serialize, or `nil` when they are not one.

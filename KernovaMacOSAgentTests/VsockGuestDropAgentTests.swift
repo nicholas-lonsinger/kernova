@@ -444,6 +444,31 @@ struct VsockGuestDropAgentTests {
         #expect(harness.revealed.value == nil)
     }
 
+    @Test("a dropped item that can't be unpacked fails the drop naming the entry")
+    func unpackFailureNamesTheEntry() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        try harness.host.send(
+            makeDropOfferFrame(
+                generation: 1, reps: [fileRep("Project", bytes: Data(repeating: 0x44, count: 64))]))
+        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+        let pull = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
+        try abortTransfer(
+            fd: pull.fd, transferID: pull.request.transferID,
+            code: ClipboardStreamAbortCode.extractError.rawValue, isArchive: true, isInline: false,
+            itemFailure: unwritable)
+
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .failed)
+        #expect(complete.code == ClipboardErrorCode.dropUnpackFailed.rawValue)
+        #expect(complete.hasItemFailure)
+        #expect(complete.itemFailure.itemPath == unwritable.itemPath)
+        #expect(complete.itemFailure.posixError == EILSEQ)
+        #expect(harness.revealed.value == nil)
+    }
+
     @Test("a volume with no room refuses the file before requesting a byte")
     func refusesWhenTheVolumeIsFull() async throws {
         let harness = try Harness(freeSpaceProvider: { _ in 0 })

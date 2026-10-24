@@ -1625,6 +1625,58 @@ struct VsockGuestClipboardAgentTests {
         #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected, pasteLimitBytes: nil))
     }
 
+    @Test("a paste that can't be unpacked tells the host which entry, with the unpack code")
+    func unpackAbortNamesTheEntryToTheHost() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = await makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
+            onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 35,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: 1024, filename: "Project",
+                        isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
+
+        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let connection = try await acceptPull(on: dialled, generation: 35)
+        try abortTransfer(
+            fd: connection.fd, transferID: connection.request.transferID,
+            code: ClipboardStreamAbortCode.extractError.rawValue, isArchive: true, isInline: false,
+            itemFailure: unwritable)
+        #expect(await pull.value == nil)
+
+        let frame = try await nextFrame(from: hostChannel)
+        guard case .error(let error) = frame.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame.payload))")
+            return
+        }
+        #expect(error.code == ClipboardErrorCode.pasteUnpackFailed.rawValue)
+        #expect(error.hasItemFailure)
+        #expect(error.itemFailure.itemPath == unwritable.itemPath)
+        #expect(error.itemFailure.posixError == EILSEQ)
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteUnpackFailed, pasteLimitBytes: nil))
+    }
+
     // MARK: - Deadline-safe size cap (#561)
 
     @Test(

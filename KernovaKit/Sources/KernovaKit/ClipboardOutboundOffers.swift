@@ -750,8 +750,18 @@ final class ClipboardOutboundOffers {
                 .error,
                 "Drop to '\(self.peerName, privacy: .public)' failed (gen=\(complete.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), code=\(complete.code, privacy: .public)): \(complete.message, privacy: .public)"
             )
-            entry.operation?.finish(.failed(.peerReported(code)))
+            entry.operation?.finish(.failed(Self.dropFailure(code, complete)))
         }
+    }
+
+    /// What a drop the peer reported as failed with `code` failed with: an
+    /// unpack failure names the entry the peer could not write, when it said.
+    private static func dropFailure(
+        _ code: ClipboardErrorCode?, _ complete: Kernova_V1_DropComplete
+    ) -> ClipboardTransferFailure {
+        guard code == .dropUnpackFailed else { return .peerReported(code) }
+        return .unpackFailed(
+            complete.hasItemFailure ? ClipboardItemFailure(wire: complete.itemFailure) : nil)
     }
 
     /// Retires the drag the peer is done with: nothing will pull from it again,

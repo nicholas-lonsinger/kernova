@@ -42,7 +42,7 @@ struct ClipboardTransferFailureTests {
                 return
             }
         case .extractError:
-            #expect(failure == .unpackFailed)
+            #expect(failure == .unpackFailed(nil))
         case .readError:
             #expect(failure == .sourceUnreadable(nil))
         case .requestRange, .requestUTI, .requestCancelled, .sendFailed,
@@ -52,6 +52,18 @@ struct ClipboardTransferFailureTests {
         case .cancelled, .superseded, .requestStale, .userCancelled:
             Issue.record("\(code.rawValue) retires the transfer and is covered by the case above")
         }
+    }
+
+    @Test("an unpack abort names the entry the receiver couldn't write, when it said")
+    func extractAbortCarriesTheItem() {
+        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+        let info = ClipboardStreamAbortInfo(
+            transferID: 1, code: .extractError, message: "aborted", neededBytes: nil,
+            availableBytes: nil, itemFailure: unwritable)
+        #expect(ClipboardTransferFailure.inboundPullAborted(info) == .unpackFailed(unwritable))
+        #expect(
+            ClipboardTransferFailure.inboundPullAborted(abortInfo(.extractError))
+                == .unpackFailed(nil))
     }
 
     @Test("a disk-full abort carries whichever figures it knew")

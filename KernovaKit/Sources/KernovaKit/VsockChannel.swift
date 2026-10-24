@@ -359,14 +359,20 @@ extension VsockChannel {
     ///   - inReplyTo: the request type this error replies to, e.g.
     ///     `"clipboard.request"`. When `nil` the field is omitted from the frame and
     ///     `hasInReplyTo` reads `false` on the receiving side.
+    ///   - itemFailure: the entry an unpack failure could not write, when it
+    ///     named one.
     /// - Throws: forwards any error from ``send(_:)``.
-    public func sendErrorFrame(code: String, message: String, inReplyTo: String?) throws {
+    public func sendErrorFrame(
+        code: String, message: String, inReplyTo: String?,
+        itemFailure: ClipboardItemFailure? = nil
+    ) throws {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.error = Kernova_V1_Error.with {
             $0.code = code
             $0.message = message
             if let inReplyTo { $0.inReplyTo = inReplyTo }
+            if let wire = itemFailure?.boundedWire { $0.itemFailure = wire }
         }
         try send(frame)
     }
