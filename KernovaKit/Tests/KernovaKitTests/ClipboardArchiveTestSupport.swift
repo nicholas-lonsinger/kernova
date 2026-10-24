@@ -22,6 +22,13 @@ struct RawArchiveEntry {
     var creation: timespec? = nil
     var modification: timespec? = nil
     var data: Data? = nil
+    /// Blob fields other than `DAT`, each declared and written ahead of it.
+    var blobsBefore: [(key: String, data: Data)] = []
+    /// Blob fields other than `DAT`, each declared and written after it.
+    var blobsAfter: [(key: String, data: Data)] = []
+    /// Applied to the header's encoding before it is written, to make one the
+    /// C API's setters refuse.
+    var editEncoding: ((inout [UInt8]) -> Void)? = nil
 
     static func directory(_ path: String, mode: UInt64 = 0o755) -> RawArchiveEntry {
         RawArchiveEntry(type: .directory, path: Array(path.utf8), mode: mode)
@@ -61,10 +68,19 @@ func rawArchive(_ entries: [RawArchiveEntry]) throws -> Data {
             if let modification = entry.modification {
                 builder.append(timespec: modification, key: "MTM")
             }
-            if let data = entry.data { builder.append(blobSize: UInt64(data.count), key: "DAT") }
-            try encode.writeHeader(try #require(builder.make()))
-            if let data = entry.data, !data.isEmpty {
-                try data.withUnsafeBytes { try encode.writeBlob(key: .init("DAT"), from: $0) }
+            let blobs =
+                entry.blobsBefore + (entry.data.map { [(key: "DAT", data: $0)] } ?? []) + entry.blobsAfter
+            for blob in blobs { builder.append(blobSize: UInt64(blob.data.count), key: blob.key) }
+            var header = try #require(builder.make())
+            if let editEncoding = entry.editEncoding {
+                var encoded = header.withAAEncodedData { Array($0) }
+                editEncoding(&encoded)
+                header = try #require(
+                    encoded.withUnsafeBufferPointer { ArchiveHeader(withAAEncodedData: $0) })
+            }
+            try encode.writeHeader(header)
+            for blob in blobs where !blob.data.isEmpty {
+                try blob.data.withUnsafeBytes { try encode.writeBlob(key: .init(blob.key), from: $0) }
             }
         }
     }

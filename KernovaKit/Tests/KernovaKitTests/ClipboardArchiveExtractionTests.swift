@@ -149,6 +149,42 @@ struct ClipboardArchiveExtractionTests {
         #expect(try Data(contentsOf: destination.appendingPathComponent("after.txt")) == Data("after".utf8))
     }
 
+    /// The blob after `DAT` spans more than one read, so it is read in
+    /// pieces too.
+    @Test("a file's data lands exactly with other blobs before and after it, and the next entry lands")
+    func blobsAroundDataAreRead() throws {
+        let destination = try makeDestination()
+        var entry = RawArchiveEntry.file("file.txt", "the data")
+        entry.blobsBefore = [(key: "XAT", data: Data("before".utf8))]
+        entry.blobsAfter = [
+            (key: "YAT", data: Data(repeating: 0x5A, count: ClipboardArchiveCodec.fileReadBlockSize + 17))
+        ]
+        let archive = try rawArchive([.root(), entry, .file("next.txt", "next")])
+
+        #expect(extractFailure(archive, into: destination) == nil)
+        #expect(try Data(contentsOf: destination.appendingPathComponent("file.txt")) == Data("the data".utf8))
+        #expect(try Data(contentsOf: destination.appendingPathComponent("next.txt")) == Data("next".utf8))
+    }
+
+    @Test("a blob whose key is not letters and digits is refused as malformed")
+    func blobKeyOutsideTheRuleIsMalformed() throws {
+        let destination = try makeDestination()
+        var entry = RawArchiveEntry.file("file.txt")
+        entry.blobsBefore = [(key: "XAB", data: Data())]
+        entry.editEncoding = { encoded in
+            let key = Array("XAB".utf8)
+            let starts = 0...(encoded.count - key.count)
+            guard let start = starts.first(where: { Array(encoded[$0..<($0 + key.count)]) == key })
+            else { return }
+            encoded[start] = 0xE9
+        }
+
+        #expect(
+            extractFailure(try rawArchive([.root(), entry]), into: destination)
+                as? ClipboardArchiveMalformedEntry
+                == ClipboardArchiveMalformedEntry(path: "file.txt", rule: .blobKey))
+    }
+
     @Test("a path the archive holds twice fails on the second, naming it")
     func duplicatePathFails() throws {
         let destination = try makeDestination()
