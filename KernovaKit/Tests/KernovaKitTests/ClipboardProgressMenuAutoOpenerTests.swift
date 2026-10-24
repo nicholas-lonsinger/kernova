@@ -138,9 +138,9 @@ struct ClipboardProgressMenuAutoOpenerTests {
     func youngPasteOpensLater() {
         var opener = ClipboardProgressMenuAutoOpener()
         // Suppression must not spend the open — the readout was never shown.
-        #expect(opener.readoutChanged(Self.readout(elapsed: 1.5), menuIsOpen: false, canOpen: true) == .none)
+        #expect(opener.readoutChanged(Self.readout(elapsed: 0.5), menuIsOpen: false, canOpen: true) == .none)
         #expect(
-            opener.readoutChanged(Self.readout(elapsed: 2.5), menuIsOpen: false, canOpen: true)
+            opener.readoutChanged(Self.readout(elapsed: 1.5), menuIsOpen: false, canOpen: true)
                 == .open)
     }
 
@@ -151,7 +151,7 @@ struct ClipboardProgressMenuAutoOpenerTests {
         // it then slowed down, which is exactly when a standing readout earns its
         // place.
         _ = opener.readoutChanged(
-            Self.readout(secondsRemaining: 1), menuIsOpen: false, canOpen: true)
+            Self.readout(secondsRemaining: 0.5), menuIsOpen: false, canOpen: true)
         #expect(
             opener.readoutChanged(
                 Self.readout(secondsRemaining: 30), menuIsOpen: false, canOpen: true) == .open)
@@ -171,7 +171,7 @@ struct ClipboardProgressMenuAutoOpenerTests {
     @Test("a paste with no rate estimate yet still opens")
     func unknownRateOpens() {
         var opener = ClipboardProgressMenuAutoOpener()
-        // Two seconds in with nothing measurable is a stalled or very slow paste,
+        // Past the elapsed floor with nothing measurable is a stalled or very slow paste,
         // not one about to finish.
         #expect(
             opener.readoutChanged(
@@ -191,21 +191,21 @@ struct ClipboardProgressMenuAutoOpenerTests {
     func shippedThresholds() {
         // Exercises the defaults rather than an injected pair, so the numbers that
         // actually ship are covered.
-        #expect(ClipboardProgressMenuAutoOpener.defaultMinimumElapsedToOpen == 2)
-        #expect(ClipboardProgressMenuAutoOpener.defaultMinimumRemainingToOpen == 2)
+        #expect(ClipboardProgressMenuAutoOpener.defaultMinimumElapsedToOpen == 1)
+        #expect(ClipboardProgressMenuAutoOpener.defaultMinimumRemainingToOpen == 1)
 
         // The case that prompted the gate: a copy just past the elapsed floor with
         // less than the interruption's own lifetime left to run.
         var tooShort = ClipboardProgressMenuAutoOpener()
         #expect(
             tooShort.readoutChanged(
-                Self.readout(elapsed: 2.1, secondsRemaining: 1.4), menuIsOpen: false,
+                Self.readout(elapsed: 1.1, secondsRemaining: 0.7), menuIsOpen: false,
                 canOpen: true) == .none)
 
         var longEnough = ClipboardProgressMenuAutoOpener()
         #expect(
             longEnough.readoutChanged(
-                Self.readout(elapsed: 2.1, secondsRemaining: 120), menuIsOpen: false,
+                Self.readout(elapsed: 1.1, secondsRemaining: 120), menuIsOpen: false,
                 canOpen: true) == .open)
     }
 }
