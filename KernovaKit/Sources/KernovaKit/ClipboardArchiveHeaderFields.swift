@@ -85,7 +85,6 @@ struct ClipboardArchiveEntryFields {
     var path: [UInt8]?
     /// `LNK`, raw bytes.
     var linkTarget: [UInt8]?
-    var device: UInt64?
     var group: UInt64?
     var mode: UInt64?
     var flags: UInt64?
@@ -140,7 +139,6 @@ struct ClipboardArchiveEntryFields {
         type = uint("TYP")
         path = string("PAT")
         linkTarget = string("LNK")
-        device = uint("DEV")
         group = uint("GID")
         mode = uint("MOD")
         flags = uint("FLG")

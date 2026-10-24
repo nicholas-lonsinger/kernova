@@ -26,8 +26,13 @@ struct ClipboardArchiveMalformedEntry: Error, Equatable {
 }
 
 extension ClipboardArchiveCodec {
-    /// Creates every entry `decodeStream` delivers under `destination`, an
-    /// existing empty directory.
+    /// Creates every regular-file, directory and symlink entry `decodeStream`
+    /// delivers under `destination`, an existing empty directory.
+    ///
+    /// Any other entry — a FIFO, socket, device node, or a type no file
+    /// system object has — creates nothing and fails nothing, and the entries
+    /// after it still land. The peer chooses every entry's type, so the
+    /// receiver is the one place that rule can hold.
     ///
     /// Each entry is created relative to its parent's open descriptor and
     /// never through a symlink, so neither path length nor depth bounds what
@@ -187,8 +192,8 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
     /// Creates the entry `fields` describes as `name` in `directory`.
     ///
     /// - Returns: for a directory, that directory, open, its attributes not
-    ///   yet applied; otherwise `nil`, with the entry created and its
-    ///   attributes applied.
+    ///   yet applied; otherwise `nil`, with a file or symlink created and its
+    ///   attributes applied, or nothing created for any other type.
     private func create(
         _ fields: ClipboardArchiveEntryFields, named name: [UInt8], at path: [UInt8],
         in directory: Int32, _ buffer: UnsafeMutableRawBufferPointer
@@ -218,26 +223,10 @@ private struct TreeExtract<Volume: ClipboardArchiveWritableVolume> {
                 try volume.makeSymlink(name, to: target, in: directory)
             }
             try apply(EntryAttributes(fields), to: .name(name, in: directory), path: path)
-        case .fifo?:
-            // Created and never opened: opening a FIFO parks until a writer
-            // arrives.
-            try attempt(path) { () throws(Errno) in try volume.makeFIFO(name, in: directory) }
-            try apply(EntryAttributes(fields), to: .name(name, in: directory), path: path)
-        case .characterSpecial?, .blockSpecial?, .socket?:
-            let nodeType: mode_t =
-                switch type {
-                case .characterSpecial?: S_IFCHR
-                case .blockSpecial?: S_IFBLK
-                default: S_IFSOCK
-                }
-            let device = dev_t(truncatingIfNeeded: fields.device ?? 0)
-            try attempt(path) { () throws(Errno) in
-                try volume.makeNode(name, type: nodeType, device: device, in: directory)
-            }
-            try apply(EntryAttributes(fields), to: .name(name, in: directory), path: path)
         default:
-            throw ClipboardItemFailure(
-                itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(EFTYPE))
+            // Left out: nothing is created, and the decoder skips whatever data
+            // the entry carries when the next header is read.
+            break
         }
         return nil
     }

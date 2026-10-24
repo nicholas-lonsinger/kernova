@@ -1,7 +1,6 @@
 import AppleArchive
 import Darwin
 import Foundation
-import KernovaSynchronization
 import KernovaTestSupport
 import System
 import Testing
@@ -121,64 +120,33 @@ struct ClipboardArchiveExtractionTests {
                 == ClipboardItemFailure(itemPath: "dir/caf\u{FFFD}.txt", reason: .posix(EILSEQ)))
     }
 
-    @Test("a FIFO lands as a FIFO with its mode and times, and the extract returns")
-    func fifoLandsWithoutBeingOpened() async throws {
+    @Test("a file entry with no data lands as an empty file")
+    func fileWithoutDataLandsEmpty() throws {
         let destination = try makeDestination()
         let archive = try rawArchive([
-            .root(), timed(RawArchiveEntry(type: .fifo, path: Array("pipe".utf8), mode: 0o640)),
+            .root(), RawArchiveEntry(type: .regularFile, path: Array("empty.txt".utf8), mode: 0o640),
+        ])
+
+        #expect(extractFailure(archive, into: destination) == nil)
+        let path = destination.appendingPathComponent("empty.txt").path
+        let status = try linkStatus(path)
+        #expect(status.st_mode & S_IFMT == S_IFREG)
+        #expect(status.st_mode & 0o7777 == 0o640)
+        #expect(status.st_size == 0)
+    }
+
+    @Test("an entry left out lands none of the data it carries, and the entry after it lands whole")
+    func leftOutEntryDataIsSkipped() throws {
+        let destination = try makeDestination()
+        let archive = try rawArchive([
+            .root(),
+            RawArchiveEntry(type: .fifo, path: Array("pipe".utf8), mode: 0o644, data: Data("left out".utf8)),
             .file("after.txt", "after"),
         ])
 
-        // Off the test's own thread, so an extract that parks on the FIFO
-        // fails this wait rather than hanging the run.
-        let outcome = Locked<Result<Void, any Error>?>(nil)
-        let gate = AsyncGate()
-        DispatchQueue.global().async {
-            let failure = extractFailure(archive, into: destination)
-            outcome.withLock { $0 = failure.map { .failure($0) } ?? .success(()) }
-            gate.notify()
-        }
-        try await gate.wait { outcome.withLock { $0 } != nil }
-        try outcome.withLock { $0 }?.get()
-
-        let pipe = destination.appendingPathComponent("pipe").path
-        let status = try linkStatus(pipe)
-        #expect(status.st_mode & S_IFMT == S_IFIFO)
-        #expect(status.st_mode & 0o7777 == 0o640)
-        try expectTimes(pipe)
-        #expect(
-            try String(contentsOf: destination.appendingPathComponent("after.txt"), encoding: .utf8)
-                == "after")
-    }
-
-    @Test("a socket entry and a device entry each fail, naming the entry", .enabled(if: getuid() != 0))
-    func specialNodesFailNamingTheEntry() throws {
-        let entries: [(String, RawArchiveEntry)] = [
-            ("socket", RawArchiveEntry(type: .socket, path: Array("socket".utf8), mode: 0o644)),
-            (
-                "character",
-                RawArchiveEntry(type: .characterSpecial, path: Array("character".utf8), device: 0x300_0002, mode: 0o644)
-            ),
-            ("block", RawArchiveEntry(type: .blockSpecial, path: Array("block".utf8), device: 0x100_0000, mode: 0o644)),
-        ]
-        for (name, entry) in entries {
-            let destination = scratch.url.appendingPathComponent(name, isDirectory: true)
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-            #expect(
-                extractFailure(try rawArchive([.root(), entry]), into: destination) as? ClipboardItemFailure
-                    == ClipboardItemFailure(itemPath: name, reason: .posix(EPERM)), "\(name)")
-        }
-    }
-
-    @Test("an entry of a type no file system object has fails, naming it")
-    func unknownTypeFails() throws {
-        let destination = try makeDestination()
-        let archive = try rawArchive([
-            .root(), RawArchiveEntry(type: .metadata, path: Array("meta".utf8), mode: 0o644),
-        ])
-        #expect(
-            extractFailure(archive, into: destination) as? ClipboardItemFailure
-                == ClipboardItemFailure(itemPath: "meta", reason: .posix(EFTYPE)))
+        #expect(extractFailure(archive, into: destination) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path) == ["after.txt"])
+        #expect(try Data(contentsOf: destination.appendingPathComponent("after.txt")) == Data("after".utf8))
     }
 
     @Test("a path the archive holds twice fails on the second, naming it")
@@ -419,7 +387,7 @@ struct ClipboardArchiveExtractionTests {
         try expectTimes(destination.path)
     }
 
-    @Test("times land on files, on directories after their children, on symlinks and on FIFOs")
+    @Test("times land on files, on directories after their children, and on symlinks")
     func timesLandOnEveryKind() throws {
         let destination = try makeDestination()
         let archive = try rawArchive([
@@ -427,10 +395,9 @@ struct ClipboardArchiveExtractionTests {
             timed(.directory("dir")), .directory("dir/sub"), .file("dir/sub/late.txt", "late"),
             timed(.file("file.txt", "f")),
             timed(RawArchiveEntry(type: .link, path: Array("link".utf8), link: Array("file.txt".utf8), mode: 0o755)),
-            timed(RawArchiveEntry(type: .fifo, path: Array("pipe".utf8), mode: 0o644)),
         ])
         #expect(extractFailure(archive, into: destination) == nil)
-        for name in ["dir", "file.txt", "link", "pipe"] {
+        for name in ["dir", "file.txt", "link"] {
             try expectTimes(destination.appendingPathComponent(name).path)
         }
         // The link's own times, not its target's.

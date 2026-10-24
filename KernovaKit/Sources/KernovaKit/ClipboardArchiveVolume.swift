@@ -62,11 +62,6 @@ protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
     func closeWritten(_ descriptor: Int32) throws(Errno)
     /// Creates the symlink `name` in `directory` pointing at `target`.
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(Errno)
-    /// Creates the FIFO `name` in `directory` without opening it.
-    func makeFIFO(_ name: [UInt8], in directory: Int32) throws(Errno)
-    /// Creates the device or socket node `name` in `directory`, `type` one of
-    /// `S_IFCHR`, `S_IFBLK` and `S_IFSOCK`.
-    func makeNode(_ name: [UInt8], type: mode_t, device: dev_t, in directory: Int32) throws(Errno)
     /// Sets the group of `target`, leaving its owner as it is.
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno)
     /// Applies `attributes` to `target`.
@@ -191,20 +186,6 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
             Self.withName(target) { target in
                 Self.withName(name) { symlinkat(target, directory, $0) }
             })
-    }
-
-    func makeFIFO(_ name: [UInt8], in directory: Int32) throws(Errno) {
-        // The guest agent's macOS 12 floor has no FIFO call that takes a
-        // directory descriptor, and a full path would bring back the
-        // `PATH_MAX` bound everything else here avoids.
-        guard #available(macOS 13, *) else { throw Errno.notSupported }
-        try Self.check(Self.withName(name) { mkfifoat(directory, $0, S_IRUSR | S_IWUSR) })
-    }
-
-    func makeNode(_ name: [UInt8], type: mode_t, device: dev_t, in directory: Int32) throws(Errno) {
-        guard #available(macOS 13, *) else { throw Errno.notSupported }
-        try Self.check(
-            Self.withName(name) { mknodat(directory, $0, type | S_IRUSR | S_IWUSR, device) })
     }
 
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno) {

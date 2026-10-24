@@ -15,7 +15,6 @@ struct RawArchiveEntry {
     var type: ArchiveHeader.EntryType?
     var path: [UInt8]
     var link: [UInt8]? = nil
-    var device: UInt64? = nil
     var uid: UInt64? = nil
     var gid: UInt64? = nil
     var mode: UInt64? = nil
@@ -54,7 +53,6 @@ func rawArchive(_ entries: [RawArchiveEntry]) throws -> Data {
             if let type = entry.type { builder.append(uint: UInt64(type.rawValue), key: "TYP") }
             builder.append(string: entry.path, key: "PAT")
             if let link = entry.link { builder.append(string: link, key: "LNK") }
-            if let device = entry.device { builder.append(uint: device, key: "DEV") }
             if let uid = entry.uid { builder.append(uint: uid, key: "UID") }
             if let gid = entry.gid { builder.append(uint: gid, key: "GID") }
             if let mode = entry.mode { builder.append(uint: mode, key: "MOD") }
@@ -161,14 +159,6 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
 
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(Errno) {
         try base.makeSymlink(name, to: target, in: directory)
-    }
-
-    func makeFIFO(_ name: [UInt8], in directory: Int32) throws(Errno) {
-        try base.makeFIFO(name, in: directory)
-    }
-
-    func makeNode(_ name: [UInt8], type: mode_t, device: dev_t, in directory: Int32) throws(Errno) {
-        try base.makeNode(name, type: type, device: device, in: directory)
     }
 
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno) {
