@@ -126,8 +126,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             )
         }
 
-        sidebarVC.searchShownDidChange = { [weak self] in self?.updateSearchItemSelection() }
-        updateSearchItemSelection()
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
@@ -166,11 +164,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         } else {
             focusSearch()
         }
-    }
-
-    /// Shows the Search button selected while the search field is shown.
-    private func updateSearchItemSelection() {
-        window?.toolbar?.selectedItemIdentifier = sidebarViewController.isSearchShown ? Self.toolbarSearch : nil
     }
 
     // MARK: - Window State Observation
@@ -346,10 +339,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         ]
     }
 
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.toolbarSearch]
-    }
-
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator]
     }
@@ -360,7 +349,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // runloop turn later so it reflects VM state.
         Task { @MainActor [weak self] in
             self?.updateToolbarItems()
-            self?.updateSearchItemSelection()
         }
     }
 

@@ -27,8 +27,6 @@ final class SidebarViewController: NSViewController {
     /// Whether ``searchField`` is on screen. A hidden field holds no search, so
     /// the list it would narrow is never narrowed out of sight.
     private(set) var isSearchShown = false
-    /// Runs after ``isSearchShown`` changes.
-    var searchShownDidChange: (() -> Void)?
     /// The search text the field and the library last agreed on: what the
     /// field last sent, or the last outside write shown in it.
     ///
@@ -367,7 +365,6 @@ final class SidebarViewController: NSViewController {
         guard shown != isSearchShown else { return }
         isSearchShown = shown
         applySearchLayout()
-        searchShownDidChange?()
     }
 
     /// Hidden, the field leaves the layout and the outline takes the top edge.
