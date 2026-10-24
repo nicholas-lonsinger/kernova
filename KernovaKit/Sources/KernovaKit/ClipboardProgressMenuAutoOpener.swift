@@ -21,10 +21,10 @@ public enum ClipboardProgressMenuAction: Equatable, Sendable {
 /// and it closes only a dropdown it opened itself.
 public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
     /// How long a transfer must have been running before it may interrupt.
-    public static let defaultMinimumElapsedToOpen: TimeInterval = 2
+    public static let defaultMinimumElapsedToOpen: TimeInterval = 1
 
     /// How much work a transfer must still have left before it may interrupt.
-    public static let defaultMinimumRemainingToOpen: TimeInterval = 2
+    public static let defaultMinimumRemainingToOpen: TimeInterval = 1
 
     private let minimumElapsedToOpen: TimeInterval
     private let minimumRemainingToOpen: TimeInterval
