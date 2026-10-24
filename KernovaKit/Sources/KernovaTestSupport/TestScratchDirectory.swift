@@ -1,5 +1,7 @@
 import Foundation
+import KernovaKit
 import KernovaSynchronization
+import System
 import Testing
 
 /// A directory under the temporary directory that no other test shares,
@@ -137,8 +139,8 @@ final class TestScratchLedger: Sendable {
         }
         for url in recorded {
             do {
-                try FileManager.default.removeItem(at: url)
-            } catch CocoaError.fileNoSuchFile {
+                try StagedItemRemoval.remove(at: url)
+            } catch Errno.noSuchFileOrDirectory {
                 continue
             } catch {
                 Issue.record(error, "Scratch directory \(url.path) outlived its test case")

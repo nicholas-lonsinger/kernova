@@ -43,7 +43,7 @@ public func extractedClipboardArchive(_ bytes: Data, named name: String = "out")
         try ClipboardArchive.extract(bytes, into: destination)
         return destination
     } catch {
-        try? FileManager.default.removeItem(at: destination)
+        try? StagedItemRemoval.remove(at: destination)
         throw error
     }
 }

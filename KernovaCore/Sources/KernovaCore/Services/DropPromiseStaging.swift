@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import System
 
 /// Where files dragged onto a VM display as *promises* — a Photos image, a Mail
 /// attachment, a picture dragged out of a browser — are written before they are
@@ -39,13 +40,13 @@ package struct DropPromiseStaging {
     /// here, and either can have removed it first.
     package static func release(_ directory: URL) {
         do {
-            try FileManager.default.removeItem(at: directory)
-        } catch CocoaError.fileNoSuchFile {
+            try StagedItemRemoval.remove(at: directory)
+        } catch Errno.noSuchFileOrDirectory {
             // Already released.
         } catch {
             Self.logger.log(
                 .warning,
-                "Could not release a settled drop's staged files: \(error.localizedDescription, privacy: .public)"
+                "Could not release a settled drop's staged files: \(String(describing: error), privacy: .public)"
             )
         }
     }

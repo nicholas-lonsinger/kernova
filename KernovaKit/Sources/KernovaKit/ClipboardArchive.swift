@@ -21,7 +21,6 @@ public enum ClipboardArchive {
         case openReadStream
         case openDecompressionStream
         case openDecodeStream
-        case openExtractStream
         case unproducibleFieldKey
     }
 
@@ -104,7 +103,8 @@ extension ClipboardArchive {
     public static func extract(_ bytes: Data, into destinationURL: URL) throws {
         if let failure = ClipboardArchiveCodec.extract(
             from: ClipboardArchiveDataSource(bytes: bytes), into: destinationURL,
-            counted: Locked(0), pacingBytes: ClipboardStreamTuning.extractPacingBytes,
+            on: ClipboardArchiveLocalVolume(), counted: Locked(0),
+            pacingBytes: ClipboardStreamTuning.extractPacingBytes,
             onOutputAdvanced: nil)
         {
             throw failure

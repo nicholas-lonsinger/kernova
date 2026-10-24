@@ -223,33 +223,6 @@ struct ClipboardDirectoryAccountingTests {
         #expect(try Data(contentsOf: tree.appendingPathComponent("big.log")).count == 4096)
     }
 
-    @Test("an extract that fails on a full volume reports disk space, not a corrupt archive")
-    func extractFailureOnAFullVolumeReportsDiskFull() async throws {
-        // Once the margin is outrun the extract's own writes are what fail, and
-        // AppleArchive reports that as an archive error. Calling it a corrupt
-        // folder sends the user off to retry instead of to free space.
-        let probe = StagingProbe(freeSpace: { $0 == 0 ? 100 << 30 : 1024 })
-        let harness = TransferHarness(freeSpaceProvider: probe.provider)
-        defer { harness.tearDown() }
-
-        let transferID: UInt64 = 0x68
-        harness.expect(transferID: transferID, plan: folderPlan(named: "Logs", advertised: 4096))
-        harness.openPull(transferID: transferID, generation: 1) { far, request in
-            defer { ClipboardDataConnection.end(fd: far) }
-            let garbage = Data("not an archive".utf8)
-            try? writeTransferReply(
-                fd: far, transferID: request.transferID, isArchive: true, isInline: false,
-                totalBytes: 0)
-            try? ClipboardDataConnection.write(fd: far, garbage)
-            try? ClipboardDataConnection.writeTrailer(
-                ClipboardTransferTrailer(ending: .complete(digest: sha256(garbage))), fd: far)
-        }
-        try await settle(harness, transferID)
-
-        let info = try abort(harness)
-        #expect(info.code == .diskFull)
-    }
-
     @Test("a reply for a pull this side cancelled is refused, not staged")
     func cancelledPullRefusesItsReply() async throws {
         let probe = StagingProbe()

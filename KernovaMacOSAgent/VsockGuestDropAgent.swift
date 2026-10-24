@@ -422,7 +422,7 @@ final class VsockGuestDropAgent: Sendable {
     /// reclaims it.
     private static func discard(_ representation: ClipboardContent.Representation) {
         guard let url = representation.fileURL else { return }
-        try? FileManager.default.removeItem(at: url)
+        try? StagedItemRemoval.remove(at: url)
     }
 
     /// Maps a filesystem failure to the code the host renders a sentence from.

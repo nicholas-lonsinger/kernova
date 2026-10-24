@@ -1,5 +1,7 @@
 import Foundation
+import KernovaLogging
 import KernovaSynchronization
+import System
 
 /// Materializes streamed file representations to real local temp files so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
@@ -20,6 +22,9 @@ import KernovaSynchronization
 /// from them; an exited process's whole root, by the next launch's
 /// ``ProcessStagingRoot/reclaimAbandonedRoots()``.
 public final class ClipboardFileStaging: Sendable {
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardFileStaging")
+
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
     public typealias FreeSpaceProvider = @Sendable (URL) -> Int64?
@@ -87,7 +92,7 @@ public final class ClipboardFileStaging: Sendable {
                 do {
                     try state.handle.close()
                 } catch {
-                    try? FileManager.default.removeItem(at: url)
+                    ClipboardFileStaging.discard(url)
                     throw error
                 }
                 return url
@@ -102,7 +107,7 @@ public final class ClipboardFileStaging: Sendable {
                 guard !state.finished else { return }
                 state.finished = true
                 try? state.handle.close()
-                try? FileManager.default.removeItem(at: url)
+                ClipboardFileStaging.discard(url)
             }
         }
     }
@@ -140,7 +145,7 @@ public final class ClipboardFileStaging: Sendable {
             if case .newest(let count) = retention {
                 while generationDirs.count > count {
                     let oldest = generationDirs.removeFirst()
-                    try? FileManager.default.removeItem(at: oldest.dir)
+                    ClipboardFileStaging.discard(oldest.dir)
                 }
             }
             return dir
@@ -319,7 +324,7 @@ public final class ClipboardFileStaging: Sendable {
     /// `reclaimSiblingRoots` reclaims those.
     public func sweep() {
         state.withLock { state in
-            try? FileManager.default.removeItem(at: root)
+            Self.discard(root)
             state.generationDirs.removeAll()
         }
     }
@@ -336,7 +341,7 @@ public final class ClipboardFileStaging: Sendable {
             guard let index = state.generationDirs.firstIndex(where: { $0.generation == generation })
             else { return }
             let dir = state.generationDirs.remove(at: index).dir
-            try? FileManager.default.removeItem(at: dir)
+            Self.discard(dir)
         }
     }
 
@@ -356,12 +361,28 @@ public final class ClipboardFileStaging: Sendable {
                     at: labelDir, includingPropertiesForKeys: nil)
             else { return }
             for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
-                try? FileManager.default.removeItem(at: sibling)
+                Self.discard(sibling)
             }
         }
     }
 
     // MARK: - Private
+
+    /// Removes staged content outright, whatever its depth or modes.
+    ///
+    /// Nothing is left to notice the failure but the log: every caller is
+    /// already giving the content up. What is already gone is not a failure.
+    fileprivate static func discard(_ url: URL) {
+        do {
+            try StagedItemRemoval.remove(at: url)
+        } catch Errno.noSuchFileOrDirectory {
+            // Already gone.
+        } catch {
+            logger.log(
+                .error,
+                "Could not remove staged clipboard content: \(String(describing: error), privacy: .public)")
+        }
+    }
 
     /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`
     /// (Apple's documented key for user-initiated/important writes, vs. the

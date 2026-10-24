@@ -334,27 +334,32 @@ enum ClipboardArchiveCodec {
         return failure ?? closes.failure
     }
 
-    /// Extracts the archive `source` carries into `destinationURL`.
+    /// Extracts the archive `source` carries into `destinationURL`, as
+    /// ``extractEntries(from:into:on:)`` creates it.
     ///
-    /// Same close discipline, and same scoping, as the encode side. Only regular
-    /// files, directories and symlinks land; any other entry the archive carries
-    /// is left out.
+    /// Same close discipline, and same scoping, as the encode side.
     ///
     /// - Parameters:
     ///   - source: the arriving archive bytes.
     ///   - destinationURL: an existing empty directory to extract into. A
     ///     stopped extract leaves partial output behind for the caller to
     ///     remove.
+    ///   - volume: the calls that create the entries.
     ///   - counted: receives the running **uncompressed** total.
     ///   - pacingBytes: output granularity at which `onOutputAdvanced` is
     ///     consulted, and so how far the extract can overrun a ceiling before
     ///     the next check catches it.
     ///   - onOutputAdvanced: the output guard; throwing from it stops the
     ///     extract.
-    /// - Returns: the failure that ended the extract, or `nil` when the whole
-    ///   archive was unpacked and every stream closed cleanly.
-    static func extract<Source: ArchiveByteStreamProtocol & AnyObject>(
-        from source: Source, into destinationURL: URL,
+    /// - Returns: the failure that ended the extract — a
+    ///   ``ClipboardItemFailure`` naming the entry that could not be created,
+    ///   a ``ClipboardArchiveMalformedEntry``, or an archive failure — or
+    ///   `nil` when the whole archive was unpacked and every stream closed
+    ///   cleanly.
+    static func extract<
+        Source: ArchiveByteStreamProtocol & AnyObject, Volume: ClipboardArchiveWritableVolume
+    >(
+        from source: Source, into destinationURL: URL, on volume: Volume,
         counted: Locked<Int>, pacingBytes: Int,
         onOutputAdvanced: (@Sendable (Int) throws -> Void)?
     ) -> Error? {
@@ -392,17 +397,7 @@ enum ClipboardArchiveCodec {
             else { throw ClipboardArchive.ArchiveError.openDecodeStream }
             defer { closes.close { try decodeStream.close() } }
 
-            // Ownership in the entries is the source's; the unprivileged
-            // receiver cannot `chown` to another account, and a file owned by
-            // one — `/etc/hosts`, another user's document — must still extract.
-            guard
-                let extractStream = ArchiveStream.extractStream(
-                    extractingTo: FilePath(destinationURL.path),
-                    selectUsing: landingFilter, flags: .ignoreOperationNotPermitted)
-            else { throw ClipboardArchive.ArchiveError.openExtractStream }
-            defer { closes.close { try extractStream.close() } }
-
-            _ = try ArchiveStream.process(readingFrom: decodeStream, writingTo: extractStream)
+            try extractEntries(from: decodeStream, into: destinationURL.path, on: volume)
         } catch {
             failure = error
         }
@@ -431,57 +426,6 @@ enum ClipboardArchiveCodec {
                 try encodeStream.writeBlob(key: .init("DAT"), from: piece)
             }
             offset = end
-        }
-    }
-
-    /// What of each entry lands: whether it is created at all, and with which
-    /// flags.
-    ///
-    /// The peer chooses what every entry carries, so the receiver is the only
-    /// place either guarantee can hold; the sender writes each entry as the
-    /// source has it.
-    private static func landingFilter(
-        _ message: ArchiveHeader.EntryMessage, _: FilePath, _ data: ArchiveHeader.EntryFilterData?
-    ) -> ArchiveHeader.EntryMessageStatus {
-        switch (message, data) {
-        case (.extractBegin, .header(let header)?):
-            return lands(header) ? .ok : .skip
-        case (.extractAttributes, .entryAttributes(let attributes)?):
-            clearImmutability(attributes)
-            return .ok
-        default:
-            return .ok
-        }
-    }
-
-    /// The entry types a file or a folder is made of.
-    ///
-    /// Creating any other kind of node can stall the extract: once AppleArchive
-    /// has made a FIFO, the extract never returns
-    /// (docs/research/2026-10-22-applearchive-folder-encoder-read-failures.md).
-    private static let landedEntryTypes = Set(
-        [ArchiveHeader.EntryType.regularFile, .directory, .link].map { UInt64($0.rawValue) })
-
-    private static func lands(_ header: ArchiveHeader) -> Bool {
-        guard case .uint(_, let type)? = header.field(forKey: .init("TYP")) else { return false }
-        return landedEntryTypes.contains(type)
-    }
-
-    /// Clears the immutable and append-only bits from an entry's flags as the
-    /// extract applies them.
-    ///
-    /// Either bit blocks `unlink` on the entry *and* on every directory above
-    /// it, so one locked entry makes `removeItem` fail for the whole extracted
-    /// tree — taking out the generation sweep with it, and every later reclaim of
-    /// the process root that holds it.
-    ///
-    /// Cleared here rather than off a walk of the finished tree because an
-    /// extract that stops part-way removes its output immediately, leaving no
-    /// point at which a walk could run.
-    private static func clearImmutability(_ attributes: ArchiveHeader.EntryAttributes) {
-        if let flags = attributes.flg {
-            attributes.flg =
-                flags & ~UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND)
         }
     }
 }

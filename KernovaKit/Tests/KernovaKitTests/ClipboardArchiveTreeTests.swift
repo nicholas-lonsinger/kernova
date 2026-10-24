@@ -78,45 +78,18 @@ struct ClipboardArchiveTreeTests {
 
     // MARK: - Real volume
 
-    /// The archive carries the whole tree; AppleArchive's extract, on the
-    /// receiving side, is what then refuses a path this long.
     @Test("a folder whose paths run past PATH_MAX archives whole")
     func pathsPastPathMaxArchive() throws {
         let source = scratch.url.appendingPathComponent("deep", isDirectory: true)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        let name = String(repeating: "n", count: 200)
-        let depth = 6
         let payload = Data("at the bottom".utf8)
-
-        // Built and removed a level at a time through descriptors: a full path
-        // this long is refused by every path-taking call, the scratch
-        // directory's own sweep included.
-        var levels = [open(source.path, O_RDONLY | O_DIRECTORY)]
-        defer {
-            unlinkat(levels[levels.count - 1], "deep.txt", 0)
-            while levels.count > 1 {
-                close(levels.removeLast())
-                unlinkat(levels[levels.count - 1], name, AT_REMOVEDIR)
-            }
-            close(levels[0])
-        }
-        try #require(levels[0] >= 0)
-        for _ in 0..<depth {
-            try #require(mkdirat(levels[levels.count - 1], name, 0o755) == 0)
-            let next = openat(levels[levels.count - 1], name, O_RDONLY | O_DIRECTORY)
-            try #require(next >= 0)
-            levels.append(next)
-        }
-        let file = openat(levels[levels.count - 1], "deep.txt", O_WRONLY | O_CREAT, 0o644)
-        try #require(file >= 0)
-        defer { close(file) }
-        try #require(payload.withUnsafeBytes { write(file, $0.baseAddress, $0.count) } == payload.count)
+        let leaf = try makeDeepTree(
+            under: source, depth: 6, name: String(repeating: "n", count: 200), contents: payload)
 
         let entries = try decodedEntries(
             ClipboardArchive.decompressedForTest(ClipboardArchive.archiveBytes(of: .directory(source))),
             readingBlobs: true)
-        let deepPath = Array(
-            (Array(repeating: name, count: depth).joined(separator: "/") + "/deep.txt").utf8)
+        let deepPath = Array(leaf.utf8)
         #expect(deepPath.count > Int(PATH_MAX))
         #expect(entries.first { $0.path == deepPath }?.data == payload)
     }

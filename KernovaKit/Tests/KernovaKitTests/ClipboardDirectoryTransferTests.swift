@@ -1,5 +1,6 @@
 import Foundation
 import KernovaTestSupport
+import System
 import Testing
 
 @testable import KernovaKit
@@ -84,6 +85,20 @@ struct ClipboardDirectoryTransferTests {
                     $0.uti = ClipboardArchive.directoryUTI
                     $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
                 }))
+    }
+
+    /// A peer that answers the pull for `transferID` with `payload`, whole,
+    /// under a trailer that checks out.
+    private func serveWhole(_ harness: TransferHarness, transferID: UInt64, payload: Data) {
+        harness.openPull(transferID: transferID, generation: 1) { far, request in
+            defer { ClipboardDataConnection.end(fd: far) }
+            try? writeTransferReply(
+                fd: far, transferID: request.transferID, isArchive: true, isInline: false,
+                totalBytes: 0)
+            try? ClipboardDataConnection.write(fd: far, payload)
+            try? ClipboardDataConnection.writeTrailer(
+                ClipboardTransferTrailer(ending: .complete(digest: sha256(payload))), fd: far)
+        }
     }
 
     /// Starts `receiver`, cancelling it from the first bytes it takes off the
@@ -492,6 +507,90 @@ struct ClipboardDirectoryTransferTests {
         // offer advertised is the honest figure to report as "needed".
         #expect(info.neededBytes == 4096)
         #expect(info.availableBytes == 1024)
+        #expect(try probe.stagedFiles().isEmpty)
+    }
+
+    @Test("an entry this side cannot write aborts with extract.error, naming it under the folder")
+    func unwritableEntryIsNamedUnderTheFolder() async throws {
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let payload = try rawArchive([
+            .root(), .directory("sub"), .file("sub/ok.txt", "ok"),
+            RawArchiveEntry(
+                type: .regularFile, path: Array("sub/caf".utf8) + [0xE9] + Array(".txt".utf8),
+                mode: 0o644, data: Data("x".utf8)),
+        ])
+
+        let transferID: UInt64 = 0x4C
+        harness.expect(transferID: transferID, plan: folderPlan(named: "Project", advertised: 4096))
+        serveWhole(harness, transferID: transferID, payload: payload)
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .extractError)
+        #expect(
+            info.itemFailure
+                == ClipboardItemFailure(itemPath: "Project/sub/caf\u{FFFD}.txt", reason: .posix(EILSEQ)))
+        #expect(harness.collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+    }
+
+    @Test("an entry no sender writes aborts with payload.invalid and leaves no tree")
+    func malformedEntryIsAnInvalidPayload() async throws {
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let payload = try rawArchive([.root(), .file("first.txt", "1"), .file("nowhere/x.txt", "x")])
+
+        let transferID: UInt64 = 0x4D
+        harness.expect(transferID: transferID, plan: folderPlan(named: "Project", advertised: 4096))
+        serveWhole(harness, transferID: transferID, payload: payload)
+        try await settle(harness, transferID)
+
+        #expect(try abort(harness).code == .payloadInvalid)
+        #expect(try probe.stagedFiles().isEmpty)
+    }
+
+    /// The guard's last check passed, so only the write itself can say the
+    /// volume filled — and it says so with its errno.
+    @Test("a write that finds the volume full aborts with disk.full, not a corrupt archive")
+    func fullVolumeWriteIsDiskFull() async throws {
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let source = try makeSourceTree()
+        let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
+
+        let transferID: UInt64 = 0x4E
+        let stream = try wholeStream(
+            transferID: transferID, payload: bytes, ending: .complete(digest: sha256(bytes)))
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 1, plan: folderPlan(named: "Project", advertised: 4096),
+            source: .dial(
+                {
+                    try dialToPeer { far in
+                        defer { ClipboardDataConnection.end(fd: far) }
+                        guard readTransferRequest(fd: far) != nil else { return }
+                        try? ClipboardDataConnection.write(fd: far, stream)
+                    }
+                },
+                request: Kernova_V1_ClipboardTransferRequest.with {
+                    $0.generation = 1
+                    $0.transferID = transferID
+                    $0.uti = ClipboardArchive.directoryUTI
+                    $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
+                }),
+            volume: InterposedArchiveVolume(failingWritesWith: .noSpace))
+        let collector = harness.collector
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) }, onAbort: { collector.abort($0) })
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .diskFull)
+        #expect(info.neededBytes == 4096)
+        #expect(info.itemFailure == nil)
         #expect(try probe.stagedFiles().isEmpty)
     }
 
