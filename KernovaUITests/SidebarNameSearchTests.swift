@@ -243,12 +243,10 @@ struct SidebarNameSearchTests {
         /// Whether the keyboard is in the search field.
         var fieldHasFocus: Bool { (window.firstResponder as? NSText)?.delegate === field }
 
-        /// Whether the field is on screen, checked against the Search button's
-        /// selection, which shows it.
+        /// Whether the field is on screen.
         var fieldShown: Bool {
             let shown = controller.sidebarViewController.isSearchShown
             #expect(field.isHidden == !shown)
-            #expect((window.toolbar?.selectedItemIdentifier == Self.search) == shown)
             return shown
         }
 
@@ -258,6 +256,16 @@ struct SidebarNameSearchTests {
         func clickSearchButton() throws {
             let item = try #require(window.toolbar?.items.first { $0.itemIdentifier == Self.search })
             #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
+        }
+
+        /// The on-screen control AppKit drew for the toolbar item sending `action`.
+        func toolbarControl(sending action: Selector) throws -> NSControl {
+            window.layoutIfNeeded()
+            func controls(in view: NSView) -> [NSControl] {
+                ((view as? NSControl).map { [$0] } ?? []) + view.subviews.flatMap(controls(in:))
+            }
+            let frame = try #require(window.contentView?.superview)
+            return try #require(controls(in: frame).first { $0.action == action })
         }
     }
 
@@ -406,17 +414,29 @@ struct SidebarNameSearchTests {
         #expect(Set([NSToolbarItem.Identifier("newVM"), Window.search, .toggleSidebar]).subtracting(visible).isEmpty)
     }
 
-    @Test("Clicking the on-screen Search button toggles the field and the button's selected state")
+    @Test("New VM and Search share one glass capsule")
+    func searchSharesNewVMGlass() throws {
+        let subject = try makeWindow(makeViewModel())
+        subject.window.makeKeyAndOrderFront(nil)
+        func glass(behind action: Selector) throws -> NSGlassEffectView {
+            let control: NSView = try subject.toolbarControl(sending: action)
+            return try #require(
+                sequence(first: control, next: \.superview).lazy.compactMap { $0 as? NSGlassEffectView }.first)
+        }
+
+        // AppKit lays a selectable toolbar item out on a platter of its own
+        // (measured macOS 27.2 26B118), so Search's shown state cannot be
+        // toolbar selection.
+        #expect(
+            try glass(behind: #selector(AppDelegate.newVM(_:)))
+                === glass(behind: #selector(MainWindowController.toggleSearch(_:))))
+    }
+
+    @Test("Clicking the on-screen Search button toggles the field")
     func onScreenSearchButtonToggles() throws {
         let subject = try makeWindow(makeViewModel())
         subject.window.makeKeyAndOrderFront(nil)
-        subject.window.layoutIfNeeded()
-        func controls(in view: NSView) -> [NSControl] {
-            ((view as? NSControl).map { [$0] } ?? []) + view.subviews.flatMap(controls(in:))
-        }
-        let frame = try #require(subject.window.contentView?.superview)
-        let button = try #require(
-            controls(in: frame).first { $0.action == #selector(MainWindowController.toggleSearch(_:)) })
+        let button = try subject.toolbarControl(sending: #selector(MainWindowController.toggleSearch(_:)))
 
         button.performClick(nil)
         #expect(subject.fieldShown)
