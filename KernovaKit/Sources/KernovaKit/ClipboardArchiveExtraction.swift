@@ -1,7 +1,6 @@
 import AppleArchive
 import Darwin
 import Foundation
-import KernovaLogging
 import System
 
 /// An arriving entry that breaks a rule every archive the sender writes keeps,
@@ -45,7 +44,7 @@ extension ClipboardArchiveCodec {
     static func extractEntries<Volume: ClipboardArchiveWritableVolume>(
         from decodeStream: ArchiveStream, into destination: String, on volume: Volume
     ) throws {
-        try TreeMaterializer.materialize(.existingDirectory(destination), on: volume) { materializer in
+        try TreeMaterializer.materialize(into: destination, on: volume) { materializer in
             let buffer = UnsafeMutableRawBufferPointer.allocate(
                 byteCount: fileReadBlockSize, alignment: 16)
             defer { buffer.deallocate() }
@@ -96,21 +95,37 @@ extension ClipboardArchiveCodec {
 
 private let pathSeparator = UInt8(ascii: "/")
 
-private let logger = KernovaLogger(subsystem: "app.kernova", category: "TreeMaterializer")
+/// The errnos with which a target refuses an attribute it cannot hold: a
+/// group the receiver is not in is `EPERM` (finding 11), and on exFAT and FAT
+/// every flag but `UF_HIDDEN` is `EINVAL`.
+private let unheldAttributeErrnos: Set<Int32> = [EINVAL, ENOTSUP, EOPNOTSUPP, EPERM]
 
 /// The attributes an entry asks for, applied after its content.
 private struct EntryAttributes {
-    var group: UInt64?
-    var settable: ClipboardArchiveSettableAttributes
+    let group: UInt64?
+    let creation: timespec?
+    let modification: timespec?
+    let flags: UInt32?
+    let mode: mode_t?
 
     init(_ fields: ClipboardArchiveEntryFields) {
         group = fields.group
-        settable = ClipboardArchiveSettableAttributes(
-            creation: fields.creation, modification: fields.modification,
-            mode: fields.mode.map { mode_t(truncatingIfNeeded: $0 & 0o7777) },
-            flags: fields.flags.map {
-                UInt32(truncatingIfNeeded: $0) & ClipboardArchiveCodec.settableEntryFlags
-            })
+        creation = fields.creation
+        modification = fields.modification
+        flags = fields.flags.map { UInt32(truncatingIfNeeded: $0) & ClipboardArchiveCodec.settableEntryFlags }
+        mode = fields.mode.map { mode_t(truncatingIfNeeded: $0 & 0o7777) }
+    }
+
+    /// The attributes applied after the group, the mode without setgid
+    /// unless `groupApplied`: setgid runs as the item's group, which is one
+    /// the entry never named unless its own was applied.
+    func settable(groupApplied: Bool) -> [ClipboardArchiveAttribute] {
+        [
+            creation.map(ClipboardArchiveAttribute.creation),
+            modification.map(ClipboardArchiveAttribute.modification),
+            flags.map(ClipboardArchiveAttribute.flags),
+            mode.map { .mode(groupApplied ? $0 : $0 & ~S_ISGID) },
+        ].compactMap { $0 }
     }
 }
 
@@ -120,9 +135,10 @@ private struct EntryAttributes {
 /// Each entry is created relative to its parent's open descriptor and never
 /// through a symlink, so neither path length nor depth bounds what lands; a
 /// ``DirectoryCursor`` holds the place, so at most two directories are open.
-/// Only regular files, directories and symlinks are created — any other entry
-/// — a FIFO, socket, device node, or a type no file system object has —
-/// creates nothing and fails nothing, and the entries after it still land.
+/// Only regular files, directories and symlinks are created. Below the root,
+/// any other entry — a FIFO, socket, device node, or a type no file system
+/// object has — creates nothing and fails nothing, and the entries after it
+/// still land; a new item's root of another type fails with `EFTYPE`.
 /// A directory's own attributes are applied once its contents have ended, the
 /// root entry's last of all.
 ///
@@ -130,45 +146,55 @@ private struct EntryAttributes {
 /// decodes, or a ``ClipboardArchiveCodec/TreeWalk`` of a tree on disk.
 final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardArchiveEntrySink {
     /// Where the root entry lands.
-    enum Top {
+    private enum Top {
         /// An existing directory, which the root entry's attributes are
-        /// applied to, and the entries are created in. The root entry is
-        /// optional, and is a directory when present.
+        /// applied to, and the entries are created in.
         case existingDirectory(String)
-        /// A path nothing occupies, where the root entry — a file, directory
-        /// or symlink, and required — is created, never replacing what is
-        /// there. Its folder is never opened.
+        /// A path nothing occupies, where the root entry is created.
         case newItem(String)
     }
 
-    /// Creates what `feed` delivers, through ``take(_:content:)``, at `top`.
+    /// Creates what `feed` delivers, through ``take(_:content:)``, in the
+    /// existing directory `destination`, which the root entry's attributes
+    /// are applied to. The root entry is optional, and is a directory when
+    /// present.
     ///
     /// - Throws: ``ClipboardItemFailure`` naming the entry, relative to the
-    ///   root, that could not be created, written or given its attributes —
-    ///   `EEXIST` with an empty path when something occupies a `.newItem` top
-    ///   — or ``ClipboardArchiveMalformedEntry`` for an entry out of order;
-    ///   or what `feed` threw. Into an existing directory, what was created
-    ///   stays for the caller to remove; a new item that was created is
-    ///   removed whole first.
+    ///   root, that could not be created, written or given its attributes;
+    ///   ``ClipboardArchiveMalformedEntry`` for an entry out of order; or
+    ///   what `feed` threw. What was created stays for the caller to remove.
     static func materialize(
-        _ top: Top, on volume: Volume, from feed: (TreeMaterializer) throws -> Void
+        into destination: String, on volume: Volume, from feed: (TreeMaterializer) throws -> Void
+    ) throws {
+        try materialize(.existingDirectory(destination), on: volume, unfinished: { _ in }, from: feed)
+    }
+
+    /// Creates what `feed` delivers, through ``take(_:content:)``, at `path`,
+    /// where the root entry — a file, directory or symlink, and required — is
+    /// created, never replacing what is there. The folder holding `path` is
+    /// never opened. When the root was created and the rest failed,
+    /// `unfinished` runs with `path`, to dispose of what was created.
+    ///
+    /// - Throws: as ``materialize(into:on:from:)`` does, and `EEXIST` with an
+    ///   empty path when something occupies `path`.
+    static func materialize(
+        newItemAt path: String, on volume: Volume, unfinished: (_ path: String) -> Void,
+        from feed: (TreeMaterializer) throws -> Void
+    ) throws {
+        try materialize(.newItem(path), on: volume, unfinished: unfinished, from: feed)
+    }
+
+    private static func materialize(
+        _ top: Top, on volume: Volume, unfinished: (String) -> Void,
+        from feed: (TreeMaterializer) throws -> Void
     ) throws {
         let materializer = try TreeMaterializer(top, on: volume)
         do {
-            defer { materializer.cursor?.close() }
+            defer { materializer.cursor = nil }
             try feed(materializer)
             try materializer.finish()
         } catch {
-            if case .newItem(let path) = top, materializer.createdTop {
-                do {
-                    try StagedItemRemoval.remove(at: URL(fileURLWithPath: path), on: volume)
-                } catch let removal {
-                    logger.log(
-                        .error,
-                        "Could not remove an unfinished copy: \(String(describing: removal), privacy: .public)"
-                    )
-                }
-            }
+            if case .newItem(let path) = top, materializer.createdTop { unfinished(path) }
             throw error
         }
     }
@@ -261,13 +287,21 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         }
     }
 
-    /// Runs `body` on the cursor, returning `nil` when there is none.
+    /// Runs `body` on the cursor, taken out and put back, returning `nil`
+    /// when there is none.
     private func withCursor<Result>(
         _ body: (inout DirectoryCursor<Volume, Frame>) throws -> Result
-    ) rethrows -> Result? {
-        guard var held = cursor else { return nil }
-        defer { cursor = held }
-        return try body(&held)
+    ) throws -> Result? {
+        guard var held = cursor.take() else { return nil }
+        let result: Result
+        do {
+            result = try body(&held)
+        } catch {
+            cursor = consume held
+            throw error
+        }
+        cursor = consume held
+        return result
     }
 
     private func takeRoot(
@@ -441,28 +475,40 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         try Self.attempt(path) { () throws(Errno) in try volume.closeWritten(file) }
     }
 
-    /// Applies `attributes` to `target`, the entry at `path`: the group first,
-    /// because changing it clears the set-id bits the mode then sets.
+    /// Applies `attributes` to `target`, the entry at `path`, one at a time,
+    /// leaving out each one the target cannot hold: the group first, because
+    /// changing it clears the set-id bits the mode then sets.
+    ///
+    /// An unprivileged receiver owns what it creates, so the entry's `UID` is
+    /// never applied, and a group it cannot give — or a value no group can
+    /// have — leaves the one the entry was created with (findings 7 and 11).
     private func apply(
         _ attributes: EntryAttributes, to target: ClipboardArchiveEntryTarget, path: [UInt8]
     ) throws {
-        // An unprivileged receiver owns what it creates, so the entry's `UID`
-        // is never applied, and a group the receiver is not in — `EPERM`, or
-        // a value no group can have — leaves the one the entry was created
-        // with (findings 7 and 11).
+        var groupApplied = false
         if let group = attributes.group.flatMap({ gid_t(exactly: $0) }) {
-            do {
-                try volume.setGroup(group, of: target)
-            } catch Errno.notPermitted {
-                // Kept as created.
-            } catch {
-                throw ClipboardItemFailure(
-                    itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(error.rawValue))
-            }
+            groupApplied = try Self.applied(path) { () throws(Errno) in try volume.setGroup(group, of: target) }
         }
-        guard !attributes.settable.isEmpty else { return }
-        try Self.attempt(path) { () throws(Errno) in
-            try volume.setAttributes(attributes.settable, of: target)
+        for attribute in attributes.settable(groupApplied: groupApplied) {
+            _ = try Self.applied(path) { () throws(Errno) in try volume.setAttribute(attribute, of: target) }
+        }
+    }
+
+    /// Runs `apply`, returning whether the target took the attribute, or
+    /// `false` when it refused it as one it cannot hold.
+    ///
+    /// - Throws: ``ClipboardItemFailure`` naming `path` for any other errno.
+    private static func applied(
+        _ path: [UInt8], _ apply: () throws(Errno) -> Void
+    ) throws(ClipboardItemFailure) -> Bool {
+        do {
+            try apply()
+            return true
+        } catch let error where unheldAttributeErrnos.contains(error.rawValue) {
+            return false
+        } catch {
+            throw ClipboardItemFailure(
+                itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(error.rawValue))
         }
     }
 

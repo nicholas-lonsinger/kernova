@@ -75,6 +75,29 @@ struct StagedItemRemovalTests {
         #expect(try String(contentsOf: kept, encoding: .utf8) == "kept")
     }
 
+    /// The directory is moved to another parent while the removal is inside
+    /// it, so its `..` is no longer the directory the removal came down from.
+    @Test("a directory moved out from under the removal stops it there, removing nothing above it")
+    func directoryMovedMidWalkStops() throws {
+        let root = try makeDirectory("tree")
+        let inner = root.appendingPathComponent("a/b", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: inner.appendingPathComponent("file.txt"))
+        let elsewhere = try makeDirectory("elsewhere")
+        let moved = elsewhere.appendingPathComponent("b", isDirectory: true)
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            guard case .remove(let name) = call, name == Array("file.txt".utf8),
+                !FileManager.default.fileExists(atPath: moved.path)
+            else { return }
+            #expect(rename(inner.path, moved.path) == 0)
+        }
+
+        #expect(throws: DirectoryCursorFailure.moved) { try StagedItemRemoval.remove(at: root, on: volume) }
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("a").path))
+        #expect(FileManager.default.fileExists(atPath: moved.path))
+        #expect(volume.openDirectoryCount == 0)
+    }
+
     @Test("a single file is removed, and nothing there is reported as missing")
     func fileAndMissingItem() throws {
         let file = scratch.url.appendingPathComponent("file.txt")

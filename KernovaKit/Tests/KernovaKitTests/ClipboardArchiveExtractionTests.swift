@@ -285,11 +285,13 @@ struct ClipboardArchiveExtractionTests {
 
     // MARK: - Attributes
 
-    @Test("set-id and sticky bits land as written")
+    @Test("set-id and sticky bits land as written, setgid with the group it names")
     func specialModeBitsLand() throws {
         let destination = try makeDestination()
+        var setgid = RawArchiveEntry.file("setgid", mode: 0o2755)
+        setgid.gid = UInt64(getegid())
         let archive = try rawArchive([
-            .root(), .file("setuid", mode: 0o4755), .file("setgid", mode: 0o2755),
+            .root(), .file("setuid", mode: 0o4755), setgid,
             .file("sticky", mode: 0o1644), .directory("shared", mode: 0o1777),
         ])
         #expect(extractFailure(archive, into: destination) == nil)
@@ -398,16 +400,96 @@ struct ClipboardArchiveExtractionTests {
         #expect(ownedStatus.st_mode & 0o7777 == 0o4750)
     }
 
-    @Test("setgid with a group the receiver is not in keeps its mode and times")
-    func setgidWithAForeignGroupKeepsItsMode() throws {
-        let destination = try makeDestination()
-        var entry = timed(.file("setgid.txt", mode: 0o2750))
-        entry.gid = UInt64(try Self.foreignGroup())
+    /// How an entry's group goes unapplied.
+    enum UnappliedGroup: CaseIterable, Sendable {
+        /// One the receiver is not in, which the kernel refuses.
+        case foreign
+        /// A value no group can have.
+        case invalid
+        /// One the target refuses as an attribute it cannot hold.
+        case refusedByTarget
+        /// None at all.
+        case absent
+    }
 
-        #expect(extractFailure(try rawArchive([.root(), entry]), into: destination) == nil)
-        let path = destination.appendingPathComponent("setgid.txt").path
-        #expect(try linkStatus(path).st_mode & 0o7777 == 0o2750)
-        try expectTimes(path)
+    @Test(
+        "setgid with a group that was not applied is dropped, and the other mode bits and times land",
+        arguments: UnappliedGroup.allCases)
+    func setgidWithoutItsGroupIsDropped(group: UnappliedGroup) throws {
+        let destination = try makeDestination()
+        let inherited = try linkStatus(destination.path).st_gid
+        var file = timed(.file("setgid.txt", mode: 0o2750))
+        var directory = timed(.directory("setgid-dir", mode: 0o2750))
+        let gid: UInt64? =
+            switch group {
+            case .foreign: UInt64(try Self.foreignGroup())
+            case .invalid: UInt64(UInt32.max) + 1
+            case .refusedByTarget: UInt64(getegid())
+            case .absent: nil
+            }
+        file.gid = gid
+        directory.gid = gid
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            if group == .refusedByTarget, case .setGroup = call { throw .invalidArgument }
+        }
+
+        #expect(extractFailure(try rawArchive([.root(), file, directory]), into: destination, on: volume) == nil)
+        for name in ["setgid.txt", "setgid-dir"] {
+            let path = destination.appendingPathComponent(name).path
+            let status = try linkStatus(path)
+            #expect(status.st_mode & 0o7777 == 0o0750, "\(name)")
+            #expect(status.st_gid == inherited, "\(name)")
+            try expectTimes(path)
+        }
+    }
+
+    /// The entries ``unheldAttributeIsLeftOut(kind:errno:)`` checks, the
+    /// root as an empty name, and the mode each asks for.
+    private static let refusalEntries: [(name: String, mode: mode_t)] = [
+        ("file.txt", 0o640), ("dir", 0o750), ("link", 0o700), ("", 0o750),
+    ]
+
+    /// exFAT and FAT refuse every flag but `UF_HIDDEN` with `EINVAL`.
+    @Test(
+        "an attribute the target cannot hold is left out, and every other attribute lands",
+        arguments: ArchiveAttributeKind.allCases,
+        [Errno.invalidArgument, .notSupported, .notSupportedOnSocket, .notPermitted])
+    func unheldAttributeIsLeftOut(kind: ArchiveAttributeKind, errno: Errno) throws {
+        let destination = try makeDestination()
+        var root = timed(.root(mode: 0o750))
+        var file = timed(.file("file.txt", "f", mode: 0o640))
+        var directory = timed(.directory("dir", mode: 0o750))
+        var link = timed(RawArchiveEntry(type: .link, path: Array("link".utf8), link: Array("x".utf8), mode: 0o700))
+        root.flags = UInt64(UF_HIDDEN)
+        file.flags = UInt64(UF_HIDDEN)
+        directory.flags = UInt64(UF_HIDDEN)
+        link.flags = UInt64(UF_HIDDEN)
+
+        #expect(
+            extractFailure(
+                try rawArchive([root, file, directory, link]), into: destination,
+                on: InterposedArchiveVolume.refusing(kind, with: errno)) == nil)
+        for (name, mode) in Self.refusalEntries {
+            let path = name.isEmpty ? destination.path : destination.appendingPathComponent(name).path
+            let status = try linkStatus(path)
+            #expect((status.st_mode & 0o7777 == mode) == (kind != .mode), "mode of \(name)")
+            #expect((status.st_flags & UInt32(UF_HIDDEN) != 0) == (kind != .flags), "flags of \(name)")
+            #expect(
+                sameInstant(status.st_mtimespec, Self.modification) == (kind != .modification), "mtime of \(name)")
+            #expect(
+                sameInstant(status.st_birthtimespec, Self.creation) == (kind != .creation), "birth time of \(name)")
+        }
+    }
+
+    @Test("an attribute the target refuses for another reason fails the extract, naming the entry")
+    func refusedAttributeIsAFailure() throws {
+        let destination = try makeDestination()
+        let archive = try rawArchive([.root(), .directory("d"), .file("d/file.txt", "f", mode: 0o640)])
+
+        #expect(
+            extractFailure(archive, into: destination, on: InterposedArchiveVolume.refusing(.mode, with: .ioError))
+                as? ClipboardItemFailure
+                == ClipboardItemFailure(itemPath: "d/file.txt", reason: .posix(EIO)))
     }
 
     @Test("the root entry's attributes land on the destination itself, after everything in it")

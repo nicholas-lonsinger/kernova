@@ -34,16 +34,14 @@ enum ClipboardArchiveEntryTarget {
     case name([UInt8], in: Int32)
 }
 
-/// The attributes one `setattrlist` call applies; each is applied only when
-/// present.
-struct ClipboardArchiveSettableAttributes {
-    var creation: timespec?
-    var modification: timespec?
+/// One attribute one `setattrlist` call applies, so a target refusing one
+/// refuses no other.
+enum ClipboardArchiveAttribute {
+    case creation(timespec)
+    case modification(timespec)
+    case flags(UInt32)
     /// Permission and set-id bits, `0o7777` at most.
-    var mode: mode_t?
-    var flags: UInt32?
-
-    var isEmpty: Bool { creation == nil && modification == nil && mode == nil && flags == nil }
+    case mode(mode_t)
 }
 
 /// The file-system calls the archive extractor, the staged-tree remover and
@@ -65,10 +63,9 @@ protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(Errno)
     /// Sets the group of `target`, leaving its owner as it is.
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno)
-    /// Applies `attributes` to `target`.
-    func setAttributes(
-        _ attributes: ClipboardArchiveSettableAttributes, of target: ClipboardArchiveEntryTarget
-    ) throws(Errno)
+    /// Applies `attribute` to `target`.
+    func setAttribute(_ attribute: ClipboardArchiveAttribute, of target: ClipboardArchiveEntryTarget)
+        throws(Errno)
     /// Removes `name` from `directory` — an empty directory when
     /// `isDirectory`, otherwise anything else, a symlink itself rather than
     /// its target.
@@ -85,7 +82,7 @@ protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
 struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
     func status(of name: [UInt8], in directory: Int32) throws(Errno) -> stat {
         var status = stat()
-        try Self.check(Self.withName(name) { fstatat(directory, $0, &status, AT_SYMLINK_NOFOLLOW) })
+        try Self.call(name) { fstatat(directory, $0, &status, AT_SYMLINK_NOFOLLOW) }
         return status
     }
 
@@ -96,10 +93,7 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
     }
 
     func openDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
-        try Self.check(
-            Self.withName(name) {
-                openat(directory, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            })
+        try Self.call(name) { openat(directory, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
     }
 
     func openFile(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
@@ -107,10 +101,7 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
         // that a FIFO swapped in after the status was taken opens at once, for
         // the caller's own type check to refuse, rather than parking the
         // encode until something writes to it.
-        try Self.check(
-            Self.withName(name) {
-                openat(directory, $0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-            })
+        try Self.call(name) { openat(directory, $0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
     }
 
     func names(in directory: Int32) throws(Errno) -> [[UInt8]] {
@@ -141,12 +132,9 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
 
     func linkTarget(of name: [UInt8], in directory: Int32) throws(Errno) -> [UInt8] {
         var buffer = [UInt8](repeating: 0, count: Int(PATH_MAX) + 1)
-        let count = try Self.check(
-            Self.withName(name) { name in
-                buffer.withUnsafeMutableBytes { raw in
-                    readlinkat(directory, name, raw.baseAddress, raw.count)
-                }
-            })
+        let count = try Self.call(name) { name in
+            buffer.withUnsafeMutableBytes { raw in readlinkat(directory, name, raw.baseAddress, raw.count) }
+        }
         guard count < buffer.count else { throw Errno.fileNameTooLong }
         return Array(buffer[..<count])
     }
@@ -160,16 +148,13 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
     // MARK: - Writes
 
     func makeDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) {
-        try Self.check(Self.withName(name) { mkdirat(directory, $0, S_IRWXU) })
+        try Self.call(name) { mkdirat(directory, $0, S_IRWXU) }
     }
 
     func createFile(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
-        let descriptor = try Self.check(
-            Self.withName(name) {
-                openat(
-                    directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                    S_IRUSR | S_IWUSR)
-            })
+        let descriptor = try Self.call(name) {
+            openat(directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        }
         // Around the page cache, so a multi-GB arrival does not evict what the
         // rest of the system has cached.
         _ = fcntl(descriptor, F_NOCACHE, 1)
@@ -180,7 +165,8 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
         while true {
             let written = Darwin.write(descriptor, buffer.baseAddress, buffer.count)
             if written >= 0 { return written }
-            guard errno == EINTR else { throw Errno(rawValue: errno) }
+            let code = errno
+            guard code == EINTR else { throw Errno(rawValue: code) }
         }
     }
 
@@ -189,10 +175,7 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
     }
 
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(Errno) {
-        try Self.check(
-            Self.withName(target) { target in
-                Self.withName(name) { symlinkat(target, directory, $0) }
-            })
+        try Self.call(target, name) { symlinkat($0, directory, $1) }
     }
 
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno) {
@@ -202,70 +185,84 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
         case .descriptor(let descriptor):
             try Self.check(fchown(descriptor, owner, group))
         case .name(let name, let directory):
-            try Self.check(
-                Self.withName(name) { fchownat(directory, $0, owner, group, AT_SYMLINK_NOFOLLOW) })
+            try Self.call(name) { fchownat(directory, $0, owner, group, AT_SYMLINK_NOFOLLOW) }
         }
     }
 
-    func setAttributes(
-        _ attributes: ClipboardArchiveSettableAttributes, of target: ClipboardArchiveEntryTarget
-    ) throws(Errno) {
+    func setAttribute(_ attribute: ClipboardArchiveAttribute, of target: ClipboardArchiveEntryTarget)
+        throws(Errno)
+    {
         var list = attrlist()
         list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
-        // The buffer holds the attributes in the order of their bits, each
-        // with its own size and no length word ahead of them (setattrlist(2)).
-        var buffer: [UInt8] = []
-        if var creation = attributes.creation {
-            list.commonattr |= attrgroup_t(ATTR_CMN_CRTIME)
-            withUnsafeBytes(of: &creation) { buffer.append(contentsOf: $0) }
+        // The buffer holds the attribute alone, with no length word ahead of
+        // it (setattrlist(2)).
+        var buffer: [UInt8]
+        switch attribute {
+        case .creation(let time):
+            list.commonattr = attrgroup_t(ATTR_CMN_CRTIME)
+            buffer = withUnsafeBytes(of: time) { Array($0) }
+        case .modification(let time):
+            list.commonattr = attrgroup_t(ATTR_CMN_MODTIME)
+            buffer = withUnsafeBytes(of: time) { Array($0) }
+        case .flags(let flags):
+            list.commonattr = attrgroup_t(ATTR_CMN_FLAGS)
+            buffer = withUnsafeBytes(of: flags) { Array($0) }
+        case .mode(let mode):
+            list.commonattr = attrgroup_t(ATTR_CMN_ACCESSMASK)
+            buffer = withUnsafeBytes(of: UInt32(mode)) { Array($0) }
         }
-        if var modification = attributes.modification {
-            list.commonattr |= attrgroup_t(ATTR_CMN_MODTIME)
-            withUnsafeBytes(of: &modification) { buffer.append(contentsOf: $0) }
-        }
-        if let mode = attributes.mode {
-            list.commonattr |= attrgroup_t(ATTR_CMN_ACCESSMASK)
-            var mask = UInt32(mode)
-            withUnsafeBytes(of: &mask) { buffer.append(contentsOf: $0) }
-        }
-        if var flags = attributes.flags {
-            list.commonattr |= attrgroup_t(ATTR_CMN_FLAGS)
-            withUnsafeBytes(of: &flags) { buffer.append(contentsOf: $0) }
-        }
-        guard list.commonattr != 0 else { return }
-        let result = buffer.withUnsafeMutableBytes { raw in
-            switch target {
-            case .descriptor(let descriptor):
-                fsetattrlist(descriptor, &list, raw.baseAddress, raw.count, 0)
-            case .name(let name, let directory):
-                Self.withName(name) {
-                    setattrlistat(directory, $0, &list, raw.baseAddress, raw.count, UInt32(FSOPT_NOFOLLOW))
+        switch target {
+        case .descriptor(let descriptor):
+            try Self.check(
+                buffer.withUnsafeMutableBytes { raw in
+                    fsetattrlist(descriptor, &list, raw.baseAddress, raw.count, 0)
+                })
+        case .name(let name, let directory):
+            try Self.call(name) { name in
+                buffer.withUnsafeMutableBytes { raw in
+                    setattrlistat(directory, name, &list, raw.baseAddress, raw.count, UInt32(FSOPT_NOFOLLOW))
                 }
             }
         }
-        try Self.check(result)
     }
 
     func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(Errno) {
-        try Self.check(
-            Self.withName(name) { unlinkat(directory, $0, isDirectory ? AT_REMOVEDIR : 0) })
+        try Self.call(name) { unlinkat(directory, $0, isDirectory ? AT_REMOVEDIR : 0) }
     }
 
     func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
         throws(Errno)
     {
-        try Self.check(
-            Self.withName(name) { name in
-                Self.withName(newName) {
-                    renameatx_np(directory, name, newDirectory, $0, UInt32(RENAME_EXCL))
-                }
-            })
+        try Self.call(name, newName) { renameatx_np(directory, $0, newDirectory, $1, UInt32(RENAME_EXCL)) }
     }
 
     // MARK: - Private
 
-    private static func withName<R>(_ name: [UInt8], _ body: (UnsafePointer<CChar>) -> R) -> R {
-        body(name.map { CChar(bitPattern: $0) } + [0])
+    /// Runs `syscall` on `name` as a C string, reading `errno` while the
+    /// string still exists: freeing it may change `errno`.
+    @discardableResult
+    private static func call<Result: BinaryInteger>(
+        _ name: [UInt8], _ syscall: (UnsafePointer<CChar>) -> Result
+    ) throws(Errno) -> Result {
+        try call(name, []) { first, _ in syscall(first) }
+    }
+
+    /// ``call(_:_:)`` for a call taking two names.
+    @discardableResult
+    private static func call<Result: BinaryInteger>(
+        _ first: [UInt8], _ second: [UInt8],
+        _ syscall: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> Result
+    ) throws(Errno) -> Result {
+        let firstName = first.map { CChar(bitPattern: $0) } + [0]
+        let secondName = second.map { CChar(bitPattern: $0) } + [0]
+        var code: Int32 = 0
+        let result = withExtendedLifetime((firstName, secondName)) {
+            let result = syscall(firstName, secondName)
+            if result < 0 { code = errno }
+            return result
+        }
+        guard result >= 0 else { throw Errno(rawValue: code) }
+        return result
     }
 
     @discardableResult

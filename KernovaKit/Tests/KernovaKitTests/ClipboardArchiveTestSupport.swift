@@ -21,12 +21,38 @@ func extractFailure(
 
 // MARK: - A volume that counts and fails
 
-/// The local volume, counting the directories it holds open and optionally
-/// failing every write, or every rename, with one `errno`.
+/// The kinds of ``ClipboardArchiveAttribute``.
+enum ArchiveAttributeKind: CaseIterable, Sendable {
+    case creation, modification, flags, mode
+
+    init(_ attribute: ClipboardArchiveAttribute) {
+        switch attribute {
+        case .creation: self = .creation
+        case .modification: self = .modification
+        case .flags: self = .flags
+        case .mode: self = .mode
+        }
+    }
+}
+
+/// The local volume, counting the directories it holds open, and handing
+/// each call that changes the volume to `before` first, which fails the call
+/// with the `errno` it throws.
 final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
+    /// A call that changes the volume, about to be made.
+    enum Call {
+        case makeDirectory(name: [UInt8])
+        case createFile(name: [UInt8])
+        case makeSymlink(name: [UInt8])
+        case write
+        case setGroup
+        case setAttribute(ClipboardArchiveAttribute, of: ClipboardArchiveEntryTarget)
+        case remove(name: [UInt8])
+        case rename
+    }
+
     private let base = ClipboardArchiveLocalVolume()
-    private let writeFailure: Errno?
-    private let renameFailure: Errno?
+    private let before: @Sendable (Call) throws(Errno) -> Void
 
     private struct Directories {
         var open: Set<Int32> = []
@@ -41,9 +67,26 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
     /// How many directories are open now.
     var openDirectoryCount: Int { directories.withLock { $0.open.count } }
 
-    init(failingWritesWith writeFailure: Errno? = nil, failingRenamesWith renameFailure: Errno? = nil) {
-        self.writeFailure = writeFailure
-        self.renameFailure = renameFailure
+    /// - Parameters:
+    ///   - writeFailure: what every write fails with.
+    ///   - renameFailure: what every rename fails with.
+    ///   - before: runs ahead of every call that changes the volume.
+    init(
+        failingWritesWith writeFailure: Errno? = nil, failingRenamesWith renameFailure: Errno? = nil,
+        before: @escaping @Sendable (Call) throws(Errno) -> Void = { _ in }
+    ) {
+        self.before = { call throws(Errno) in
+            if case .write = call, let writeFailure { throw writeFailure }
+            if case .rename = call, let renameFailure { throw renameFailure }
+            try before(call)
+        }
+    }
+
+    /// A volume refusing every attribute of `kind` with `errno`.
+    static func refusing(_ kind: ArchiveAttributeKind, with errno: Errno) -> InterposedArchiveVolume {
+        InterposedArchiveVolume { call throws(Errno) in
+            if case .setAttribute(let attribute, _) = call, ArchiveAttributeKind(attribute) == kind { throw errno }
+        }
     }
 
     func openDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
@@ -61,7 +104,7 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
     }
 
     func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer) throws(Errno) -> Int {
-        if let writeFailure { throw writeFailure }
+        try before(.write)
         return try base.write(descriptor, from: buffer)
     }
 
@@ -86,37 +129,43 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume, Sendable {
     }
 
     func makeDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) {
+        try before(.makeDirectory(name: name))
         try base.makeDirectory(name, in: directory)
     }
 
     func createFile(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
-        try base.createFile(name, in: directory)
+        try before(.createFile(name: name))
+        return try base.createFile(name, in: directory)
     }
 
     func closeWritten(_ descriptor: Int32) throws(Errno) { try base.closeWritten(descriptor) }
 
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(Errno) {
+        try before(.makeSymlink(name: name))
         try base.makeSymlink(name, to: target, in: directory)
     }
 
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno) {
+        try before(.setGroup)
         try base.setGroup(group, of: target)
     }
 
-    func setAttributes(
-        _ attributes: ClipboardArchiveSettableAttributes, of target: ClipboardArchiveEntryTarget
-    ) throws(Errno) {
-        try base.setAttributes(attributes, of: target)
+    func setAttribute(_ attribute: ClipboardArchiveAttribute, of target: ClipboardArchiveEntryTarget)
+        throws(Errno)
+    {
+        try before(.setAttribute(attribute, of: target))
+        try base.setAttribute(attribute, of: target)
     }
 
     func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(Errno) {
+        try before(.remove(name: name))
         try base.remove(name, in: directory, isDirectory: isDirectory)
     }
 
     func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
         throws(Errno)
     {
-        if let renameFailure { throw renameFailure }
+        try before(.rename)
         try base.rename(name, in: directory, to: newName, in: newDirectory)
     }
 }

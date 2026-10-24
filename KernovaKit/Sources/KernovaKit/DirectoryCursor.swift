@@ -27,9 +27,9 @@ enum DirectoryCursorFailure: Error, Equatable {
 /// length bounds where it can go, and at most two directories are open at
 /// once — the current one, and its child or its parent while it moves.
 ///
-/// The cursor owns every descriptor it holds; ``close()`` releases the last
-/// one and must be called exactly once.
-struct DirectoryCursor<Volume: ClipboardArchiveVolume, Frame> {
+/// The cursor owns every descriptor it holds, and closes the last one when it
+/// ends.
+struct DirectoryCursor<Volume: ClipboardArchiveVolume, Frame>: ~Copyable {
     private struct Level {
         let device: dev_t
         let inode: ino_t
@@ -117,8 +117,7 @@ struct DirectoryCursor<Volume: ClipboardArchiveVolume, Frame> {
         return left.frame
     }
 
-    /// Closes the directory the cursor is at.
-    func close() {
+    deinit {
         volume.close(descriptor)
     }
 }

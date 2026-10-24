@@ -179,7 +179,6 @@ extension ClipboardArchiveCodec {
         guard let top = try walk.writeEntry(Array(root.utf8), in: AT_FDCWD, path: []) else { return }
         var cursor = DirectoryCursor(
             volume: volume, descriptor: top.descriptor, status: top.status, frame: top.directory)
-        defer { cursor.close() }
         while true {
             if let name = cursor.frame.pending.popLast() {
                 let parentPath = cursor.frame.path

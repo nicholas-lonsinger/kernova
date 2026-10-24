@@ -7,9 +7,9 @@ import System
 ///
 /// `FileManager.removeItem` and `removefile(3)` remove nothing from a tree
 /// whose paths run past `PATH_MAX` or that holds a directory its owner cannot
-/// write, and `REMOVEFILE_ALLOW_LONG_PATHS` works by changing the process-wide
-/// working directory, which a multithreaded process cannot do safely
-/// (docs/research/2026-10-23-applearchive-extract-semantics.md, finding 12).
+/// write (docs/research/2026-10-23-applearchive-extract-semantics.md, finding
+/// 12), and `REMOVEFILE_ALLOW_LONG_PATHS` changes the process's working
+/// directory, which its man page says makes it not thread safe.
 /// This walks the tree through descriptors on a ``DirectoryCursor`` instead,
 /// making each directory searchable and writable by its owner before
 /// emptying it.
@@ -54,7 +54,6 @@ public enum StagedItemRemoval {
         var cursor = DirectoryCursor(
             volume: volume, descriptor: top.descriptor, status: top.status,
             frame: Frame(name: root, pending: top.names))
-        defer { cursor.close() }
         while true {
             if let name = cursor.frame.pending.popLast() {
                 let entry = try volume.status(of: name, in: cursor.descriptor)
@@ -94,8 +93,7 @@ public enum StagedItemRemoval {
     ) throws(Errno) -> (descriptor: Int32, status: stat, names: [[UInt8]])? {
         let mode = status.st_mode & 0o7777
         if mode & S_IRWXU != S_IRWXU {
-            try volume.setAttributes(
-                ClipboardArchiveSettableAttributes(mode: mode | S_IRWXU), of: .name(name, in: directory))
+            try volume.setAttribute(.mode(mode | S_IRWXU), of: .name(name, in: directory))
         }
         let descriptor = try volume.openDirectory(name, in: directory)
         do {

@@ -88,8 +88,11 @@ struct ClipboardDirectoryTransferTests {
     }
 
     /// A peer that answers the pull for `transferID` with `payload`, whole,
-    /// under a trailer that checks out.
-    private func serveWhole(_ harness: TransferHarness, transferID: UInt64, payload: Data) {
+    /// under a trailer ending it as `ending`, by default one that checks out.
+    private func serveWhole(
+        _ harness: TransferHarness, transferID: UInt64, payload: Data,
+        ending: ClipboardTransferTrailer.Ending? = nil
+    ) {
         harness.openPull(transferID: transferID, generation: 1) { far, request in
             defer { ClipboardDataConnection.end(fd: far) }
             try? writeTransferReply(
@@ -97,7 +100,7 @@ struct ClipboardDirectoryTransferTests {
                 totalBytes: 0)
             try? ClipboardDataConnection.write(fd: far, payload)
             try? ClipboardDataConnection.writeTrailer(
-                ClipboardTransferTrailer(ending: .complete(digest: sha256(payload))), fd: far)
+                ClipboardTransferTrailer(ending: ending ?? .complete(digest: sha256(payload))), fd: far)
         }
     }
 
@@ -510,8 +513,12 @@ struct ClipboardDirectoryTransferTests {
         #expect(try probe.stagedFiles().isEmpty)
     }
 
-    @Test("an entry this side cannot write aborts with extract.error, naming it under the folder")
-    func unwritableEntryIsNamedUnderTheFolder() async throws {
+    /// The sender's abort trailer, naming an item of its own, stands behind
+    /// the entry this side failed on, so it explains nothing.
+    @Test(
+        "an entry this side cannot write aborts with extract.error naming it, whatever trailer follows",
+        arguments: [false, true])
+    func unwritableEntryIsNamedUnderTheFolder(senderAborts: Bool) async throws {
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
@@ -520,11 +527,18 @@ struct ClipboardDirectoryTransferTests {
             RawArchiveEntry(
                 type: .regularFile, path: Array("sub/caf".utf8) + [0xE9] + Array(".txt".utf8),
                 mode: 0o644, data: Data("x".utf8)),
+            .file("sub/after.txt", "after"),
         ])
 
         let transferID: UInt64 = 0x4C
         harness.expect(transferID: transferID, plan: folderPlan(named: "Project", advertised: 4096))
-        serveWhole(harness, transferID: transferID, payload: payload)
+        serveWhole(
+            harness, transferID: transferID, payload: payload,
+            ending: senderAborts
+                ? .aborted(
+                    rawCode: ClipboardStreamAbortCode.readError.rawValue,
+                    readFailure: ClipboardItemFailure(itemPath: "Project/sub/unread.txt", reason: .posix(EACCES)))
+                : nil)
         try await settle(harness, transferID)
 
         let info = try abort(harness)
@@ -592,6 +606,56 @@ struct ClipboardDirectoryTransferTests {
         #expect(info.neededBytes == 4096)
         #expect(info.itemFailure == nil)
         #expect(try probe.stagedFiles().isEmpty)
+    }
+
+    /// The failing write cancels the receiver first, so the item failure it
+    /// raises arrives with the cancellation already standing.
+    @Test("an item failure raised after a cancellation still ends the transfer cancelled")
+    func itemFailureAfterCancelIsCancelled() async throws {
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let source = try makeSourceTree()
+        let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
+
+        let transferID: UInt64 = 0x4F
+        let stream = try wholeStream(
+            transferID: transferID, payload: bytes, ending: .complete(digest: sha256(bytes)))
+        let held = Locked<ClipboardTransferReceiver?>(nil)
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            guard case .write = call else { return }
+            held.withLock { $0 }?.cancel()
+            throw .ioError
+        }
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 1, plan: folderPlan(named: "Project", advertised: 4096),
+            source: .dial(
+                {
+                    try dialToPeer { far in
+                        defer { ClipboardDataConnection.end(fd: far) }
+                        guard readTransferRequest(fd: far) != nil else { return }
+                        try? ClipboardDataConnection.write(fd: far, stream)
+                    }
+                },
+                request: Kernova_V1_ClipboardTransferRequest.with {
+                    $0.generation = 1
+                    $0.transferID = transferID
+                    $0.uti = ClipboardArchive.directoryUTI
+                    $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
+                }),
+            volume: volume)
+        held.withLock { $0 = receiver }
+        let collector = harness.collector
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) }, onAbort: { collector.abort($0) })
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .cancelled)
+        #expect(info.itemFailure == nil)
+        #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        held.withLock { $0 = nil }
     }
 
     @Test("the sender aborts a folder that outgrows the requester's ceiling")
