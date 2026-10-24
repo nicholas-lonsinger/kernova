@@ -750,39 +750,43 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Shared intake for the Paste button, responder-chain `paste:`, and drag-and-drop.
+    /// Paste's intake — the Paste button and responder-chain `paste:` — reading
+    /// the Mac clipboard.
     ///
-    /// Paste/drop are complete gestures — the content is sent to the guest
+    /// Paste and drop are complete gestures — the content is sent to the guest
     /// immediately, unlike typed edits which send on window blur.
     private func takeIn(pasteboard: any ClipboardReadPasteboard) {
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
         let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
         if case .pendingFiles(let urls, let unresolved) = result {
-            resolveAndApply(pendingFiles: urls, unresolved: unresolved, allowsBinary: allowsBinary)
+            resolveAndApply(
+                pendingFiles: urls, unresolved: unresolved, allowsBinary: allowsBinary, gesture: .paste)
         } else {
-            _ = apply(intake: result)
+            _ = apply(intake: result, gesture: .paste)
         }
     }
 
     /// Resolves `.pendingFiles` URLs off the main actor and applies the result
     /// on the way back.
-    private func resolveAndApply(pendingFiles urls: [URL], unresolved: Int, allowsBinary: Bool) {
+    private func resolveAndApply(
+        pendingFiles urls: [URL], unresolved: Int, allowsBinary: Bool, gesture: ClipboardIntakeGesture
+    ) {
         Task { @MainActor [weak self] in
             let resolved = await ClipboardPasteboardIntake.read(
                 filesAt: urls, unresolved: unresolved, allowsBinary: allowsBinary)
-            _ = self?.apply(intake: resolved)
+            _ = self?.apply(intake: resolved, gesture: gesture)
         }
     }
 
-    private func apply(intake: ClipboardIntakeResult) -> Bool {
+    private func apply(intake: ClipboardIntakeResult, gesture: ClipboardIntakeGesture) -> Bool {
         guard let service = instance.clipboardService else { return false }
 
         switch intake {
-        case .content(let content, let note):
+        case .content(let content, let skipped):
             service.clipboardContent = content
             _ = service.grabIfChanged()
-            if let note {
+            if let note = ClipboardPasteboardIntake.skipNote(count: skipped) {
                 statusMessage.showTransientMessage(note, style: .warning)
             }
             Self.logger.log(
@@ -790,15 +794,16 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
             return true
-        case .rejected(let message, _):
+        case .rejected(let refusal):
+            let message = ClipboardPasteboardIntake.message(for: refusal, gesture: gesture)
             statusMessage.showTransientMessage(message, style: .warning)
             Self.logger.log(.info, "Pasteboard intake rejected: \(message, privacy: .public)")
             return false
         case .pendingFiles:
             Self.logger.log(
                 .fault,
-                "apply(intake:) received .pendingFiles — resolve it via read(filesAt:) first")
-            assertionFailure("apply(intake:) received .pendingFiles")
+                "apply(intake:gesture:) received .pendingFiles — resolve it via read(filesAt:) first")
+            assertionFailure("apply(intake:gesture:) received .pendingFiles")
             return false
         }
     }
@@ -825,11 +830,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
         switch result {
         case .content:
-            return apply(intake: result)
+            return apply(intake: result, gesture: .drop)
         case .pendingFiles(let urls, let unresolved):
             // Accept the drop now; resolve the files/folders off the main actor
             // (the dragging pasteboard was already consumed synchronously above).
-            resolveAndApply(pendingFiles: urls, unresolved: unresolved, allowsBinary: allowsBinary)
+            resolveAndApply(
+                pendingFiles: urls, unresolved: unresolved, allowsBinary: allowsBinary, gesture: .drop)
             return true
         case .rejected:
             if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
@@ -838,7 +844,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 receivePromisedFile(receiver)
                 return true
             }
-            return apply(intake: result)
+            return apply(intake: result, gesture: .drop)
         }
     }
 
@@ -857,7 +863,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             // A text-only transport rejects the file whatever it holds, so say so
             // instead of writing it out first.
             statusMessage.showTransientMessage(
-                ClipboardPasteboardIntake.textOnlyTransportMessage, style: .warning)
+                ClipboardPasteboardIntake.message(for: .textOnlyTransport, gesture: .drop),
+                style: .warning)
             return
         }
 
@@ -895,7 +902,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 firstFileGate.taken = true
                 let resolved = await ClipboardPasteboardIntake.read(
                     filesAt: [url], allowsBinary: allowsBinary)
-                keepFile = self.apply(intake: resolved)
+                keepFile = self.apply(intake: resolved, gesture: .drop)
             }
         }
     }

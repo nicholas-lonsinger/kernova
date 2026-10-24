@@ -51,8 +51,9 @@ struct ClipboardTransferWordingTests {
             (.unpackFailed, .paste),
             (.unpackFailed, .preview),
             (.stagingFailed, .paste),
-            (.itemsSkipped(note: "Some items couldn't be read."), .forward),
-            (.itemsSkipped(note: "One item couldn't be read."), .drop),
+            (.itemsSkipped(count: 2), .forward),
+            (.itemsSkipped(count: 1), .drop),
+            (.itemsUnreadable, .forward),
             (.itemsUnreadable, .drop),
             (.sendFailed, .drop),
             (.unclaimed, .drop),
@@ -100,7 +101,10 @@ struct ClipboardTransferWordingTests {
             try #require(wording(.tooLarge(limitBytes: limit), .copy)).headline
                 == "Clipboard not copied from \(quotedVM).")
         #expect(
-            try #require(wording(.itemsSkipped(note: "n"), .forward)).headline
+            try #require(wording(.itemsSkipped(count: 1), .forward)).headline
+                == "Clipboard partly copied to \(quotedVM).")
+        #expect(
+            try #require(wording(.itemsUnreadable, .forward)).headline
                 == "Clipboard not copied to \(quotedVM).")
         #expect(
             try #require(wording(.timedOut, .paste)).headline
@@ -295,10 +299,32 @@ struct ClipboardTransferWordingTests {
         #expect(copy.menuLine == "Clipboard: the VM couldn't read \u{201C}Mail\u{201D}")
     }
 
-    @Test("a passthrough forward shows the intake's own note")
-    func forwardShowsTheIntakeNote() throws {
-        let note = "Some items couldn't be read."
-        #expect(try #require(wording(.itemsSkipped(note: note), .forward)).message == note)
+    @Test(
+        "a send that left unreadable items out counts them and says the rest crossed",
+        arguments: [
+            (
+                ClipboardTransferGesture.drop, 1,
+                "One item couldn't be read, so it wasn't sent to the VM. The rest were."
+            ),
+            (.drop, 3, "3 items couldn't be read, so they weren't sent to the VM. The rest were."),
+            (
+                .forward, 1,
+                "One copied item couldn't be read, so it wasn't sent to the VM. The rest were."
+            ),
+            (
+                .forward, 3,
+                "3 copied items couldn't be read, so they weren't sent to the VM. The rest were."
+            ),
+        ])
+    func skippedItemsMessage(gesture: ClipboardTransferGesture, count: Int, message: String) throws {
+        #expect(try #require(wording(.itemsSkipped(count: count), gesture)).message == message)
+    }
+
+    @Test("a forward none of whose items could be read says nothing was sent")
+    func unreadableForwardMessage() throws {
+        #expect(
+            try #require(wording(.itemsUnreadable, .forward)).message
+                == "The copy couldn't be read, so nothing was sent to the VM.")
     }
 
     // MARK: - Menu lines
@@ -321,7 +347,8 @@ struct ClipboardTransferWordingTests {
                 .supersededCopyRetracted(hasSuccessor: true), .copy,
                 "Clipboard: earlier copy was removed"
             ),
-            (.itemsSkipped(note: "n"), .forward, "Clipboard: some items weren't forwarded"),
+            (.itemsSkipped(count: 1), .forward, "Clipboard: some items weren't forwarded"),
+            (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
             (.peerReported(.dropDiskFull), .drop, "Drop: the VM ran out of disk space"),
             (
                 .peerReported(.dropDownloadsDenied), .drop,
@@ -329,7 +356,7 @@ struct ClipboardTransferWordingTests {
             ),
             (.peerReported(.dropFailed), .drop, "Drop: the files didn't reach the VM"),
             (.sendFailed, .drop, "Drop: the files didn't reach the VM"),
-            (.itemsSkipped(note: "n"), .drop, "Drop: some files weren't sent"),
+            (.itemsSkipped(count: 1), .drop, "Drop: some files weren't sent"),
             (.unclaimed, .drop, "Drop: the VM never took the files"),
             (.timedOut, .drop, "Drop: the VM stopped taking the files"),
         ]

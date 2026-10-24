@@ -214,23 +214,32 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest failed",
                 mentionsMacClipboardKept: false)
 
-        case (.itemsSkipped(let note), .drop):
+        case (.itemsSkipped(let count), .drop):
             return ClipboardTransferWording(
-                headline: "Some files not copied to \(vm).", message: note,
+                headline: "Some files not copied to \(vm).",
+                message: skippedMessage(count: count, item: "item"),
                 menuLine: "Drop: some files weren't sent",
                 mentionsMacClipboardKept: false)
 
-        case (.itemsSkipped(let note), _):
+        case (.itemsSkipped(let count), _):
             return ClipboardTransferWording(
-                headline: "Clipboard not copied to \(vm).", message: note,
+                headline: "Clipboard partly copied to \(vm).",
+                message: skippedMessage(count: count, item: "copied item"),
                 menuLine: "Clipboard: some items weren't forwarded",
                 mentionsMacClipboardKept: false)
 
-        case (.itemsUnreadable, _):
+        case (.itemsUnreadable, .drop):
             return ClipboardTransferWording(
                 headline: "Files not copied to \(vm).",
                 message: "Those items couldn't be read, so nothing was sent to the VM.",
                 menuLine: "Drop: the files didn't reach the VM",
+                mentionsMacClipboardKept: false)
+
+        case (.itemsUnreadable, _):
+            return ClipboardTransferWording(
+                headline: "Clipboard not copied to \(vm).",
+                message: "The copy couldn't be read, so nothing was sent to the VM.",
+                menuLine: "Clipboard: the copy couldn't be read",
                 mentionsMacClipboardKept: false)
 
         case (.sendFailed, _):
@@ -367,6 +376,14 @@ package struct ClipboardTransferWording: Equatable {
     private static func inboundFailureLine(for gesture: ClipboardTransferGesture) -> String {
         gesture == .preview
             ? "Clipboard: preview from the guest failed" : "Clipboard: paste from the guest failed"
+    }
+
+    /// The sentence for `count` unreadable items left out of a send whose rest
+    /// crossed; `item` names one of them.
+    private static func skippedMessage(count: Int, item: String) -> String {
+        count == 1
+            ? "One \(item) couldn't be read, so it wasn't sent to the VM. The rest were."
+            : "\(count) \(item)s couldn't be read, so they weren't sent to the VM. The rest were."
     }
 
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
