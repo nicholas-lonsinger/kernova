@@ -89,15 +89,17 @@ extension Frame {
         return frame
     }
 
-    /// A `DragOffer` announcing the items of the guest drag under `generation`.
+    /// A `DragOffer` announcing the items of the guest drag under `generation`,
+    /// `promised` naming the indices it carries as file promises.
     public static func dragOffer(
-        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]
+        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], promised: [Int] = []
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.dragOffer = Kernova_V1_DragOffer.with {
             $0.generation = generation
             $0.repInfo = reps
+            $0.promised = promised.map { UInt32(clamping: $0) }
         }
         return frame
     }
@@ -148,6 +150,7 @@ extension Frame {
             case .armed: $0.stage = .armed
             case .targeted: $0.stage = .targeted
             case .caught: $0.stage = .caught
+            case .resolving: $0.stage = .resolving
             case .failed(let code, let message):
                 $0.stage = .failed
                 if let code { $0.code = code.rawValue }
@@ -157,15 +160,42 @@ extension Frame {
         return frame
     }
 
-    /// A `DragSizes` carrying the measured size of each folder in the guest
-    /// drag under `generation`, keyed by the folder's index in its offer.
-    public static func dragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Frame {
+    /// A `DragSizes` settling items of the guest drag under `generation`:
+    /// `byteCounts` sizes each item it keys by index in the offer, and
+    /// `unavailable` lists the items that will never be sized.
+    public static func dragSizes(
+        generation: UInt64, byteCounts: [Int: Int], unavailable: [Int] = []
+    ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.dragSizes = Kernova_V1_DragSizes.with {
             $0.generation = generation
-            for (repIndex, byteCount) in folderByteCounts {
-                $0.folderByteCounts[UInt32(clamping: repIndex)] = UInt64(clamping: byteCount)
+            for (repIndex, byteCount) in byteCounts {
+                $0.byteCounts[UInt32(clamping: repIndex)] = UInt64(clamping: byteCount)
+            }
+            $0.unavailable = unavailable.map { UInt32(clamping: $0) }
+        }
+        return frame
+    }
+
+    /// A `DragResolve` asking the guest to have the promised items of the drag
+    /// for `generation` called in.
+    public static func dragResolve(generation: UInt64) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.dragResolve = Kernova_V1_DragResolve.with { $0.generation = generation }
+        return frame
+    }
+
+    /// A `DragNames` carrying the names the promised items of the drag for
+    /// `generation` took, keyed by each item's index in the offer.
+    public static func dragNames(generation: UInt64, filenames: [Int: String]) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.dragNames = Kernova_V1_DragNames.with {
+            $0.generation = generation
+            for (repIndex, filename) in filenames {
+                $0.filenames[UInt32(clamping: repIndex)] = filename
             }
         }
         return frame

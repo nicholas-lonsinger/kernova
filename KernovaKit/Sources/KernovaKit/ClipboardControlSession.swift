@@ -222,13 +222,16 @@ public final class ClipboardControlSession {
     ///
     /// `handleControlFrame` receives every frame, on the main actor and in
     /// arrival order — including one this session has since stopped for, which
-    /// its owner decides about (``hasStopped``). `onEnded` runs off the main
-    /// actor the moment the channel is done, so a pull parked on the main
-    /// thread is woken without waiting for a main-queue hop it is itself
-    /// blocking.
+    /// its owner decides about (``hasStopped``). `observe` sees each frame
+    /// first, on the thread that read it, before it is queued to the main
+    /// actor — for a reply a thread holding the main thread is waiting on.
+    /// `onEnded` runs off the main actor the moment the channel is done, so a
+    /// pull parked on the main thread is woken without waiting for a
+    /// main-queue hop it is itself blocking.
     @discardableResult
     public func start(
         handleControlFrame: @escaping @MainActor (Frame) -> Void,
+        observe: @escaping @Sendable (Frame) -> Void = { _ in },
         onEnded: @escaping @Sendable () -> Void = {}
     ) -> Bool {
         guard case .idle = lifecycle.withLock({ $0 }) else { return false }
@@ -265,6 +268,7 @@ public final class ClipboardControlSession {
                 channel: channel, label: label, connectionTag: tag, subject: subject,
                 inbox: inbox, lifecycle: lifecycle, onEnded: onEnded,
                 onControlFrame: { frame in
+                    observe(frame)
                     // Fire-and-forget: the consume loop must never wait on the
                     // main actor — a paste's promise callback occupies it, and
                     // a transfer this loop's frames open is what resolves that
@@ -372,12 +376,16 @@ public final class ClipboardControlSession {
 
     /// Announces `reps` under `generation` in the vocabulary of what this side
     /// offers — a `ClipboardOffer`, a host's `DropOffer`, a guest's `DragOffer`.
+    ///
+    /// `promised` names the indices a guest's drag carries as file promises;
+    /// only a `DragOffer` carries any.
     nonisolated public func sendOffer(
-        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
+        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool,
+        promised: [Int] = []
     ) throws {
         try channel.send(
             outboundDiscipline.offerFrame(
-                generation: generation, reps: reps, isConcealed: isConcealed))
+                generation: generation, reps: reps, isConcealed: isConcealed, promised: promised))
     }
 
     /// Retires the offer for `generation` in the vocabulary of what this side
@@ -444,9 +452,24 @@ public final class ClipboardControlSession {
         try? channel.send(.dragHandOff(generation: generation, step: step))
     }
 
-    /// Tells the host the measured sizes of the folders in the drag for
-    /// `generation`.
-    nonisolated public func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) throws {
-        try channel.send(.dragSizes(generation: generation, folderByteCounts: folderByteCounts))
+    /// Tells the host the sizes of items in the drag for `generation`, and
+    /// which will never be sized.
+    nonisolated public func sendDragSizes(
+        generation: UInt64, byteCounts: [Int: Int], unavailable: [Int] = []
+    ) throws {
+        try channel.send(
+            .dragSizes(generation: generation, byteCounts: byteCounts, unavailable: unavailable))
+    }
+
+    /// Asks the guest to have the promised items of the drag for `generation`
+    /// called in.
+    nonisolated public func sendDragResolve(generation: UInt64) throws {
+        try channel.send(.dragResolve(generation: generation))
+    }
+
+    /// Tells the host the names the promised items of the drag for
+    /// `generation` took.
+    nonisolated public func sendDragNames(generation: UInt64, filenames: [Int: String]) throws {
+        try channel.send(.dragNames(generation: generation, filenames: filenames))
     }
 }

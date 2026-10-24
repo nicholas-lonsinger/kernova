@@ -22,9 +22,12 @@ struct ClipboardOfferDisciplineTests {
         let drop = ClipboardOfferDiscipline(kind: .drop, sender: .host)
         let drag = ClipboardOfferDiscipline(kind: .drop, sender: .guest)
 
-        guard case .clipboardOffer = clipboard.offerFrame(generation: 1, reps: [], isConcealed: false).payload,
-            case .dropOffer = drop.offerFrame(generation: 1, reps: [], isConcealed: false).payload,
-            case .dragOffer = drag.offerFrame(generation: 1, reps: [], isConcealed: false).payload,
+        func offer(_ discipline: ClipboardOfferDiscipline) -> Frame.OneOf_Payload? {
+            discipline.offerFrame(generation: 1, reps: [], isConcealed: false, promised: []).payload
+        }
+        guard case .clipboardOffer = offer(clipboard),
+            case .dropOffer = offer(drop),
+            case .dragOffer = offer(drag),
             case .clipboardRelease = clipboard.releaseFrame(generation: 1).payload,
             case .dropRelease = drop.releaseFrame(generation: 1).payload,
             case .dragRelease = drag.releaseFrame(generation: 1).payload

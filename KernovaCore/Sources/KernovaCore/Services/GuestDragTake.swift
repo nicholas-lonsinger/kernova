@@ -466,6 +466,11 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             case .abandoned:
                 break
             }
+        case .resolving:
+            // Answers the `DragResolve` a naming of promised items sends, which
+            // the endpoint consumes itself
+            // (`ClipboardEndpoint.resolveDragNames(generation:deadline:releasingGuestButton:)`).
+            break
         case .failed(let code, let message):
             let reason = "the guest failed the hand-off (\(code?.rawValue ?? "unknown")): \(message)"
             switch phase {

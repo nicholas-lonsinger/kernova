@@ -80,12 +80,26 @@ private final class UnreadableReps: Sendable {
 /// here.
 @MainActor
 final class ClipboardOutboundOffers {
+    /// Where one promised item of a drag out is.
+    private enum PromiseState: Equatable {
+        /// Its source has not written it; the offer holds a placeholder.
+        case pending
+        /// Its file has landed and replaced the placeholder.
+        case resolved
+        /// Its source failed to write it; it will never be served.
+        case unavailable
+    }
+
     /// One offer this side has made and can still serve.
     private final class Entry {
         let generation: UInt64
         /// What the offer serves; a drag's folders take their measured sizes
-        /// after the offer went out (``sendFolderSizes(generation:byteCounts:)``).
+        /// after the offer went out (``sendFolderSizes(generation:byteCounts:)``),
+        /// and its promised items their files once written
+        /// (``resolvePromise(generation:repIndex:fileURL:byteCount:)``).
         var content: ClipboardContent
+        /// A drag's promised items, by index.
+        var promises: [Int: PromiseState] = [:]
         /// The generation the offer is still wanted at, read from each
         /// transfer's own queue; zeroed once it is not, which aborts its
         /// transfers.
@@ -229,6 +243,37 @@ final class ClipboardOutboundOffers {
     func offer(
         _ content: ClipboardContent, skippedBeforeOffer: Int = 0
     ) -> ClipboardEndpoint.OfferOutcome {
+        offer(content, skippedBeforeOffer: skippedBeforeOffer, promised: [])
+    }
+
+    /// Announces a drag out whose items are files on disk or file promises,
+    /// reporting what became of it.
+    ///
+    /// A promise is offered as its type alone and served nothing until its
+    /// file lands (``resolvePromise(generation:repIndex:fileURL:byteCount:)``).
+    /// Anywhere but a drag out it sends nothing.
+    func offerDrag(_ items: [ClipboardDragOutItem]) -> ClipboardEndpoint.OfferOutcome {
+        guard discipline.flow == .dragOut else { return .sendFailed }
+        var promised: Set<Int> = []
+        let representations = items.enumerated().map {
+            index, item -> ClipboardContent.Representation in
+            switch item {
+            case .file(let representation):
+                return representation
+            case .promise(let uti, let isDirectory):
+                promised.insert(index)
+                return ClipboardContent.Representation(
+                    pendingRemoteUTI: uti, byteCount: 0, isDirectory: isDirectory)
+            }
+        }
+        return offer(
+            ClipboardContent(representations: representations), skippedBeforeOffer: 0,
+            promised: promised)
+    }
+
+    private func offer(
+        _ content: ClipboardContent, skippedBeforeOffer: Int, promised: Set<Int>
+    ) -> ClipboardEndpoint.OfferOutcome {
         if discipline.dedups, content.digest == lastOfferedDigestStorage { return .duplicate }
         // Cap to the 16-bit rep-index limit a transfer id can address; the
         // uncapped digest stays the dedup key, so unchanged content isn't
@@ -247,11 +292,17 @@ final class ClipboardOutboundOffers {
         let operation: ClipboardTransferOperation? =
             discipline.readout == .upFront
             ? makeUpFrontOperation(generation: generation, content: offered) : nil
+        let offeredPromises = promised.filter { $0 < offered.representations.count }
         do {
             try session.sendOffer(
                 generation: generation,
-                reps: offered.representations.map(\.offerRepresentationInfo),
-                isConcealed: offered.isConcealed)
+                reps: offered.representations.enumerated().map { index, representation in
+                    var info = representation.offerRepresentationInfo
+                    // A promise declares its type alone, and lands as a file.
+                    if offeredPromises.contains(index) { info.isInline = false }
+                    return info
+                },
+                isConcealed: offered.isConcealed, promised: offeredPromises.sorted())
         } catch {
             Self.logger.log(
                 .error,
@@ -269,6 +320,7 @@ final class ClipboardOutboundOffers {
         let entry = Entry(
             generation: generation, content: offered,
             skippedBeforeOffer: max(0, skippedBeforeOffer))
+        entry.promises = Dictionary(uniqueKeysWithValues: offeredPromises.map { ($0, .pending) })
         entry.operation = operation
         entries[generation] = entry
         // The peer serves drops one job at a time, so a batch offered while
@@ -377,7 +429,7 @@ final class ClipboardOutboundOffers {
         let folders = byteCounts.filter { sources[$0.key] != nil }
         entry.content = entry.content.withDirectoryEstimates(folders)
         do {
-            try session.sendDragSizes(generation: generation, folderByteCounts: folders)
+            try session.sendDragSizes(generation: generation, byteCounts: folders)
         } catch {
             Self.logger.log(
                 .warning,
@@ -388,6 +440,99 @@ final class ClipboardOutboundOffers {
         Self.logger.log(
             .notice,
             "Sent the sizes of \(folders.count, privacy: .public) folder(s) to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(folders.values.reduce(0, &+), privacy: .public) bytes)"
+        )
+        return true
+    }
+
+    // MARK: - Promised drag items
+
+    /// Tells the peer the names the drag's promised items took when they were
+    /// called in, reporting whether the drag was live and the names went out.
+    ///
+    /// A name for an index that is not promised is dropped, and a promised
+    /// item left out reads as one that could not be named. Sent even with no
+    /// names: the peer is waiting on this frame.
+    @discardableResult
+    func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
+        guard let entry = entries[generation] else { return false }
+        let named = filenames.filter { entry.promises[$0.key] != nil }
+        do {
+            try session.sendDragNames(generation: generation, filenames: named)
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to send the names of gen=\(generation, privacy: .public)'s promised items: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        Self.logger.log(
+            .notice,
+            "Sent the names of \(named.count, privacy: .public) of \(entry.promises.count, privacy: .public) promised item(s) to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        return true
+    }
+
+    /// Puts the file a promise wrote in place of its placeholder — named by its
+    /// last path component, typed as the promise declared — and tells the peer
+    /// its size, reporting whether the item was still a pending promise of a
+    /// live drag and the size went out.
+    ///
+    /// Recorded before the send, so the pull the size unblocks is served the
+    /// file. A promise of a directory type takes `fileURL` as its folder, and
+    /// `byteCount` as its tree's measured size.
+    @discardableResult
+    func resolvePromise(generation: UInt64, repIndex: Int, fileURL: URL, byteCount: Int) -> Bool {
+        guard let entry = entries[generation], entry.promises[repIndex] == .pending else {
+            return false
+        }
+        let placeholder = entry.content.representations[repIndex]
+        let filename = fileURL.lastPathComponent
+        let landed =
+            placeholder.isDirectory
+            ? ClipboardContent.Representation(
+                directorySourceURL: fileURL, estimatedByteCount: byteCount, filename: filename,
+                uti: placeholder.uti)
+            : ClipboardContent.Representation(
+                uti: placeholder.uti, fileURL: fileURL, byteCount: byteCount, filename: filename)
+        entry.content = entry.content.replacingRepresentation(at: repIndex, with: landed)
+        entry.promises[repIndex] = .resolved
+        do {
+            try session.sendDragSizes(generation: generation, byteCounts: [repIndex: byteCount])
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to send the size of promised item \(repIndex, privacy: .public) of gen=\(generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        Self.logger.log(
+            .notice,
+            "Promised item \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) landed (\(byteCount, privacy: .public) bytes); told '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        return true
+    }
+
+    /// Marks the drag's pending promises among `repIndices` as never to be
+    /// written and tells the peer, reporting whether any was pending and the
+    /// news went out.
+    @discardableResult
+    func markPromisesUnavailable(generation: UInt64, repIndices: [Int]) -> Bool {
+        guard let entry = entries[generation] else { return false }
+        let pending = Set(repIndices.filter { entry.promises[$0] == .pending }).sorted()
+        guard !pending.isEmpty else { return false }
+        for index in pending { entry.promises[index] = .unavailable }
+        do {
+            try session.sendDragSizes(generation: generation, byteCounts: [:], unavailable: pending)
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Failed to send that \(pending.count, privacy: .public) promised item(s) of gen=\(generation, privacy: .public) are unavailable: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        Self.logger.log(
+            .warning,
+            "\(pending.count, privacy: .public) promised item(s) of gen=\(generation, privacy: .public) will never be written; told '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
         )
         return true
     }
@@ -441,6 +586,19 @@ final class ClipboardOutboundOffers {
             outbox.refuse(
                 link: link, transferID: request.transferID, code: .requestUTI,
                 message: utiMessage(request.uti))
+            return
+        }
+        if let promise = entry.promises[repIndex], promise != .resolved {
+            // The peer is told an item's size only once it has a file, so a pull
+            // ahead of that is a peer out of step; the refusal is a source
+            // read failure, since there is no source to read.
+            Self.logger.log(
+                .warning,
+                "Request for promised item \(repIndex, privacy: .public) of gen=\(request.generation, privacy: .public), which has no file (conn=\(self.session.connectionTag, privacy: .public))"
+            )
+            outbox.refuse(
+                link: link, transferID: request.transferID, code: .readError,
+                message: "Promised item \(repIndex) has no file")
             return
         }
         // Ahead of the transfer: with no readout a transfer announced here

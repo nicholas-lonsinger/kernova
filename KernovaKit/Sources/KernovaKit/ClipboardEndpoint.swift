@@ -234,8 +234,14 @@ public final class ClipboardEndpoint {
     /// A clipboard connection retires the report the last one left standing:
     /// what it described is a transfer of a session that is over.
     public func start() {
+        let observesDrags = role == .host && kind == .drop
         let started = session.start(
             handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
+            observe: { [inbound] frame in
+                // The replies a drag's naming waits for, taken before the main
+                // hop: the waiting thread can be the main thread itself.
+                if observesDrags { inbound.observeOffMain(frame) }
+            },
             onEnded: { [weak self] in
                 // Off the main actor and before anything hops to it: a pull
                 // parked on the main thread is what would block that hop.
@@ -507,10 +513,106 @@ public final class ClipboardEndpoint {
     /// `generation` — keyed by each folder's index in the offer — and sends
     /// them in a `DragSizes`, reporting whether the drag was still live and
     /// the sizes went out. Guest drop channel only.
+    ///
+    /// The host pulls no folder until a `DragSizes` sizes it, so the folders
+    /// this leaves out keep waiting.
     @discardableResult
     public func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Bool {
         guard role == .guest, kind == .drop else { return false }
         return outbound.sendFolderSizes(generation: generation, byteCounts: folderByteCounts)
+    }
+
+    // MARK: - Promised items (guest side)
+
+    /// Announces a drag whose items are files on disk or file promises,
+    /// reporting what became of it. Guest drop channel only; anywhere else it
+    /// sends nothing and reports `.sendFailed`.
+    ///
+    /// A promise is offered as its type alone, and its pulls are refused until
+    /// ``resolvePromisedDragItem(generation:repIndex:fileURL:byteCount:)`` puts
+    /// its file in place — the host asks for none before that sends its size.
+    @discardableResult
+    public func offerDrag(_ items: [ClipboardDragOutItem]) -> OfferOutcome {
+        guard role == .guest, kind == .drop else { return .sendFailed }
+        return outbound.offerDrag(items)
+    }
+
+    /// Sends the names the promised items of the drag offered under
+    /// `generation` took when the catcher called them in, keyed by each item's
+    /// index, reporting whether the drag was live and the names went out.
+    /// Guest drop channel only.
+    ///
+    /// The host is waiting on this frame, so send it even with no names; a
+    /// promised item left out reads as one that could not be named.
+    @discardableResult
+    public func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
+        guard role == .guest, kind == .drop else { return false }
+        return outbound.sendDragNames(generation: generation, filenames: filenames)
+    }
+
+    /// Puts the file a promise of the drag offered under `generation` wrote in
+    /// place of its placeholder, and sends the host its size, reporting
+    /// whether the item was a pending promise of a live drag and the size went
+    /// out. Guest drop channel only.
+    ///
+    /// The item is named by `fileURL`'s last path component and keeps the type
+    /// its promise declared. A promise of a directory type takes `fileURL` as
+    /// its folder and `byteCount` as its tree's measured size.
+    @discardableResult
+    public func resolvePromisedDragItem(
+        generation: UInt64, repIndex: Int, fileURL: URL, byteCount: Int
+    ) -> Bool {
+        guard role == .guest, kind == .drop else { return false }
+        return outbound.resolvePromise(
+            generation: generation, repIndex: repIndex, fileURL: fileURL, byteCount: byteCount)
+    }
+
+    /// Tells the host the pending promises among `repIndices` of the drag
+    /// offered under `generation` will never be written — their source failed
+    /// — reporting whether any was pending and the news went out. Guest drop
+    /// channel only.
+    @discardableResult
+    public func markPromisedDragItemsUnavailable(generation: UInt64, repIndices: [Int]) -> Bool {
+        guard role == .guest, kind == .drop else { return false }
+        return outbound.markPromisesUnavailable(generation: generation, repIndices: repIndices)
+    }
+
+    // MARK: - Promised items (host side)
+
+    /// The names the promised items of the drag offered under `generation`
+    /// took, keyed by `repIndex`, or `nil` until they have arrived. Never
+    /// waits.
+    nonisolated public func resolvedDragNames(generation: UInt64) -> [Int: String]? {
+        guard role == .host, kind == .drop else { return nil }
+        return inbound.dragNaming.names(generation: generation)
+    }
+
+    /// Names the promised items of the drag offered under `generation`,
+    /// holding the calling thread — any thread, the main thread inside a
+    /// tracking loop included — until the guest names them, fails, or
+    /// `deadline` passes. Host drop channel only.
+    ///
+    /// The first call sends `DragResolve`, waits for the guest's
+    /// `STAGE_RESOLVING`, runs `releasingGuestButton` on the calling thread so
+    /// the guest drops onto its catcher, then waits for `DragNames`. A call
+    /// while that runs joins it, waiting to its own deadline, and runs nothing.
+    /// Once settled — names, a failure, or the deadline passing — every later
+    /// call returns the same at once, until the drag is retired.
+    ///
+    /// Fails fast when the guest answers `STAGE_FAILED` or withdraws the drag,
+    /// the drag is retired, or the session ends. A drag with no promised items
+    /// is named at once, with nothing sent and nothing released.
+    ///
+    /// - Returns: each named item's sanitized name
+    ///   (``ClipboardDraggedItem/safeFilename(_:isDirectory:)``), by `repIndex`;
+    ///   an item the guest could not name is absent.
+    nonisolated public func resolveDragNames(
+        generation: UInt64, deadline: DispatchTime, releasingGuestButton: () -> Void
+    ) -> Result<[Int: String], ClipboardDragNamingFailure> {
+        guard role == .host, kind == .drop else { return .failure(.dragNotLive) }
+        return inbound.resolveDragNames(
+            generation: generation, deadline: deadline,
+            releasingGuestButton: releasingGuestButton)
     }
 
     // MARK: - Data connections
@@ -662,6 +764,12 @@ public final class ClipboardEndpoint {
         case .dragSizes(let sizes):
             guard kind == .drop, role == .host else { return closeOnWrongPort() }
             inbound.handleDragSizes(sizes)
+        case .dragNames(let names):
+            guard kind == .drop, role == .host else { return closeOnWrongPort() }
+            inbound.handleDragNames(names)
+        case .dragResolve(let resolve):
+            guard kind == .drop, role == .guest else { return closeOnWrongPort() }
+            delegate?.endpoint(self, didReceiveDragResolve: resolve.generation)
         case .error(let error):
             inbound.handlePeerError(error)
         case .hello, .heartbeat, .policyUpdate, .logRecord:
@@ -720,6 +828,15 @@ public final class ClipboardEndpoint {
     /// folder's size, on the pulling thread.
     public func onInboundSizeWaitForTesting(_ body: (@Sendable () -> Void)?) {
         inbound.sizeWaitBeganForTesting.withLock { $0 = body }
+    }
+
+    /// Test seam: has drag naming on this connection take its wait from
+    /// `vend` — `{ nil }` parks even the main thread, as inside a tracking
+    /// loop.
+    nonisolated func setDragNamingEventLoopWaitForTesting(
+        _ vend: @escaping @Sendable () -> NestedEventLoopWait?
+    ) {
+        inbound.dragNaming.setEventLoopWaitForTesting(vend)
     }
 
     /// Test seam: how many inbound pulls this connection has started.
@@ -793,6 +910,14 @@ public protocol ClipboardEndpointDelegate: AnyObject {
     /// the drag was still live here. Guest drop channel only.
     func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64)
 
+    /// A Mac destination wants the promised items of the drag taken under
+    /// `generation`: the guest answers
+    /// ``ClipboardEndpoint/sendDragHandOff(generation:step:)`` with `.resolving`
+    /// once its catcher will call them in on the drop the host then releases,
+    /// or `.failed`, and sends ``ClipboardEndpoint/sendDragNames(generation:filenames:)``
+    /// once they are called in. Guest drop channel only.
+    func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragResolve generation: UInt64)
+
     /// An offer this side was holding stopped being servable. `generation` is
     /// `nil` when there was none, which is still the moment to withdraw whatever
     /// this side published for the peer's last offer.
@@ -839,6 +964,9 @@ extension ClipboardEndpointDelegate {
 
     /// Does nothing.
     public func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {}
+
+    /// Does nothing.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragResolve generation: UInt64) {}
 
     /// Does nothing.
     public func endpoint(

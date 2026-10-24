@@ -236,6 +236,8 @@ final class GuestDragItemWriter {
                 return .timedOut
             case .cancelled:
                 return lostOffer
+            case .unavailable:
+                return .peerReported(.dragItemUnavailable)
             case .delivered, .mainThreadUnavailable:
                 return .transferFailed
             }

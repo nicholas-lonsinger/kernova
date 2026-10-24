@@ -32,6 +32,10 @@ public struct ClipboardContent: Equatable, Sendable {
             /// `.inMemory`/`.file` once a `ClipboardRequest` streams the bytes.
             /// Renders a metadata-only preview host-side, and is never handed to
             /// the sender.
+            ///
+            /// Also the guest's placeholder for a promised drag item its source
+            /// has not written, replaced by the landed file
+            /// (``ClipboardEndpoint/resolvePromisedDragItem(generation:repIndex:fileURL:byteCount:)``).
             case pendingRemote(byteCount: Int)
 
             /// A copied **source directory** whose tree is walked and streamed on
@@ -273,6 +277,15 @@ public struct ClipboardContent: Equatable, Sendable {
                 directorySourceURL: url, estimatedByteCount: estimate,
                 filename: representation.filename, uti: representation.uti)
         }
+        return ClipboardContent(representations: updated, isConcealed: isConcealed)
+    }
+
+    /// Returns a copy with `representation` in place of the one at `index`.
+    public func replacingRepresentation(
+        at index: Int, with representation: Representation
+    ) -> ClipboardContent {
+        var updated = representations
+        updated[index] = representation
         return ClipboardContent(representations: updated, isConcealed: isConcealed)
     }
 

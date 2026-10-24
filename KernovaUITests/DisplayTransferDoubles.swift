@@ -146,6 +146,6 @@ extension ClipboardDraggedItem {
             declared: RepInfo(
                 uti: uti, byteCount: byteCount, filename: filename, isInline: false,
                 isDirectory: isDirectory
-            ).wire)
+            ).wire, isPromised: false)
     }
 }

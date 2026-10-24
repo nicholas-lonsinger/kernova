@@ -209,7 +209,7 @@ struct VsockGuestDropAgentDragOutTests {
             throw TestFailure("Expected a DragSizes, got \(String(describing: frame.payload))")
         }
         #expect(sizes.generation == offer.generation)
-        #expect(sizes.folderByteCounts == [0: 9])
+        #expect(sizes.byteCounts == [0: 9])
     }
 
     @Test("a host that does not take drags out gets no watcher until it says it does")

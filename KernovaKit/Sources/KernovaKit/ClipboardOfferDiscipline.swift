@@ -139,15 +139,17 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
 
     // MARK: - Vocabulary
 
-    /// The frame announcing `reps` under `generation`.
+    /// The frame announcing `reps` under `generation`; only a drag out carries
+    /// `promised` items.
     func offerFrame(
-        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
+        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool,
+        promised: [Int]
     ) -> Frame {
         switch flow {
         case .clipboard:
             .clipboardOffer(generation: generation, reps: reps, isConcealed: isConcealed)
         case .drop: .dropOffer(generation: generation, reps: reps)
-        case .dragOut: .dragOffer(generation: generation, reps: reps)
+        case .dragOut: .dragOffer(generation: generation, reps: reps, promised: promised)
         }
     }
 

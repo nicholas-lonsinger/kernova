@@ -74,7 +74,7 @@ struct DragFrameTests {
     @Test(
         "every hand-off step round-trips, carrying a code only when it failed",
         arguments: [
-            ClipboardDragHandOffStep.armed, .targeted, .caught,
+            ClipboardDragHandOffStep.armed, .targeted, .caught, .resolving,
             .failed(.dragTakeStale, message: "the press is over"),
             .failed(nil, message: ""),
         ])
@@ -93,16 +93,52 @@ struct DragFrameTests {
         }
     }
 
-    @Test("folder sizes round-trip their generation and every folder's size by index")
+    @Test("item sizes round-trip their generation, every listed item's size and the unavailable ones")
     func sizesRoundTrip() throws {
-        let decoded = try roundTrip(.dragSizes(generation: 8, folderByteCounts: [1: 4_096, 3: 0]))
+        let decoded = try roundTrip(
+            .dragSizes(generation: 8, byteCounts: [1: 4_096, 3: 0], unavailable: [5, 2]))
         #expect(decoded.protocolVersion == 1)
         guard case .dragSizes(let sizes) = decoded.payload else {
             Issue.record("Expected a drag sizes payload")
             return
         }
         #expect(sizes.generation == 8)
-        #expect(sizes.folderByteCounts == [1: 4_096, 3: 0])
+        #expect(sizes.byteCounts == [1: 4_096, 3: 0])
+        #expect(sizes.unavailable == [5, 2])
+    }
+
+    @Test("a drag offer round-trips the indices it carries as promises")
+    func promisedOfferRoundTrips() throws {
+        let frame = Frame.dragOffer(
+            generation: 2,
+            reps: [
+                RepInfo(uti: "public.data", byteCount: 3, filename: "a.bin", isInline: false).wire,
+                RepInfo(uti: "public.jpeg", byteCount: 0, isInline: false).wire,
+            ],
+            promised: [1])
+        guard case .dragOffer(let offer) = try roundTrip(frame).payload else {
+            Issue.record("Expected a drag offer payload")
+            return
+        }
+        #expect(offer.promised == [1])
+        #expect(offer.repInfo[1].filename.isEmpty)
+    }
+
+    @Test("a resolve round-trips its generation, and names their generation and every name by index")
+    func resolveAndNamesRoundTrip() throws {
+        guard case .dragResolve(let resolve) = try roundTrip(.dragResolve(generation: 6)).payload
+        else {
+            Issue.record("Expected a drag resolve payload")
+            return
+        }
+        #expect(resolve.generation == 6)
+        let decoded = try roundTrip(.dragNames(generation: 7, filenames: [0: "IMG_1.HEIC", 2: "b"]))
+        guard case .dragNames(let names) = decoded.payload else {
+            Issue.record("Expected a drag names payload")
+            return
+        }
+        #expect(names.generation == 7)
+        #expect(names.filenames == [0: "IMG_1.HEIC", 2: "b"])
     }
 
     @Test("a stage this build does not define reads as a failure, never as a step to act on")
@@ -135,6 +171,10 @@ struct DragFrameTests {
         catcher.dragCatcher = Kernova_V1_DragCatcher()
         var sizes = Frame()
         sizes.dragSizes = Kernova_V1_DragSizes()
+        var resolve = Frame()
+        resolve.dragResolve = Kernova_V1_DragResolve()
+        var names = Frame()
+        names.dragNames = Kernova_V1_DragNames()
 
         // Fields 43–49 with wire type 2 encode as the tag byte pairs below.
         #expect(Array(try offer.serializedData()).prefix(2) == [0xDA, 0x02])
@@ -144,6 +184,9 @@ struct DragFrameTests {
         #expect(Array(try handOff.serializedData()).prefix(2) == [0xFA, 0x02])
         #expect(Array(try catcher.serializedData()).prefix(2) == [0x82, 0x03])
         #expect(Array(try sizes.serializedData()).prefix(2) == [0x8A, 0x03])
+        // Fields 60 and 61, past the clipboard data connection's 50–59.
+        #expect(Array(try resolve.serializedData()).prefix(2) == [0xE2, 0x03])
+        #expect(Array(try names.serializedData()).prefix(2) == [0xEA, 0x03])
     }
 
     @Test("every drag frame on the control channel classifies as wrong port")
@@ -152,7 +195,8 @@ struct DragFrameTests {
             .dragOffer(generation: 1, reps: []), .dragComplete(generation: 1),
             .dragRelease(generation: 1), .dragTake(generation: 1),
             .dragHandOff(generation: 1, step: .armed), .dragCatcher(generation: 1, shown: true),
-            .dragSizes(generation: 1, folderByteCounts: [:]),
+            .dragSizes(generation: 1, byteCounts: [:]), .dragResolve(generation: 1),
+            .dragNames(generation: 1, filenames: [:]),
         ]
         for frame in frames {
             #expect(ControlChannelInbound.classify(frame) == .wrongPort)

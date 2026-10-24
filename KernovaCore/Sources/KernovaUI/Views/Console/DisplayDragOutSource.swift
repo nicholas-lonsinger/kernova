@@ -40,10 +40,10 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
     /// after the session that carried it has ended.
     final class PromisedItem: Sendable {
         let index: Int
-        let filename: String
+        let filename: String?
         let source: DisplayDragOutSource
 
-        init(index: Int, filename: String, source: DisplayDragOutSource) {
+        init(index: Int, filename: String?, source: DisplayDragOutSource) {
             self.index = index
             self.filename = filename
             self.source = source

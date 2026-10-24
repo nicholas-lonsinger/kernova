@@ -61,6 +61,10 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
     /// Every generation the host said it is done with, in arrival order.
     public private(set) var completedDrags: [UInt64] = []
 
+    /// Every generation the host asked to have its promises called in, in
+    /// arrival order.
+    public private(set) var resolves: [UInt64] = []
+
     /// Every retraction, in order.
     public private(set) var retractions: [Retraction] = []
 
@@ -203,6 +207,12 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
     /// Records the host being done with a drag.
     public func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {
         completedDrags.append(generation)
+        changed.notify()
+    }
+
+    /// Records the host asking for a drag's promises to be called in.
+    public func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragResolve generation: UInt64) {
+        resolves.append(generation)
         changed.notify()
     }
 
