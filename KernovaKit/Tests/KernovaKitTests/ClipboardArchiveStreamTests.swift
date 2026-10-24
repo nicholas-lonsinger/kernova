@@ -229,6 +229,48 @@ struct ClipboardArchiveStreamTests {
         #expect(!fm.fileExists(atPath: dest.path))
     }
 
+    /// A peer's archive holding the root, an entry `node` of `type`, then the
+    /// regular file `after.txt` — so an extract that stops at `node` never
+    /// lands `after.txt`.
+    private func peerArchive(withNodeOf type: ArchiveHeader.EntryType) throws -> Data {
+        let sink = ClipboardArchiveDataSink()
+        let byteStream = try #require(ArchiveByteStream.customStream(instance: sink))
+        let compress = try #require(
+            ArchiveByteStream.compressionStream(using: .lz4, writingTo: byteStream))
+        let encode = try #require(ArchiveStream.encodeStream(writingTo: compress))
+        for (entryType, path) in [(ArchiveHeader.EntryType.directory, ""), (type, "node")] {
+            let header = ArchiveHeader()
+            header.append(.uint(key: .init("TYP"), value: UInt64(entryType.rawValue)))
+            header.append(.string(key: .init("PAT"), value: path))
+            if entryType == .characterSpecial || entryType == .blockSpecial {
+                header.append(.uint(key: .init("DEV"), value: 0))
+            }
+            header.append(.uint(key: .init("MOD"), value: 0o755))
+            try encode.writeHeader(header)
+        }
+        try ClipboardArchiveCodec.writeBlobEntry(Data("after".utf8), name: "after.txt", to: encode)
+        try encode.close()
+        try compress.close()
+        try byteStream.close()
+        return sink.bytes
+    }
+
+    @Test(
+        "an entry that is not a file, folder or symlink lands nothing, and the rest of the archive does",
+        arguments: [
+            ArchiveHeader.EntryType.fifo, .socket, .characterSpecial, .blockSpecial, .whiteout,
+            .door, .port, .metadata,
+        ].map(\.rawValue))
+    func nodeEntryLandsNothing(rawType: UInt32) throws {
+        let dest = try makeDestination(in: scratch.url)
+
+        try ClipboardArchive.extract(
+            try peerArchive(withNodeOf: ArchiveHeader.EntryType(rawValue: rawType)), into: dest)
+
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dest.path) == ["after.txt"])
+        #expect(try Data(contentsOf: dest.appendingPathComponent("after.txt")) == Data("after".utf8))
+    }
+
     // MARK: - One-entry sources
 
     @Test("a file source round-trips byte-identically under its entry name, with mode and times")

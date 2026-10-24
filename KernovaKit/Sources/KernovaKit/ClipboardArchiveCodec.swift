@@ -336,7 +336,9 @@ enum ClipboardArchiveCodec {
 
     /// Extracts the archive `source` carries into `destinationURL`.
     ///
-    /// Same close discipline, and same scoping, as the encode side.
+    /// Same close discipline, and same scoping, as the encode side. Only regular
+    /// files, directories and symlinks land; any other entry the archive carries
+    /// is left out.
     ///
     /// - Parameters:
     ///   - source: the arriving archive bytes.
@@ -396,7 +398,7 @@ enum ClipboardArchiveCodec {
             guard
                 let extractStream = ArchiveStream.extractStream(
                     extractingTo: FilePath(destinationURL.path),
-                    selectUsing: clearImmutability, flags: .ignoreOperationNotPermitted)
+                    selectUsing: landingFilter, flags: .ignoreOperationNotPermitted)
             else { throw ClipboardArchive.ArchiveError.openExtractStream }
             defer { closes.close { try extractStream.close() } }
 
@@ -432,26 +434,54 @@ enum ClipboardArchiveCodec {
         }
     }
 
-    /// Clears the immutable and append-only bits from each entry's flags as the
+    /// What of each entry lands: whether it is created at all, and with which
+    /// flags.
+    ///
+    /// The peer chooses what every entry carries, so the receiver is the only
+    /// place either guarantee can hold; the sender writes each entry as the
+    /// source has it.
+    private static func landingFilter(
+        _ message: ArchiveHeader.EntryMessage, _: FilePath, _ data: ArchiveHeader.EntryFilterData?
+    ) -> ArchiveHeader.EntryMessageStatus {
+        switch (message, data) {
+        case (.extractBegin, .header(let header)?):
+            return lands(header) ? .ok : .skip
+        case (.extractAttributes, .entryAttributes(let attributes)?):
+            clearImmutability(attributes)
+            return .ok
+        default:
+            return .ok
+        }
+    }
+
+    /// The entry types a file or a folder is made of.
+    ///
+    /// Creating any other kind of node can stall the extract: once AppleArchive
+    /// has made a FIFO, the extract never returns
+    /// (docs/research/2026-10-22-applearchive-folder-encoder-read-failures.md).
+    private static let landedEntryTypes = Set(
+        [ArchiveHeader.EntryType.regularFile, .directory, .link].map { UInt64($0.rawValue) })
+
+    private static func lands(_ header: ArchiveHeader) -> Bool {
+        guard case .uint(_, let type)? = header.field(forKey: .init("TYP")) else { return false }
+        return landedEntryTypes.contains(type)
+    }
+
+    /// Clears the immutable and append-only bits from an entry's flags as the
     /// extract applies them.
     ///
     /// Either bit blocks `unlink` on the entry *and* on every directory above
     /// it, so one locked entry makes `removeItem` fail for the whole extracted
     /// tree — taking out the generation sweep with it, and every later reclaim of
-    /// the process root that holds it. The peer chooses
-    /// what an entry's `FLG` carries, so the receiver is the only place the
-    /// guarantee can hold; the sender writes the source's flags unaltered.
+    /// the process root that holds it.
     ///
     /// Cleared here rather than off a walk of the finished tree because an
     /// extract that stops part-way removes its output immediately, leaving no
     /// point at which a walk could run.
-    private static func clearImmutability(
-        _: ArchiveHeader.EntryMessage, _: FilePath, _ data: ArchiveHeader.EntryFilterData?
-    ) -> ArchiveHeader.EntryMessageStatus {
-        if case .entryAttributes(let attributes)? = data, let flags = attributes.flg {
+    private static func clearImmutability(_ attributes: ArchiveHeader.EntryAttributes) {
+        if let flags = attributes.flg {
             attributes.flg =
                 flags & ~UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND)
         }
-        return .ok
     }
 }
