@@ -15,17 +15,24 @@ import UniformTypeIdentifiers
 struct GuestDragOutTests {
     private let scratch = TestScratchDirectory(prefix: "GuestDragOutTests")
 
-    /// A drag-out over fakes, watching.
+    /// A drag-out over fakes, offering what `offering` says the host takes.
     @MainActor
     private struct Rig {
         let input = FakeGuestDragInput()
         let surface = FakeCatcherSurface()
         let peer = FakeGuestDragPeer()
+        let staging = TestStagingRoot()
         let dragOut: GuestDragOut
 
-        init(watching: Bool = true) {
-            dragOut = GuestDragOut(peer: peer, system: .faked(input: input, surface: surface))
-            dragOut.setWatching(watching)
+        init(offering: HostDragOutSupport = .filesAndPromises) {
+            dragOut = GuestDragOut(
+                peer: peer, system: .faked(input: input, surface: surface), stagingRoot: staging.root)
+            dragOut.setOffering(offering)
+        }
+
+        /// Where every drag's called-in promises land.
+        var promiseFolders: URL {
+            staging.root.url.appendingPathComponent(GuestDragPromises.stagingLabel, isDirectory: true)
         }
 
         /// A press that drags `items`, read by the first tick and resolved.
@@ -54,7 +61,13 @@ struct GuestDragOutTests {
     private func caught(_ urls: [URL]?, mask: NSDragOperation = [.copy, .move, .generic])
         -> GuestDragCatcher.Drag
     {
-        GuestDragCatcher.Drag(sourceMask: mask, fileURLs: urls)
+        caught(items: urls?.map(GuestDragItem.file), mask: mask)
+    }
+
+    private func caught(items: [GuestDragItem]?, mask: NSDragOperation = [.copy, .move, .generic])
+        -> GuestDragCatcher.Drag
+    {
+        GuestDragCatcher.Drag(sourceMask: mask, items: items)
     }
 
     // MARK: - Which drags are offered
@@ -67,7 +80,7 @@ struct GuestDragOutTests {
 
         rig.pressAndDrag([fileItem(first), fileItem(second)])
 
-        #expect(rig.peer.events == [.offered(generation: 1, filenames: ["one.txt", "two.txt"])])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["one.txt", "two.txt"])])
     }
 
     @Test("a folder is offered as one item")
@@ -79,14 +92,58 @@ struct GuestDragOutTests {
 
         rig.pressAndDrag([fileItem(folder)])
 
-        #expect(rig.peer.events == [.offered(generation: 1, filenames: ["Folder"])])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["Folder"])])
     }
 
-    @Test("any item that is a file promise keeps the whole drag in the guest")
-    func aPromiseKeepsTheDrag() throws {
+    @Test("an item's promise wins over the derivative file URL it also carries")
+    func aPromiseWinsOverItsFileURL() throws {
+        let derivative = try file("derivative.jpeg")
+        let pasteboard = FakeReadPasteboard()
+        pasteboard.setItems([promiseItem("public.heic", alongside: derivative)])
+
+        #expect(
+            GuestDraggedItems.items(on: pasteboard, acceptingPromises: true) == [.promise(uti: "public.heic")])
+    }
+
+    @Test("a drag of files and promises is offered with every item, in order")
+    func offersAMixedDrag() throws {
+        let rig = Rig()
+        let plain = try file("plain.txt")
+
+        rig.pressAndDrag([
+            fileItem(plain), promiseItem("public.heic", alongside: try file("derivative.jpeg")),
+            promiseItem("public.folder"),
+        ])
+
+        #expect(
+            rig.peer.events == [
+                .offered(generation: 1, items: ["plain.txt", "promise:public.heic", "promise:public.folder"])
+            ])
+        let offered = try #require(rig.peer.outboundContent(generation: 1)).representations
+        #expect(offered.map(\.isDirectory) == [false, false, true])
+    }
+
+    @Test("a host that takes no promises leaves a drag carrying one in the guest, and takes plain files")
+    func promisesNeedTheHostCapability() throws {
+        let rig = Rig(offering: .files)
+        let pasteboard = FakeReadPasteboard()
+        pasteboard.setItems([fileItem(try file("plain.txt")), promiseItem("public.heic")])
+        #expect(GuestDraggedItems.items(on: pasteboard, acceptingPromises: false) == nil)
+
+        rig.pressAndDrag([fileItem(try file("plain.txt")), promiseItem("public.heic")])
+        #expect(rig.input.resolveCount == 0)
+        #expect(rig.peer.events.isEmpty)
+
+        rig.releaseAndTick()
+        rig.pressAndDrag([fileItem(try file("alone.txt"))])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["alone.txt"])])
+    }
+
+    @Test("a promise that names no promised type keeps the whole drag in the guest")
+    func anUntypedPromiseKeepsTheDrag() throws {
         let rig = Rig()
 
-        rig.pressAndDrag([fileItem(try file("plain.txt")), promisedFileItem(try file("promised.jpg"))])
+        rig.pressAndDrag([fileItem(try file("plain.txt")), promiseItem(nil, alongside: try file("promised.jpg"))])
 
         #expect(rig.input.resolveCount == 0)
         #expect(rig.peer.events.isEmpty)
@@ -122,20 +179,15 @@ struct GuestDragOutTests {
 
     @Test("a drag the offer limit would cut short is not offered")
     func overTheOfferLimitIsNotOffered() {
-        let count = ClipboardContent.maxOfferableRepresentations + 1
-        let urls = (0..<count).map { URL(fileURLWithPath: "/tmp/item-\($0)") }
-        let representations = (0..<count).map { _ in
-            ClipboardContent.Representation(uti: "public.data", data: Data([0]))
-        }
+        let limit = ClipboardContent.maxOfferableRepresentations
+        let files = (0..<limit).map { GuestDragItem.file(URL(fileURLWithPath: "/tmp/item-\($0)")) }
+        let intake = ClipboardPasteboardReader.FileIntake(
+            representations: files.map { _ in ClipboardContent.Representation(uti: "public.data", data: Data([0])) },
+            skipped: 0)
 
-        let overLimit = ClipboardPasteboardReader.FileIntake(
-            representations: representations, skipped: 0)
-        #expect(GuestDraggedFiles.offerableContent(overLimit, resolvedFrom: urls) == nil)
-
-        let atLimit = ClipboardPasteboardReader.FileIntake(
-            representations: Array(representations.dropLast()), skipped: 0)
-        #expect(
-            GuestDraggedFiles.offerableContent(atLimit, resolvedFrom: Array(urls.dropLast())) != nil)
+        #expect(GuestDraggedItems.offerItems(files, resolvedFiles: intake)?.count == limit)
+        // A promise counts toward the limit like a file.
+        #expect(GuestDraggedItems.offerItems(files + [.promise(uti: "public.heic")], resolvedFiles: intake) == nil)
     }
 
     @Test("a drag pasteboard that is still empty is read again on the next tick")
@@ -150,16 +202,16 @@ struct GuestDragOutTests {
         rig.input.fireTick()
         rig.input.deliverResolves()
 
-        #expect(rig.peer.events == [.offered(generation: 1, filenames: ["late.txt"])])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["late.txt"])])
     }
 
     // MARK: - The baseline
 
     @Test("what was already on the drag pasteboard when watching started is not a drag")
     func whatWasStandingIsNotADrag() throws {
-        let rig = Rig(watching: false)
+        let rig = Rig(offering: .none)
         rig.input.drag([fileItem(try file("old.txt"))])
-        rig.dragOut.setWatching(true)
+        rig.dragOut.setOffering(.filesAndPromises)
 
         rig.input.press()
         rig.input.fireTick()
@@ -180,7 +232,7 @@ struct GuestDragOutTests {
         #expect(rig.input.resolveCount == 1)
         #expect(
             rig.peer.events == [
-                .offered(generation: 1, filenames: ["dragged.txt"]), .withdrew(generation: 1),
+                .offered(generation: 1, items: ["dragged.txt"]), .withdrew(generation: 1),
             ])
     }
 
@@ -199,7 +251,7 @@ struct GuestDragOutTests {
         rig.input.fireTick()
         rig.input.deliverResolves()
 
-        #expect(rig.peer.events == [.offered(generation: 1, filenames: ["quick.txt"])])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["quick.txt"])])
     }
 
     // MARK: - Stale results and changed items
@@ -255,8 +307,8 @@ struct GuestDragOutTests {
 
         #expect(
             rig.peer.events == [
-                .offered(generation: 1, filenames: ["first.txt"]), .withdrew(generation: 1),
-                .offered(generation: 2, filenames: ["second.txt"]),
+                .offered(generation: 1, items: ["first.txt"]), .withdrew(generation: 1),
+                .offered(generation: 2, items: ["second.txt"]),
             ])
     }
 
@@ -270,7 +322,7 @@ struct GuestDragOutTests {
         rig.input.fireTick()
 
         #expect(rig.input.resolveCount == 1)
-        #expect(rig.peer.events == [.offered(generation: 1, filenames: ["same.txt"])])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["same.txt"])])
     }
 
     // MARK: - Press end and withdrawal
@@ -311,7 +363,7 @@ struct GuestDragOutTests {
         rig.input.fireTick()
         rig.releaseAndTick()
 
-        #expect(rig.peer.events == [.offered(generation: 1, filenames: ["completed.txt"])])
+        #expect(rig.peer.events == [.offered(generation: 1, items: ["completed.txt"])])
     }
 
     @Test("stopping withdraws an untaken offer, drops the monitor and ends the App Nap hold")
@@ -321,7 +373,7 @@ struct GuestDragOutTests {
         #expect(rig.input.isObservingPresses)
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
 
-        rig.dragOut.setWatching(false)
+        rig.dragOut.setOffering(.none)
 
         #expect(rig.peer.events.last == .withdrew(generation: 1))
         #expect(!rig.input.isHoldingActivity)
@@ -468,7 +520,7 @@ struct GuestDragOutTests {
 
     @Test("a take while not watching fails as stale")
     func aTakeWhileNotWatchingFails() {
-        let rig = Rig(watching: false)
+        let rig = Rig(offering: .none)
 
         rig.dragOut.take(generation: 1)
 
@@ -496,7 +548,7 @@ struct GuestDragOutTests {
 
         #expect(catcher.draggingEntered(caught(urls)) == .copy)
         #expect(catcher.draggingUpdated(caught(urls)) == .copy)
-        #expect(catcher.performDragOperation())
+        #expect(catcher.performDragOperation(receivers: { [] }))
         // The drop's release is the host's; the press ending before the drop
         // concludes leaves the surface for the conclusion to take down.
         rig.releaseAndTick()
@@ -573,7 +625,7 @@ struct GuestDragOutTests {
         #expect(!rig.surface.isShown)
         // Nothing is left armed to answer a later callback with anything at all.
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(receivers: { [] }))
     }
 
     @Test(
@@ -598,7 +650,7 @@ struct GuestDragOutTests {
         // A release the host injected before it heard the refusal drops here
         // and is refused, so nothing moves.
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(receivers: { [] }))
         // The press ending under the surface leaves it for the drag's end.
         rig.releaseAndTick()
         #expect(rig.surface.isShown)
@@ -649,7 +701,7 @@ struct GuestDragOutTests {
         let rig = takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
-        _ = catcher.performDragOperation()
+        _ = catcher.performDragOperation(receivers: { [] })
 
         catcher.draggingEnded()
 
@@ -680,7 +732,7 @@ struct GuestDragOutTests {
 
         #expect(!rig.surface.isShown)
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(receivers: { [] }))
         catcher.draggingEnded()
         #expect(
             rig.peer.handOffs == [
@@ -699,7 +751,7 @@ struct GuestDragOutTests {
         rig.dragOut.complete(generation: 1)
 
         #expect(rig.surface.isShown)
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(receivers: { [] }))
         catcher.draggingEnded()
         #expect(!rig.surface.isShown)
         #expect(rig.peer.handOffs.count == 3)
@@ -806,7 +858,7 @@ struct GuestDragOutTests {
 
         #expect(rig.surface.isShown)
         #expect(catcher.draggingEntered(caught(urls)) == .copy)
-        #expect(catcher.performDragOperation())
+        #expect(catcher.performDragOperation(receivers: { [] }))
         #expect(
             rig.peer.handOffs == [
                 .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
@@ -847,7 +899,7 @@ struct GuestDragOutTests {
 
         #expect(catcher.draggingUpdated(caught(urls)) == [])
         #expect(catcher.draggingEntered(caught(urls, mask: [.move])) == [])
-        #expect(!catcher.performDragOperation())
+        #expect(!catcher.performDragOperation(receivers: { [] }))
         #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
 
         rig.dragOut.setCatcherShown(true, generation: 1)
@@ -939,6 +991,213 @@ struct GuestDragOutTests {
         }
     }
 
+    // MARK: - Calling promises in
+
+    /// A rig whose drag of a plain file and then a promise of each of
+    /// `promised` the host has taken, entered on the catcher.
+    private func promiseRig(_ promised: [String]) throws -> Rig {
+        let plain = try file("plain.txt")
+        let rig = Rig()
+        rig.pressAndDrag([fileItem(plain)] + promised.map { promiseItem($0) })
+        rig.dragOut.take(generation: 1)
+        let items = [GuestDragItem.file(plain)] + promised.map { GuestDragItem.promise(uti: $0) }
+        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(items: items)) == .copy)
+        return rig
+    }
+
+    private func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    @Test("a DragResolve is answered resolving only while the taken drag is on the catcher")
+    func resolveNeedsATargetedTake() throws {
+        let plain = try file("plain.txt")
+        let rig = Rig()
+        rig.pressAndDrag([fileItem(plain), promiseItem("public.heic")])
+        rig.dragOut.take(generation: 1)
+
+        rig.dragOut.resolve(generation: 1)
+        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected an armed but untargeted take to fail the resolve, got \(rig.peer.handOffs)")
+            return
+        }
+        rig.dragOut.resolve(generation: 2)
+        guard case .handOff(2, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a resolve of no take to be stale, got \(rig.peer.handOffs)")
+            return
+        }
+        // A refused resolve leaves the take standing.
+        #expect(rig.surface.isShown)
+
+        let items: [GuestDragItem] = [.file(plain), .promise(uti: "public.heic")]
+        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(items: items)) == .copy)
+        rig.dragOut.resolve(generation: 1)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolving))
+
+        rig.dragOut.setCatcherShown(false, generation: 1)
+        rig.dragOut.resolve(generation: 1)
+        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a stood-down take to fail the resolve, got \(rig.peer.handOffs)")
+            return
+        }
+    }
+
+    @Test("a drop the host did not ask to resolve calls nothing in and reads no promise")
+    func noCallInWithoutAResolve() throws {
+        let rig = try promiseRig(["public.heic"])
+        let receiver = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        var readReceivers = false
+
+        let dropped = rig.dragOut.catcherForTesting.performDragOperation {
+            readReceivers = true
+            return [receiver]
+        }
+
+        #expect(dropped)
+        #expect(!readReceivers)
+        #expect(!receiver.wasCalledIn)
+        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .caught))
+        #expect(!rig.peer.events.contains { if case .named = $0 { true } else { false } })
+        #expect(!exists(rig.promiseFolders))
+    }
+
+    @Test("a drop the host resolved calls each promise in and names it by its first file, ahead of caught")
+    func theCallInNamesThePromises() throws {
+        let rig = try promiseRig(["public.heic", "public.jpeg"])
+        let catcher = rig.dragOut.catcherForTesting
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
+        rig.dragOut.resolve(generation: 1)
+
+        #expect(catcher.performDragOperation { [photo, burst] })
+
+        let folder = try #require(photo.destination)
+        #expect(burst.destination == folder)
+        #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
+        #expect(exists(folder))
+        #expect(
+            rig.peer.events.suffix(2) == [
+                .named(generation: 1, filenames: [1: "IMG_0001.HEIC", 2: "IMG_0002.JPG"]),
+                .handOff(generation: 1, step: .caught),
+            ])
+        // Caught, the take resolves nothing more.
+        rig.dragOut.resolve(generation: 1)
+        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
+            Issue.record("Expected a resolve after the catch to fail, got \(rig.peer.handOffs)")
+            return
+        }
+    }
+
+    @Test("a drop carrying another count of promises than the drag calls none in and names none")
+    func aPromiseCountMismatchCallsNothingIn() throws {
+        let rig = try promiseRig(["public.heic", "public.jpeg"])
+        let only = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        rig.dragOut.resolve(generation: 1)
+
+        #expect(rig.dragOut.catcherForTesting.performDragOperation { [only] })
+
+        #expect(!only.wasCalledIn)
+        #expect(
+            rig.peer.events.suffix(3) == [
+                .unavailable(generation: 1, repIndices: [1, 2]), .named(generation: 1, filenames: [:]),
+                .handOff(generation: 1, step: .caught),
+            ])
+    }
+
+    @Test("a promise's landed file resolves its item at its size, and one its source failed is unavailable")
+    func readsResolveOrMarkUnavailable() async throws {
+        let rig = try promiseRig(["public.heic", "public.jpeg"])
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let other = FakePromiseReceiver(names: ["IMG_0002.JPG"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [photo, other] }
+
+        try photo.write("IMG_0001.HEIC", contents: Data(count: 1_234))
+        try other.fail("IMG_0002.JPG")
+        await drainMainQueue()
+
+        #expect(
+            rig.peer.events.suffix(2) == [
+                .resolved(generation: 1, repIndex: 1, filename: "IMG_0001.HEIC", byteCount: 1_234),
+                .unavailable(generation: 1, repIndices: [2]),
+            ])
+    }
+
+    @Test("a promised folder resolves once its tree is measured")
+    func aPromisedFolderIsMeasured() async throws {
+        let rig = try promiseRig(["public.folder"])
+        let album = FakePromiseReceiver(names: ["Album"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [album] }
+
+        try album.writeFolder("Album")
+        await drainMainQueue()
+
+        #expect(rig.input.pendingMeasureFolders.map { Array($0.keys) } == [[1]])
+        rig.input.deliverMeasures(size: 4_096)
+        #expect(rig.peer.events.last == .resolved(generation: 1, repIndex: 1, filename: "Album", byteCount: 4_096))
+    }
+
+    @Test("a promise whose file is not the kind its type declared is unavailable")
+    func aLandingOfTheWrongKindIsUnavailable() async throws {
+        let rig = try promiseRig(["public.folder"])
+        let album = FakePromiseReceiver(names: ["Album"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [album] }
+
+        try album.write("Album", contents: Data("not a folder".utf8))
+        await drainMainQueue()
+
+        #expect(rig.input.pendingMeasureFolders.isEmpty)
+        #expect(rig.peer.events.last == .unavailable(generation: 1, repIndices: [1]))
+    }
+
+    @Test(
+        "the promises' folder outlives the take, and goes once the host is done and every read is in",
+        arguments: [true, false])
+    func theFolderGoesOnceHostAndReadsAreDone(hostFirst: Bool) async throws {
+        let rig = try promiseRig(["public.heic"])
+        let catcher = rig.dragOut.catcherForTesting
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        rig.dragOut.resolve(generation: 1)
+        _ = catcher.performDragOperation { [photo] }
+        catcher.concludeDragOperation()
+        let folder = try #require(photo.destination)
+        #expect(exists(folder))
+
+        if hostFirst {
+            rig.dragOut.complete(generation: 1)
+            #expect(exists(folder))
+            try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
+            await drainMainQueue()
+        } else {
+            try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
+            await drainMainQueue()
+            #expect(exists(folder))
+            rig.dragOut.complete(generation: 1)
+        }
+
+        #expect(!exists(folder))
+    }
+
+    @Test("the connection ending removes the promises' folder once its reads are in, telling the host nothing")
+    func stopWaitsForTheReads() async throws {
+        let rig = try promiseRig(["public.heic"])
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        rig.dragOut.resolve(generation: 1)
+        _ = rig.dragOut.catcherForTesting.performDragOperation { [photo] }
+        let folder = try #require(photo.destination)
+
+        rig.dragOut.stop()
+        #expect(exists(folder))
+        let reported = rig.peer.events
+        try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
+        await drainMainQueue()
+
+        #expect(!exists(folder))
+        #expect(rig.peer.events == reported)
+    }
+
     // MARK: - The catcher's window
 
     /// The live catcher window laid out over `screen` for `urls`, never
@@ -947,10 +1206,23 @@ struct GuestDragOutTests {
         for urls: [URL] = [URL(fileURLWithPath: "/one.txt")],
         over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
     ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
-        let catcher = GuestDragCatcher(peer: FakeGuestDragPeer(), makeSurface: { _ in FakeCatcherSurface() })
+        catcherWindow(items: urls.map(GuestDragItem.file), over: screen)
+    }
+
+    /// The live catcher window laid out over `screen` for `items`, never
+    /// ordered front.
+    private func catcherWindow(
+        items: [GuestDragItem], over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
+    ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
+        let peer = FakeGuestDragPeer()
+        let catcher = GuestDragCatcher(
+            peer: peer,
+            promises: GuestDragPromises(
+                peer: peer, input: FakeGuestDragInput(), stagingRoot: TestStagingRoot().root),
+            makeSurface: { _ in FakeCatcherSurface() })
         let icons = FakeGuestDragTypeIcons()
         let panel = GuestDragCatcherPanel(catcher: catcher, typeIcon: icons.icon(for:))
-        panel.layOut(fileURLs: urls, over: screen)
+        panel.layOut(items: items, over: screen)
         let window = panel.windowForTesting
         window.contentView?.layoutSubtreeIfNeeded()
         return (window, icons)
@@ -1005,6 +1277,19 @@ struct GuestDragOutTests {
         let three = catcherWindow(for: [try file("one.txt"), try file("two.txt"), try file("three.txt")])
         #expect(try hud(in: three.window).name.stringValue == "3 items")
         #expect(three.icons.asked.isEmpty)
+
+        let mixed = catcherWindow(items: [.file(try file("one.txt")), .promise(uti: "public.heic")])
+        #expect(try hud(in: mixed.window).name.stringValue == "2 items")
+        #expect(mixed.icons.asked.isEmpty)
+    }
+
+    @Test("the box shows one promise, which has no name yet, as its promised type and that type's description")
+    func catcherHUDShowsOnePromise() throws {
+        let one = catcherWindow(items: [.promise(uti: UTType.heic.identifier)])
+
+        #expect(one.icons.asked == [.heic])
+        #expect(try hud(in: one.window).icon.image === one.icons.images.last)
+        #expect(try hud(in: one.window).name.stringValue == UTType.heic.localizedDescription)
     }
 
     @Test("a long name truncates in the middle at the name line's widest")

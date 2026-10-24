@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Testing
 import UniformTypeIdentifiers
 
 /// The guest's event stream and drag pasteboard, driven by hand: a test
@@ -142,17 +143,20 @@ final class FakeGuestDragInput: GuestDragInput {
     }
 }
 
-/// The catcher's window, recording whether it is up.
+/// The catcher's window, recording whether it is up and what its box shows.
 @MainActor
 final class FakeCatcherSurface: GuestDragCatcherSurface {
     private(set) var isShown = false
     private(set) var showCount = 0
+    /// The items the latest showing presented.
+    private(set) var shownItems: [GuestDragItem]?
     /// Whether a screen is there to cover.
     var hasScreen = true
     nonisolated let changed = AsyncGate()
 
-    func show(fileURLs: [URL]) -> Bool {
+    func show(items: [GuestDragItem]) -> Bool {
         showCount += 1
+        shownItems = items
         isShown = hasScreen
         changed.notify()
         return hasScreen
@@ -168,10 +172,15 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
 @MainActor
 final class FakeGuestDragPeer: GuestDragOutPeer {
     enum Event: Equatable {
-        case offered(generation: UInt64, filenames: [String])
+        /// An offer, each item by its filename — a promise, which has none, as
+        /// `promise:<its type>`.
+        case offered(generation: UInt64, items: [String])
         case withdrew(generation: UInt64)
         case handOff(generation: UInt64, step: ClipboardDragHandOffStep)
         case sized(generation: UInt64, folderByteCounts: [Int: Int])
+        case named(generation: UInt64, filenames: [Int: String])
+        case resolved(generation: UInt64, repIndex: Int, filename: String, byteCount: Int)
+        case unavailable(generation: UInt64, repIndices: [Int])
     }
 
     private(set) var events: [Event] = []
@@ -184,14 +193,20 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         events.filter { if case .handOff = $0 { true } else { false } }
     }
 
-    func offer(
-        _ content: ClipboardContent, skippedBeforeOffer: Int
-    ) -> ClipboardEndpoint.OfferOutcome {
+    func offerDrag(_ items: [ClipboardDragOutItem]) -> ClipboardEndpoint.OfferOutcome {
         let generation = nextGeneration
         nextGeneration += 1
-        events.append(
-            .offered(generation: generation, filenames: content.representations.map(\.filename)))
-        contents[generation] = content
+        let representations = items.map { item -> ClipboardContent.Representation in
+            switch item {
+            case .file(let representation):
+                return representation
+            case .promise(let uti, let isDirectory):
+                return ClipboardContent.Representation(
+                    pendingRemoteUTI: uti, byteCount: 0, filename: "promise:\(uti)", isDirectory: isDirectory)
+            }
+        }
+        events.append(.offered(generation: generation, items: representations.map(\.filename)))
+        contents[generation] = ClipboardContent(representations: representations)
         return .sent(generation: generation)
     }
 
@@ -215,6 +230,82 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         events.append(.sized(generation: generation, folderByteCounts: folderByteCounts))
         return true
     }
+
+    func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
+        events.append(.named(generation: generation, filenames: filenames))
+        return true
+    }
+
+    func resolvePromisedDragItem(generation: UInt64, repIndex: Int, fileURL: URL, byteCount: Int) -> Bool {
+        events.append(
+            .resolved(
+                generation: generation, repIndex: repIndex, filename: fileURL.lastPathComponent,
+                byteCount: byteCount))
+        return true
+    }
+
+    func markPromisedDragItemsUnavailable(generation: UInt64, repIndices: [Int]) -> Bool {
+        events.append(.unavailable(generation: generation, repIndices: repIndices))
+        return true
+    }
+}
+
+/// One file promise a drop carries, whose source a test plays: it names its
+/// files when called in, and writes each when the test says.
+final class FakePromiseReceiver: GuestDragPromiseReceiving {
+    /// The names it gives its files once called in.
+    private let names: [String]
+
+    private(set) var fileNames: [String] = []
+    /// Where it was called in to, once it was.
+    private(set) var destination: URL?
+    private var reader: ((URL, (any Error)?) -> Void)?
+
+    init(names: [String]) {
+        self.names = names
+    }
+
+    var wasCalledIn: Bool { destination != nil }
+
+    func receivePromisedFiles(
+        atDestination destination: URL, options: [AnyHashable: Any],
+        operationQueue: OperationQueue, reader: @escaping (URL, (any Error)?) -> Void
+    ) {
+        self.destination = destination
+        self.reader = reader
+        fileNames = names
+    }
+
+    /// Writes its file named `name` holding `contents`, and reports it.
+    @discardableResult
+    func write(_ name: String, contents: Data) throws -> URL {
+        let url = try #require(destination).appendingPathComponent(name)
+        try contents.write(to: url)
+        try report(url, nil)
+        return url
+    }
+
+    /// Writes its folder named `name`, holding one file, and reports it.
+    @discardableResult
+    func writeFolder(_ name: String) throws -> URL {
+        let url = try #require(destination).appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try Data("inside".utf8).write(to: url.appendingPathComponent("inside.txt"))
+        try report(url, nil)
+        return url
+    }
+
+    /// Reports that its file named `name` could not be written.
+    func fail(_ name: String) throws {
+        let url = try #require(destination).appendingPathComponent(name)
+        try report(url, CocoaError(.fileWriteUnknown))
+    }
+
+    /// Calls the reader it was called in with.
+    private func report(_ url: URL, _ error: (any Error)?) throws {
+        let reader = try #require(self.reader)
+        reader(url, error)
+    }
 }
 
 extension GuestDragOutSystem {
@@ -236,13 +327,24 @@ func fileItem(_ url: URL) -> FakePasteboardItem {
     FakePasteboardItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
 }
 
-/// One dragged item carrying a file URL beside a file promise.
-func promisedFileItem(_ url: URL) -> FakePasteboardItem {
-    let promiseType = NSPasteboard.PasteboardType(
-        NSFilePromiseReceiver.readableDraggedTypes.first ?? "com.apple.NSFilePromiseItemMetaData")
-    return FakePasteboardItem([
-        (type: .fileURL, data: Data(url.absoluteString.utf8)), (type: promiseType, data: Data()),
-    ])
+/// The promise type every promise item declares besides its promised type.
+private let promiseMetadataType = NSPasteboard.PasteboardType(
+    NSFilePromiseReceiver.readableDraggedTypes.first ?? "com.apple.NSFilePromiseItemMetaData")
+
+/// One dragged item carrying a file promise of `type` — `nil` names none —
+/// and, when `alongside` is given, a file URL besides, as a Photos asset
+/// carries one into the library's derivatives.
+func promiseItem(_ type: String?, alongside url: URL? = nil) -> FakePasteboardItem {
+    var representations: [(type: NSPasteboard.PasteboardType, data: Data)] = [
+        (type: promiseMetadataType, data: Data())
+    ]
+    if let type {
+        representations.append((type: GuestDraggedItems.promisedContentType, data: Data(type.utf8)))
+    }
+    if let url {
+        representations.append((type: .fileURL, data: Data(url.absoluteString.utf8)))
+    }
+    return FakePasteboardItem(representations)
 }
 
 /// The guest's type icons: a fresh image for each type asked, every one

@@ -2,8 +2,8 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Offers the host each drag in this guest that carries plain file URLs, for as
-/// long as the press that started it is held.
+/// Offers the host each drag in this guest that ``GuestDraggedItems`` lets go
+/// out, for as long as the press that started it is held.
 ///
 /// Scoped to presses: a global monitor starts one for each primary-button
 /// press, and a timer runs only while the button stays down, reading the drag
@@ -45,8 +45,8 @@ final class GuestDragWatcher {
         let generation: UInt64
         /// The press the drag belongs to.
         let press: UInt64
-        /// The file URLs the offer was made from, in drag order.
-        let fileURLs: [URL]
+        /// The items the offer was made from, in drag order.
+        let items: [GuestDragItem]
     }
 
     private let input: any GuestDragInput
@@ -54,6 +54,10 @@ final class GuestDragWatcher {
 
     /// Told each time a press ends, with its id.
     var onPressEnded: ((UInt64) -> Void)?
+
+    /// Whether a drag carrying file promises is offered: only to a host that
+    /// takes them, and otherwise it stays in the guest.
+    var offersPromises = false
 
     // MARK: - State
 
@@ -70,7 +74,7 @@ final class GuestDragWatcher {
 
     private struct Offer: Equatable {
         let generation: UInt64
-        let fileURLs: [URL]
+        let items: [GuestDragItem]
         /// The change count the offer's items were last read at.
         var changeCount: Int
     }
@@ -83,12 +87,13 @@ final class GuestDragWatcher {
         /// newer press arrives before any tick saw the button go up.
         var lastObservedCount: Int
         var phase: Phase = .watching
-        /// The file URLs whose resolve is in flight, so a tick starts no second
-        /// walk of the same items and a superseded walk's result is dropped.
-        var resolving: [URL]?
-        /// The file URLs whose resolve came back unofferable, so an unchanged
-        /// drag is not walked again every tick.
-        var unofferable: [URL]?
+        /// The items whose files' resolve is in flight, so a tick starts no
+        /// second walk of the same items and a superseded walk's result is
+        /// dropped.
+        var resolving: [GuestDragItem]?
+        /// The items whose resolve came back unofferable, so an unchanged drag
+        /// is not walked again every tick.
+        var unofferable: [GuestDragItem]?
     }
 
     private var isRunning = false
@@ -179,9 +184,9 @@ final class GuestDragWatcher {
     /// withdrawing an offer its items no longer match and resolving new ones.
     private func read(at count: Int) {
         guard let current = press else { return }
-        let urls = GuestDraggedFiles.fileURLs(on: input.dragPasteboard)
+        let items = GuestDraggedItems.items(on: input.dragPasteboard, acceptingPromises: offersPromises)
         if case .offered(var offer) = current.phase {
-            if urls == offer.fileURLs {
+            if items == offer.items {
                 offer.changeCount = count
                 press?.phase = .offered(offer)
                 return
@@ -189,40 +194,41 @@ final class GuestDragWatcher {
             _ = peer.withdraw(generation: offer.generation)
             press?.phase = .watching
         }
-        guard let urls, urls != current.resolving, urls != current.unofferable else { return }
-        press?.resolving = urls
+        guard let items, items != current.resolving, items != current.unofferable else { return }
+        press?.resolving = items
         let pressID = current.id
-        input.resolveFiles(urls) { [weak self] intake in
-            self?.resolved(intake, from: urls, readAt: count, press: pressID)
+        input.resolveFiles(items.compactMap(\.fileURL)) { [weak self] intake in
+            self?.resolved(intake, of: items, readAt: count, press: pressID)
         }
     }
 
     /// Offers what a resolve produced, if the press it was read for is still
     /// the current, held one.
     private func resolved(
-        _ intake: ClipboardPasteboardReader.FileIntake, from urls: [URL], readAt count: Int,
+        _ intake: ClipboardPasteboardReader.FileIntake, of items: [GuestDragItem], readAt count: Int,
         press pressID: UInt64
     ) {
-        guard isRunning, let current = press, current.id == pressID, current.resolving == urls
+        guard isRunning, let current = press, current.id == pressID, current.resolving == items
         else { return }
         press?.resolving = nil
         // Checked here, immediately before the offer goes out, rather than left
         // to the next tick: a host that took an offer whose press had already
         // ended would arm the catcher for a drag that is over.
         guard input.isPrimaryButtonHeld, case .watching = current.phase else { return }
-        guard let content = GuestDraggedFiles.offerableContent(intake, resolvedFrom: urls) else {
-            press?.unofferable = urls
+        guard let offered = GuestDraggedItems.offerItems(items, resolvedFiles: intake) else {
+            press?.unofferable = items
             return
         }
-        switch peer.offer(content, skippedBeforeOffer: 0) {
+        switch peer.offerDrag(offered) {
         case .sent(let generation):
-            press?.phase = .offered(Offer(generation: generation, fileURLs: urls, changeCount: count))
+            press?.phase = .offered(Offer(generation: generation, items: items, changeCount: count))
+            let promised = items.count { $0.fileURL == nil }
             Self.logger.log(
                 .notice,
-                "Offered a drag of \(urls.count, privacy: .public) item(s) to the host (gen=\(generation, privacy: .public))"
+                "Offered a drag of \(items.count, privacy: .public) item(s), \(promised, privacy: .public) of them promised, to the host (gen=\(generation, privacy: .public))"
             )
         case .duplicate, .nothingToOffer, .sendFailed:
-            press?.unofferable = urls
+            press?.unofferable = items
         }
     }
 
@@ -236,7 +242,7 @@ final class GuestDragWatcher {
         else { return .failure(.notCurrent) }
         guard input.isPrimaryButtonHeld else { return .failure(.pressOver) }
         press?.phase = .settled
-        return .success(Claim(generation: generation, press: current.id, fileURLs: offer.fileURLs))
+        return .success(Claim(generation: generation, press: current.id, items: offer.items))
     }
 
     /// Lets go of the offer under `generation`, which the host has retired; the

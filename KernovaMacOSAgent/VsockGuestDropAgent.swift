@@ -30,6 +30,8 @@ final class VsockGuestDropAgent: Sendable {
     private let progressIdleGap: TimeInterval
     private let downloadsDirectory: URL
     private let staging: ClipboardFileStaging
+    /// Where a drag out's called-in promises land, beside `staging`'s drops.
+    private let stagingRoot: ProcessStagingRoot
     private let revealInFinder: @Sendable ([URL]) -> Void
     private let dragOutSystem: GuestDragOutSystem
 
@@ -55,7 +57,7 @@ final class VsockGuestDropAgent: Sendable {
 
         var shouldDial: Bool { host.supportsDropFiles && enabledByPolicy }
 
-        var watchesDrags: Bool { shouldDial && host.supportsDragOut }
+        var dragOut: HostDragOutSupport { shouldDial ? host.dragOut : .none }
     }
 
     /// Runs one drop job at a time, in offer order.
@@ -139,6 +141,7 @@ final class VsockGuestDropAgent: Sendable {
         self.downloadsDirectory = downloadsDirectory
         self.revealInFinder = revealInFinder
         self.dragOutSystem = dragOutSystem
+        self.stagingRoot = stagingRoot
         self.staging = ClipboardFileStaging(
             label: "agent-drop", root: stagingRoot, receivingOn: .drop, as: .guest,
             freeSpaceProvider: freeSpaceProvider)
@@ -188,11 +191,12 @@ final class VsockGuestDropAgent: Sendable {
     }
 
     /// Runs the drag watcher exactly while a connection is up and the host
-    /// and its policy both allow drags out, reading the enablement as it
-    /// stands now so hops landing out of order still settle on the latest.
+    /// and its policy both allow drags out, offering what the host takes of
+    /// them, and reading the enablement as it stands now so hops landing out
+    /// of order still settle on the latest.
     @MainActor
     private func reconcileDragWatching() {
-        dragOut?.setWatching(enablement.withLock { $0.watchesDrags })
+        dragOut?.setOffering(enablement.withLock { $0.dragOut })
     }
 
     func stop() {
@@ -245,7 +249,8 @@ final class VsockGuestDropAgent: Sendable {
                 reporter: self.reporter)
             self.liveChannel = channel
             self.endpoint = endpoint
-            self.dragOut = GuestDragOut(peer: endpoint, system: self.dragOutSystem)
+            self.dragOut = GuestDragOut(
+                peer: endpoint, system: self.dragOutSystem, stagingRoot: self.stagingRoot)
             endpoint.delegate = self
             endpoint.start()
             self.reconcileDragWatching()
@@ -469,6 +474,10 @@ extension VsockGuestDropAgent: ClipboardEndpointDelegate {
         _ endpoint: ClipboardEndpoint, didReceiveDragCatcher shown: Bool, generation: UInt64
     ) {
         dragOut?.setCatcherShown(shown, generation: generation)
+    }
+
+    func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragResolve generation: UInt64) {
+        dragOut?.resolve(generation: generation)
     }
 
     func endpoint(_ endpoint: ClipboardEndpoint, didCompleteDrag generation: UInt64) {

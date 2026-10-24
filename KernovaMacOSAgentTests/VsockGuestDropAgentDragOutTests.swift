@@ -76,7 +76,7 @@ struct VsockGuestDropAgentDragOutTests {
         }
     }
 
-    private static let both = HostDropCapabilities(supportsDropFiles: true, supportsDragOut: true)
+    private static let both = HostDropCapabilities(supportsDropFiles: true, dragOut: .filesAndPromises)
 
     private func file(_ name: String, _ contents: Data) throws -> URL {
         let directory = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -212,11 +212,63 @@ struct VsockGuestDropAgentDragOutTests {
         #expect(sizes.byteCounts == [0: 9])
     }
 
+    @Test("a drag carrying a promise goes out with that item promised, and a DragResolve reaches the catcher")
+    func aPromiseDragOverTheWire() async throws {
+        let harness = try Harness(scratch: scratch.url, capabilities: Self.both)
+        defer { harness.tearDown() }
+        try await harness.start()
+        try await harness.input.changed.wait { harness.input.isObservingPresses }
+        harness.input.press()
+        harness.input.drag([fileItem(try file("plain.bin", Data("plain".utf8))), promiseItem("public.heic")])
+        harness.input.fireTick()
+
+        let offer = try await harness.awaitDragOffer()
+        #expect(offer.promised == [1])
+        #expect(offer.repInfo.map(\.uti).last == "public.heic")
+
+        try harness.host.send(.dragTake(generation: offer.generation))
+        guard case .dragHandOff(let armed) = try await nextFrame(from: harness.host).payload,
+            ClipboardDragHandOffStep(armed) == .armed
+        else { throw TestFailure("Expected ARMED first") }
+        // The drag has not entered the catcher, so nothing may be released
+        // onto it: the resolve fails.
+        try harness.host.send(.dragResolve(generation: offer.generation))
+
+        guard case .dragHandOff(let answer) = try await nextFrame(from: harness.host).payload else {
+            throw TestFailure("Expected a DragHandOff answering the resolve")
+        }
+        guard case .failed(.dragTakeFailed, _) = ClipboardDragHandOffStep(answer) else {
+            throw TestFailure("Expected the resolve to fail, got \(ClipboardDragHandOffStep(answer))")
+        }
+    }
+
+    @Test("a host that takes no promises is offered no drag carrying one")
+    func promisesNeedTheHostCapability() async throws {
+        let harness = try Harness(
+            scratch: scratch.url, capabilities: HostDropCapabilities(supportsDropFiles: true, dragOut: .files))
+        defer { harness.tearDown() }
+        try await harness.start()
+        try await harness.input.changed.wait { harness.input.isObservingPresses }
+        let plain = try file("plain.bin", Data("plain".utf8))
+        harness.input.press()
+        harness.input.drag([fileItem(plain), promiseItem("public.heic")])
+        harness.input.fireTick()
+
+        // The same press then drags the plain file alone: the first offer on
+        // the wire is that one.
+        harness.input.drag([fileItem(plain)])
+        harness.input.fireTick()
+
+        let offer = try await harness.awaitDragOffer()
+        #expect(offer.repInfo.map(\.filename) == ["plain.bin"])
+        #expect(offer.promised.isEmpty)
+    }
+
     @Test("a host that does not take drags out gets no watcher until it says it does")
     func theWatcherNeedsTheHostCapability() async throws {
         let harness = try Harness(
             scratch: scratch.url,
-            capabilities: HostDropCapabilities(supportsDropFiles: true, supportsDragOut: false))
+            capabilities: HostDropCapabilities(supportsDropFiles: true, dragOut: .none))
         defer { harness.tearDown() }
         try await harness.start()
         // The connection decides whether to watch in the same turn that builds
