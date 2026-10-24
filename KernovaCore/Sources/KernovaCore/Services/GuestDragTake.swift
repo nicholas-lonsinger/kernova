@@ -34,6 +34,12 @@ package protocol GuestDragDisplay: AnyObject {
     /// ``injectDrag(at:)`` — when it is anywhere else.
     func returnToExitPoint()
 
+    /// Moves the guest pointer, with a constructed drag event, to just inside
+    /// the display's edge where the drag left it: the exit point held a margin
+    /// in from every edge, so an auto-hidden Dock or a hot corner in the guest
+    /// does not fire. The exit point itself stays where it was.
+    func parkNearExitPoint()
+
     /// Releases the guest's button where the last event the display sent put
     /// the guest pointer, with a constructed mouse-up, which drops the guest's
     /// drag on whatever is under it.
@@ -122,6 +128,11 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// take the drop, where the drag left the display. Before the press goes back
 /// to the guest, the guest pointer returns to that exit point.
 ///
+/// While the drag is out on the Mac, each showing of the catcher that becomes
+/// its target parks the guest pointer, and the guest's drag image with it,
+/// just inside where the drag left the display; a release onto the catcher
+/// lands there.
+///
 /// The guest's drag stays live, its button held, for as long as the Mac
 /// session runs: over this VM's display the catcher stands down and the guest
 /// pointer follows the session, so a drag that comes back drops inside the
@@ -144,8 +155,9 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         /// `DragTake` is out and the press is withheld; `armed` once the guest
         /// reported its catcher up under the pointer.
         case handingOff(armed: Bool)
-        /// The guest reported its catcher as the drag's target, so the next
-        /// physical event may begin the Mac session or release onto it.
+        /// The guest reported its catcher as the drag's target and the guest
+        /// pointer is parked, so the next physical event may begin the Mac
+        /// session or release onto it.
         case ready
         /// A Mac drag session carries the items, and the guest's button is
         /// still held.
@@ -164,7 +176,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// Where the Mac session carrying the guest's drag stands.
     package enum Carriage: Equatable, Sendable {
         /// Off this VM's display; `targeted` while the guest's catcher, shown,
-        /// is the drag's target.
+        /// is the drag's target and the guest pointer is parked.
         case outside(targeted: Bool)
         /// Over this VM's display: the catcher is stood down, and the guest
         /// pointer follows the session.
@@ -433,11 +445,13 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             case .handingOff:
                 phase = .ready
                 stopDeadline()
+                display?.parkNearExitPoint()
                 Self.logger.log(
                     .notice,
                     "The guest's catcher is the target of drag gen=\(self.generation, privacy: .public)")
             case .carried(.outside(targeted: false)):
                 phase = .carried(.outside(targeted: true))
+                display?.parkNearExitPoint()
                 Self.logger.log(
                     .notice,
                     "The guest's catcher, shown again, is the target of drag gen=\(self.generation, privacy: .public)"

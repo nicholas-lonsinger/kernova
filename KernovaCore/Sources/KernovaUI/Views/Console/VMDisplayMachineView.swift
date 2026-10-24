@@ -56,6 +56,10 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     /// the last point a Mac session put the guest pointer over the display.
     private var exitPoint: NSPoint?
 
+    /// How far in from each edge of the display a park holds the guest
+    /// pointer.
+    private static let parkInset: CGFloat = 8
+
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMDisplayMachineView")
 
@@ -151,6 +155,15 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     func returnToExitPoint() {
         guard let exitPoint, exitPoint != guestPointer else { return }
         inject(.leftMouseDragged, at: exitPoint)
+    }
+
+    func parkNearExitPoint() {
+        guard let exitPoint else { return }
+        let inset = Self.parkInset
+        let parked = NSPoint(
+            x: min(max(exitPoint.x, bounds.minX + inset), bounds.maxX - inset),
+            y: min(max(exitPoint.y, bounds.minY + inset), bounds.maxY - inset))
+        inject(.leftMouseDragged, at: parked)
     }
 
     func injectRelease() {

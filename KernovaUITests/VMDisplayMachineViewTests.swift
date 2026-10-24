@@ -289,6 +289,74 @@ struct VMDisplayMachineViewTests {
         #expect(view.forwarded.count == before)
     }
 
+    // MARK: - The park
+
+    /// Presses on the display and drags to `exit` — forwarded there, past the
+    /// edge included while no drag is on offer — then takes the drag over.
+    private func pressLeaving(at exit: NSPoint, view: RecordingMachineView) throws {
+        view.mouseDown(with: try event(.leftMouseDown, x: 50))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: exit.x, y: exit.y))
+        host.nextTake = makeTake()
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 300))
+    }
+
+    @Test(
+        "a park drags the guest pointer to the exit point held 8 points in from every edge, and the release follows it",
+        arguments: [
+            (exit: NSPoint(x: 150, y: 60), parked: NSPoint(x: 150, y: 60)),
+            (exit: NSPoint(x: 3, y: 50), parked: NSPoint(x: 8, y: 50)),
+            (exit: NSPoint(x: 250, y: 50), parked: NSPoint(x: 192, y: 50)),
+            (exit: NSPoint(x: 100, y: 104), parked: NSPoint(x: 100, y: 92)),
+            (exit: NSPoint(x: -20, y: -5), parked: NSPoint(x: 8, y: 8)),
+        ])
+    func parkHoldsTheExitPointInside(_ spot: (exit: NSPoint, parked: NSPoint)) throws {
+        let view = makeView()
+        try pressLeaving(at: spot.exit, view: view)
+        view.injectNudge(.center)
+        let before = view.forwarded.count
+
+        view.parkNearExitPoint()
+        view.injectRelease()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: spot.parked),
+                .init(type: .leftMouseUp, location: spot.parked),
+            ])
+    }
+
+    @Test("a park leaves the exit point exact: the return before a release goes back to it unclamped")
+    func parkLeavesTheExitPointExact() throws {
+        let view = makeView()
+        try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
+        view.parkNearExitPoint()
+        let before = view.forwarded.count
+
+        view.returnToExitPoint()
+        view.injectRelease()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: NSPoint(x: 250, y: 50)),
+                .init(type: .leftMouseUp, location: NSPoint(x: 250, y: 50)),
+            ])
+    }
+
+    @Test("a park goes near the session's last position over the display")
+    func parkFollowsTheSession() throws {
+        let view = makeView()
+        try pressLeaving(at: NSPoint(x: 150, y: 60), view: view)
+        view.injectDrag(at: NSPoint(x: 197, y: 40))
+        let before = view.forwarded.count
+
+        view.parkNearExitPoint()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: NSPoint(x: 192, y: 40))
+            ])
+    }
+
     @Test("no session begins outside a withheld drag")
     func noSessionWithoutAWithheldDrag() throws {
         let view = makeView()

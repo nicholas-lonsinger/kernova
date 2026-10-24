@@ -216,12 +216,13 @@ private final class CatcherView: NSView {
     }
 }
 
-/// The "Copy to Mac" box, below the guest's drag image.
+/// The "Copy to Mac" box, at the screen's center.
 ///
-/// The host parks the guest pointer at the screen's center, so the drag image
-/// hangs there, drawn as its source draws it; the box sits below that point.
-/// Decoration only: no point in it takes a hit test, so the whole screen stays
-/// the catcher's drag destination and click target.
+/// The host parks the guest pointer, and with it the drag image its source
+/// draws, just inside the edge the drag left the VM's display by, after a
+/// moment at the center while the catcher takes the drag; the box sits at the
+/// center. Decoration only: no point in it takes a hit test, so the whole
+/// screen stays the catcher's drag destination and click target.
 private final class CatcherHUD: NSVisualEffectView {
     private static let padding: CGFloat = 24
     private static let iconSide: CGFloat = 128
@@ -230,7 +231,7 @@ private final class CatcherHUD: NSVisualEffectView {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
 
-    /// Adds the box to `content`, below `content`'s middle.
+    /// Adds the box to `content`, at `content`'s center.
     func install(in content: NSView) {
         material = .hudWindow
         blendingMode = .behindWindow
@@ -260,7 +261,7 @@ private final class CatcherHUD: NSVisualEffectView {
         NSLayoutConstraint.activate(
             [
                 centerXAnchor.constraint(equalTo: content.centerXAnchor),
-                topAnchor.constraint(equalTo: content.centerYAnchor, constant: 72),
+                centerYAnchor.constraint(equalTo: content.centerYAnchor),
                 iconView.widthAnchor.constraint(equalToConstant: Self.iconSide),
                 iconView.heightAnchor.constraint(equalToConstant: Self.iconSide),
                 iconView.topAnchor.constraint(equalTo: topAnchor, constant: Self.padding),

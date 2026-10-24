@@ -967,12 +967,12 @@ struct GuestDragOutTests {
     }
 
     @Test(
-        "the catcher's box sits centered below the screen's middle",
+        "the catcher's box sits at the screen's center",
         arguments: [
             NSRect(x: 0, y: 0, width: 1440, height: 900),
             NSRect(x: 1440, y: -82, width: 1511, height: 983),
         ])
-    func catcherHUDSitsBelowTheMiddle(screen: NSRect) throws {
+    func catcherHUDSitsAtTheCenter(screen: NSRect) throws {
         let (window, _) = catcherWindow(over: screen)
         let content = try #require(window.contentView)
         let (box, icon, label, name) = try hud(in: window)
@@ -982,8 +982,7 @@ struct GuestDragOutTests {
         #expect(box.material == .hudWindow)
         #expect(box.state == .active)
         #expect(abs(box.frame.midX - middle.x) < 0.5)
-        // The content view is not flipped: below the middle is a lower y.
-        #expect(abs(box.frame.maxY - (middle.y - 72)) < 0.5)
+        #expect(abs(box.frame.midY - middle.y) < 0.5)
         #expect(icon.frame.size == NSSize(width: 128, height: 128))
         #expect(abs(box.bounds.maxY - icon.frame.maxY - 24) < 0.5)
         #expect(abs(icon.frame.minY - label.frame.maxY - 10) < 0.5)
