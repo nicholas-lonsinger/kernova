@@ -727,7 +727,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             return (dropMessage(for: reasons, limitBytes: limitBytes), .error)
         case .stagingFailed:
             return ("Couldn't prepare the clipboard content to copy", .error)
-        case .written(_, let droppedReasons, _):
+        case .written(_, let droppedReasons):
             if droppedReasons.isEmpty {
                 return ("Copied to Mac clipboard", .info)
             } else if droppedReasons.contains(.overPasteBudget) {

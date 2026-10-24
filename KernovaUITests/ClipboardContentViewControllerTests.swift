@@ -646,7 +646,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     @Test("a clean copy confirms the write")
     func writtenConfirmsTheCopy() {
         let message = ClipboardContentViewController.copyOutcomeMessage(
-            for: .written(representationCount: 1, droppedReasons: [], changeCount: 1),
+            for: .written(representationCount: 1, droppedReasons: []),
             limitBytes: ClipboardPasteLimit.defaultBytes)
         #expect(message.text == "Copied to Mac clipboard")
         #expect(message.style == .info)
@@ -655,7 +655,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     @Test("a write that drops the over-cap files names the cap, not a plain success")
     func writtenOverBudgetNamesTheCap() {
         let message = ClipboardContentViewController.copyOutcomeMessage(
-            for: .written(representationCount: 1, droppedReasons: [.overPasteBudget], changeCount: 1),
+            for: .written(representationCount: 1, droppedReasons: [.overPasteBudget]),
             limitBytes: ClipboardPasteLimit.defaultBytes)
         // Built from the cap, not typed: retuning the cap moves this sentence.
         #expect(

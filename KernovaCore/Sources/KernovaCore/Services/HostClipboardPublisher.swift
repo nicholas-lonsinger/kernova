@@ -130,9 +130,7 @@ package final class HostClipboardPublisher {
             return .stagingFailed
         }
 
-        guard publisher.write(specs, promised: !promises.isEmpty),
-            let changeCount = publisher.lastWriteChangeCount
-        else {
+        guard publisher.write(specs, promised: !promises.isEmpty) else {
             Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }
@@ -141,9 +139,7 @@ package final class HostClipboardPublisher {
             .info,
             "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
-        return .written(
-            representationCount: representationCount, droppedReasons: droppedReasons,
-            changeCount: changeCount)
+        return .written(representationCount: representationCount, droppedReasons: droppedReasons)
     }
 
     /// `true` while the host pasteboard still holds this publisher's most recent
@@ -319,24 +315,16 @@ package enum HostPublishOutcome {
     /// lone directory whose archive couldn't be extracted).
     case stagingFailed
     /// The write succeeded. `droppedReasons` lists payloads that couldn't be
-    /// served alongside the placed items; `changeCount` is the write pasteboard's
-    /// change count right after the write.
-    case written(
-        representationCount: Int, droppedReasons: [CopyToMacDropReason], changeCount: Int)
+    /// served alongside the placed items.
+    case written(representationCount: Int, droppedReasons: [CopyToMacDropReason])
     /// `writeObjects` returned false — nothing was placed.
     case writeFailed
-
-    /// The pasteboard's change count right after a successful write, else `nil`.
-    var postWriteChangeCount: Int? {
-        if case .written(_, _, let changeCount) = self { return changeCount }
-        return nil
-    }
 
     /// Payloads this publish could not serve, whether or not anything else was.
     var droppedReasons: [CopyToMacDropReason] {
         switch self {
         case .nothingServed(let reasons): return reasons
-        case .written(_, let droppedReasons, _): return droppedReasons
+        case .written(_, let droppedReasons): return droppedReasons
         case .stagingFailed, .writeFailed: return []
         }
     }
