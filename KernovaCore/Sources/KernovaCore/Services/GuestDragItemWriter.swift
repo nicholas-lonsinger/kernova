@@ -15,6 +15,10 @@ protocol GuestDragItemWriterOwner: AnyObject {
     /// carries them and the take is not yet retired.
     var acceptsWrites: Bool { get }
 
+    /// Whether promised item `repIndex` is called by a stand-in name where a
+    /// destination writes it, which no write fills.
+    func takesStandInName(repIndex: Int) -> Bool
+
     /// A write settled, or the writes were cancelled.
     func writesSettled()
 }
@@ -116,6 +120,12 @@ final class GuestDragItemWriter {
         cancel()
     }
 
+    /// The drag's promised items could not be named for a destination about to
+    /// call them in, which then never asks: ends the transfers and reports it.
+    func failNaming() {
+        fail(.dragItemUnnamed)
+    }
+
     // MARK: - Writing items
 
     /// Writes item `index` to exactly `destination`, blocking until it lands;
@@ -175,6 +185,10 @@ final class GuestDragItemWriter {
         guard items.indices.contains(index) else {
             return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
         }
+        let item = items[index]
+        if terminal == nil, item.isPromised, owner?.takesStandInName(repIndex: item.repIndex) == true {
+            endTransfers(on: .dragItemUnnamed, reported: false)
+        }
         if let terminal {
             if case .failed(let failure, reported: false) = terminal {
                 self.terminal = .failed(failure, reported: true)
@@ -189,7 +203,7 @@ final class GuestDragItemWriter {
             return .failure(GuestDragWriteFailure(GuestDragWriteError.failed(.transferFailed)))
         }
         writesInFlight += 1
-        return .success((items[index].repIndex, liveReadout()))
+        return .success((item.repIndex, liveReadout()))
     }
 
     /// Settles one write, returning the error its caller throws, if any.
@@ -236,6 +250,8 @@ final class GuestDragItemWriter {
                 return .timedOut
             case .cancelled:
                 return lostOffer
+            case .unavailable:
+                return .peerReported(.dragItemUnavailable)
             case .delivered, .mainThreadUnavailable:
                 return .transferFailed
             }

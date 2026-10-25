@@ -454,7 +454,22 @@ struct VsockGuestControlAgentTests {
         try host.send(makeHostHelloFrame())
         try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
         #expect(
-            reported.value == [.unadvertised, HostDropCapabilities(supportsDropFiles: true, supportsDragOut: true)])
+            reported.value == [
+                .unadvertised, HostDropCapabilities(supportsDropFiles: true, dragOut: .filesAndPromises),
+            ])
+    }
+
+    @Test(
+        "a host's drag-out capabilities set what its drags out may carry",
+        arguments: [
+            ([KernovaCapability.dragOutFilesV1], HostDragOutSupport.files),
+            ([KernovaCapability.dragOutPromisesV1], .none),
+            ([KernovaCapability.dragOutFilesV1, KernovaCapability.dragOutPromisesV1], .filesAndPromises),
+        ])
+    func hostDragOutSupport(advertised: [String], support: HostDragOutSupport) {
+        let capabilities = HostDropCapabilities(advertised: [KernovaCapability.dropFilesV3] + advertised)
+
+        #expect(capabilities == HostDropCapabilities(supportsDropFiles: true, dragOut: support))
     }
 
     @Test("a host that takes drops but not drags out leaves drag-out off")
@@ -476,7 +491,7 @@ struct VsockGuestControlAgentTests {
         try host.send(hello)
         try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
 
-        #expect(reported.value?.last == HostDropCapabilities(supportsDropFiles: true, supportsDragOut: false))
+        #expect(reported.value?.last == HostDropCapabilities(supportsDropFiles: true, dragOut: .none))
     }
 
     @Test("a host that advertises no drop capability leaves it off")

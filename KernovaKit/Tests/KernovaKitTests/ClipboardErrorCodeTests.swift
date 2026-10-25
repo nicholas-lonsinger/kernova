@@ -18,6 +18,8 @@ struct ClipboardErrorCodeTests {
         #expect(ClipboardErrorCode.dragTakeStale.rawValue == "clipboard.drag.take.stale")
         #expect(ClipboardErrorCode.dragTakeRefused.rawValue == "clipboard.drag.take.refused")
         #expect(ClipboardErrorCode.dragTakeFailed.rawValue == "clipboard.drag.take.failed")
+        #expect(
+            ClipboardErrorCode.dragItemUnavailable.rawValue == "clipboard.drag.item.unavailable")
     }
 
     @Test("every code carries the prefix the host's error routing gates on")

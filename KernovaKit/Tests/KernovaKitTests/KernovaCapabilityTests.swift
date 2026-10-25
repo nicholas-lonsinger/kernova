@@ -15,16 +15,17 @@ struct KernovaCapabilityTests {
                 == KernovaCapability.controlChannelDefaults.joined(separator: ","))
     }
 
-    @Test("The advertised defaults are the v3 clipboard and drop tags and drag-out")
+    @Test("The advertised defaults are the v3 clipboard and drop tags, drag-out and its promises")
     func defaultsAdvertiseTheCurrentProtocols() {
         // An earlier tag's peer has no data port to dial, so the tags are
         // replaced rather than added to.
         #expect(
             KernovaCapability.controlChannelDefaults == [
                 "control.v1", "control.heartbeat.v1", "clipboard.transfer.v3", "drop.files.v3",
-                "drag.out.files.v1",
+                "drag.out.files.v1", "drag.out.promises.v1",
             ])
         #expect(KernovaCapability.recognized.contains(KernovaCapability.dragOutFilesV1))
+        #expect(KernovaCapability.recognized.contains(KernovaCapability.dragOutPromisesV1))
         #expect(!KernovaCapability.recognized.contains("clipboard.stream.v2"))
         #expect(!KernovaCapability.recognized.contains("drop.files.v2"))
     }

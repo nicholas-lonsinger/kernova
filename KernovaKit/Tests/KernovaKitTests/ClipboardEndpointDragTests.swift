@@ -404,7 +404,7 @@ struct ClipboardEndpointDragTests {
         let folderID = harness.transferID(generation: 1, repIndex: 0)
         #expect(!harness.recorder.requests.contains { $0.transferID == folderID })
 
-        try harness.send(.dragSizes(generation: 1, folderByteCounts: [0: 64]))
+        try harness.send(.dragSizes(generation: 1, byteCounts: [0: 64]))
 
         try await harness.waitForRequest(generation: 1, repIndex: 0)
         #expect(harness.endpoint.inboundByteCount(generation: 1) == 72)
@@ -427,7 +427,7 @@ struct ClipboardEndpointDragTests {
         let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
         let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
         try await waits.wait(for: 1)
-        try harness.send(.dragSizes(generation: 1, folderByteCounts: [0: 1_000_000]))
+        try harness.send(.dragSizes(generation: 1, byteCounts: [0: 1_000_000]))
 
         guard case .aborted(let info) = await pull.value else {
             Issue.record("Expected the pull to fail its pre-flight")
@@ -472,8 +472,8 @@ struct ClipboardEndpointDragTests {
         #expect(harness.recorder.requests.isEmpty)
     }
 
-    @Test("a folder the sizes leave out is never pulled, while the sized one is")
-    func anUnsizedFolderIsRefused() async throws {
+    @Test("a folder one frame leaves out keeps waiting while the sized one is pulled, until a later frame sizes it")
+    func aFolderALaterFrameSizesWaitsForIt() async throws {
         let harness = try RawPeerHarness(role: .host, kind: .drop)
         defer { harness.tearDown() }
         var second = Self.folder
@@ -482,19 +482,25 @@ struct ClipboardEndpointDragTests {
         try harness.send(.dragOffer(generation: 1, reps: [Self.folder.wire, second.wire]))
         try await harness.side.recorder.waitForDrag()
         let operation = harness.side.makeOperation(gesture: .dragOut, direction: .inbound)
-        let unsized = harness.side.startPull(generation: 1, repIndex: 1, operation: operation)
+        let later = harness.side.startPull(generation: 1, repIndex: 1, operation: operation)
         try await waits.wait(for: 1)
 
-        try harness.send(.dragSizes(generation: 1, folderByteCounts: [0: 5]))
+        try harness.send(.dragSizes(generation: 1, byteCounts: [0: 5]))
 
-        #expect(isCancelled(await unsized.value))
-        #expect(harness.endpoint.inboundByteCount(generation: 1) == 5)
         let sized = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        let unsizedID = harness.transferID(generation: 1, repIndex: 1)
-        #expect(!harness.recorder.requests.contains { $0.transferID == unsizedID })
+        #expect(harness.endpoint.inboundByteCount(generation: 1) == 5)
+        // The frame sized only folder 0, so folder 1's pull is still held.
+        let laterID = harness.transferID(generation: 1, repIndex: 1)
+        #expect(!harness.recorder.requests.contains { $0.transferID == laterID })
+
+        try harness.send(.dragSizes(generation: 1, byteCounts: [1: 6]))
+
+        try await harness.waitForRequest(generation: 1, repIndex: 1)
+        #expect(harness.endpoint.inboundByteCount(generation: 1) == 11)
         harness.endpoint.completeDrag(generation: 1)
         _ = await sized.value
+        _ = await later.value
     }
 
     @Test("the guest records the sizes it sends, only for folders, and sends none for a drag the host is done with")
@@ -515,7 +521,7 @@ struct ClipboardEndpointDragTests {
             return nil
         }
         #expect(sent.map(\.generation) == [1])
-        #expect(sent.first?.folderByteCounts == [1: 9])
+        #expect(sent.first?.byteCounts == [1: 9])
         #expect(harness.endpoint.outboundContent(generation: 1)?.representations.map(\.byteCount) == [3, 9])
 
         try harness.send(.dragComplete(generation: 1))
@@ -715,7 +721,8 @@ struct ClipboardEndpointDragTests {
             ])
 
         let steps: [ClipboardDragHandOffStep] = [
-            .armed, .targeted, .caught, .failed(.dragTakeRefused, message: "no copy"),
+            .armed, .targeted, .resolving, .resolveRefused, .caught,
+            .failed(.dragTakeRefused, message: "no copy"),
         ]
         for step in steps {
             pair.guest.endpoint.sendDragHandOff(generation: 7, step: step)
@@ -773,6 +780,7 @@ struct ClipboardEndpointDragTests {
             WrongWay("DragComplete", at: .host, .dragComplete(generation: 1)),
             WrongWay("DragTake", at: .host, .dragTake(generation: 1)),
             WrongWay("DragCatcher", at: .host, .dragCatcher(generation: 1, shown: false)),
+            WrongWay("DragResolve", at: .host, .dragResolve(generation: 1)),
             WrongWay(
                 "ClipboardRequest", at: .host,
                 .clipboardRequest(
@@ -781,7 +789,8 @@ struct ClipboardEndpointDragTests {
             WrongWay("DragOffer", at: .guest, .dragOffer(generation: 1, reps: [])),
             WrongWay("DragRelease", at: .guest, .dragRelease(generation: 1)),
             WrongWay("DragHandOff", at: .guest, .dragHandOff(generation: 1, step: .targeted)),
-            WrongWay("DragSizes", at: .guest, .dragSizes(generation: 1, folderByteCounts: [0: 1])),
+            WrongWay("DragSizes", at: .guest, .dragSizes(generation: 1, byteCounts: [0: 1])),
+            WrongWay("DragNames", at: .guest, .dragNames(generation: 1, filenames: [0: "a"])),
         ])
     func wrongWayClosesTheChannel(_ wrongWay: WrongWay) async throws {
         let harness = try RawPeerHarness(role: wrongWay.role, kind: .drop)
@@ -796,6 +805,7 @@ struct ClipboardEndpointDragTests {
         #expect(harness.side.recorder.takes.isEmpty)
         #expect(harness.side.recorder.handOffs.isEmpty)
         #expect(harness.side.recorder.catcherChanges.isEmpty)
+        #expect(harness.side.recorder.resolves.isEmpty)
     }
 
     @Test(

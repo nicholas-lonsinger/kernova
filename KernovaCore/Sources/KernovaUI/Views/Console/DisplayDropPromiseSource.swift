@@ -1,24 +1,5 @@
 import AppKit
-
-/// The part of `NSFilePromiseReceiver` a display drop uses.
-///
-/// A protocol rather than the class itself so a test can play a promise source:
-/// promises are written by the *dragging* side, and nothing on the receiving
-/// side can put one on a pasteboard.
-@MainActor
-protocol DisplayDropPromiseReceiving: AnyObject {
-    /// The names of the files this receiver will write.
-    var fileNames: [String] { get }
-
-    /// Asks the source to write its files into `destination`, calling `reader`
-    /// once per file with the URL it landed at, or with the error that stopped
-    /// it.
-    func receivePromisedFiles(
-        atDestination destination: URL, options: [AnyHashable: Any],
-        operationQueue: OperationQueue, reader: @escaping (URL, (any Error)?) -> Void)
-}
-
-extension NSFilePromiseReceiver: DisplayDropPromiseReceiving {}
+import KernovaKit
 
 /// How a display finds the file promises a drag carries.
 ///
@@ -30,7 +11,7 @@ struct DisplayDropPromiseSource {
     var carriesPromises: @MainActor (NSPasteboard) -> Bool
 
     /// The receivers for the promises it carries, in drag order.
-    var receivers: @MainActor (NSPasteboard) -> [any DisplayDropPromiseReceiving]
+    var receivers: @MainActor (NSPasteboard) -> [any FilePromiseReceiving]
 
     /// What a real drag carries.
     static let pasteboard = DisplayDropPromiseSource(

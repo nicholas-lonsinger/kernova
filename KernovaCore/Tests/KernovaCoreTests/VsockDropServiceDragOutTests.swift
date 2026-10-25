@@ -43,13 +43,19 @@ struct VsockDropServiceDragOutTests {
     final class RecordingDisplay: GuestDragDisplay {
         private(set) var calls: [DisplayCall] = []
         let changed = AsyncGate()
+        /// Runs on each release, on the thread that injects it — the main
+        /// thread, which a naming may be holding parked.
+        var onRelease: (@Sendable () -> Void)?
 
         var releaseCount: Int { calls.filter { $0 == .release }.count }
 
         func injectNudge(_ nudge: GuestDragNudge) { record(.nudge(nudge)) }
         func injectDrag(at point: CGPoint) { record(.drag(point)) }
         func returnToExitPoint() { record(.returnToExit) }
-        func injectRelease() { record(.release) }
+        func injectRelease() {
+            record(.release)
+            onRelease?()
+        }
         func resumeForwarding() { record(.resume) }
 
         func beginHostSession(carrying take: any GuestDragTaking) -> Bool {
@@ -96,6 +102,57 @@ struct VsockDropServiceDragOutTests {
         func release() { held.signal() }
     }
 
+    /// The wire between host and guest, relayed frame by frame off the main
+    /// actor, so a test can answer the host while a naming holds the main
+    /// thread parked — where the guest endpoint, whose delegate runs there,
+    /// cannot.
+    final class WireTap: Sendable {
+        /// The relay's end of the host's channel.
+        private let towardHost: VsockChannel
+        private let towardGuest: VsockChannel
+        /// Runs off the main actor on each frame the host sends, before the
+        /// guest is handed it.
+        private let onHostFrame = Locked<(@Sendable (Frame) -> Void)?>(nil)
+
+        init(hostEnd: Int32, guestEnd: Int32) {
+            towardHost = VsockChannel(fileDescriptor: hostEnd)
+            towardGuest = VsockChannel(fileDescriptor: guestEnd)
+            towardHost.start()
+            towardGuest.start()
+            Task.detached { [towardHost, towardGuest, onHostFrame] in
+                do {
+                    for try await frame in towardHost.incoming {
+                        onHostFrame.withLock { $0 }?(frame)
+                        try towardGuest.send(frame)
+                    }
+                } catch {}
+                towardGuest.close()
+            }
+            Task.detached { [towardHost, towardGuest] in
+                do {
+                    for try await frame in towardGuest.incoming { try towardHost.send(frame) }
+                } catch {}
+                towardHost.close()
+            }
+        }
+
+        /// Answers each `DragResolve` the host sends with `step`, as the
+        /// guest's catcher would, ahead of the guest endpoint hearing it.
+        func answerResolves(with step: ClipboardDragHandOffStep) {
+            onHostFrame.withLock {
+                $0 = { [towardHost] frame in
+                    guard case .dragResolve(let resolve) = frame.payload else { return }
+                    try? towardHost.send(.dragHandOff(generation: resolve.generation, step: step))
+                }
+            }
+        }
+
+        /// Sends the host `frame` as though the guest had.
+        func sendToHost(_ frame: Frame) {
+            try? towardHost.send(frame)
+        }
+    }
+
     /// How one item write ended, as a destination would see it.
     enum WriteResult: Equatable, Sendable {
         case landed
@@ -122,16 +179,31 @@ struct VsockDropServiceDragOutTests {
         /// harness whose pulls park.
         let parked = DialledDataConnections()
         let guestChannel: VsockChannel
+        /// The relay between the two, for a harness that taps the wire.
+        let tap: WireTap?
         private let hostChannel: VsockChannel
         private let hostStagingRoot = TestStagingRoot()
         private let guestStaging: ClipboardFileStaging
 
-        /// `progressRevealDelay` and `progressIdleGap` are the host readout's.
+        /// `progressRevealDelay` and `progressIdleGap` are the host readout's;
+        /// `tapsWire` relays the control channel through a ``WireTap``.
         init(
             parksPulls: Bool = false, progressRevealDelay: TimeInterval = 0,
-            progressIdleGap: TimeInterval = 0
+            progressIdleGap: TimeInterval = 0,
+            dragNamingDeadline: TimeInterval = GuestDragTake.namingDeadline,
+            tapsWire: Bool = false
         ) throws {
-            let (hostFd, guestFd) = try makeRawSocketPair()
+            let hostFd: Int32
+            let guestFd: Int32
+            if tapsWire {
+                let (host, hostEnd) = try makeRawSocketPair()
+                let (guestEnd, guest) = try makeRawSocketPair()
+                (hostFd, guestFd) = (host, guest)
+                tap = WireTap(hostEnd: hostEnd, guestEnd: guestEnd)
+            } else {
+                (hostFd, guestFd) = try makeRawSocketPair()
+                tap = nil
+            }
             hostChannel = VsockChannel(fileDescriptor: hostFd)
             guestChannel = VsockChannel(fileDescriptor: guestFd)
             hostChannel.start()
@@ -140,7 +212,7 @@ struct VsockDropServiceDragOutTests {
                 channel: hostChannel, label: "Drag VM", reporter: reports.reporter,
                 stagingRoot: hostStagingRoot.root, stagingKey: "drag-vm",
                 progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
-                clock: clock)
+                dragNamingDeadline: dragNamingDeadline, clock: clock)
             self.service = service
             guestStaging = ClipboardFileStaging(label: "guest", root: TestStagingRoot().root)
             let parked = self.parked
@@ -186,6 +258,47 @@ struct VsockDropServiceDragOutTests {
             }
             try await waitForChange { self.service.guestDrag?.generation == generation }
             return try #require(service.guestDrag)
+        }
+
+        /// Offers `items` from the guest as one drag, promises included, and
+        /// waits for the host to hold it.
+        func offerDrag(_ items: [ClipboardDragOutItem]) async throws -> ClipboardInboundDrag {
+            let outcome = guest.offerDrag(items)
+            guard case .sent(let generation) = outcome else {
+                throw TestFailure("The guest's drag was not offered: \(outcome)")
+            }
+            try await waitForChange { self.service.guestDrag?.generation == generation }
+            return try #require(service.guestDrag)
+        }
+
+        /// A take of `items`, promises included, whose next withheld drag
+        /// began the Mac session over its targeted catcher.
+        func carriedTake(of items: [ClipboardDragOutItem]) async throws -> GuestDragTake {
+            let take = try take(try await offerDrag(items))
+            try await guestRecorder.wait { self.guestRecorder.takes.contains(take.generation) }
+            try await handOff(.armed, for: take, reaching: .handingOff(armed: true))
+            try await handOff(.targeted, for: take, reaching: .ready)
+            take.withheldDrag()
+            #expect(take.phase == .carried(.outside(targeted: true)))
+            return take
+        }
+
+        /// Asks `take` for item `index`'s name from an operation queue, as a
+        /// promise provider is asked by an in-app destination.
+        func filename(_ take: GuestDragTake, item index: Int) async -> String {
+            await offCooperativePool { take.filename(forItemAt: index) }
+        }
+
+        /// Has the tap answer the host's `DragResolve` with `STAGE_RESOLVING`,
+        /// and the display's release send `names`, as the guest's catcher
+        /// calling the promises in would.
+        func answerResolves(naming names: [Int: String], for take: GuestDragTake) throws {
+            let tap = try #require(self.tap)
+            tap.answerResolves(with: .resolving)
+            let generation = take.generation
+            display.onRelease = {
+                tap.sendToHost(.dragNames(generation: generation, filenames: names))
+            }
         }
 
         /// Takes `drag` over for the recording display.
@@ -1301,6 +1414,276 @@ struct VsockDropServiceDragOutTests {
         try await harness.reports.waitForFailure()
         #expect(harness.reports.failure == .interrupted(fileCount: 2))
         #expect(harness.reports.finish?.gesture == .dragOut)
+    }
+
+    // MARK: - Promised items
+
+    /// Two photos the guest's source writes only once called in.
+    private static let photos: [ClipboardDragOutItem] = [
+        .promise(uti: "public.jpeg", isDirectory: false),
+        .promise(uti: "public.png", isDirectory: false),
+    ]
+
+    @Test("a destination asking for a promised item's name has the guest name them all, released only once it answers")
+    func promisedNamesComeFromTheGuest() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        #expect(take.items.map(\.filename) == [nil, nil])
+
+        let first = Task { await harness.filename(take, item: 0) }
+        try await harness.guestRecorder.wait { harness.guestRecorder.resolves == [take.generation] }
+        // Its catcher has not said it calls the promises in, so the button
+        // stays held.
+        #expect(harness.display.releaseCount == 0)
+
+        harness.guest.sendDragHandOff(generation: take.generation, step: .resolving)
+        try await harness.waitForDisplay(.release)
+        #expect(take.phase == .released(at: .catcher))
+        #expect(
+            harness.guest.sendDragNames(
+                generation: take.generation, filenames: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"]))
+        #expect(await first.value == "IMG_0001.jpeg")
+
+        // The second item's name is already in, so nothing asks again.
+        #expect(take.filename(forItemAt: 1) == "IMG_0002.png")
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.resolves == [take.generation])
+        #expect(harness.display.releaseCount == 1)
+
+        // Each item's bytes follow once the guest's source has written it.
+        let destination = try makeDestination()
+        let write = Task {
+            await harness.write(take, item: 0, to: destination.appendingPathComponent("IMG_0001.jpeg"))
+        }
+        let photo = try makeFile(named: "IMG_0001.jpeg", contents: "jpeg")
+        #expect(
+            harness.guest.resolvePromisedDragItem(
+                generation: take.generation, repIndex: 0, fileURL: photo, byteCount: 4))
+        #expect(await write.value == .landed)
+        #expect(
+            try String(
+                contentsOf: destination.appendingPathComponent("IMG_0001.jpeg"), encoding: .utf8)
+                == "jpeg")
+    }
+
+    @Test("a name asked for while the catcher is not the target is a stand-in, asked of nobody, and its write fails")
+    func untargetedNamingFallsBack() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        #expect(take.hostSession(over: harness.display, at: CGPoint(x: 10, y: 10)))
+        take.hostSessionLeft(harness.display)
+        #expect(take.phase == .carried(.outside(targeted: false)))
+
+        #expect(await harness.filename(take, item: 0) == "File.jpeg")
+        #expect(await harness.filename(take, item: 1) == "File.png")
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.resolves.isEmpty)
+
+        let destination = try makeDestination()
+        #expect(
+            await harness.write(take, item: 0, to: destination.appendingPathComponent("File.jpeg"))
+                == .failed(.dragItemUnnamed))
+        #expect(
+            await harness.write(take, item: 1, to: destination.appendingPathComponent("File.png"))
+                == .failed(.dragItemUnnamed))
+        try await harness.reports.waitForFailure()
+        let finish = try #require(harness.reports.finish)
+        #expect(finish.gesture == .dragOut)
+        #expect(harness.reports.refusals.count == 1)
+        #expect(
+            ClipboardTransferWording.wording(for: finish, vmName: "Guest")?.message
+                == "The VM didn't name a dragged item, so the drag didn't finish.")
+    }
+
+    @Test("the guest failing to resolve gives a stand-in name with nothing released, and the write fails")
+    func resolveFailureFallsBack() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+
+        let name = Task { await harness.filename(take, item: 0) }
+        try await harness.guestRecorder.wait { !harness.guestRecorder.resolves.isEmpty }
+        harness.guest.sendDragHandOff(
+            generation: take.generation, step: .failed(.dragTakeFailed, message: "no catcher"))
+
+        #expect(await name.value == "File.jpeg")
+        #expect(harness.display.releaseCount == 0)
+        let destination = try makeDestination().appendingPathComponent("File.jpeg")
+        #expect(await harness.write(take, item: 0, to: destination) == .failed(.dragItemUnnamed))
+        try await harness.reports.waitForFailure()
+        #expect(harness.reports.failure == .dragItemUnnamed)
+    }
+
+    @Test("a guest that never answers gives a stand-in name at the deadline, and the write fails")
+    func namingDeadlineFallsBack() async throws {
+        // The deadline is the behavior under test.
+        let harness = try Harness(dragNamingDeadline: 0.2)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+
+        #expect(await harness.filename(take, item: 0) == "File.jpeg")
+        // Settled for the drag: the next ask neither waits nor asks again.
+        #expect(await harness.filename(take, item: 1) == "File.png")
+        let destination = try makeDestination().appendingPathComponent("File.jpeg")
+        #expect(await harness.write(take, item: 0, to: destination) == .failed(.dragItemUnnamed))
+        try await harness.reports.waitForFailure()
+        #expect(harness.reports.failure == .dragItemUnnamed)
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.resolves == [take.generation])
+    }
+
+    @Test("a session a destination took without asking for names has them named as it ends")
+    func droppedSessionNamesOnItsEnd() async throws {
+        let harness = try Harness(tapsWire: true)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"], for: take)
+
+        // Holds the main thread, as the session's end does, until the guest's
+        // button is released for the call-in.
+        take.hostSessionEnded(dropped: true)
+
+        #expect(take.phase == .released(at: .catcher))
+        #expect(harness.display.releaseCount == 1)
+        #expect(take.filename(forItemAt: 0) == "IMG_0001.jpeg")
+        #expect(take.filename(forItemAt: 1) == "IMG_0002.png")
+        try await harness.guestRecorder.wait { harness.guestRecorder.resolves == [take.generation] }
+    }
+
+    @Test("a session that ended untargeted with a drop has the names asked for on TARGETED")
+    func endedSessionNamesOnTargeted() async throws {
+        let harness = try Harness(tapsWire: true)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        #expect(take.hostSession(over: harness.display, at: CGPoint(x: 10, y: 10)))
+        take.hostSessionLeft(harness.display)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: ""], for: take)
+        try await harness.handOff(.armed, for: take, until: .nudge(.offset), times: 1)
+        take.hostSessionEnded(dropped: true)
+        #expect(take.phase == .carried(.ended))
+
+        try await harness.handOff(.targeted, for: take, reaching: .released(at: .catcher))
+
+        #expect(harness.display.releaseCount == 1)
+        #expect(take.filename(forItemAt: 0) == "IMG_0001.jpeg")
+        // Unnamed by the guest, so a stand-in.
+        #expect(take.filename(forItemAt: 1) == "File.png")
+    }
+
+    /// The longest a test holds the main thread itself: far below
+    /// `testWaitBackstop`, so a hop that never returns fails this test alone.
+    private static let mainHoldWindow: TimeInterval = 5
+
+    @Test("names settled for an in-app destination answer off-main asks after the session ends, main held")
+    func inAppNamesOutliveTheSession() async throws {
+        let harness = try Harness(tapsWire: true)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"], for: take)
+        #expect(take.nameItemsForInAppDestination())
+        harness.service.endEndpointSessionForTesting()
+
+        // The main thread waits here as it does in an in-app destination's
+        // `receivePromisedFiles`, while AppKit asks the provider for names on
+        // a queue of its own: an ask that hopped to the main actor would
+        // never return.
+        let names = Locked<[String]>([])
+        #expect(
+            holdingTheMainThread {
+                names.withLock { $0 = [take.filename(forItemAt: 0), take.filename(forItemAt: 1)] }
+            })
+        #expect(names.withLock { $0 } == ["IMG_0001.jpeg", "IMG_0002.png"])
+    }
+
+    /// Runs `body` on another thread while this one — the main thread — waits
+    /// for it, reporting whether it returned within ``mainHoldWindow``.
+    private func holdingTheMainThread(_ body: @escaping @Sendable () -> Void) -> Bool {
+        let answered = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            body()
+            answered.signal()
+        }
+        return answered.wait(timeout: .now() + Self.mainHoldWindow) == .success
+    }
+
+    @Test("a write that begins after the session ended, before the take hears of it, is interrupted, not unnamed")
+    func aWriteAfterTheSessionEndsIsInterrupted() async throws {
+        let harness = try Harness(tapsWire: true)
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        try harness.answerResolves(naming: [0: "IMG_0001.jpeg", 1: "IMG_0002.png"], for: take)
+        #expect(await harness.filename(take, item: 0) == "IMG_0001.jpeg")
+
+        harness.service.endEndpointSessionForTesting()
+
+        let destination = try makeDestination().appendingPathComponent("IMG_0001.jpeg")
+        #expect(await harness.write(take, item: 0, to: destination) == .failed(.interrupted(fileCount: nil)))
+    }
+
+    @Test("a refused resolve leaves the hand-off as it was: the drag completes only once the guest reports its catch")
+    func refusedResolveLeavesTheHandOff() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        let name = Task { await harness.filename(take, item: 0) }
+        try await harness.guestRecorder.wait { !harness.guestRecorder.resolves.isEmpty }
+        harness.guest.sendDragHandOff(generation: take.generation, step: .resolveRefused)
+        #expect(await name.value == "File.jpeg")
+        #expect(harness.display.releaseCount == 0)
+
+        // The step reaches the take on the main actor too; delivered here, it
+        // is in ahead of the release whatever the hop's timing.
+        take.handOff(.resolveRefused)
+        #expect(take.phase == .carried(.outside(targeted: true)))
+        take.hostSessionEnded(dropped: false)
+        #expect(take.phase == .released(at: .catcher))
+        take.handOff(.resolveRefused)
+
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(!harness.guestRecorder.completedDrags.contains(take.generation))
+        harness.guest.sendDragHandOff(generation: take.generation, step: .caught)
+        try await harness.waitForComplete(take.generation)
+    }
+
+    @Test("a session that ended with nothing dropped releases without asking for names")
+    func undroppedSessionAsksNothing() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+
+        take.hostSessionEnded(dropped: false)
+
+        #expect(take.phase == .released(at: .catcher))
+        try await harness.hostToGuestBarrier(scratch: scratch.url)
+        #expect(harness.guestRecorder.resolves.isEmpty)
+    }
+
+    @Test("a promise the guest's source failed to write fails its write, saying the app didn't write it")
+    func unavailablePromiseIsReported() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let take = try await harness.carriedTake(of: Self.photos)
+        let name = Task { await harness.filename(take, item: 0) }
+        try await harness.guestRecorder.wait { !harness.guestRecorder.resolves.isEmpty }
+        harness.guest.sendDragHandOff(generation: take.generation, step: .resolving)
+        try await harness.waitForDisplay(.release)
+        #expect(
+            harness.guest.sendDragNames(generation: take.generation, filenames: [0: "IMG_0001.jpeg"]))
+        #expect(await name.value == "IMG_0001.jpeg")
+
+        let destination = try makeDestination().appendingPathComponent("IMG_0001.jpeg")
+        let write = Task { await harness.write(take, item: 0, to: destination) }
+        #expect(
+            harness.guest.markPromisedDragItemsUnavailable(generation: take.generation, repIndices: [0]))
+
+        #expect(await write.value == .failed(.peerReported(.dragItemUnavailable)))
+        try await harness.reports.waitForFailure()
+        let finish = try #require(harness.reports.finish)
+        #expect(
+            ClipboardTransferWording.wording(for: finish, vmName: "Guest")?.message
+                == "An app in the VM didn't write a dragged item, so the drag didn't finish.")
     }
 
     @Test("the channel ending once a session dropped nothing reports nothing")

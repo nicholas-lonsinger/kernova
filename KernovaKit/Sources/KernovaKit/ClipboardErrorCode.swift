@@ -63,4 +63,12 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// The guest could not hand a drag over, for a reason with no more specific
     /// code.
     case dragTakeFailed = "clipboard.drag.take.failed"
+
+    /// A promised item of a guest drag will never have bytes to pull: its
+    /// source failed to write it.
+    ///
+    /// Never crosses the wire: the guest says so in `DragSizes.unavailable`,
+    /// and the host both refuses the pull (``LazyPullOutcome/unavailable``) and
+    /// reports it.
+    case dragItemUnavailable = "clipboard.drag.item.unavailable"
 }

@@ -159,7 +159,7 @@ struct ClipboardDraggedItemTests {
             declared: RepInfo(
                 uti: "public.folder", byteCount: 77, filename: "../Tree", isInline: true,
                 isDirectory: true
-            ).wire)
+            ).wire, isPromised: false)
 
         #expect(item.repIndex == 2)
         #expect(item.isDirectory)

@@ -303,21 +303,38 @@ struct HostDropCapabilities: Equatable, Sendable {
     /// `drop.files.v3`: the host runs a drop listener at all.
     var supportsDropFiles: Bool
 
-    /// `drag.out.files.v1`: the host takes over drags that leave its VM
-    /// display.
-    var supportsDragOut: Bool
+    /// What the host takes of a drag that leaves its VM display.
+    var dragOut: HostDragOutSupport
 
     /// What a host that has not said `Hello` takes: nothing.
-    static let unadvertised = HostDropCapabilities(supportsDropFiles: false, supportsDragOut: false)
+    static let unadvertised = HostDropCapabilities(supportsDropFiles: false, dragOut: .none)
 
-    init(supportsDropFiles: Bool, supportsDragOut: Bool) {
+    init(supportsDropFiles: Bool, dragOut: HostDragOutSupport) {
         self.supportsDropFiles = supportsDropFiles
-        self.supportsDragOut = supportsDragOut
+        self.dragOut = dragOut
     }
 
     /// What `capabilities`, a `Hello`'s list, includes.
     init(advertised capabilities: [String]) {
         supportsDropFiles = capabilities.contains(KernovaCapability.dropFilesV3)
-        supportsDragOut = capabilities.contains(KernovaCapability.dragOutFilesV1)
+        dragOut =
+            switch (
+                capabilities.contains(KernovaCapability.dragOutFilesV1),
+                capabilities.contains(KernovaCapability.dragOutPromisesV1)
+            ) {
+            case (false, _): .none
+            case (true, false): .files
+            case (true, true): .filesAndPromises
+            }
     }
+}
+
+/// What a host takes of a drag that leaves its VM display.
+enum HostDragOutSupport: Equatable, Sendable {
+    /// Nothing: the drag stays in the guest.
+    case none
+    /// `drag.out.files.v1`: drags of plain file URLs.
+    case files
+    /// `drag.out.promises.v1` beside it: file promises too.
+    case filesAndPromises
 }

@@ -18,6 +18,10 @@ public enum LazyPullOutcome: Sendable {
     /// event-loop wait is unavailable, where the only alternative is parking the
     /// app for the transfer's length.
     case mainThreadUnavailable
+    /// Nothing was asked for: the peer said the item will never have bytes —
+    /// a drag's promised item its source failed to write
+    /// (``ClipboardErrorCode/dragItemUnavailable``).
+    case unavailable
 }
 
 /// One in-flight pull per `transfer_id`, shared by every caller that asks for it.
@@ -284,24 +288,18 @@ final class LazyPullCoordinator: Sendable {
         return nil
     }
 
-    /// Holds the calling thread until `resolved` returns a value: on
-    /// `eventLoop` when there is one, else parked on `semaphore`, which
-    /// whatever resolves it signals from another thread.
-    ///
-    /// `resolved`, never the wait's return, decides — so a signal racing a
-    /// re-check is still honored, and no timeout is decided here.
+    /// Holds the calling thread until `resolved` returns a value, the way
+    /// ``ThreadHold`` holds it, with no deadline: only `resolved` ends it.
     private static func hold<Value>(
         eventLoop: NestedEventLoopWait?, semaphore: DispatchSemaphore,
         recheckingEvery interval: TimeInterval, until resolved: @Sendable () -> Value?
     ) -> Value {
-        while true {
-            if let value = resolved() { return value }
-            if let eventLoop {
-                _ = eventLoop.wait(timeout: interval) { resolved() != nil }
-            } else {
-                _ = semaphore.wait(timeout: .now() + interval)
-            }
-        }
+        guard
+            let value = ThreadHold.hold(
+                eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: interval,
+                until: resolved)
+        else { preconditionFailure("A hold with no deadline returned without its value") }
+        return value
     }
 
     /// Starts or joins the pull for `transferID` without holding any thread.

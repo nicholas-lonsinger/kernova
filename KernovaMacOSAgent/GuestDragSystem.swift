@@ -122,22 +122,22 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
     var windowForTesting: NSPanel { panel }
     #endif
 
-    func show(fileURLs: [URL]) -> Bool {
+    func show(items: [GuestDragItem]) -> Bool {
         let pointer = NSEvent.mouseLocation
         guard
             let screen = NSScreen.screens.first(where: { NSMouseInRect(pointer, $0.frame, false) })
                 ?? NSScreen.main
         else { return false }
-        layOut(fileURLs: fileURLs, over: screen.frame)
+        layOut(items: items, over: screen.frame)
         // The agent is never the active app, so only this brings it front.
         panel.orderFrontRegardless()
         return true
     }
 
-    /// Sets the box up for `fileURLs` and covers `screenFrame`, leaving the
+    /// Sets the box up for `items` and covers `screenFrame`, leaving the
     /// window where it is in the window order.
-    func layOut(fileURLs: [URL], over screenFrame: NSRect) {
-        content.hud.present(fileURLs, typeIcon: typeIcon)
+    func layOut(items: [GuestDragItem], over screenFrame: NSRect) {
+        content.hud.present(items, typeIcon: typeIcon)
         panel.setFrame(screenFrame, display: true)
     }
 
@@ -184,7 +184,7 @@ private final class CatcherView: NSView {
     private func drag(_ sender: any NSDraggingInfo) -> GuestDragCatcher.Drag {
         GuestDragCatcher.Drag(
             sourceMask: sender.draggingSourceOperationMask,
-            fileURLs: GuestDraggedFiles.fileURLs(on: sender.draggingPasteboard))
+            items: GuestDraggedItems.items(on: sender.draggingPasteboard, acceptingPromises: true))
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -204,7 +204,10 @@ private final class CatcherView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        catcher?.performDragOperation() ?? false
+        catcher?.performDragOperation {
+            sender.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])
+                as? [NSFilePromiseReceiver] ?? []
+        } ?? false
     }
 
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {
@@ -278,21 +281,28 @@ private final class CatcherHUD: NSVisualEffectView {
                 })
     }
 
-    /// Shows `fileURLs`: one item as its type's icon and its name, several
-    /// as the multiple-documents icon and their count.
+    /// Shows `items`: one file as its type's icon and its name, one promise —
+    /// which has no name until it is called in — as its promised type's icon
+    /// and description, and several as the multiple-documents icon and their
+    /// count.
     ///
-    /// The type comes from the item's name alone: a read of a file in a
+    /// A file's type comes from its name alone: a read of a file in a
     /// protected folder raises the guest's privacy prompt, which the
     /// transfer itself never needs.
-    func present(_ fileURLs: [URL], typeIcon: @MainActor (UTType) -> NSImage) {
-        if fileURLs.count == 1, let item = fileURLs.first {
-            iconView.image = typeIcon(Self.type(named: item))
-            nameLabel.stringValue = item.lastPathComponent
-        } else {
+    func present(_ items: [GuestDragItem], typeIcon: @MainActor (UTType) -> NSImage) {
+        switch items.first {
+        case .file(let url)? where items.count == 1:
+            iconView.image = typeIcon(Self.type(named: url))
+            nameLabel.stringValue = url.lastPathComponent
+        case .promise(let uti)? where items.count == 1:
+            let type = UTType(uti) ?? .data
+            iconView.image = typeIcon(type)
+            nameLabel.stringValue = type.localizedDescription ?? uti
+        default:
             let multiple = NSImage(named: NSImage.multipleDocumentsName)
             if multiple == nil { assertionFailure("No image named \(NSImage.multipleDocumentsName)") }
             iconView.image = multiple
-            nameLabel.stringValue = "\(fileURLs.count) items"
+            nameLabel.stringValue = "\(items.count) items"
         }
     }
 

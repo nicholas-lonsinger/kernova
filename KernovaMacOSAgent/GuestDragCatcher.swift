@@ -14,6 +14,16 @@ import KernovaLogging
 /// items, a source that forbids a copy — is answered with no operation and
 /// `failed`.
 ///
+/// A take whose drag carries file promises calls them in at the catch only
+/// once the host asked with `DragResolve`, which the catcher answers
+/// `resolving` while it is targeted: the host releases the button for that
+/// drop alone, and every other drop on the surface calls nothing in. The ask
+/// holds for the showing it came in, as `targeted` does: standing the surface
+/// down drops it. An ask the catcher cannot act on is answered
+/// `resolveRefused`, never `failed`: the host completes a take once it hears
+/// `failed`, so a `failed` the take did not mean would let a completion
+/// overtake the release and take the surface down under it.
+///
 /// Once `targeted` is out the host may already have released the button, and
 /// that release is a real drop under the guest pointer, so a refusal after
 /// `targeted` leaves the surface up until the guest's drag ends, to refuse
@@ -47,9 +57,9 @@ final class GuestDragCatcher {
     struct Drag: Equatable {
         /// The operations the drag's source allows.
         let sourceMask: NSDragOperation
-        /// The drag's file URLs under ``GuestDraggedFiles``' rule, or `nil`
-        /// when it carries anything else.
-        let fileURLs: [URL]?
+        /// The drag's items under ``GuestDraggedItems``' rule, promises
+        /// included, or `nil` when it carries anything else.
+        let items: [GuestDragItem]?
     }
 
     /// One stretch of the surface being up for a take, reported by its own
@@ -60,6 +70,9 @@ final class GuestDragCatcher {
         /// `targeted` went out in this showing, so the host may have released
         /// the button.
         var targeted = false
+        /// The host asked for the drag's promises in this showing: the drop
+        /// calls them in.
+        var callsIn = false
     }
 
     /// The drag a take armed the catcher for.
@@ -76,15 +89,17 @@ final class GuestDragCatcher {
     }
 
     private let peer: any GuestDragOutPeer
+    private let promises: GuestDragPromises
     private let makeSurface: @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
     private var surface: (any GuestDragCatcherSurface)?
     private var take: Take?
 
     init(
-        peer: any GuestDragOutPeer,
+        peer: any GuestDragOutPeer, promises: GuestDragPromises,
         makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
     ) {
         self.peer = peer
+        self.promises = promises
         self.makeSurface = makeSurface
     }
 
@@ -96,7 +111,7 @@ final class GuestDragCatcher {
         let surface = surface ?? makeSurface(self)
         self.surface = surface
         take = Take(claim: claim)
-        guard surface.show(fileURLs: claim.fileURLs) else {
+        guard surface.show(items: claim.items) else {
             finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
             return
         }
@@ -157,13 +172,41 @@ final class GuestDragCatcher {
             return
         }
         guard current.showing == nil, !current.refused, let surface else { return }
-        guard surface.show(fileURLs: current.claim.fileURLs) else {
+        guard surface.show(items: current.claim.items) else {
             finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
             return
         }
         take?.showing = Showing()
         send(.armed, for: generation)
         Self.logger.log(.notice, "Catcher armed again (gen=\(generation, privacy: .public))")
+    }
+
+    /// A Mac destination wants the names of `generation`'s promised items:
+    /// marks the current showing to call them in at the catch and reports
+    /// `resolving`, which only a take whose drag is on the surface — targeted,
+    /// neither caught nor refused — can be. Anything else is answered
+    /// `resolveRefused`, leaving any live take as it was, and the host
+    /// releases nothing.
+    func resolve(generation: UInt64) {
+        guard let current = take, current.claim.generation == generation else {
+            refuseResolve(generation: generation, because: "The catcher holds no such take")
+            return
+        }
+        guard current.showing?.entered == true, !current.caught, !current.refused else {
+            refuseResolve(
+                generation: generation, because: "The drag is not on the catcher to call its promises in")
+            return
+        }
+        take?.showing?.callsIn = true
+        send(.resolving, for: generation)
+        Self.logger.log(.notice, "Catcher will call the drag's promises in (gen=\(generation, privacy: .public))")
+    }
+
+    private func refuseResolve(generation: UInt64, because reason: String) {
+        Self.logger.log(
+            .notice,
+            "Refused the host's resolve (gen=\(generation, privacy: .public)): \(reason, privacy: .public)")
+        send(.resolveRefused, for: generation)
     }
 
     /// A click reached the surface, so no drag is in flight to catch: the
@@ -223,12 +266,13 @@ final class GuestDragCatcher {
             decline(current, showing, (.dragTakeRefused, "The drag's source does not allow a copy"))
             return []
         }
-        guard drag.fileURLs == current.claim.fileURLs else {
+        guard drag.items == current.claim.items else {
             decline(current, showing, (.dragTakeRefused, "The drag holds other items than the taken one"))
             return []
         }
         if !showing.entered {
-            take?.showing = Showing(entered: true, targeted: true)
+            take?.showing?.entered = true
+            take?.showing?.targeted = true
             send(.targeted, for: current.claim.generation)
         }
         return .copy
@@ -256,12 +300,19 @@ final class GuestDragCatcher {
         take?.showing?.entered = false
     }
 
-    /// The drag ended on the surface.
-    func performDragOperation() -> Bool {
-        guard let current = take, current.showing?.entered == true, !current.caught, !current.refused else {
+    /// The drag ended on the surface. A showing the host asked to resolve
+    /// calls the drop's promises in, read through `receivers`, before it
+    /// reports `caught`; any other reads nothing of them.
+    func performDragOperation(receivers: () -> [any FilePromiseReceiving]) -> Bool {
+        guard let current = take, let showing = current.showing, showing.entered, !current.caught,
+            !current.refused
+        else {
             return false
         }
         take?.caught = true
+        if showing.callsIn {
+            promises.callIn(current.claim, receivers: receivers())
+        }
         send(.caught, for: current.claim.generation)
         return true
     }

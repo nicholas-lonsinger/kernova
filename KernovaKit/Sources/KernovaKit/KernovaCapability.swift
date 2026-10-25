@@ -45,10 +45,19 @@ public enum KernovaCapability {
     /// only ever comes from an agent that has the feature.
     public static let dragOutFilesV1 = "drag.out.files.v1"
 
+    /// File-promise items in a drag out (``dragOutFilesV1``): offered in
+    /// `DragOffer.promised`, called in by `DragResolve`, named in `DragNames`,
+    /// and sized one at a time in `DragSizes` as each is written.
+    ///
+    /// A feature tag like ``dragOutFilesV1``: the guest offers promised items
+    /// only to a host that advertises it.
+    public static let dragOutPromisesV1 = "drag.out.promises.v1"
+
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
         controlV1, controlHeartbeatV1, clipboardTransferV3, dropFilesV3, dragOutFilesV1,
+        dragOutPromisesV1,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for
