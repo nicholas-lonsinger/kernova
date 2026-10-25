@@ -49,6 +49,15 @@ public final class ClipboardProgressStatusItemPresenter {
 
     private var autoReveal = ClipboardProgressAutoReveal()
 
+    /// What the reveal's revisit is timed on.
+    private let clock: any EngineClock
+    /// When ``snapshot`` was delivered, so a revisit can age it to the moment
+    /// it runs.
+    private var deliveredAt: EngineInstant
+    /// The one revisit armed for an operation whose readout earns its reveal by
+    /// running time alone.
+    private var revisit: (operation: ClipboardTransferOperationID, task: Task<Void, Never>)?
+
     /// Creates a presenter bound to a status item's dropdown and its popover
     /// slot.
     ///
@@ -57,11 +66,14 @@ public final class ClipboardProgressStatusItemPresenter {
     /// readout reports itself cancellable.
     public init(
         menu: NSMenu, slot: any StatusItemCalloutSlot,
-        onCancel: ((ClipboardTransferOperationID) -> Void)? = nil
+        onCancel: ((ClipboardTransferOperationID) -> Void)? = nil,
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
         self.menu = menu
         self.slot = slot
         self.onCancel = onCancel
+        self.clock = clock
+        self.deliveredAt = clock.now
     }
 
     /// Applies the transfer report the domain host just published.
@@ -85,6 +97,7 @@ public final class ClipboardProgressStatusItemPresenter {
             allowsCancel = false
         }
         self.snapshot = rendered
+        deliveredAt = clock.now
         if let rendered {
             let id = rendered.operationID
             dropdownReadout.apply(rendered)
@@ -187,13 +200,39 @@ public final class ClipboardProgressStatusItemPresenter {
                 return false
             }
         }
+        armRevisit(for: readout)
         // A clear has logged its own line.
         guard let readout else { return }
         log(decision, skip: skip, readout: readout, dropdownOpen: dropdownOpen)
     }
 
+    /// Keeps one revisit armed for the moment `readout` earns its reveal by
+    /// running time alone, and none once it clears, its reveal is spent, or it
+    /// no longer would.
+    ///
+    /// A wait delivers no updates, so without the revisit a readout delivered
+    /// just under the elapsed floor would hold its callout back until the wait
+    /// ends. An update for the operation already armed keeps its revisit, which
+    /// decides on whatever readout is current when it runs.
+    private func armRevisit(for readout: ClipboardProgressSnapshot?) {
+        guard let readout, let wait = autoReveal.secondsUntilEarned(readout) else {
+            revisit?.task.cancel()
+            revisit = nil
+            return
+        }
+        if revisit?.operation == readout.operationID { return }
+        revisit?.task.cancel()
+        let task = clock.schedule(after: wait) { @MainActor [weak self] in
+            guard !Task.isCancelled, let self else { return }
+            self.revisit = nil
+            guard let snapshot = self.snapshot else { return }
+            self.revealIfEarned(snapshot.aged(by: self.deliveredAt.seconds(to: self.clock.now)))
+        }
+        revisit = (readout.operationID, task)
+    }
+
     /// Records the decision with the inputs that made it — one line per delivered
-    /// readout, a rate the tracker's throttle already bounds.
+    /// readout, a rate the tracker's throttle already bounds, and one per revisit.
     ///
     /// Only `.shown` is `.info`: a reveal the slot skipped is retried on every
     /// update until it goes up, so it repeats at the throttle rate as `.none`

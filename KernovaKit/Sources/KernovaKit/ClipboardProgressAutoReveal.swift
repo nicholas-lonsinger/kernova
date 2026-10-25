@@ -83,6 +83,23 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
         return .shown
     }
 
+    /// Seconds from now until `readout`, left unchanged, earns its reveal by its
+    /// running time alone — `nil` when it already has, or never will without a
+    /// further update.
+    ///
+    /// A transfer waiting on something — the guest exporting a promised file
+    /// before its size is known — delivers no update while it waits, so nothing
+    /// re-runs ``readoutChanged(_:dropdownIsOpen:reveal:)`` once it crosses the
+    /// elapsed floor; the caller revisits at this moment with
+    /// ``ClipboardProgressSnapshot/aged(by:)`` of the readout it holds.
+    public func secondsUntilEarned(_ readout: ClipboardProgressSnapshot) -> TimeInterval? {
+        if let lastSpent, readout.operationID <= lastSpent { return nil }
+        guard readout.gesture.isAwaited else { return nil }
+        let wait = minimumElapsedToReveal - readout.elapsedSeconds
+        guard wait > 0, isWorthRevealing(readout.aged(by: wait)) else { return nil }
+        return wait
+    }
+
     /// Whether the transfer has been running long enough, and has enough left to
     /// run, to be worth showing unsummoned.
     private func isWorthRevealing(_ readout: ClipboardProgressSnapshot) -> Bool {

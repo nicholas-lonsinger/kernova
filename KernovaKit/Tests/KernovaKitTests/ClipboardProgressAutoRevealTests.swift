@@ -245,4 +245,37 @@ struct ClipboardProgressAutoRevealTests {
         var longEnough = ClipboardProgressAutoReveal()
         #expect(Self.fold(readout(elapsed: 1.1, secondsRemaining: 120), into: &longEnough) == .shown)
     }
+
+    @Test("a readout under the floor that would earn its reveal by time alone names when")
+    func namesWhenTimeAloneEarnsTheReveal() {
+        var reveal = ClipboardProgressAutoReveal()
+        let waiting = readout(elapsed: 0.25, secondsRemaining: nil, bytesTransferred: 0, totalBytes: 0)
+        #expect(Self.fold(waiting, into: &reveal) == .none)
+        #expect(reveal.secondsUntilEarned(waiting) == 0.75)
+        // An estimate that still clears the remaining test once aged to the floor.
+        #expect(reveal.secondsUntilEarned(readout(elapsed: 0.25, secondsRemaining: 10)) == 0.75)
+    }
+
+    @Test("a readout that time alone will not earn the reveal names no moment")
+    func namesNoMomentWhenTimeAloneWillNot() {
+        let reveal = ClipboardProgressAutoReveal()
+        // Already past the floor: the delivered update decided it.
+        #expect(reveal.secondsUntilEarned(readout(elapsed: 5)) == nil)
+        // Its estimate runs out before the floor.
+        #expect(reveal.secondsUntilEarned(readout(elapsed: 0.25, secondsRemaining: 1)) == nil)
+        // Every byte in.
+        #expect(
+            reveal.secondsUntilEarned(
+                readout(elapsed: 0.25, secondsRemaining: nil, bytesTransferred: 1_000)) == nil)
+        // Nobody is waiting on it.
+        #expect(reveal.secondsUntilEarned(readout(elapsed: 0.25, gesture: .preview)) == nil)
+    }
+
+    @Test("a spent reveal names no moment to revisit")
+    func aSpentRevealNamesNoMoment() {
+        var reveal = ClipboardProgressAutoReveal()
+        let waiting = readout(elapsed: 0.25, secondsRemaining: nil, bytesTransferred: 0, totalBytes: 0)
+        #expect(Self.fold(waiting, into: &reveal, dropdownIsOpen: true) == .none)
+        #expect(reveal.secondsUntilEarned(waiting) == nil)
+    }
 }

@@ -92,6 +92,20 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         return min(1, max(0, Double(bytesTransferred) / Double(totalBytes)))
     }
 
+    /// The same readout as it stands `seconds` later with nothing reported in
+    /// between: run that much longer, with that much less of its estimate left.
+    func aged(by seconds: TimeInterval) -> ClipboardProgressSnapshot {
+        guard seconds > 0 else { return self }
+        return ClipboardProgressSnapshot(
+            direction: direction, peerName: peerName, currentItemName: currentItemName,
+            filesCompleted: filesCompleted, fileCount: fileCount,
+            bytesTransferred: bytesTransferred, totalBytes: totalBytes,
+            bytesPerSecond: bytesPerSecond,
+            secondsRemaining: secondsRemaining.map { max(0, $0 - seconds) }, gesture: gesture,
+            elapsedSeconds: elapsedSeconds + seconds, isCancellable: isCancellable,
+            operationID: operationID, pendingBehind: pendingBehind, awaitsSize: awaitsSize)
+    }
+
     /// The same readout with ``pendingBehind`` set, for the reporter to stamp
     /// what the operation itself cannot see.
     public func withPendingBehind(_ count: Int) -> ClipboardProgressSnapshot {

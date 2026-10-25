@@ -60,9 +60,26 @@ struct ClipboardProgressStatusItemPresenterTests {
     private let slot = RecordingSlot()
     private let operation = ClipboardTransferOperationID()
 
+    private let clock = GatedEngineClock()
+
     private func makePresenter() -> ClipboardProgressStatusItemPresenter {
         ClipboardProgressStatusItemPresenter(
-            menu: NSMenu(), slot: slot, onCancel: { [slot] id in slot.events.append(.cancelled(id)) })
+            menu: NSMenu(), slot: slot, onCancel: { [slot] id in slot.events.append(.cancelled(id)) },
+            clock: clock)
+    }
+
+    /// A drag out whose pull is waiting on the guest to name its file's size,
+    /// `elapsed` seconds in.
+    private func awaitingSize(
+        elapsed: TimeInterval, of id: ClipboardTransferOperationID? = nil
+    ) -> ClipboardTransferReport {
+        .running(
+            ClipboardProgressSnapshot(
+                direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
+                fileCount: 1, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
+                secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: elapsed,
+                isCancellable: true, operationID: id ?? operation, awaitsSize: true),
+            since: Date())
     }
 
     /// A running report that earns the reveal, for `operation`.
@@ -139,5 +156,89 @@ struct ClipboardProgressStatusItemPresenterTests {
         presenter.apply(running(elapsed: 6))
         #expect(slot.current != nil)
         #expect(slot.current != notice)
+    }
+
+    @Test("a readout that waits under the elapsed floor with no further update reveals as the floor passes")
+    func aWaitingReadoutRevealsAtTheFloor() async throws {
+        let presenter = makePresenter()
+        presenter.apply(awaitingSize(elapsed: 0.25))
+        #expect(slot.shown.isEmpty)
+        let revisit = try #require(clock.parked.first)
+        #expect(clock.parked.count == 1)
+        #expect(revisit.seconds == ClipboardProgressAutoReveal.defaultMinimumElapsedToReveal - 0.25)
+
+        clock.advance(seconds: revisit.seconds)
+        clock.release(revisit)
+        await clock.completion(of: revisit)
+
+        #expect(slot.shown.count == 1)
+        #expect(slot.current != nil)
+        #expect(clock.parked.isEmpty)
+    }
+
+    @Test("a revisit that runs before the floor has passed arms one more for the rest")
+    func anEarlyRevisitArmsForTheRest() async throws {
+        let presenter = makePresenter()
+        presenter.apply(awaitingSize(elapsed: 0.25))
+        let first = try #require(clock.parked.first)
+
+        clock.advance(seconds: 0.5)
+        clock.release(first)
+        await clock.completion(of: first)
+
+        #expect(slot.shown.isEmpty)
+        #expect(clock.parked.map(\.seconds) == [0.25])
+    }
+
+    @Test("further updates for the waiting operation keep its one revisit")
+    func updatesKeepTheOneRevisit() throws {
+        let presenter = makePresenter()
+        presenter.apply(awaitingSize(elapsed: 0.25))
+        presenter.apply(awaitingSize(elapsed: 0.5))
+        #expect(clock.parked.count == 1)
+    }
+
+    @Test("a readout that clears before the floor leaves no revisit")
+    func aClearCancelsTheRevisit() async throws {
+        let presenter = makePresenter()
+        presenter.apply(awaitingSize(elapsed: 0.25))
+        #expect(clock.parked.count == 1)
+
+        presenter.apply(.idle)
+
+        try await clock.parkedChanged.wait { clock.parked.isEmpty }
+        #expect(slot.shown.isEmpty)
+    }
+
+    @Test("a newer operation replaces the waiting one's revisit with its own")
+    func aNewerOperationReplacesTheRevisit() async throws {
+        let presenter = makePresenter()
+        presenter.apply(awaitingSize(elapsed: 0.25))
+        let first = try #require(clock.parked.first)
+
+        presenter.apply(awaitingSize(elapsed: 0.5, of: ClipboardTransferOperationID()))
+
+        try await clock.parkedChanged.wait { !clock.parked.contains(first) }
+        #expect(clock.parked.map(\.seconds) == [0.5])
+    }
+
+    @Test("a readout whose reveal is spent arms no revisit")
+    func aSpentRevealArmsNothing() async throws {
+        let presenter = makePresenter()
+        slot.isDropdownOpen = true
+        presenter.apply(awaitingSize(elapsed: 0.25))
+        slot.isDropdownOpen = false
+        presenter.apply(awaitingSize(elapsed: 0.5))
+
+        #expect(clock.requestedSeconds.isEmpty)
+        #expect(slot.shown.isEmpty)
+    }
+
+    @Test("a readout that reveals on delivery arms no revisit")
+    func anEarnedRevealArmsNothing() {
+        let presenter = makePresenter()
+        presenter.apply(awaitingSize(elapsed: 2))
+        #expect(slot.shown.count == 1)
+        #expect(clock.requestedSeconds.isEmpty)
     }
 }
