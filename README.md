@@ -15,7 +15,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
-    <img src="docs/images/hero-light.png" alt="Kernova main window: a sidebar of VMs with a running macOS 27 guest's desktop in the detail pane" width="900">
+    <img src="docs/images/hero-light.png" alt="Kernova main window: a sidebar of VMs with color tags, a folder, and a smart group, beside a running macOS 27 guest's desktop in the detail pane" width="900">
   </picture>
 </p>
 
@@ -99,6 +99,13 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
   </picture>
 </p>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/network-dark.png">
+    <img src="docs/images/network-light.png" alt="A VM's Network settings with the Mode menu open: NAT and Host Only each list their Common network, an Isolated network, and named networks; Bridged lists Automatic and each interface" width="680">
+  </picture>
+</p>
+
 ### Guest integration
 
 | | |
@@ -111,7 +118,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png">
-    <img src="docs/images/clipboard-light.png" alt="The clipboard window for a running macOS guest, showing rich text with an embedded photo and caption, with Automatic passthrough on" width="720">
+    <img src="docs/images/clipboard-light.png" alt="The clipboard window for a running macOS guest, holding rich text with an embedded photo and caption, with Paste from Mac, Copy to Mac, and Automatic passthrough off" width="720">
   </picture>
 </p>
 
