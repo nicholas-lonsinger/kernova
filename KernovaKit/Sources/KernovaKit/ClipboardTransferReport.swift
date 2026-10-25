@@ -84,9 +84,11 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case transferFailed
     /// The sending side could not read what it was sending, so the transfer
     /// stopped there; the failure names the item and how, when the read said.
-    case sourceUnreadable(ClipboardSourceReadFailure?)
-    /// The bytes arrived but could not be unpacked into the file or folder.
-    case unpackFailed
+    case sourceUnreadable(ClipboardItemFailure?)
+    /// The bytes arrived but could not be unpacked into the file or folder; the
+    /// failure names the entry the receiving side could not write, and how,
+    /// when it said.
+    case unpackFailed(ClipboardItemFailure?)
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
     /// Items this side could not read were left out of what it sent, and the
@@ -125,8 +127,8 @@ extension ClipboardTransferFailure {
         guard !info.isRetiring else { return nil }
         switch info.code {
         case .diskFull: return .diskFull(from: info)
-        case .extractError: return .unpackFailed
-        case .readError: return .sourceUnreadable(info.readFailure)
+        case .extractError: return .unpackFailed(info.itemFailure)
+        case .readError: return .sourceUnreadable(info.itemFailure)
         default: return .transferFailed
         }
     }

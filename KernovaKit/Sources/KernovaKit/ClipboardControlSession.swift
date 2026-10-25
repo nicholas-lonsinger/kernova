@@ -408,24 +408,29 @@ public final class ClipboardControlSession {
                 maxAcceptByteCount: maxAcceptByteCount))
     }
 
-    /// Reports a refusal to the peer. Best-effort, as the refusal has already
+    /// Reports a refusal to the peer, naming the entry an unpack failure could
+    /// not write when it named one. Best-effort, as the refusal has already
     /// been recorded on this side.
     nonisolated public func sendError(
-        code: ClipboardErrorCode, message: String, inReplyTo: String?
+        code: ClipboardErrorCode, message: String, inReplyTo: String?,
+        itemFailure: ClipboardItemFailure? = nil
     ) {
         try? channel.sendErrorFrame(
-            code: code.rawValue, message: message, inReplyTo: inReplyTo)
+            code: code.rawValue, message: message, inReplyTo: inReplyTo,
+            itemFailure: itemFailure)
     }
 
     /// Reports how the drop for `generation` ended. Best-effort: a channel that
     /// died took the drop with it.
     nonisolated public func sendDropComplete(
         generation: UInt64, outcome: Kernova_V1_DropComplete.Outcome,
-        code: ClipboardErrorCode? = nil, message: String = ""
+        code: ClipboardErrorCode? = nil, message: String = "",
+        itemFailure: ClipboardItemFailure? = nil
     ) {
         try? channel.send(
             .dropComplete(
-                generation: generation, outcome: outcome, code: code, message: message))
+                generation: generation, outcome: outcome, code: code, message: message,
+                itemFailure: itemFailure))
     }
 
     /// Tells the guest the host is done with the drag for `generation`.

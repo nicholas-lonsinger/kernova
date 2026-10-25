@@ -148,7 +148,7 @@ final class GuestDragItemWriter {
             // outright.
             let discard = {
                 guard let url = representation.fileURL else { return }
-                _ = try? FileManager.default.removeItem(at: url)
+                _ = try? StagedItemRemoval.remove(at: url)
             }
             if endpoint.hasLiveInboundOffer(generation: generation) {
                 #if DEBUG

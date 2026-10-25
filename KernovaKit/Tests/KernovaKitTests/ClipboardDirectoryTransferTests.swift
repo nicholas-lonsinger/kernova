@@ -86,6 +86,23 @@ struct ClipboardDirectoryTransferTests {
                 }))
     }
 
+    /// A peer that answers the pull for `transferID` with `payload`, whole,
+    /// under a trailer ending it as `ending`, by default one that checks out.
+    private func serveWhole(
+        _ harness: TransferHarness, transferID: UInt64, payload: Data,
+        ending: ClipboardTransferTrailer.Ending? = nil
+    ) {
+        harness.openPull(transferID: transferID, generation: 1) { far, request in
+            defer { ClipboardDataConnection.end(fd: far) }
+            try? writeTransferReply(
+                fd: far, transferID: request.transferID, isArchive: true, isInline: false,
+                totalBytes: 0)
+            try? ClipboardDataConnection.write(fd: far, payload)
+            try? ClipboardDataConnection.writeTrailer(
+                ClipboardTransferTrailer(ending: ending ?? .complete(digest: sha256(payload))), fd: far)
+        }
+    }
+
     /// Starts `receiver`, cancelling it from the first bytes it takes off the
     /// wire.
     private func startCancellingOnFirstArrival(
@@ -492,6 +509,43 @@ struct ClipboardDirectoryTransferTests {
         // offer advertised is the honest figure to report as "needed".
         #expect(info.neededBytes == 4096)
         #expect(info.availableBytes == 1024)
+        #expect(try probe.stagedFiles().isEmpty)
+    }
+
+    /// The sender's abort trailer, naming an item of its own, stands behind
+    /// the entry this side failed on, so it explains nothing.
+    @Test(
+        "an entry this side cannot write aborts with extract.error naming it, whatever trailer follows",
+        arguments: [false, true])
+    func unwritableEntryIsNamedUnderTheFolder(senderAborts: Bool) async throws {
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let payload = try rawArchive([
+            .root(), .directory("sub"), .file("sub/ok.txt", "ok"),
+            RawArchiveEntry(
+                type: .regularFile, path: Array("sub/caf".utf8) + [0xE9] + Array(".txt".utf8),
+                mode: 0o644, data: Data("x".utf8)),
+            .file("sub/after.txt", "after"),
+        ])
+
+        let transferID: UInt64 = 0x4C
+        harness.expect(transferID: transferID, plan: folderPlan(named: "Project", advertised: 4096))
+        serveWhole(
+            harness, transferID: transferID, payload: payload,
+            ending: senderAborts
+                ? .aborted(
+                    rawCode: ClipboardStreamAbortCode.readError.rawValue,
+                    readFailure: ClipboardItemFailure(itemPath: "Project/sub/unread.txt", reason: .posix(EACCES)))
+                : nil)
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .extractError)
+        #expect(
+            info.itemFailure
+                == ClipboardItemFailure(itemPath: "Project/sub/caf\u{FFFD}.txt", reason: .posix(EILSEQ)))
+        #expect(harness.collector.representation(transferID) == nil)
         #expect(try probe.stagedFiles().isEmpty)
     }
 

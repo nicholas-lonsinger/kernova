@@ -164,7 +164,10 @@ public func makeErrorFrame(code: String, message: String, inReplyTo: String? = n
 /// A `DropComplete` reporting how a drop ended.
 public func makeDropCompleteFrame(
     generation: UInt64, outcome: Kernova_V1_DropComplete.Outcome,
-    code: ClipboardErrorCode? = nil, message: String = ""
+    code: ClipboardErrorCode? = nil, message: String = "",
+    itemFailure: ClipboardItemFailure? = nil
 ) -> Frame {
-    .dropComplete(generation: generation, outcome: outcome, code: code, message: message)
+    .dropComplete(
+        generation: generation, outcome: outcome, code: code, message: message,
+        itemFailure: itemFailure)
 }

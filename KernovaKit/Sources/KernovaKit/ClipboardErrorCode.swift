@@ -19,6 +19,10 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// The paste failed for a reason with no more specific code.
     case pasteFailed = "clipboard.paste.failed"
 
+    /// The paste's bytes arrived but the receiving side could not unpack them;
+    /// the frame carries the entry it could not write when it named one.
+    case pasteUnpackFailed = "clipboard.paste.unpack.failed"
+
     /// The offer's paste-bound reps exceed the deadline-safe cap, so the host
     /// refused the Copy-to-Mac gesture.
     ///
@@ -51,6 +55,10 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// A dropped file did not reach the guest's Downloads folder, for a reason
     /// with no more specific code.
     case dropFailed = "clipboard.drop.failed"
+
+    /// A dropped item's bytes arrived but the guest could not unpack them; the
+    /// `DropComplete` carries the entry it could not write when it named one.
+    case dropUnpackFailed = "clipboard.drop.unpack.failed"
 
     /// The guest could not hand a drag over because the take named a drag that
     /// is not its current one, or the press that carried it is over.

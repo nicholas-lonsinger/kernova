@@ -444,6 +444,40 @@ struct VsockGuestDropAgentTests {
         #expect(harness.revealed.value == nil)
     }
 
+    @Test("a dropped item that can't be unpacked fails the drop naming the entry")
+    func unpackFailureNamesTheEntry() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        try harness.host.send(
+            makeDropOfferFrame(
+                generation: 1,
+                reps: [
+                    RepInfo(
+                        uti: ClipboardArchive.directoryUTI, byteCount: 64, filename: "Project",
+                        isInline: false, isDirectory: true)
+                ]))
+        // The guest's own extract refuses a name APFS cannot store.
+        let refused = try rawArchive([
+            .root(),
+            RawArchiveEntry(
+                type: .regularFile, path: Array("caf".utf8) + [0xE9] + Array(".txt".utf8), mode: 0o644,
+                data: Data("x".utf8)),
+        ])
+        try await serveRequest(
+            on: harness.dialled, generation: 1, repIndex: 0, payload: refused,
+            payloadIsArchived: true)
+
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .failed)
+        #expect(complete.code == ClipboardErrorCode.dropUnpackFailed.rawValue)
+        #expect(complete.hasItemFailure)
+        #expect(complete.itemFailure.itemPath == "Project/caf\u{FFFD}.txt")
+        #expect(complete.itemFailure.posixError == EILSEQ)
+        #expect(harness.revealed.value == nil)
+    }
+
     @Test("a volume with no room refuses the file before requesting a byte")
     func refusesWhenTheVolumeIsFull() async throws {
         let harness = try Harness(freeSpaceProvider: { _ in 0 })

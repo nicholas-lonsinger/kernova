@@ -438,7 +438,7 @@ struct ClipboardTransferStreamTests {
     private func runToCompletion(
         _ sender: ClipboardTransferSender, representation: ClipboardContent.Representation,
         isInline: Bool = true,
-        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil
+        onSourceUnreadable: (@Sendable (ClipboardItemFailure?) -> Void)? = nil
     ) async throws -> Bool {
         let ended = AsyncGate()
         let outcome = Locked<Bool?>(nil)
@@ -832,6 +832,61 @@ struct ClipboardTransferStreamTests {
         #expect(info.code == code)
         #expect(info.message == "refused")
         #expect(info.isRetiring == ClipboardStreamAbortCode.retiring.contains(code))
+    }
+
+    @Test(
+        "a peer's refusal keeps its item only for read.error",
+        arguments: [
+            (ClipboardStreamAbortCode.readError, true), (.extractError, false), (.diskFull, false),
+        ])
+    func refusalKeepsItsItemOnlyForAReadFailure(
+        code: ClipboardStreamAbortCode, kept: Bool
+    ) async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let failure = ClipboardItemFailure(itemPath: "Project/locked", reason: .posix(EACCES))
+        let transferID: UInt64 = 0xD2
+        harness.expect(transferID: transferID, plan: .init(uti: "public.data"))
+        harness.openPull(transferID: transferID, generation: 13) { far, request in
+            defer { ClipboardDataConnection.end(fd: far) }
+            try? ClipboardDataConnection.writeFrame(
+                .clipboardTransferRefusal(
+                    transferID: request.transferID, code: code, message: "refused",
+                    readFailure: failure),
+                fd: far)
+        }
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == code)
+        #expect(info.itemFailure == (kept ? failure : nil))
+    }
+
+    @Test("a peer's extract.error trailer names no item this side couldn't save")
+    func peerExtractTrailerKeepsNoItem() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let transferID: UInt64 = 0xD3
+        harness.expect(transferID: transferID, plan: .init(uti: "public.data"))
+        harness.openPull(transferID: transferID, generation: 13) { far, request in
+            defer { ClipboardDataConnection.end(fd: far) }
+            try? writeTransferReply(
+                fd: far, transferID: request.transferID, isArchive: false, isInline: true,
+                totalBytes: 1)
+            try? ClipboardDataConnection.writeTrailer(
+                ClipboardTransferTrailer(
+                    ending: .aborted(
+                        rawCode: ClipboardStreamAbortCode.extractError.rawValue,
+                        readFailure: ClipboardItemFailure(
+                            itemPath: "Project/peer text", reason: .posix(EILSEQ)))),
+                fd: far)
+        }
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .extractError)
+        #expect(info.itemFailure == nil)
+        #expect(ClipboardTransferFailure.inboundPullAborted(info) == .unpackFailed(nil))
     }
 
     /// The refusal is for a file this side cannot read at all, which is the one

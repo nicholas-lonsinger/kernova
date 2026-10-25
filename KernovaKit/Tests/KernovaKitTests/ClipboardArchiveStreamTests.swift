@@ -486,17 +486,17 @@ struct ClipboardArchiveStreamTests {
     func missingSourceFails() throws {
         let missing = scratch.url.appendingPathComponent("nope", isDirectory: true)
         // An empty archive here would be a folder silently arriving empty.
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(ENOENT))) {
+        #expect(throws: ClipboardItemFailure(itemPath: "", reason: .posix(ENOENT))) {
             _ = try ClipboardArchive.archiveBytes(of: .directory(missing))
         }
     }
 
     @Test("a file source naming a directory or a missing path fails the encode")
     func fileSourceRequiresARegularFile() throws {
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(EFTYPE))) {
+        #expect(throws: ClipboardItemFailure(itemPath: "", reason: .posix(EFTYPE))) {
             _ = try ClipboardArchive.archiveBytes(of: .file(scratch.url, name: "dir", byteCount: 0))
         }
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .posix(ENOENT))) {
+        #expect(throws: ClipboardItemFailure(itemPath: "", reason: .posix(ENOENT))) {
             _ = try ClipboardArchive.archiveBytes(
                 of: .file(
                     scratch.url.appendingPathComponent("nope.bin"), name: "nope.bin", byteCount: 16))
@@ -526,7 +526,7 @@ struct ClipboardArchiveStreamTests {
         defer { withExtendedLifetime(sealed) {} }
 
         #expect(
-            throws: ClipboardSourceReadFailure(itemPath: "Library/locked.db", reason: .posix(EACCES))
+            throws: ClipboardItemFailure(itemPath: "Library/locked.db", reason: .posix(EACCES))
         ) {
             _ = try ClipboardArchive.archiveBytes(of: .directory(source))
         }
@@ -544,7 +544,7 @@ struct ClipboardArchiveStreamTests {
         let sealed = try WithheldPermissions(vault)
         defer { withExtendedLifetime(sealed) {} }
 
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "Library/Mail", reason: .posix(EACCES))) {
+        #expect(throws: ClipboardItemFailure(itemPath: "Library/Mail", reason: .posix(EACCES))) {
             _ = try ClipboardArchive.archiveBytes(of: .directory(source))
         }
     }
@@ -585,7 +585,7 @@ struct ClipboardArchiveStreamTests {
 
         // The entry's header has already declared the larger size, so the
         // archive can only be abandoned — never quietly closed short.
-        #expect(throws: ClipboardSourceReadFailure(itemPath: "", reason: .endedEarly)) {
+        #expect(throws: ClipboardItemFailure(itemPath: "", reason: .endedEarly)) {
             _ = try ClipboardArchive.archiveBytes(
                 of: .file(file, name: "shrank.bin", byteCount: 8192))
         }

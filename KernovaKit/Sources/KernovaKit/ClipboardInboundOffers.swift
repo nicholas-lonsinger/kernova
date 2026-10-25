@@ -649,10 +649,15 @@ public final class ClipboardInboundOffers {
             "Clipboard error from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)): \(error.code, privacy: .public) — \(error.message, privacy: .public)"
         )
         guard error.code.hasPrefix("clipboard.") else { return }
-        let code = ClipboardErrorCode(rawValue: error.code)
-        onRefusal(
-            .peerPaste,
-            code == .pasteTooLarge ? .tooLarge(limitBytes: maxPasteBytes()) : .peerReported(code))
+        let failure: ClipboardTransferFailure
+        switch ClipboardErrorCode(rawValue: error.code) {
+        case .pasteTooLarge: failure = .tooLarge(limitBytes: maxPasteBytes())
+        case .pasteUnpackFailed:
+            failure = .unpackFailed(
+                error.hasItemFailure ? ClipboardItemFailure(wire: error.itemFailure) : nil)
+        case let code: failure = .peerReported(code)
+        }
+        onRefusal(.peerPaste, failure)
     }
 
     /// Forgets one offer and everything it holds, telling the peer nothing — the
@@ -1385,8 +1390,9 @@ public final class ClipboardInboundOffers {
             case .caller: break
             }
             announceRefusal(
-                Self.pasteErrorCode(forAbortCode: info.code), info.message, generation: plan.generation,
-                caller: caller)
+                Self.pasteErrorCode(forAbortCode: info.code), info.message,
+                itemFailure: info.code == .extractError ? info.itemFailure : nil,
+                generation: plan.generation, caller: caller)
         case .timedOut:
             Self.logger.log(
                 .warning,
@@ -1456,17 +1462,19 @@ public final class ClipboardInboundOffers {
         switch code {
         case .diskFull: return .pasteDiskFull
         case .stallTimeout: return .pasteTimeout
+        case .extractError: return .pasteUnpackFailed
         default: return .pasteFailed
         }
     }
 
     nonisolated private func announceRefusal(
-        _ code: ClipboardErrorCode, _ message: String, generation: UInt64, caller: PullCaller
+        _ code: ClipboardErrorCode, _ message: String, itemFailure: ClipboardItemFailure? = nil,
+        generation: UInt64, caller: PullCaller
     ) {
         guard caller == .paste else { return }
         MainActorBridge.sync {
             guard let entry = self.entries[generation] else { return }
-            self.announceRefusal(code, message, entry: entry)
+            self.announceRefusal(code, message, itemFailure: itemFailure, entry: entry)
         }
     }
 
@@ -1477,9 +1485,13 @@ public final class ClipboardInboundOffers {
     /// Deduped by the offer's refusal-burst window — one paste fires one provider
     /// per promised item, so its failures are reported once, while a later paste
     /// of the same offer is a fresh gesture and reports again.
-    private func announceRefusal(_ code: ClipboardErrorCode, _ message: String, entry: Entry) {
+    private func announceRefusal(
+        _ code: ClipboardErrorCode, _ message: String, itemFailure: ClipboardItemFailure? = nil,
+        entry: Entry
+    ) {
         guard sendsPasteRefusalsToPeer, opensRefusalWindow(entry) else { return }
-        session.sendError(code: code, message: message, inReplyTo: "clipboard.request")
+        session.sendError(
+            code: code, message: message, inReplyTo: "clipboard.request", itemFailure: itemFailure)
         recordRefusal(code, generation: entry.generation)
     }
 

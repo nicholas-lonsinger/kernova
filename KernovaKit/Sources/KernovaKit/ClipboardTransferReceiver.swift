@@ -73,7 +73,7 @@ final class ClipboardTransferReceiver: Sendable {
         let message: String
         var neededBytes: Int?
         var availableBytes: Int?
-        var readFailure: ClipboardSourceReadFailure?
+        var itemFailure: ClipboardItemFailure?
 
         init(code: ClipboardStreamAbortCode, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil) {
             self.init(
@@ -83,13 +83,13 @@ final class ClipboardTransferReceiver: Sendable {
 
         init(
             rawCode: String, message: String, neededBytes: Int? = nil, availableBytes: Int? = nil,
-            readFailure: ClipboardSourceReadFailure? = nil
+            itemFailure: ClipboardItemFailure? = nil
         ) {
             self.rawCode = rawCode
             self.message = message
             self.neededBytes = neededBytes
             self.availableBytes = availableBytes
-            self.readFailure = readFailure
+            self.itemFailure = itemFailure
         }
     }
 
@@ -313,7 +313,7 @@ final class ClipboardTransferReceiver: Sendable {
             throw stop(
                 fromPeer: reply.refusalCode, message: reply.refusalMessage,
                 readFailure: reply.hasReadFailure
-                    ? ClipboardSourceReadFailure(wire: reply.readFailure) : nil)
+                    ? ClipboardItemFailure(wire: reply.readFailure) : nil)
         }
         let totalBytes = Int(clamping: reply.totalBytes)
         let firstByteAt = clock.now
@@ -455,11 +455,11 @@ final class ClipboardTransferReceiver: Sendable {
             counted: counted, pacingBytes: extractPacingBytes, onOutputAdvanced: guarded)
 
         if let refused = refusal.recorded {
-            try? FileManager.default.removeItem(at: destination)
+            discard(destination)
             throw stop(for: refused)
         }
         if let failure {
-            try? FileManager.default.removeItem(at: destination)
+            discard(destination)
             throw stop(for: failure, endedOn: reader)
         }
 
@@ -473,8 +473,23 @@ final class ClipboardTransferReceiver: Sendable {
             return try finishStaged(
                 reply: reply, at: destination, counted: counted, reader: reader)
         } catch {
-            try? FileManager.default.removeItem(at: destination)
+            discard(destination)
             throw error
+        }
+    }
+
+    /// Removes an extract's destination and everything under it.
+    ///
+    /// A failure is logged and goes no further: the transfer is already
+    /// ending on its own stop, and the generation sweep removes what is left.
+    private func discard(_ destination: URL) {
+        do {
+            try StagedItemRemoval.remove(at: destination)
+        } catch {
+            Self.logger.log(
+                .error,
+                "Clipboard transfer \(self.transferID, privacy: .public): removing its staged output failed: \(String(describing: error), privacy: .public)"
+            )
         }
     }
 
@@ -635,20 +650,44 @@ final class ClipboardTransferReceiver: Sendable {
 
     /// The stop a peer's refusal or abort trailer names.
     ///
-    /// A source the peer could not read is logged here, where its item
-    /// arrives: whichever pull this resolves may report the failure without a
-    /// log line of its own.
+    /// The peer's item is kept only under `read.error`, so an item this side
+    /// reports as unsaved comes from ``stop(forUnwritable:)`` alone. A kept
+    /// item is logged here, where it arrives: whichever pull this resolves may
+    /// report the failure without a log line of its own.
     private func stop(
         fromPeer rawCode: String, message: String = "The sender ended the transfer",
-        readFailure: ClipboardSourceReadFailure?
+        readFailure: ClipboardItemFailure?
     ) -> ReceiveStop {
-        if let readFailure {
+        let unread = rawCode == ClipboardStreamAbortCode.readError.rawValue ? readFailure : nil
+        if let unread {
             Self.logger.log(
                 .notice,
-                "Clipboard transfer \(self.transferID, privacy: .public): the sender couldn't read '\(readFailure.itemPath, privacy: .private)' — \(readFailure.description, privacy: .public)"
+                "Clipboard transfer \(self.transferID, privacy: .public): the sender couldn't read '\(unread.itemPath, privacy: .private)' — \(unread.description, privacy: .public)"
             )
         }
-        return ReceiveStop(rawCode: rawCode, message: message, readFailure: readFailure)
+        return ReceiveStop(rawCode: rawCode, message: message, itemFailure: unread)
+    }
+
+    /// The stop an entry the extract refused ends the transfer with.
+    ///
+    /// Logged here, where the item is known: whichever pull this resolves may
+    /// report the failure without a log line of its own.
+    private func stop(forUnwritable failure: ClipboardItemFailure) -> ReceiveStop {
+        Self.logger.log(
+            .notice,
+            "Clipboard transfer \(self.transferID, privacy: .public): couldn't write '\(failure.itemPath, privacy: .private)' — \(failure.description, privacy: .public)"
+        )
+        // A folder's entries are named relative to the folder; a file's one
+        // entry is the representation itself.
+        let placed =
+            if let folder = plan.extractsDirectoryNamed {
+                failure.within(folder)
+            } else {
+                ClipboardItemFailure(itemPath: "", reason: failure.reason).within(plan.filename)
+            }
+        return ReceiveStop(
+            rawCode: ClipboardStreamAbortCode.extractError.rawValue,
+            message: "Unpacking the payload failed: \(failure.description)", itemFailure: placed)
     }
 
     /// What the sender wrote to end the payload, once the consumer has stopped
@@ -675,8 +714,9 @@ final class ClipboardTransferReceiver: Sendable {
     /// A local cancellation outranks every other reason — the sender's own
     /// trailer and this side's stops included — so a transfer the owner gave up
     /// on retires quietly however far along the stream the cancellation landed.
-    /// Short of one, the connection's own failure outranks the archive failure
-    /// it caused; short of that, the sender's own reason outranks the truncation
+    /// Short of one, an entry the extract refused is reported as itself; short
+    /// of that, the connection's own failure outranks the archive failure it
+    /// caused; short of that, the sender's own reason outranks the truncation
     /// or the archive failure it caused, so an archive cut short by a
     /// supersession retires quietly rather than reporting a corrupt payload.
     private func stop(for error: Error, endedOn reader: ClipboardPayloadReader? = nil)
@@ -684,6 +724,9 @@ final class ClipboardTransferReceiver: Sendable {
     {
         if cancelled { return cancellationStop }
         if let stop = error as? ReceiveStop { return stop }
+        // Raised by this side's own check, so no ending the sender wrote can
+        // explain it.
+        if let failure = error as? ClipboardItemFailure { return stop(forUnwritable: failure) }
         if case ClipboardArchiveStreamError.outputRefused(let refusal) = error {
             switch refusal {
             case .diskFull:
@@ -743,6 +786,6 @@ final class ClipboardTransferReceiver: Sendable {
         ClipboardStreamAbortInfo(
             transferID: transferID, rawCode: stop.rawCode, message: stop.message,
             neededBytes: stop.neededBytes, availableBytes: stop.availableBytes,
-            readFailure: stop.readFailure)
+            itemFailure: stop.itemFailure)
     }
 }

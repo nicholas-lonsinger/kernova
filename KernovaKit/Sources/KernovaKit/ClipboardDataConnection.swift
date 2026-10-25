@@ -32,7 +32,7 @@ enum ClipboardDataConnectionError: Error, Equatable {
 /// The last ``byteCount`` bytes are a kind byte and a 32-byte body: the digest
 /// for a complete payload; for an abort, the code in the body's first 30 bytes
 /// and, in its last two, the big-endian length of a detail that precedes the
-/// kind byte — a serialized ``ClipboardSourceReadFailure``, or nothing. A
+/// kind byte — a serialized ``ClipboardItemFailure``, or nothing. A
 /// reader finds where the trailer begins from its last bytes alone, which is
 /// what lets it hold back at most ``maximumByteCount``.
 ///
@@ -48,7 +48,7 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
         /// The sending side gave up, naming a `ClipboardStreamAbortCode` raw
         /// value — kept as the peer spelled it — and, for a `read.error`, the
         /// item it could not read.
-        case aborted(rawCode: String, readFailure: ClipboardSourceReadFailure? = nil)
+        case aborted(rawCode: String, readFailure: ClipboardItemFailure? = nil)
     }
 
     /// The fixed tail: one kind byte plus 32 bytes of digest or abort code and
@@ -56,7 +56,7 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
     public static let byteCount = 33
 
     /// The longest a trailer can be: the fixed tail plus the largest detail.
-    public static let maximumByteCount = byteCount + ClipboardSourceReadFailure.maximumEncodedByteCount
+    public static let maximumByteCount = byteCount + ClipboardItemFailure.maximumEncodedByteCount
 
     /// Bytes after the kind byte.
     private static let bodyByteCount = byteCount - 1
@@ -102,7 +102,7 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
         let fixed = tail.suffix(byteCount)
         guard fixed[fixed.startIndex] == 1 else { return byteCount }
         let detail = Int(fixed[fixed.endIndex - 2]) << 8 | Int(fixed[fixed.endIndex - 1])
-        guard detail <= ClipboardSourceReadFailure.maximumEncodedByteCount,
+        guard detail <= ClipboardItemFailure.maximumEncodedByteCount,
             tail.count >= byteCount + detail
         else { return nil }
         return byteCount + detail
@@ -127,7 +127,7 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
             let detail = Data(bytes.prefix(bytes.count - byteCount))
             return ClipboardTransferTrailer(
                 ending: .aborted(
-                    rawCode: code, readFailure: ClipboardSourceReadFailure(encoded: detail)))
+                    rawCode: code, readFailure: ClipboardItemFailure(encoded: detail)))
         default:
             return nil
         }
@@ -317,7 +317,7 @@ extension Frame {
     /// that could not be read for a `read.error` refusal.
     static func clipboardTransferRefusal(
         transferID: UInt64, code: ClipboardStreamAbortCode, message: String,
-        readFailure: ClipboardSourceReadFailure? = nil
+        readFailure: ClipboardItemFailure? = nil
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -325,7 +325,7 @@ extension Frame {
             $0.transferID = transferID
             $0.refusalCode = code.rawValue
             $0.refusalMessage = message
-            if let readFailure { $0.readFailure = readFailure.wire }
+            if let wire = readFailure?.boundedWire { $0.readFailure = wire }
         }
         return frame
     }

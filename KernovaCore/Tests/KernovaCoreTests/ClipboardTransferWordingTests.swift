@@ -48,8 +48,8 @@ struct ClipboardTransferWordingTests {
             (.timedOut, .drop),
             (.transferFailed, .paste),
             (.transferFailed, .preview),
-            (.unpackFailed, .paste),
-            (.unpackFailed, .preview),
+            (.unpackFailed(nil), .paste),
+            (.unpackFailed(nil), .preview),
             (.stagingFailed, .paste),
             (.itemsSkipped(count: 2), .forward),
             (.itemsSkipped(count: 1), .drop),
@@ -61,7 +61,7 @@ struct ClipboardTransferWordingTests {
             (.interrupted(fileCount: nil), .dragOut),
             (.timedOut, .dragOut),
             (.transferFailed, .dragOut),
-            (.unpackFailed, .dragOut),
+            (.unpackFailed(nil), .dragOut),
             (.stagingFailed, .dragOut),
             (.peerReported(nil), .dragOut),
             (.peerReported(.dragItemUnavailable), .dragOut),
@@ -70,12 +70,23 @@ struct ClipboardTransferWordingTests {
             (.sourceUnreadable(nil), .dragOut),
             (.sourceUnreadable(Self.mailUnreadable), .paste),
             (.sourceUnreadable(nil), .preview),
+            (.unpackFailed(Self.cafeUnsavable), .paste),
+            (.unpackFailed(Self.cafeUnsavable), .preview),
+            (.unpackFailed(Self.cafeUnsavable), .dragOut),
+            (.unpackFailed(Self.cafeUnsavable), .peerPaste),
+            (.unpackFailed(nil), .peerPaste),
+            (.unpackFailed(Self.cafeUnsavable), .drop),
+            (.unpackFailed(nil), .drop),
         ]
     }
 
+    /// An entry whose name the receiving volume refused, inside a copied folder.
+    private static let cafeUnsavable = ClipboardItemFailure(
+        itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+
     /// A read the guest's privacy controls refused, deep inside a dragged home
     /// folder.
-    private static let mailUnreadable = ClipboardSourceReadFailure(
+    private static let mailUnreadable = ClipboardItemFailure(
         itemPath: "pbear/Library/Mail", reason: .posix(EPERM))
 
     // MARK: - Outcomes with nothing to say
@@ -194,7 +205,7 @@ struct ClipboardTransferWordingTests {
         // paste from the tail of one whose earlier files already landed.
         for failure in [
             ClipboardTransferFailure.incompleteFileSet, .interrupted(fileCount: nil), .timedOut,
-            .transferFailed, .unpackFailed, .stagingFailed,
+            .transferFailed, .unpackFailed(nil), .stagingFailed,
         ] {
             let message = try #require(wording(failure, .paste)).message
             #expect(message.hasSuffix("so the paste didn't finish."), "\(failure)")
@@ -214,7 +225,7 @@ struct ClipboardTransferWordingTests {
     @Test("a failed preview never claims a paste happened")
     func previewNeverSpeaksOfAPaste() throws {
         for failure in [
-            ClipboardTransferFailure.timedOut, .transferFailed, .unpackFailed,
+            ClipboardTransferFailure.timedOut, .transferFailed, .unpackFailed(nil),
         ] {
             let copy = try #require(wording(failure, .preview))
             #expect(copy.message == "The preview from the guest couldn't be loaded.", "\(failure)")
@@ -279,7 +290,7 @@ struct ClipboardTransferWordingTests {
                 == "The VM couldn't read \u{201C}Mail\u{201D} (permission denied), so the drag didn't finish.")
         #expect(copy.menuLine == "Drag: the VM couldn't read \u{201C}Mail\u{201D}")
 
-        let reasons: [(ClipboardSourceReadFailure.Reason, String)] = [
+        let reasons: [(ClipboardItemFailure.Reason, String)] = [
             (.posix(EACCES), " (permission denied)"),
             (.posix(ENOENT), " (it no longer exists)"),
             (.posix(EIO), " (input/output error)"),
@@ -287,7 +298,7 @@ struct ClipboardTransferWordingTests {
             (.unknown, ""),
         ]
         for (reason, parenthetical) in reasons {
-            let failure = ClipboardSourceReadFailure(itemPath: "pbear/notes.txt", reason: reason)
+            let failure = ClipboardItemFailure(itemPath: "pbear/notes.txt", reason: reason)
             #expect(
                 try #require(wording(.sourceUnreadable(failure), .dragOut)).message
                     == "The VM couldn't read \u{201C}notes.txt\u{201D}\(parenthetical), so the drag didn't finish.")
@@ -333,6 +344,97 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.itemsUnreadable, .forward)).message
                 == "The copy couldn't be read, so nothing was sent to the VM.")
+    }
+
+    @Test("an entry the receiving side couldn't save is named, by whichever side saves it")
+    func unsavableItemIsNamed() throws {
+        let cafe = "\u{201C}caf\u{E9}\u{201D}"
+        let named: [(ClipboardTransferGesture, String, String, String)] = [
+            (
+                .paste, "Clipboard not pasted from \(quotedVM).",
+                "This Mac couldn't save \(cafe) (the disk can't store its name), so the paste didn't finish.",
+                "Clipboard: this Mac couldn't save \(cafe)"
+            ),
+            (
+                .dragOut, "Files not copied from \(quotedVM).",
+                "This Mac couldn't save \(cafe) (the disk can't store its name), so the drag didn't finish.",
+                "Drag: this Mac couldn't save \(cafe)"
+            ),
+            (
+                .peerPaste, "Clipboard not pasted into \(quotedVM).",
+                "The VM couldn't save \(cafe) (the disk can't store its name), so the paste didn't finish.",
+                "Clipboard: the VM couldn't save \(cafe)"
+            ),
+            (
+                .drop, "Files not copied to \(quotedVM).",
+                "The VM couldn't save \(cafe) (the disk can't store its name), so the drop didn't finish.",
+                "Drop: the VM couldn't save \(cafe)"
+            ),
+        ]
+        for (gesture, headline, message, menuLine) in named {
+            let copy = try #require(wording(.unpackFailed(Self.cafeUnsavable), gesture))
+            #expect(copy.headline == headline, "\(gesture)")
+            #expect(copy.message == message, "\(gesture)")
+            #expect(copy.menuLine == menuLine, "\(gesture)")
+        }
+        // A preview stays generic whatever the failure named.
+        #expect(
+            try #require(wording(.unpackFailed(Self.cafeUnsavable), .preview)).message
+                == "The preview from the guest couldn't be loaded.")
+    }
+
+    @Test("an unpack failure that names no entry keeps each gesture's own sentence")
+    func unnamedUnpackFailure() throws {
+        let expected: [(ClipboardTransferGesture, String, String)] = [
+            (
+                .paste, "The copied item couldn't be unpacked, so the paste didn't finish.",
+                "Clipboard: paste from the guest failed"
+            ),
+            (
+                .dragOut, "A dragged folder couldn't be unpacked, so the drag didn't finish.",
+                "Drag: the files didn't reach your Mac"
+            ),
+            (
+                .peerPaste, "The VM couldn't unpack the copied item, so the paste didn't finish.",
+                "Clipboard: paste into the guest failed"
+            ),
+            (
+                .drop, "The VM couldn't unpack a dropped item, so the drop didn't finish.",
+                "Drop: the files didn't reach the VM"
+            ),
+        ]
+        let unnamed = ClipboardItemFailure(itemPath: "", reason: .posix(EIO))
+        for (gesture, message, menuLine) in expected {
+            for failure in [nil, unnamed] {
+                let copy = try #require(wording(.unpackFailed(failure), gesture))
+                #expect(copy.message == message, "\(gesture)")
+                #expect(copy.menuLine == menuLine, "\(gesture)")
+            }
+        }
+    }
+
+    @Test("a save names the write reasons the volume gives, and the read phrases otherwise")
+    func saveReasons() throws {
+        let reasons: [(ClipboardItemFailure.Reason, String)] = [
+            (.posix(EILSEQ), " (the disk can't store its name)"),
+            (.posix(EEXIST), " (another item in the folder has the same name)"),
+            (.posix(ENAMETOOLONG), " (its path is too long)"),
+            (.posix(EACCES), " (permission denied)"),
+            (.posix(EIO), " (input/output error)"),
+            (.unknown, ""),
+        ]
+        for (reason, parenthetical) in reasons {
+            let failure = ClipboardItemFailure(itemPath: "Project/notes.txt", reason: reason)
+            #expect(
+                try #require(wording(.unpackFailed(failure), .paste)).message
+                    == "This Mac couldn't save \u{201C}notes.txt\u{201D}\(parenthetical), so the paste didn't finish."
+            )
+        }
+        // The write reasons are a save's alone: a read keeps the system's own text.
+        let unreadable = ClipboardItemFailure(itemPath: "Project/notes.txt", reason: .posix(EEXIST))
+        #expect(
+            try #require(wording(.sourceUnreadable(unreadable), .paste)).message
+                == "The VM couldn't read \u{201C}notes.txt\u{201D} (file exists), so the paste didn't finish.")
     }
 
     // MARK: - Menu lines

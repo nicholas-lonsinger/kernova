@@ -418,6 +418,32 @@ struct ClipboardEndpointRefusalTests {
         #expect(other.failure == .peerReported(.pasteDiskFull))
     }
 
+    @Test("a peer's unpack error becomes an unpack failure naming the entry it couldn't write")
+    func peerUnpackErrorNamesTheEntry() async throws {
+        let harness = try RawPeerHarness(pasteLimit: cap)
+        defer { harness.tearDown() }
+
+        let unwritable = ClipboardItemFailure(itemPath: "Project/caf\u{E9}", reason: .posix(EILSEQ))
+        var frame = makeErrorFrame(
+            code: ClipboardErrorCode.pasteUnpackFailed.rawValue, message: "x",
+            inReplyTo: "clipboard.request")
+        frame.error.itemFailure = unwritable.wire
+        try harness.send(frame)
+        let refusal = try await harness.side.recorder.waitForRefusal()
+        #expect(refusal.gesture == .peerPaste)
+        #expect(refusal.failure == .unpackFailed(unwritable))
+
+        // Without an item it is still the unpack failure, unnamed.
+        try harness.send(
+            makeErrorFrame(
+                code: ClipboardErrorCode.pasteUnpackFailed.rawValue, message: "x",
+                inReplyTo: "clipboard.request"))
+        let unnamed = try await harness.side.recorder.waitForRefusal {
+            $0.failure != refusal.failure
+        }
+        #expect(unnamed.failure == .unpackFailed(nil))
+    }
+
     // MARK: - Serving after the connection is over
 
     @Test("a materialized representation keeps serving both flavors after the connection ends")

@@ -1625,6 +1625,63 @@ struct VsockGuestClipboardAgentTests {
         #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected, pasteLimitBytes: nil))
     }
 
+    @Test("a paste that can't be unpacked tells the host which entry, with the unpack code")
+    func unpackAbortNamesTheEntryToTheHost() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = await makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
+            onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 35,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: 1024, filename: "Project",
+                        isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
+
+        // The guest's own extract refuses a name APFS cannot store.
+        let refused = try rawArchive([
+            .root(),
+            RawArchiveEntry(
+                type: .regularFile, path: Array("caf".utf8) + [0xE9] + Array(".txt".utf8), mode: 0o644,
+                data: Data("x".utf8)),
+        ])
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let connection = try await acceptPull(on: dialled, generation: 35)
+        try serveTransfer(
+            fd: connection.fd, transferID: connection.request.transferID, payload: refused,
+            isArchive: true, isInline: false)
+        #expect(await pull.value == nil)
+
+        let frame = try await nextFrame(from: hostChannel)
+        guard case .error(let error) = frame.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame.payload))")
+            return
+        }
+        #expect(error.code == ClipboardErrorCode.pasteUnpackFailed.rawValue)
+        #expect(error.hasItemFailure)
+        #expect(error.itemFailure.itemPath == "Project/caf\u{FFFD}.txt")
+        #expect(error.itemFailure.posixError == EILSEQ)
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteUnpackFailed, pasteLimitBytes: nil))
+    }
+
     // MARK: - Deadline-safe size cap (#561)
 
     @Test(

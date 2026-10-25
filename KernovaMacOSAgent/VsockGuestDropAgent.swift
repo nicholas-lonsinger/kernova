@@ -92,7 +92,9 @@ final class VsockGuestDropAgent: Sendable {
     private enum JobOutcome {
         case completed
         case cancelled
-        case failed(ClipboardErrorCode, String)
+        /// `item` is the entry an unpack failure could not write, when it named
+        /// one.
+        case failed(ClipboardErrorCode, String, item: ClipboardItemFailure? = nil)
     }
 
     // MARK: - Init
@@ -357,8 +359,12 @@ final class VsockGuestDropAgent: Sendable {
                         .warning,
                         "Dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
                     )
-                    outcome = .failed(
-                        abort.code == .diskFull ? .dropDiskFull : .dropFailed, abort.message)
+                    switch abort.code {
+                    case .diskFull: outcome = .failed(.dropDiskFull, abort.message)
+                    case .extractError:
+                        outcome = .failed(.dropUnpackFailed, abort.message, item: abort.itemFailure)
+                    default: outcome = .failed(.dropFailed, abort.message)
+                    }
                 }
             case .timedOut:
                 outcome = .failed(.dropFailed, "The transfer stopped making progress")
@@ -382,7 +388,7 @@ final class VsockGuestDropAgent: Sendable {
         switch outcome {
         case .completed: operation.finish(.completed)
         case .cancelled: operation.finish(.cancelled)
-        case .failed(let code, _): operation.finish(.failed(.peerReported(code)))
+        case .failed(let code, _, _): operation.finish(.failed(.peerReported(code)))
         }
         if case .completed = outcome, !landed.isEmpty {
             revealInFinder(landed)
@@ -422,7 +428,7 @@ final class VsockGuestDropAgent: Sendable {
     /// reclaims it.
     private static func discard(_ representation: ClipboardContent.Representation) {
         guard let url = representation.fileURL else { return }
-        try? FileManager.default.removeItem(at: url)
+        try? StagedItemRemoval.remove(at: url)
     }
 
     /// Maps a filesystem failure to the code the host renders a sentence from.
@@ -450,9 +456,10 @@ final class VsockGuestDropAgent: Sendable {
             endpoint.sendDropComplete(generation: generation, outcome: .completed)
         case .cancelled:
             endpoint.sendDropComplete(generation: generation, outcome: .cancelled)
-        case .failed(let code, let message):
+        case .failed(let code, let message, let item):
             endpoint.sendDropComplete(
-                generation: generation, outcome: .failed, code: code, message: message)
+                generation: generation, outcome: .failed, code: code, message: message,
+                itemFailure: item)
         }
     }
 }

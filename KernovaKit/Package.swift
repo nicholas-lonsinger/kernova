@@ -65,6 +65,11 @@ let package = Package(
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ],
             swiftSettings: sharedSwiftSettings,
+            // `import AppleArchive` does not autolink the C library its
+            // `__AAHeader…` functions live in
+            // (docs/research/2026-10-23-applearchive-extract-semantics.md,
+            // finding 3).
+            linkerSettings: [.linkedLibrary("AppleArchive")],
             plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
         ),
         // The one logging spelling: `KernovaLogger` and the `LogMessage` its

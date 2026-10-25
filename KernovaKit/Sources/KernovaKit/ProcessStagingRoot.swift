@@ -65,7 +65,7 @@ public final class ProcessStagingRoot: Sendable {
                 }
                 directoryLock = acquired
             } catch {
-                try? manager.removeItem(at: building)
+                try? StagedItemRemoval.remove(at: building)
                 throw error
             }
         }
@@ -117,13 +117,13 @@ public final class ProcessStagingRoot: Sendable {
                 // Held while the entry is removed, so any other reclaimer's
                 // try-lock on it is refused until it is gone.
                 guard let abandoned = try ExclusiveFileLock.tryAcquire(at: entry) else { continue }
-                try withExtendedLifetime(abandoned) { try manager.removeItem(at: entry) }
+                try withExtendedLifetime(abandoned) { try StagedItemRemoval.remove(at: entry) }
             } catch Errno.noSuchFileOrDirectory {
                 // Another reclaimer removed it first.
             } catch {
                 Self.logger.log(
                     .warning,
-                    "Could not reclaim staging entry '\(entry.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Could not reclaim staging entry '\(entry.lastPathComponent, privacy: .public)': \(String(describing: error), privacy: .public)"
                 )
             }
         }

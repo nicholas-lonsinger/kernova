@@ -1,5 +1,7 @@
+import Darwin
 import Foundation
 import KernovaTestSupport
+import System
 import Testing
 import UniformTypeIdentifiers
 
@@ -56,11 +58,151 @@ struct StagedItemLandingTests {
         let representation = try staged("report.pdf")
         let destination = scratch.url.appendingPathComponent("missing/report.pdf")
 
-        #expect(throws: CocoaError.self) {
+        let error = #expect(throws: POSIXError.self) {
             try StagedItemLanding.land(representation, at: destination)
         }
+        #expect(error?.code == .ENOENT)
         #expect(FileManager.default.fileExists(atPath: try #require(representation.fileURL).path))
         #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    /// A staged folder named `name` holding `sub/a.txt`.
+    private func stagedTree(_ name: String) throws -> URL {
+        let tree = scratch.url.appendingPathComponent("staging/\(name)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: tree.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        try Data("one".utf8).write(to: tree.appendingPathComponent("sub/a.txt"))
+        return tree
+    }
+
+    /// A rename that fails with `EXDEV` stands in for another volume.
+    @Test(
+        "a folder whose own mode withholds write from its owner lands by rename, or by copy, with that mode",
+        arguments: [nil, Errno.improperLink])
+    func unwritableFolderLandsWithItsMode(renameFailure: Errno?) throws {
+        let tree = try stagedTree("Locked")
+        let inode = try linkStatus(tree.path).st_ino
+        try #require(chmod(tree.path, 0o555) == 0)
+        let destination = try destinationFolder().appendingPathComponent("Locked")
+
+        try StagedItemLanding.land(
+            tree, at: destination, on: InterposedArchiveVolume(failingRenamesWith: renameFailure))
+
+        #expect(try linkStatus(destination.path).st_mode & 0o7777 == 0o555)
+        #expect(try Data(contentsOf: destination.appendingPathComponent("sub/a.txt")) == Data("one".utf8))
+        #expect((try linkStatus(destination.path).st_ino == inode) == (renameFailure == nil))
+        #expect(!FileManager.default.fileExists(atPath: tree.path))
+    }
+
+    @Test("a rename failing for a reason other than another volume is thrown, and nothing is copied")
+    func otherRenameFailureIsThrown() throws {
+        let tree = try stagedTree("Tree")
+        let destination = try destinationFolder().appendingPathComponent("Tree")
+
+        let error = #expect(throws: POSIXError.self) {
+            try StagedItemLanding.land(
+                tree, at: destination, on: InterposedArchiveVolume(failingRenamesWith: .ioError))
+        }
+        #expect(error?.code == .EIO)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        #expect(try Data(contentsOf: tree.appendingPathComponent("sub/a.txt")) == Data("one".utf8))
+    }
+
+    @Test("on one volume, a folder lands by rename, keeping its inode")
+    func sameVolumeLandingIsARename() throws {
+        let tree = try stagedTree("Photos")
+        let inode = try linkStatus(tree.path).st_ino
+        let representation = ClipboardContent.Representation(
+            uti: "public.folder", fileURL: tree, byteCount: 3, filename: "Photos", isDirectory: true)
+        let destination = try destinationFolder().appendingPathComponent("Photos")
+
+        try StagedItemLanding.land(representation, at: destination)
+
+        #expect(try linkStatus(destination.path).st_ino == inode)
+        #expect(!FileManager.default.fileExists(atPath: tree.path))
+    }
+
+    // MARK: - Across volumes
+
+    /// A copy `removeItem` could not take out of staging: a read-only folder
+    /// holding a file.
+    @Test(
+        "across volumes, or where a rename would replace, a folder holding a read-only folder copies whole, symlinks as themselves, and leaves staging",
+        arguments: [Errno.improperLink, .notSupported])
+    func folderCopiesAcrossVolumes(renameFailure: Errno) throws {
+        let fm = FileManager.default
+        let tree = try stagedTree("Tree")
+        let locked = tree.appendingPathComponent("locked", isDirectory: true)
+        try fm.createDirectory(at: locked, withIntermediateDirectories: false)
+        try Data("inside".utf8).write(to: locked.appendingPathComponent("inside.txt"))
+        try #require(chmod(locked.path, 0o555) == 0)
+        // Dangling, so following it instead of copying it would fail.
+        try fm.createSymbolicLink(
+            atPath: tree.appendingPathComponent("dangling").path, withDestinationPath: "nowhere")
+        let destination = try destinationFolder().appendingPathComponent("Tree")
+
+        try StagedItemLanding.land(
+            tree, at: destination, on: InterposedArchiveVolume(failingRenamesWith: renameFailure))
+
+        #expect(try Data(contentsOf: destination.appendingPathComponent("sub/a.txt")) == Data("one".utf8))
+        #expect(
+            try Data(contentsOf: destination.appendingPathComponent("locked/inside.txt")) == Data("inside".utf8))
+        #expect(try linkStatus(destination.appendingPathComponent("locked").path).st_mode & 0o7777 == 0o555)
+        let link = destination.appendingPathComponent("dangling").path
+        #expect(try linkStatus(link).st_mode & S_IFMT == S_IFLNK)
+        #expect(try fm.destinationOfSymbolicLink(atPath: link) == "nowhere")
+        #expect(!fm.fileExists(atPath: tree.path))
+    }
+
+    @Test("across volumes, a file copies byte for byte and leaves staging")
+    func fileCopiesAcrossVolumes() throws {
+        let representation = try staged("report.pdf")
+        let source = try #require(representation.fileURL)
+        let destination = try destinationFolder().appendingPathComponent("Renamed.pdf")
+
+        try StagedItemLanding.land(
+            source, at: destination, on: InterposedArchiveVolume(failingRenamesWith: .improperLink))
+
+        #expect(try Data(contentsOf: destination) == Data("payload".utf8))
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test("across volumes, a sparse file keeps its holes")
+    func sparseFileCopiesSparsely() throws {
+        let staging = scratch.url.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let source = staging.appendingPathComponent("disk.img")
+        let size: off_t = 64 << 20
+        try Data("head".utf8).write(to: source)
+        try #require(truncate(source.path, size) == 0)
+        let allocationBound = Int64(1 << 20)
+        try #require(try linkStatus(source.path).st_blocks * 512 < allocationBound)
+        let destination = try destinationFolder().appendingPathComponent("disk.img")
+
+        try StagedItemLanding.land(
+            source, at: destination, on: InterposedArchiveVolume(failingRenamesWith: .improperLink))
+
+        let landed = try linkStatus(destination.path)
+        #expect(landed.st_size == size)
+        #expect(landed.st_blocks * 512 < allocationBound)
+        let handle = try FileHandle(forReadingFrom: destination)
+        defer { try? handle.close() }
+        #expect(try handle.read(upToCount: 4) == Data("head".utf8))
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test("across volumes, an existing item is never replaced, and the staged item stays", arguments: [false, true])
+    func copyRefusesAnExistingItem(stagedIsFolder: Bool) throws {
+        let source = stagedIsFolder ? try stagedTree("Item") : try #require(try staged("Item").fileURL)
+        let destination = try destinationFolder().appendingPathComponent("Item")
+        try Data("theirs".utf8).write(to: destination)
+
+        #expect(throws: (any Error).self) {
+            try StagedItemLanding.land(
+                source, at: destination, on: InterposedArchiveVolume(failingRenamesWith: .improperLink))
+        }
+        #expect(try Data(contentsOf: destination) == Data("theirs".utf8))
+        #expect(FileManager.default.fileExists(atPath: source.path))
     }
 
     @Test("landing in a folder counts the name up the way Finder keeps both")

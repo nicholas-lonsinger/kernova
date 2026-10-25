@@ -61,6 +61,9 @@ struct AgentMenuTextTests {
             AgentMenuText.clipboardLine(.pasteRefused(.pasteTimeout, pasteLimitBytes: limit))
                 == "Clipboard: paste timed out")
         #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteUnpackFailed, pasteLimitBytes: limit))
+                == "Clipboard: couldn't save the pasted item")
+        #expect(
             AgentMenuText.clipboardLine(.pasteRefused(.pasteFailed, pasteLimitBytes: limit))
                 == "Clipboard: paste failed")
         // Host-only refusals never reach the guest; they read as the generic

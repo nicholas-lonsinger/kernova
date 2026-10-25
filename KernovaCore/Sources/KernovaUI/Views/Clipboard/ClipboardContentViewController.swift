@@ -889,7 +889,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 // the buffer's representation, and the directory holding it is
                 // the service's to reclaim.
                 var keepFile = false
-                defer { if !keepFile { try? FileManager.default.removeItem(at: url) } }
+                defer { if !keepFile { try? StagedItemRemoval.remove(at: url) } }
                 guard let self else { return }
                 if let error {
                     self.statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)

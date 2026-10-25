@@ -76,7 +76,7 @@ final class ClipboardTransferOutbox: Sendable {
         link: ClipboardTransferLink,
         onBegin: (@Sendable () -> Void)? = nil,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
-        onSourceUnreadable: (@Sendable (ClipboardSourceReadFailure?) -> Void)? = nil,
+        onSourceUnreadable: (@Sendable (ClipboardItemFailure?) -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) -> Bool {
         let sender = ClipboardTransferSender(
