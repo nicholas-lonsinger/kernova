@@ -631,6 +631,43 @@ struct ClipboardArchiveExtractionTests {
         #expect(Int(status.st_blocks) * 512 == allocated)
     }
 
+    @Test(
+        "on a volume that refuses to punch the holes it reports, the file reads back byte for byte",
+        arguments: SparseLayout.allCases, [1, ClipboardArchiveCodec.fileReadBlockSize / 4096])
+    func refusedPunchLeavesTheFileWhole(layout: SparseLayout, scale: Int) throws {
+        guard let holeSize = try scratchHoleSize() else { return }
+        let destination = try makeDestination()
+        let (contents, _) = Self.sparseContents(layout, scale: scale, holeSize: holeSize)
+        var entry = RawArchiveEntry.file("sparse.bin")
+        entry.data = contents
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            if case .punchHole = call { throw .notSupported }
+        }
+
+        #expect(extractFailure(try rawArchive([.root(), entry]), into: destination, on: volume) == nil)
+        let path = destination.appendingPathComponent("sparse.bin").path
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == contents)
+        #expect(Int(try linkStatus(path).st_size) == contents.count)
+    }
+
+    @Test(
+        "a file whose trailing zeros cannot be sized fails the extract, naming the file",
+        arguments: [1, ClipboardArchiveCodec.fileReadBlockSize / 4096])
+    func failedTruncateIsAFailure(scale: Int) throws {
+        guard let holeSize = try scratchHoleSize() else { return }
+        let destination = try makeDestination()
+        let (contents, _) = Self.sparseContents(.trailingZeros, scale: scale, holeSize: holeSize)
+        var entry = RawArchiveEntry.file("sparse.bin")
+        entry.data = contents
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            if case .setSize = call { throw .ioError }
+        }
+
+        #expect(
+            extractFailure(try rawArchive([.root(), entry]), into: destination, on: volume) as? ClipboardItemFailure
+                == ClipboardItemFailure(itemPath: "sparse.bin", reason: .posix(EIO)))
+    }
+
     @Test("on a volume that reports no holes, a file's zeros are written as data")
     func zerosAreWrittenWhereNoHoles() throws {
         guard let holeSize = try scratchHoleSize() else { return }

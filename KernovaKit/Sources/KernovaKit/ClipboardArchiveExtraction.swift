@@ -154,10 +154,10 @@ private struct EntryAttributes: Sendable {
 /// A folder's symlinks and small regular files are read into a batch, bounded
 /// in entries and bytes, and created side by side, each regular file's
 /// descriptor open only while it is written. The batch is created before the
-/// materializer leaves the folder, and before any other entry is created, so
-/// a failure in it is the one in archive order that creating the entries one
-/// at a time would have met first. A regular file's whole blocks of zeros
-/// become holes.
+/// materializer leaves the folder, and before any other entry is created.
+/// The failure it reports is the first in archive order of its entries'
+/// failures, a name collision charged to the later entry. A regular file's
+/// whole blocks of zeros become holes.
 ///
 /// A source is the archive ``ClipboardArchiveCodec/extractEntries(from:into:on:)``
 /// decodes, or a ``ClipboardArchiveCodec/TreeWalk`` of a tree on disk.
@@ -561,8 +561,8 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
     /// Creates the batch's entries in `directory`, the folder the cursor is
     /// at, side by side, and empties it.
     ///
-    /// - Throws: the failure creating the entries one at a time, in archive
-    ///   order, would have met first.
+    /// - Throws: the first in archive order of the entries' failures, a name
+    ///   collision charged to the later entry.
     private func createBatch(in directory: Int32) throws {
         guard !batch.isEmpty else { return }
         let entries = batch
@@ -601,14 +601,12 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         }
     }
 
-    /// The failure creating `entries` one at a time, in order, would have met
-    /// first, given the ones that `failed`, by position, created side by side
-    /// — `nil` when none did.
+    /// The first in archive order of the failures of `entries` that `failed`,
+    /// by position, created side by side — `nil` when none did.
     ///
-    /// Of two entries the volume takes for one name, the later in archive
-    /// order fails one at a time, but either can side by side, so each
-    /// collision is charged to the second entry in archive order of those
-    /// that took the name.
+    /// Of the entries the volume takes for one name, either can fail side by
+    /// side, so each collision is charged to the second in archive order of
+    /// those that took the name.
     private static func firstFailure(
         of entries: [PendingEntry], failed: [Int: any Error], in directory: Int32, on volume: Volume
     ) -> (any Error)? {
