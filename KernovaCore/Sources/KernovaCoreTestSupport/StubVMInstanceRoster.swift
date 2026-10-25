@@ -13,7 +13,7 @@ final class StubVMInstanceRoster: VMAdmissionPeers {
         didSet { wirePeers() }
     }
 
-    var supportsUSBAccessories = false
+    var usbPassthroughGap: USBAccessoryPassthrough.Gap? = .needsEntitlement
 
     var isTerminating = false
 

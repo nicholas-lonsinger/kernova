@@ -20,12 +20,12 @@ struct VMCommandCoreAttachmentTests {
 
     private func makeHarness(
         diskImages: MockDiskImageService = MockDiskImageService(),
-        usbAccessoryService: MockUSBAccessoryService? = nil
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement)
     ) -> Harness {
         Harness(
             WiredCommandCore(
                 virtualization: MockVirtualizationService(), diskImages: diskImages,
-                usbAccessoryService: usbAccessoryService, preferences: preferences))
+                usbAccessoryPassthrough: usbAccessoryPassthrough, preferences: preferences))
     }
 
     @discardableResult
@@ -1453,7 +1453,7 @@ struct VMCommandCoreAttachmentTests {
         let installerPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
             .path(percentEncoded: false)
         let installer = RemovableMediaItem(path: installerPath, readOnly: true)
-        let harness = makeHarness(usbAccessoryService: MockUSBAccessoryService())
+        let harness = makeHarness(usbAccessoryPassthrough: .available(MockUSBAccessoryService()))
         let sessionID = UUID()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS

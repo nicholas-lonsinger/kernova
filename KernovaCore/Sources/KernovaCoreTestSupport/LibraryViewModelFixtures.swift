@@ -14,7 +14,7 @@ func makeLibraryViewModel(
     preferences: AppPreferences,
     storageService: MockVMStorageService = MockVMStorageService(),
     fileSystem: MockFileSystem = MockFileSystem(),
-    usbAccessoryService: (any USBAccessoryProviding)? = nil,
+    usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
     diskImageService: MockDiskImageService = MockDiskImageService(),
     organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
     bundleProducts: AppBundleProducts = .testing
@@ -30,7 +30,7 @@ func makeLibraryViewModel(
         localImageInspector: MockLocalRestoreImageInspector(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         bridgedInterfaces: MockBridgedInterfaceProvider(),
-        usbAccessoryService: usbAccessoryService,
+        usbAccessoryPassthrough: usbAccessoryPassthrough,
         fileSystem: fileSystem,
         downloadsDirectory: nil,
         preferences: preferences,

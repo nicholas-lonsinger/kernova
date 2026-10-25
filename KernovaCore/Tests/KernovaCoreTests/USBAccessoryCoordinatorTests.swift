@@ -26,7 +26,7 @@ struct USBAccessoryCoordinatorTests {
     /// passes for the wrong reason. Callers keep the returned harness alive
     /// for the length of the test; the library's VMs reach it weakly too.
     private func makeHarness(_ service: MockUSBAccessoryService) throws -> Harness {
-        let lifecycle = makeTestLifecycle(usbAccessoryService: service)
+        let lifecycle = makeTestLifecycle(usbAccessoryPassthrough: .available(service))
         let library = makeWiredLibrary(lifecycle: lifecycle)
         let coordinator = try #require(
             USBAccessoryCoordinator(
@@ -90,9 +90,9 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.startObservingCallCount == 1)
     }
 
-    @Test("Does not exist in a build that cannot pass accessories through")
+    @Test("Does not exist in a process that cannot pass accessories through")
     func absentWithoutTheCapability() {
-        let lifecycle = makeTestLifecycle(usbAccessoryService: nil)
+        let lifecycle = makeTestLifecycle(usbAccessoryPassthrough: .unavailable(.needsEntitlement))
         let library = makeWiredLibrary(lifecycle: lifecycle)
         #expect(
             USBAccessoryCoordinator(

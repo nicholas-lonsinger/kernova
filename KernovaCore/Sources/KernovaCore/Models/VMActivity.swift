@@ -979,7 +979,7 @@ package final class VMActivity {
     /// VM sees the claim. Throws, committing nothing, when the claim is held.
     private func reserve(for kind: VMOperationKind, on owner: VMInstance) throws {
         guard case .attachingUSB(let registryID) = kind else { return }
-        guard let accessoryHolders else { throw VMAdmissionRefusal(refusal: .unsupportedByBuild) }
+        guard let accessoryHolders else { throw VMAdmissionRefusal(refusal: .removed) }
         try accessoryHolders.reserve(registryID, for: owner, AccessoryHoldersKey())
     }
 

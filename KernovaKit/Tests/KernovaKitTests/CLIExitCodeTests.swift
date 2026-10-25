@@ -32,6 +32,10 @@ struct CLIExitCodeTests {
             ),
             (.unsupported(capability: "snapshots"), .refusedByState),
             (.unsupportedByBuild(capability: "USB accessory passthrough"), .refusedByState),
+            (
+                .unsupportedByMacOS(capability: "USB accessory passthrough", minimumVersion: 27),
+                .refusedByState
+            ),
             (.conflict(vm: vm, with: vm, reason: .macAddress), .refusedByState),
             (
                 .confirmationRequired(

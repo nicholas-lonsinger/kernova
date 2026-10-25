@@ -68,6 +68,9 @@ package enum CommandError: Error, Sendable, Equatable {
     /// This build cannot do what was asked: the cause is the build, whatever
     /// VM the verb named.
     case unsupportedByBuild(capability: String)
+    /// This Mac's macOS predates `minimumVersion`, the first that carries what
+    /// was asked: the cause is the host, whatever VM the verb named.
+    case unsupportedByMacOS(capability: String, minimumVersion: Int)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The app is quitting, and takes nothing new on.
@@ -176,6 +179,8 @@ extension CommandError {
             .unsupported(capability: capability)
         case .unsupportedByBuild(let capability):
             .unsupportedByBuild(capability: capability)
+        case .unsupportedByMacOS(let capability, let minimumVersion):
+            .unsupportedByMacOS(capability: capability, minimumVersion: minimumVersion)
         case .conflict(let vm, let other, let reason):
             .conflict(vm: vm, with: other, reason: reason)
         case .terminating:

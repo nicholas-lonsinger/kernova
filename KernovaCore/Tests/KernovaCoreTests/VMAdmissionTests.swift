@@ -31,7 +31,7 @@ struct VMAdmissionTests {
     private struct Variant: Sendable, CustomStringConvertible {
         var guestOS: VMGuestOS = .macOS
         var pendingSetup = false
-        var usbSupported = true
+        var usbPassthroughGap: USBAccessoryPassthrough.Gap?
         var networkEnabled = true
         var clipboardSharing = true
         /// The saved state restores after a membership move — a NAT VM's.
@@ -43,13 +43,13 @@ struct VMAdmissionTests {
         static let linux = Variant(guestOS: .linux)
         static let pendingSetup = Variant(pendingSetup: true)
         static let linuxPendingSetup = Variant(guestOS: .linux, pendingSetup: true)
-        static let noUSB = Variant(usbSupported: false)
+        static let noUSB = Variant(usbPassthroughGap: .needsEntitlement)
         static let noNetwork = Variant(networkEnabled: false)
         static let noClipboard = Variant(clipboardSharing: false)
         static let writesOutsideBundle = Variant(writesOutsideBundle: true)
 
         var description: String {
-            "\(guestOS) setup=\(pendingSetup) usb=\(usbSupported) "
+            "\(guestOS) setup=\(pendingSetup) usbGap=\(String(describing: usbPassthroughGap)) "
                 + "network=\(networkEnabled) clipboard=\(clipboardSharing) "
                 + "survivesMembershipMove=\(survivesMembershipMove) "
                 + "writesOutsideBundle=\(writesOutsideBundle)"
@@ -64,7 +64,7 @@ struct VMAdmissionTests {
             networkEnabled: variant.networkEnabled,
             savedStateSurvivesMembershipMove: variant.survivesMembershipMove,
             clipboardSharingEnabled: variant.clipboardSharing,
-            hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
+            hasPendingGuestSetup: variant.pendingSetup, usbPassthroughGap: variant.usbPassthroughGap,
             writesOutsideBundle: variant.writesOutsideBundle, identityConflict: nil,
             accessoryHolder: nil, terminating: terminating,
             heldByAnotherCopy: heldByAnotherCopy)
@@ -75,7 +75,7 @@ struct VMAdmissionTests {
     }
 
     /// One cell: `A` admit, `J` join, `B` busy with the held kind, `I`
-    /// invalid state, `R` removed, `U` unsupported by this build, `C` an
+    /// invalid state, `R` removed, `U` USB passthrough unavailable, `C` an
     /// identity conflict, `H` an accessory another attach holds, `T` refused
     /// by the app's termination, `O` refused as held by another copy, `S`
     /// taken only by a stopped VM, `E` an Ephemeral baseline that can't be read,
@@ -89,7 +89,7 @@ struct VMAdmissionTests {
         case .refuse(.busy): "?"
         case .refuse(.invalidState): "I"
         case .refuse(.removed): "R"
-        case .refuse(.unsupportedByBuild): "U"
+        case .refuse(.usbPassthroughUnavailable): "U"
         case .refuse(.identityConflict): "C"
         case .refuse(.accessoryHeld): "H"
         case .refuse(.terminating): "T"
@@ -680,7 +680,7 @@ struct VMAdmissionTests {
 
         // Facts varied under a held operation.
 
-        // A build without USB passthrough refuses it as unsupported whatever
+        // A process without USB passthrough refuses it as unavailable whatever
         // holds the VM.
         HeldRow(
             kind: .deletingSnapshot, startedFrom: live, variant: .noUSB,
@@ -1038,7 +1038,13 @@ struct VMAdmissionTests {
                 == .refuse(.accessoryHeld(by: holder)))
         #expect(
             VMAdmission.decide(attach, posture: .commit, phase: Self.live, facts: facts(.noUSB))
-                == .refuse(.unsupportedByBuild))
+                == .refuse(.usbPassthroughUnavailable(.needsEntitlement)))
+        // The refusal carries the facts' gap, so it names the cause that holds.
+        #expect(
+            VMAdmission.decide(
+                attach, posture: .commit, phase: Self.live,
+                facts: facts(Variant(usbPassthroughGap: .needsMacOS(27))))
+                == .refuse(.usbPassthroughUnavailable(.needsMacOS(27))))
         // Still held once the operation holding this VM ends, so that is the
         // answer during it too.
         #expect(

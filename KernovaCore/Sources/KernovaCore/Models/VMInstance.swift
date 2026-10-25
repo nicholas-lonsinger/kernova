@@ -529,7 +529,8 @@ package final class VMInstance {
 
     /// What the library contributes to this VM's admission — wired by
     /// `VMLibrary.wireHooks(for:)`. An instance outside a library has no
-    /// peers, no USB passthrough, and no termination.
+    /// peers, so no peer fact refuses its admission, and it can reserve no
+    /// USB accessory.
     @ObservationIgnored weak var peers: (any VMAdmissionPeers)?
 
     var admissionFacts: VMAdmission.Facts {
@@ -541,7 +542,7 @@ package final class VMInstance {
             savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
-            usbSupported: peers?.supportsUSBAccessories ?? false,
+            usbPassthroughGap: peers?.usbPassthroughGap,
             writesOutsideBundle: configuration.writesOutsideBundle,
             identityConflict: nil,
             accessoryHolder: nil,

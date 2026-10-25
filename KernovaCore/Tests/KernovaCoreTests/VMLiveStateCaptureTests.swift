@@ -97,7 +97,7 @@ struct VMLiveStateCaptureTests {
 
     private func instanceHoldingAccessories(_ count: Int) async throws -> AccessoryFixture {
         let accessories = MockUSBAccessoryService()
-        let lifecycle = makeTestLifecycle(usbAccessoryService: accessories)
+        let lifecycle = makeTestLifecycle(usbAccessoryPassthrough: .available(accessories))
         let library = makeWiredLibrary(lifecycle: lifecycle)
         let sessionID = UUID()
         let instance = library.registerFixture(phase: .running(sessionID: sessionID))

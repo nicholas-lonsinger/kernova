@@ -1057,11 +1057,11 @@ struct VMLibraryTests {
     /// A library over `storage`, whose bundle files hold every VM's pairings.
     private func makePairingLibrary() -> (VMLibrary, MockVMStorageService) {
         let storage = MockVMStorageService()
-        // A build that passes accessories through, the only one that edits
+        // A process that passes accessories through, the only one that edits
         // pairings.
         let library = makeWiredLibrary(
             storage: storage, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()),
-            lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()),
+            lifecycle: makeTestLifecycle(usbAccessoryPassthrough: .available(MockUSBAccessoryService())),
             fileSystem: fileSystem, preferences: preferences)
         library.onFailure = { [failures] title, message, subject in
             failures.record(title: title, message: message, subject: subject)

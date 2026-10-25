@@ -53,14 +53,14 @@ struct VMActivityTests {
         return (instance, recorder)
     }
 
-    /// A VM wired into a library whose build passes USB accessories through,
+    /// A VM wired into a library whose process passes USB accessories through,
     /// holding one snapshot — so every live operation kind is admitted from a
     /// settled live phase. The caller keeps the library alive.
     private func makeWiredInstance(
         _ phase: VMLifecyclePhase
     ) -> (VMInstance, Recorder, VMLibrary) {
         let library = makeWiredLibrary(
-            lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()))
+            lifecycle: makeTestLifecycle(usbAccessoryPassthrough: .available(MockUSBAccessoryService())))
         let instance = library.registerFixture(
             phase: phase,
             snapshots: VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
@@ -1033,7 +1033,7 @@ struct VMActivityTests {
         let reported: [(any Error, VMFollowUp.Scope)] = [
             (VMAdmissionRefusal(refusal: .invalidState), .vm),
             (VMAdmissionRefusal(refusal: .heldByAnotherCopy), .vm),
-            (VMAdmissionRefusal(refusal: .unsupportedByBuild), session),
+            (VMAdmissionRefusal(refusal: .usbPassthroughUnavailable(.needsEntitlement)), session),
             (Probe(), session),
         ]
         for (error, scope) in reported {

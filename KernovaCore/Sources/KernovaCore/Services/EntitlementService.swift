@@ -23,14 +23,11 @@ package struct EntitlementService: Sendable {
     /// Resolved once, for the same reason as `hasVMNetworking`.
     let hasAccessoryAccess: Bool
 
-    /// Whether USB accessory passthrough can work at all in this process —
-    /// both the entitlement and the OS that carries the API.
-    ///
-    /// The single value every accessory surface reads, so the capability
-    /// appears and disappears in one place rather than per surface.
-    package var supportsUSBAccessories: Bool {
-        if #available(macOS 27.0, *) { hasAccessoryAccess } else { false }
-    }
+    /// ``hasAccessoryAccess``, where AccessoryAccess exists. Below macOS 27 the
+    /// entitlement authorizes nothing, so the macOS is what a caller deciding
+    /// passthrough asks first.
+    @available(macOS 27.0, *)
+    package var authorizesAccessoryAccess: Bool { hasAccessoryAccess }
 
     /// Whether reading the host's ARP table is authorized
     /// (`com.apple.developer.networking.topology-observation`).

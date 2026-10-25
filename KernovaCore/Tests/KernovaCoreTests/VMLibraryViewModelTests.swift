@@ -6359,7 +6359,7 @@ struct VMLibraryViewModelTests {
             localImageInspector: MockLocalRestoreImageInspector(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
-            usbAccessoryService: MockUSBAccessoryService(),
+            usbAccessoryPassthrough: .available(MockUSBAccessoryService()),
             fileSystem: fileSystem,
             downloadsDirectory: nil,
             preferences: preferences,

@@ -53,12 +53,12 @@ struct VMCommandEnvelopeRouterTests {
         installService: any MacOSInstallProviding = MockMacOSInstallService(),
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
         diskImages: MockDiskImageService = MockDiskImageService(),
-        usbAccessoryService: MockUSBAccessoryService? = nil,
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
         clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let wired = WiredCommandCore(
             virtualization: virtualization, installService: installService,
-            diskImages: diskImages, usbAccessoryService: usbAccessoryService,
+            diskImages: diskImages, usbAccessoryPassthrough: usbAccessoryPassthrough,
             preferences: preferences, clock: clock)
         return Harness(wired: wired, transport: makeTransport(over: wired.core))
     }
@@ -260,7 +260,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Both USB listings and the edit cross the wire as their own requests")
     func theUSBVerbsCrossTheWire() async throws {
         let accessories = MockUSBAccessoryService()
-        let harness = makeHarness(usbAccessoryService: accessories)
+        let harness = makeHarness(usbAccessoryPassthrough: .available(accessories))
         let instance = makeInstance(in: harness, name: "Stub", phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
         let held = MockUSBAccessoryService.accessory(registryID: 4_294_967_296)
@@ -304,7 +304,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("The remembered-accessory verbs cross the wire, one of them naming no machine")
     func theUSBPairingVerbsCrossTheWire() async throws {
         let accessories = MockUSBAccessoryService()
-        let harness = makeHarness(usbAccessoryService: accessories)
+        let harness = makeHarness(usbAccessoryPassthrough: .available(accessories))
         let first = makeInstance(in: harness, name: "First", phase: .running(sessionID: UUID()))
         let second = makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
         let firstAccessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "AAA")

@@ -7,7 +7,7 @@ import Testing
 @testable import KernovaCoreTestSupport
 
 /// The USB accessory verbs, driven with no menu extra and no USB controller:
-/// the capability refusal a build without passthrough owes, the two listings,
+/// the capability refusal a process without passthrough owes, the two listings,
 /// the state gate an edit is admitted by, and the vocabulary each failure comes
 /// back in.
 @Suite("VMCommandCore USB Accessory Tests", .serialized, .caseScoped)
@@ -15,15 +15,26 @@ import Testing
 struct VMCommandCoreUSBAccessoryTests {
     private let preferences = makeTestPreferences()
 
-    /// The refusal every verb owes a build that cannot pass accessories
-    /// through — the cause is the build, so no VM is named.
-    private let unsupportedByBuild = CommandError.unsupportedByBuild(
-        capability: "USB accessory passthrough")
+    /// Each cause that keeps passthrough from a process, with the refusal
+    /// every verb owes it and that refusal's message. The cause is the host,
+    /// never a VM, so no refusal names one.
+    nonisolated private static let unavailable: [(USBAccessoryPassthrough.Gap, CommandError, String)] = [
+        (
+            .needsEntitlement,
+            .unsupportedByBuild(capability: "USB accessory passthrough"),
+            "This build of Kernova does not support USB accessory passthrough."
+        ),
+        (
+            .needsMacOS(27),
+            .unsupportedByMacOS(capability: "USB accessory passthrough", minimumVersion: 27),
+            "Kernova needs macOS 27 or later for USB accessory passthrough."
+        ),
+    ]
 
-    private func makeHarness(withAccessorySupport: Bool = true) -> WiredCommandCore {
-        WiredCommandCore(
-            usbAccessoryService: withAccessorySupport ? MockUSBAccessoryService() : nil,
-            preferences: preferences)
+    private func makeHarness(
+        _ passthrough: USBAccessoryPassthrough = .available(MockUSBAccessoryService())
+    ) -> WiredCommandCore {
+        WiredCommandCore(usbAccessoryPassthrough: passthrough, preferences: preferences)
     }
 
     /// A VM with a live session an accessory can be attached to.
@@ -58,9 +69,13 @@ struct VMCommandCoreUSBAccessoryTests {
 
     // MARK: - Capability
 
-    @Test("Every verb refuses in a build that cannot pass accessories through")
-    func everyVerbRefusesWithoutTheCapability() async throws {
-        let harness = makeHarness(withAccessorySupport: false)
+    @Test(
+        "Every verb refuses, naming the cause, in a process that cannot pass accessories through",
+        arguments: unavailable)
+    func everyVerbRefusesWithoutTheCapability(
+        gap: USBAccessoryPassthrough.Gap, refusal: CommandError, message: String
+    ) async throws {
+        let harness = makeHarness(.unavailable(gap))
         let instance = makeRunningInstance(in: harness)
 
         let listing = try #require(throws: CommandError.self) {
@@ -71,13 +86,13 @@ struct VMCommandCoreUSBAccessoryTests {
             try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
         }
 
-        // The cause is the build — the OS version, or a signature without the
+        // The cause is the host — its macOS, or a signature without the
         // entitlement — and none of the three refusals may describe a VM as
         // the thing that cannot do it.
-        #expect(listing == unsupportedByBuild)
-        #expect(edit == unsupportedByBuild)
-        #expect(available == unsupportedByBuild)
-        #expect(available.message == "This build of Kernova does not support USB accessory passthrough.")
+        #expect(listing == refusal)
+        #expect(edit == refusal)
+        #expect(available == refusal)
+        #expect(available.message == message)
     }
 
     @Test("An accessory macOS has not assigned to Kernova is a miss, not a failed attach")
@@ -213,8 +228,9 @@ struct VMCommandCoreUSBAccessoryTests {
         let cases: [(USBAccessoryError, (CommandError) -> Bool)] = [
             // The guest went away between the state gate and the controller.
             (.noVirtualMachine, \.isInvalidState),
-            // A VM configured without a USB controller cannot hold one, which
-            // is the same answer a build without the capability gives.
+            // A VM configured without a USB controller cannot hold one, and the
+            // refusal names the VM, where a process without passthrough names
+            // the host.
             (.noUSBController, { $0 == .unsupported(capability: "USB accessory passthrough") }),
             (.accessoryNotFound, \.isOperationFailure),
             (.deviceNotFound, \.isOperationFailure),
@@ -672,9 +688,13 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(instance.usbPairings.pairings.count == 1)
     }
 
-    @Test("Both remembered-accessory verbs refuse in a build without passthrough")
-    func pairingVerbsRefuseWithoutTheCapability() async throws {
-        let harness = makeHarness(withAccessorySupport: false)
+    @Test(
+        "Both remembered-accessory verbs refuse, naming the cause, in a process without passthrough",
+        arguments: unavailable)
+    func pairingVerbsRefuseWithoutTheCapability(
+        gap: USBAccessoryPassthrough.Gap, refusal: CommandError, message: String
+    ) async throws {
+        let harness = makeHarness(.unavailable(gap))
         let instance = makeRunningInstance(in: harness)
 
         let listing = try #require(throws: CommandError.self) { _ = try harness.core.usbPairings(of: nil) }
@@ -682,8 +702,9 @@ struct VMCommandCoreUSBAccessoryTests {
             try harness.core.forgetUSBPairing(.id(instance.id), key: "k")
         }
 
-        #expect(listing == unsupportedByBuild)
-        #expect(forget == unsupportedByBuild)
+        #expect(listing == refusal)
+        #expect(forget == refusal)
+        #expect(listing.message == message)
     }
 }
 

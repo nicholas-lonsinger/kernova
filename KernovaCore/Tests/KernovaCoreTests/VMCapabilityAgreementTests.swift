@@ -26,7 +26,7 @@ struct VMCapabilityAgreementTests {
         // Already past any deadline, so a restart the catalog accepts answers
         // on its power-off deadline instead of waiting on a guest.
         return WiredCommandCore(
-            virtualization: virtualization, usbAccessoryService: MockUSBAccessoryService(),
+            virtualization: virtualization, usbAccessoryPassthrough: .available(MockUSBAccessoryService()),
             preferences: preferences, clock: TestEngineClock())
     }
 
@@ -143,7 +143,7 @@ struct VMCapabilityAgreementTests {
     private func isAdmissionRefusal(_ error: CommandError) -> Bool {
         switch error {
         case .busy, .invalidState, .changeTakesStoppedVM, .notFound, .conflict,
-            .unsupportedByBuild, .terminating, .heldByAnotherCopy:
+            .unsupportedByBuild, .unsupportedByMacOS, .terminating, .heldByAnotherCopy:
             true
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
             .guestAccountPasswordRequired, .invalidArgument, .stepRequired,

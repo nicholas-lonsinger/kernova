@@ -224,22 +224,14 @@ private final class AccessoryListener: NSObject, AAUSBAccessoryListener, Sendabl
     }
 }
 
-/// Where the capability's presence is decided, once.
+/// Where the capability's presence, and the cause of its absence, is decided
+/// once.
 package enum USBAccessorySupport {
-    /// The service when this build can pass accessories through, `nil` when it
-    /// cannot.
-    ///
-    /// `nil` collapses both causes of absence — an OS below macOS 27 and a
-    /// signature without the entitlement — into the one answer every caller
-    /// reads, so no surface has to ask which of them applies.
+    /// Whether this process can pass accessories through, and if not, why.
     @MainActor
-    package static func makeService(entitlements: EntitlementService)
-        -> (any USBAccessoryProviding)?
-    {
-        guard entitlements.supportsUSBAccessories else { return nil }
-        // `supportsUSBAccessories` already answers the OS question; the
-        // compiler needs it spelled here to allow the initializer.
-        guard #available(macOS 27.0, *) else { return nil }
-        return USBAccessoryService()
+    package static func passthrough(entitlements: EntitlementService) -> USBAccessoryPassthrough {
+        guard #available(macOS 27.0, *) else { return .unavailable(.needsMacOS(27)) }
+        guard entitlements.authorizesAccessoryAccess else { return .unavailable(.needsEntitlement) }
+        return .available(USBAccessoryService())
     }
 }
