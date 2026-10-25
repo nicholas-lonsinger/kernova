@@ -1,6 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import System
 import Testing
@@ -185,31 +186,61 @@ struct ClipboardArchiveExtractionTests {
                 == ClipboardArchiveMalformedEntry(path: "file.txt", rule: .blobKey))
     }
 
-    @Test("a path the archive holds twice fails on the second, naming it")
-    func duplicatePathFails() throws {
-        let destination = try makeDestination()
-        let archive = try rawArchive([.root(), .file("dup.txt", "first"), .file("dup.txt", "second")])
+    /// Two entries the volume takes for one name: the same bytes, or — where
+    /// the volume ignores case — names that differ only in case.
+    enum Collision: CaseIterable, Sendable {
+        case samePath, caseOnly
 
-        #expect(
-            extractFailure(archive, into: destination) as? ClipboardItemFailure
-                == ClipboardItemFailure(itemPath: "dup.txt", reason: .posix(EEXIST)))
-        #expect(
-            try String(contentsOf: destination.appendingPathComponent("dup.txt"), encoding: .utf8)
-                == "first")
+        var names: (first: String, second: String) {
+            switch self {
+            case .samePath: ("dup.txt", "dup.txt")
+            case .caseOnly: ("Readme", "README")
+            }
+        }
     }
 
-    @Test("names that differ only in case fail on the second where the volume ignores case")
-    func caseCollisionFails() throws {
-        let destination = try makeDestination()
+    /// The two entries sit in one folder's batch, among others, so they are
+    /// created side by side; in every other round of names that differ in
+    /// case, the later entry takes the name first.
+    @Test("two entries one name holds fail on the later, naming it, however they race", arguments: Collision.allCases)
+    func collisionFailsOnTheLater(collision: Collision) throws {
         // On a case-sensitive volume the two names are two files, and there is
         // no collision to pin.
-        guard pathconf(destination.path, _PC_CASE_SENSITIVE) == 0 else { return }
-        let archive = try rawArchive([.root(), .file("Readme", "lower"), .file("README", "UPPER")])
+        if collision == .caseOnly, pathconf(scratch.url.path, _PC_CASE_SENSITIVE) != 0 { return }
+        let (first, second) = collision.names
+        // Longer than any other entry's data, so its write is told apart.
+        let secondContents = "the second entry"
+        let others = (0..<60).map { RawArchiveEntry.file("d/f\($0).txt", "\($0)") }
+        let archive = try rawArchive(
+            [.root(), .directory("d")] + others[..<30] + [.file("d/\(first)", "first")] + others[30...]
+                + [.file("d/\(second)", secondContents), .directory("after")])
 
-        #expect(
-            extractFailure(archive, into: destination) as? ClipboardItemFailure
-                == ClipboardItemFailure(itemPath: "README", reason: .posix(EEXIST)))
-        #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path) == ["Readme"])
+        for round in 0..<10 {
+            let destination = scratch.url.appendingPathComponent("round-\(round)", isDirectory: true)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            let laterWins = collision == .caseOnly && round % 2 == 1
+            let secondWritten = DispatchSemaphore(value: 0)
+            let volume = InterposedArchiveVolume { call throws(Errno) in
+                guard laterWins else { return }
+                switch call {
+                case .createFile(let name) where name == Array(first.utf8):
+                    _ = secondWritten.wait(timeout: .now() + testWaitBackstop)
+                case .write(let byteCount) where byteCount == secondContents.utf8.count:
+                    secondWritten.signal()
+                default:
+                    break
+                }
+            }
+            #expect(
+                extractFailure(archive, into: destination, on: volume) as? ClipboardItemFailure
+                    == ClipboardItemFailure(itemPath: "d/\(second)", reason: .posix(EEXIST)), "round \(round)")
+            let landed = try FileManager.default.contentsOfDirectory(
+                atPath: destination.appendingPathComponent("d").path)
+            #expect(landed.count == 61, "round \(round)")
+            #expect(landed.filter { $0 == first || $0 == second }.count == 1, "round \(round)")
+            if laterWins { #expect(landed.contains(second), "round \(round)") }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path) == ["d"], "round \(round)")
+        }
     }
 
     // MARK: - Entries no sender writes
@@ -520,6 +551,277 @@ struct ClipboardArchiveExtractionTests {
         }
         // The link's own times, not its target's.
         #expect(try linkStatus(destination.appendingPathComponent("link").path).st_mode & S_IFMT == S_IFLNK)
+    }
+
+    // MARK: - Holes
+
+    /// A file's data as runs of hole-sized blocks, each all zeros or not, then
+    /// a tail of data shorter than a block.
+    enum SparseLayout: CaseIterable, Sendable {
+        case zerosBetweenData, trailingZeros, leadingZeros, allZeros
+
+        /// The runs, as whether each is zeros and how many blocks it holds,
+        /// and the tail's byte count.
+        func shape(scale: Int) -> (runs: [(zeros: Bool, blocks: Int)], tail: Int) {
+            switch self {
+            case .zerosBetweenData: ([(false, 3 * scale), (true, 5 * scale), (false, 2 * scale)], 100)
+            case .trailingZeros: ([(false, 2 * scale), (true, 7 * scale)], 0)
+            case .leadingZeros: ([(true, 4 * scale), (false, 1 * scale)], 1)
+            case .allZeros: ([(true, 6 * scale)], 0)
+            }
+        }
+    }
+
+    /// The bytes `layout` describes in blocks of `holeSize`, and how many of
+    /// them are data a hole cannot replace, whole blocks included.
+    private static func sparseContents(
+        _ layout: SparseLayout, scale: Int, holeSize: Int
+    ) -> (contents: Data, allocated: Int) {
+        let (runs, tail) = layout.shape(scale: scale)
+        var contents = Data()
+        var allocated = 0
+        func append(random count: Int) {
+            var bytes = [UInt8](repeating: 0, count: count)
+            arc4random_buf(&bytes, count)
+            // A data block of all zeros would be a hole too.
+            for block in stride(from: 0, to: count, by: holeSize) { bytes[block] |= 1 }
+            contents.append(contentsOf: bytes)
+        }
+        for (zeros, blocks) in runs {
+            if zeros {
+                contents.append(Data(count: blocks * holeSize))
+            } else {
+                append(random: blocks * holeSize)
+                allocated += blocks * holeSize
+            }
+        }
+        if tail > 0 {
+            append(random: tail)
+            allocated += holeSize
+        }
+        return (contents, allocated)
+    }
+
+    /// The hole size of the volume the scratch directory is on, or `nil`
+    /// when it makes none.
+    private func scratchHoleSize() throws -> Int? {
+        let descriptor = open(scratch.url.path, O_RDONLY)
+        try #require(descriptor >= 0)
+        defer { close(descriptor) }
+        return ClipboardArchiveLocalVolume().holeSize(of: descriptor)
+    }
+
+    /// A small file is written in its folder's batch, a large one — whose
+    /// data also arrives in more than one piece — on its own.
+    @Test(
+        "whole blocks of zeros land as holes, and the file reads back byte for byte",
+        arguments: SparseLayout.allCases, [1, ClipboardArchiveCodec.fileReadBlockSize / 4096])
+    func zeroBlocksLandAsHoles(layout: SparseLayout, scale: Int) throws {
+        guard let holeSize = try scratchHoleSize() else { return }
+        let destination = try makeDestination()
+        let (contents, allocated) = Self.sparseContents(layout, scale: scale, holeSize: holeSize)
+        var entry = RawArchiveEntry.file("sparse.bin")
+        entry.data = contents
+
+        #expect(extractFailure(try rawArchive([.root(), entry]), into: destination) == nil)
+        let path = destination.appendingPathComponent("sparse.bin").path
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == contents)
+        let status = try linkStatus(path)
+        #expect(Int(status.st_size) == contents.count)
+        #expect(Int(status.st_blocks) * 512 == allocated)
+    }
+
+    @Test("on a volume that reports no holes, a file's zeros are written as data")
+    func zerosAreWrittenWhereNoHoles() throws {
+        guard let holeSize = try scratchHoleSize() else { return }
+        let destination = try makeDestination()
+        let (contents, _) = Self.sparseContents(.zerosBetweenData, scale: 8, holeSize: holeSize)
+        var entry = RawArchiveEntry.file("sparse.bin")
+        entry.data = contents
+        let punched = Locked(false)
+        let volume = InterposedArchiveVolume(reportsHoles: false) { call throws(Errno) in
+            if case .punchHole = call { punched.withLock { $0 = true } }
+        }
+
+        #expect(extractFailure(try rawArchive([.root(), entry]), into: destination, on: volume) == nil)
+        let path = destination.appendingPathComponent("sparse.bin").path
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == contents)
+        #expect(Int(try linkStatus(path).st_blocks) * 512 == (contents.count + holeSize - 1) / holeSize * holeSize)
+        #expect(!punched.withLock { $0 })
+    }
+
+    // MARK: - Attribute calls
+
+    @Test(
+        "an entry's attributes land in one call, and one each only after the target refuses it",
+        arguments: [nil, ArchiveAttributeKind.flags])
+    func attributesLandInOneCall(refused: ArchiveAttributeKind?) throws {
+        let destination = try makeDestination()
+        var entries = [
+            timed(.root(mode: 0o750)), timed(.file("file.txt", "f", mode: 0o640)),
+            timed(.directory("dir", mode: 0o750)),
+            timed(RawArchiveEntry(type: .link, path: Array("link".utf8), link: Array("x".utf8), mode: 0o700)),
+        ]
+        for index in entries.indices { entries[index].flags = UInt64(UF_HIDDEN) }
+        let calls = Locked<[Set<ArchiveAttributeKind>]>([])
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            guard case .setAttributes(let attributes, _) = call else { return }
+            let kinds = ArchiveAttributeKind.kinds(of: attributes)
+            calls.withLock { $0.append(kinds) }
+            if let refused, kinds.contains(refused) { throw .invalidArgument }
+        }
+
+        #expect(extractFailure(try rawArchive(entries), into: destination, on: volume) == nil)
+        let made = calls.withLock { $0 }
+        let every = Set(ArchiveAttributeKind.allCases)
+        #expect(made.filter { $0 == every }.count == entries.count)
+        for kind in ArchiveAttributeKind.allCases {
+            #expect(made.filter { $0 == [kind] }.count == (refused == nil ? 0 : entries.count), "\(kind)")
+        }
+        #expect(made.count == entries.count * (refused == nil ? 1 : 1 + every.count))
+    }
+
+    // MARK: - Batches
+
+    /// Folders of `perFolder` entries each — every seventh a symlink, the
+    /// files' sizes spanning the batch's largest — each entry with its own
+    /// mode, times and flags, every folder read-only so an entry created
+    /// after its folder's attributes fails.
+    private static func manyEntries(folders: Int, perFolder: Int) -> [RawArchiveEntry] {
+        let sizes = [0, 1, 100, 4096, 5000, 70_000, 300_000]
+        var entries = [RawArchiveEntry.root()]
+        var index = 0
+        func stamped(_ entry: RawArchiveEntry) -> RawArchiveEntry {
+            var entry = entry
+            index += 1
+            entry.mode = UInt64(0o600 | index % 64)
+            entry.flags = index % 2 == 0 ? UInt64(UF_HIDDEN) : 0
+            entry.gid = UInt64(getegid())
+            entry.creation = timespec(tv_sec: 981_173_106 + index, tv_nsec: index)
+            entry.modification = timespec(tv_sec: 1_013_000_000 + index, tv_nsec: 2 * index)
+            return entry
+        }
+        for folder in 0..<folders {
+            var directory = stamped(.directory("d\(folder)"))
+            directory.mode = 0o555
+            entries.append(directory)
+            for item in 0..<perFolder {
+                let path = "d\(folder)/e\(item)"
+                if item % 7 == 3 {
+                    entries.append(
+                        stamped(RawArchiveEntry(type: .link, path: Array(path.utf8), link: Array("t\(item)".utf8))))
+                } else {
+                    var file = stamped(.file(path))
+                    let size = sizes[item % sizes.count]
+                    var bytes = [UInt8](repeating: 0, count: size)
+                    arc4random_buf(&bytes, size)
+                    file.data = Data(bytes)
+                    entries.append(file)
+                }
+            }
+        }
+        return entries
+    }
+
+    @Test("a tree of many small files and symlinks lands with every entry's contents and attributes")
+    func manySmallEntriesLandWhole() throws {
+        let destination = try makeDestination()
+        let entries = Self.manyEntries(folders: 3, perFolder: 600)
+
+        #expect(extractFailure(try rawArchive(entries), into: destination) == nil)
+        for entry in entries.dropFirst() {
+            let name = String(decoding: entry.path, as: UTF8.self)
+            let path = destination.appendingPathComponent(name).path
+            let status = try linkStatus(path)
+            #expect(UInt64(status.st_mode & 0o7777) == entry.mode, "mode of \(name)")
+            #expect(UInt64(status.st_flags) == entry.flags, "flags of \(name)")
+            #expect(status.st_gid == getegid(), "group of \(name)")
+            #expect(sameInstant(status.st_mtimespec, try #require(entry.modification)), "mtime of \(name)")
+            #expect(sameInstant(status.st_birthtimespec, try #require(entry.creation)), "birth time of \(name)")
+            switch entry.type {
+            case .regularFile?:
+                #expect(status.st_mode & S_IFMT == S_IFREG, "\(name)")
+                #expect(FileManager.default.contents(atPath: path) == entry.data ?? Data(), "contents of \(name)")
+            case .link?:
+                #expect(
+                    try FileManager.default.destinationOfSymbolicLink(atPath: path)
+                        == String(decoding: try #require(entry.link), as: UTF8.self), "\(name)")
+            default:
+                #expect(status.st_mode & S_IFMT == S_IFDIR, "\(name)")
+            }
+        }
+    }
+
+    @Test("a batch holds the folder it lands in and one file per worker open, closing all of them")
+    func batchDescriptorsStayBounded() throws {
+        let destination = try makeDestination()
+        let volume = InterposedArchiveVolume()
+
+        #expect(
+            extractFailure(
+                try rawArchive(Self.manyEntries(folders: 2, perFolder: 1000)), into: destination, on: volume)
+                == nil)
+        #expect(volume.mostOpenDirectories <= 2)
+        #expect(volume.mostOpenFiles <= ProcessInfo.processInfo.activeProcessorCount)
+        #expect(volume.openDirectoryCount == 0)
+        #expect(volume.openFileCount == 0)
+    }
+
+    @Test("of the entries in a batch that fail, the failure is the first in archive order's, and nothing after lands")
+    func batchFailureIsTheFirstInArchiveOrder() throws {
+        let files = (0..<200).map { RawArchiveEntry.file("d/f\($0)", "\($0)") }
+        let archive = try rawArchive([.root(), .directory("d")] + files + [.directory("after")])
+        let failing: Set<[UInt8]> = [Array("f150".utf8), Array("f40".utf8), Array("f41".utf8)]
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            if case .createFile(let name) = call, failing.contains(name) { throw .ioError }
+        }
+
+        for round in 0..<10 {
+            let destination = scratch.url.appendingPathComponent("round-\(round)", isDirectory: true)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            #expect(
+                extractFailure(archive, into: destination, on: volume) as? ClipboardItemFailure
+                    == ClipboardItemFailure(itemPath: "d/f40", reason: .posix(EIO)), "round \(round)")
+            #expect(
+                !FileManager.default.fileExists(atPath: destination.appendingPathComponent("after").path),
+                "round \(round)")
+        }
+    }
+
+    /// The guard runs in the decode, on the extract's thread, so no batch is
+    /// being created while it refuses.
+    @Test("an output guard refusing while a batch fills stops the extract, and no entry is created after it")
+    func refusalMidBatchStopsTheExtract() throws {
+        let destination = try makeDestination()
+        let count = 2000
+        let files = (0..<count).map { index -> RawArchiveEntry in
+            var file = RawArchiveEntry.file("d/f\(index)")
+            var bytes = [UInt8](repeating: 0, count: 2048)
+            arc4random_buf(&bytes, bytes.count)
+            file.data = Data(bytes)
+            return file
+        }
+        let archive = try rawArchive([.root(), .directory("d")] + files)
+        let refused = Locked(false)
+        let createdAfter = Locked(0)
+        let volume = InterposedArchiveVolume { call throws(Errno) in
+            if case .createFile = call, refused.withLock({ $0 }) { createdAfter.withLock { $0 += 1 } }
+        }
+
+        let failure = ClipboardArchiveCodec.extract(
+            from: ClipboardArchiveDataSource(bytes: archive), into: destination, on: volume,
+            counted: Locked(0), pacingBytes: 64 * 1024,
+            onOutputAdvanced: { total in
+                guard total >= 1024 * 1024 else { return }
+                refused.withLock { $0 = true }
+                throw ClipboardArchiveStreamError.outputRefused(.overAdvertisedSize)
+            })
+
+        #expect(failure != nil)
+        #expect(refused.withLock { $0 })
+        #expect(createdAfter.withLock { $0 } == 0)
+        let landed = try FileManager.default.contentsOfDirectory(atPath: destination.appendingPathComponent("d").path)
+        #expect(landed.count < count)
     }
 
     // MARK: - Writes

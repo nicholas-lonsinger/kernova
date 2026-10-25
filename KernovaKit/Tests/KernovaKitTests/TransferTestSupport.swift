@@ -294,7 +294,7 @@ final class TransferHarness: Sendable {
     func makeReceiver(
         transferID: UInt64, generation: UInt64, plan: ClipboardTransferReceiver.Plan,
         source: ClipboardTransferReceiver.Source,
-        volume: any ClipboardArchiveWritableVolume & Sendable = ClipboardArchiveLocalVolume()
+        volume: any ClipboardArchiveWritableVolume = ClipboardArchiveLocalVolume()
     ) -> ClipboardTransferReceiver {
         ClipboardTransferReceiver(
             transferID: transferID, generation: generation, source: source,

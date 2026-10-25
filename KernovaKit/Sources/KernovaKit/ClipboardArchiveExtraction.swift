@@ -1,6 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaSynchronization
 import System
 
 /// An arriving entry that breaks a rule every archive the sender writes keeps,
@@ -100,32 +101,40 @@ private let pathSeparator = UInt8(ascii: "/")
 /// every flag but `UF_HIDDEN` is `EINVAL`.
 private let unheldAttributeErrnos: Set<Int32> = [EINVAL, ENOTSUP, EOPNOTSUPP, EPERM]
 
+/// The bounds of the batch in which a ``TreeMaterializer`` creates a folder's
+/// small entries side by side.
+private enum FileBatch {
+    /// The largest regular file a batch takes.
+    static let largestFile = 256 * 1024
+    /// The most file data and link targets one batch holds.
+    static let byteBudget = 8 * 1024 * 1024
+    /// The most entries one batch holds.
+    static let entryBudget = 256
+}
+
 /// The attributes an entry asks for, applied after its content.
-private struct EntryAttributes {
+private struct EntryAttributes: Sendable {
     let group: UInt64?
-    let creation: timespec?
-    let modification: timespec?
-    let flags: UInt32?
-    let mode: mode_t?
+    /// Every attribute but the group, the mode as the entry asks for it.
+    let others: ClipboardArchiveAttributes
 
     init(_ fields: ClipboardArchiveEntryFields) {
         group = fields.group
-        creation = fields.creation
-        modification = fields.modification
-        flags = fields.flags.map { UInt32(truncatingIfNeeded: $0) & ClipboardArchiveCodec.settableEntryFlags }
-        mode = fields.mode.map { mode_t(truncatingIfNeeded: $0 & 0o7777) }
+        others = ClipboardArchiveAttributes(
+            creation: fields.creation, modification: fields.modification,
+            flags: fields.flags.map {
+                UInt32(truncatingIfNeeded: $0) & ClipboardArchiveCodec.settableEntryFlags
+            },
+            mode: fields.mode.map { mode_t(truncatingIfNeeded: $0 & 0o7777) })
     }
 
     /// The attributes applied after the group, the mode without setgid
     /// unless `groupApplied`: setgid runs as the item's group, which is one
     /// the entry never named unless its own was applied.
-    func settable(groupApplied: Bool) -> [ClipboardArchiveAttribute] {
-        [
-            creation.map(ClipboardArchiveAttribute.creation),
-            modification.map(ClipboardArchiveAttribute.modification),
-            flags.map(ClipboardArchiveAttribute.flags),
-            mode.map { .mode(groupApplied ? $0 : $0 & ~S_ISGID) },
-        ].compactMap { $0 }
+    func settable(groupApplied: Bool) -> ClipboardArchiveAttributes {
+        var settable = others
+        if !groupApplied { settable.mode = settable.mode.map { $0 & ~S_ISGID } }
+        return settable
     }
 }
 
@@ -141,6 +150,14 @@ private struct EntryAttributes {
 /// still land; a new item's root of another type fails with `EFTYPE`.
 /// A directory's own attributes are applied once its contents have ended, the
 /// root entry's last of all.
+///
+/// A folder's symlinks and small regular files are read into a batch, bounded
+/// in entries and bytes, and created side by side, each regular file's
+/// descriptor open only while it is written. The batch is created before the
+/// materializer leaves the folder, and before any other entry is created, so
+/// a failure in it is the one in archive order that creating the entries one
+/// at a time would have met first. A regular file's whole blocks of zeros
+/// become holes.
 ///
 /// A source is the archive ``ClipboardArchiveCodec/extractEntries(from:into:on:)``
 /// decodes, or a ``ClipboardArchiveCodec/TreeWalk`` of a tree on disk.
@@ -210,6 +227,14 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
     private var isFirst = true
     /// Whether a `.newItem` root was created at the top.
     private var createdTop = false
+    /// The entries of the directory the cursor is at waiting to be created,
+    /// in archive order.
+    private var batch: [PendingEntry] = []
+    /// The file data and link targets `batch` holds.
+    private var batchByteCount = 0
+    /// The hole size of the volume the entries land on, once a descriptor
+    /// there has been read: `.some(nil)` for a volume that makes no holes.
+    private var volumeHoleSize: Int??
 
     /// A directory the materializer is inside: the attributes its entry asked
     /// for.
@@ -225,6 +250,42 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         case item
         /// Nothing, for a type left out.
         case nothing
+    }
+
+    /// How ``take(_:content:)`` creates an entry below the root.
+    private enum Handling {
+        /// In the folder's batch, holding `byteCount` bytes of file data.
+        case batchedFile(byteCount: Int)
+        /// In the folder's batch.
+        case batchedLink
+        /// On its own, once the folder's batch is created.
+        case alone
+        /// Not at all: its type is left out.
+        case leftOut
+
+        init(_ fields: ClipboardArchiveEntryFields) {
+            switch fields.type.flatMap({ UInt32(exactly: $0) }).flatMap(ArchiveHeader.EntryType.init) {
+            case .regularFile?:
+                let byteCount = fields.blobs?.first(where: \.isData)?.size ?? 0
+                self = byteCount <= FileBatch.largestFile ? .batchedFile(byteCount: Int(byteCount)) : .alone
+            case .link?: self = .batchedLink
+            case .directory?: self = .alone
+            default: self = .leftOut
+            }
+        }
+    }
+
+    /// An entry read into the batch: everything creating it takes.
+    private struct PendingEntry: Sendable {
+        enum Content: Sendable {
+            case file(data: [UInt8])
+            case link(target: [UInt8])
+        }
+
+        let name: [UInt8]
+        let path: [UInt8]
+        let attributes: EntryAttributes
+        let content: Content
     }
 
     private init(_ top: Top, on volume: Volume) throws {
@@ -255,9 +316,11 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         try take(fields, content: content)
     }
 
-    /// Creates the entry `fields` describes, running `content` once — unless
+    /// Takes the entry `fields` describes, running `content` once — unless
     /// the entry fails first — with the closure that puts each piece of a
     /// regular file's data into it, and discards the data of any other entry.
+    ///
+    /// The entry may be created later, with the rest of its folder's batch.
     func take(
         _ fields: ClipboardArchiveEntryFields,
         content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void
@@ -277,14 +340,44 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         }
         let (parent, name) = try Self.split(path)
         _ = try withCursor { cursor in
+            if parent != here { try createBatch(in: cursor.descriptor) }
             try climb(&cursor, to: parent, for: path)
-            let created = try create(fields, named: name, at: path, in: cursor.descriptor, content: content)
-            if case .directory(let descriptor, let status) = created {
-                cursor.descend(
-                    into: descriptor, status: status, frame: Frame(attributes: EntryAttributes(fields)))
-                here = path
+            switch Handling(fields) {
+            case .batchedFile(let byteCount):
+                if batch.count == FileBatch.entryBudget || batchByteCount + byteCount > FileBatch.byteBudget {
+                    try createBatch(in: cursor.descriptor)
+                }
+                var data: [UInt8] = []
+                data.reserveCapacity(byteCount)
+                try content { piece in data.append(contentsOf: piece) }
+                enqueue(fields, named: name, at: path, content: .file(data: data), byteCount: data.count)
+            case .batchedLink:
+                let target = try Self.linkTarget(of: fields, at: path)
+                if batch.count == FileBatch.entryBudget || batchByteCount + target.count > FileBatch.byteBudget {
+                    try createBatch(in: cursor.descriptor)
+                }
+                try content { _ in }
+                enqueue(fields, named: name, at: path, content: .link(target: target), byteCount: target.count)
+            case .alone:
+                try createBatch(in: cursor.descriptor)
+                let created = try create(fields, named: name, at: path, in: cursor.descriptor, content: content)
+                if case .directory(let descriptor, let status) = created {
+                    cursor.descend(
+                        into: descriptor, status: status, frame: Frame(attributes: EntryAttributes(fields)))
+                    here = path
+                }
+            case .leftOut:
+                try content { _ in }
             }
         }
+    }
+
+    private func enqueue(
+        _ fields: ClipboardArchiveEntryFields, named name: [UInt8], at path: [UInt8],
+        content: PendingEntry.Content, byteCount: Int
+    ) {
+        batch.append(PendingEntry(name: name, path: path, attributes: EntryAttributes(fields), content: content))
+        batchByteCount += byteCount
     }
 
     /// Runs `body` on the cursor, taken out and put back, returning `nil`
@@ -332,13 +425,14 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         }
     }
 
-    /// Climbs back to the top, applying each directory's attributes as it is
-    /// left, the root entry's last.
+    /// Creates the batch, then climbs back to the top, applying each
+    /// directory's attributes as it is left, the root entry's last.
     private func finish() throws {
         let climbed: Void? = try withCursor { cursor in
+            try createBatch(in: cursor.descriptor)
             try climb(&cursor, to: [], for: [])
             if let rootAttributes {
-                try apply(rootAttributes, to: .descriptor(cursor.descriptor), path: [])
+                try Self.apply(rootAttributes, to: .descriptor(cursor.descriptor), path: [], on: volume)
             }
         }
         if climbed == nil, !createdTop { throw ClipboardArchiveMalformedEntry(path: "", rule: .root) }
@@ -359,6 +453,20 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
         }
         guard let slash = path.lastIndex(of: pathSeparator) else { return ([], path) }
         return (Array(path[..<slash]), Array(path[(slash + 1)...]))
+    }
+
+    /// The target of the symlink entry `fields`, at `path`.
+    ///
+    /// - Throws: ``ClipboardArchiveMalformedEntry`` for a missing target or
+    ///   one holding a NUL.
+    private static func linkTarget(
+        of fields: ClipboardArchiveEntryFields, at path: [UInt8]
+    ) throws(ClipboardArchiveMalformedEntry) -> [UInt8] {
+        guard let target = fields.linkTarget, !target.contains(0) else {
+            throw ClipboardArchiveMalformedEntry(
+                path: ClipboardArchiveCodec.displayPath(path), rule: .linkTarget)
+        }
+        return target
     }
 
     /// Moves `cursor` up from ``here`` to `parent`, applying each
@@ -383,7 +491,7 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
             do {
                 _ = try cursor.ascend { descriptor, frame in
                     if let attributes = frame.attributes {
-                        try apply(attributes, to: .descriptor(descriptor), path: left)
+                        try Self.apply(attributes, to: .descriptor(descriptor), path: left, on: volume)
                     }
                 }
             } catch let failure as DirectoryCursorFailure {
@@ -403,8 +511,12 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
     ) throws -> Created {
         let type = fields.type.flatMap { UInt32(exactly: $0) }.flatMap(ArchiveHeader.EntryType.init)
         guard type != .regularFile else {
-            try writeRegularFile(
-                fields, named: name, at: path, in: directory, content: content, created: created)
+            try Self.writeRegularFile(
+                named: name, at: path, in: directory, attributes: EntryAttributes(fields), on: volume,
+                holeSize: holeSize(of:), created: created
+            ) { file in
+                try content { piece in try file.write(piece) }
+            }
             return .item
         }
         try content { _ in }
@@ -423,74 +535,270 @@ final class TreeMaterializer<Volume: ClipboardArchiveWritableVolume>: ClipboardA
                 throw error
             }
         case .link?:
-            guard let target = fields.linkTarget, !target.contains(0) else {
-                throw ClipboardArchiveMalformedEntry(
-                    path: ClipboardArchiveCodec.displayPath(path), rule: .linkTarget)
-            }
+            let target = try Self.linkTarget(of: fields, at: path)
             try Self.attempt(path) { () throws(Errno) in
                 try volume.makeSymlink(name, to: target, in: directory)
             }
             created()
-            try apply(EntryAttributes(fields), to: .name(name, in: directory), path: path)
+            try Self.apply(EntryAttributes(fields), to: .name(name, in: directory), path: path, on: volume)
             return .item
         default:
             return .nothing
         }
     }
 
-    /// Creates the regular file `name` in `directory` holding the data
-    /// `content` delivers, then applies its attributes.
-    private func writeRegularFile(
-        _ fields: ClipboardArchiveEntryFields, named name: [UInt8], at path: [UInt8],
-        in directory: Int32,
-        content: (_ data: (UnsafeRawBufferPointer) throws -> Void) throws -> Void,
-        created: () -> Void
-    ) throws {
-        let file = try Self.attempt(path) { () throws(Errno) in
-            try volume.createFile(name, in: directory)
+    /// The hole size of the volume the entries land on, read from
+    /// `descriptor` the first time.
+    private func holeSize(of descriptor: Int32) -> Int? {
+        if let volumeHoleSize { return volumeHoleSize }
+        let size = volume.holeSize(of: descriptor)
+        volumeHoleSize = .some(size)
+        return size
+    }
+
+    // MARK: - The batch
+
+    /// Creates the batch's entries in `directory`, the folder the cursor is
+    /// at, side by side, and empties it.
+    ///
+    /// - Throws: the failure creating the entries one at a time, in archive
+    ///   order, would have met first.
+    private func createBatch(in directory: Int32) throws {
+        guard !batch.isEmpty else { return }
+        let entries = batch
+        batch.removeAll(keepingCapacity: true)
+        batchByteCount = 0
+        let holeSize = holeSize(of: directory)
+        let volume = volume
+        let failures = Locked<[Int: any Error]>([:])
+        DispatchQueue.concurrentPerform(iterations: entries.count) { position in
+            do {
+                try Self.create(entries[position], in: directory, holeSize: holeSize, on: volume)
+            } catch {
+                failures.withLock { $0[position] = error }
+            }
         }
+        let failed = failures.withLock { $0 }
+        if let failure = Self.firstFailure(of: entries, failed: failed, in: directory, on: volume) { throw failure }
+    }
+
+    private static func create(
+        _ entry: PendingEntry, in directory: Int32, holeSize: Int?, on volume: Volume
+    ) throws {
+        switch entry.content {
+        case .file(let data):
+            try writeRegularFile(
+                named: entry.name, at: entry.path, in: directory, attributes: entry.attributes, on: volume,
+                holeSize: { _ in holeSize }
+            ) { file in
+                try data.withUnsafeBytes { try file.write($0) }
+            }
+        case .link(let target):
+            try attempt(entry.path) { () throws(Errno) in
+                try volume.makeSymlink(entry.name, to: target, in: directory)
+            }
+            try apply(entry.attributes, to: .name(entry.name, in: directory), path: entry.path, on: volume)
+        }
+    }
+
+    /// The failure creating `entries` one at a time, in order, would have met
+    /// first, given the ones that `failed`, by position, created side by side
+    /// — `nil` when none did.
+    ///
+    /// Of two entries the volume takes for one name, the later in archive
+    /// order fails one at a time, but either can side by side, so each
+    /// collision is charged to the second entry in archive order of those
+    /// that took the name.
+    private static func firstFailure(
+        of entries: [PendingEntry], failed: [Int: any Error], in directory: Int32, on volume: Volume
+    ) -> (any Error)? {
+        var charged = failed
+        let collided = failed.keys.filter { (failed[$0] as? ClipboardItemFailure)?.reason == .posix(EEXIST) }
+        if !collided.isEmpty {
+            func inode(_ position: Int) -> ino_t? {
+                try? volume.status(of: entries[position].name, in: directory).st_ino
+            }
+            var holders: [ino_t: Int] = [:]
+            for position in entries.indices where failed[position] == nil {
+                if let inode = inode(position) { holders[inode] = position }
+            }
+            var sharers: [Int: [Int]] = [:]
+            for position in collided {
+                guard let holder = inode(position).flatMap({ holders[$0] }) else { continue }
+                sharers[holder, default: [holder]].append(position)
+                charged[position] = nil
+            }
+            for positions in sharers.values {
+                let second = positions.sorted()[1]
+                charged[second] = ClipboardItemFailure(
+                    itemPath: ClipboardArchiveCodec.displayPath(entries[second].path), reason: .posix(EEXIST))
+            }
+        }
+        return charged.min { $0.key < $1.key }?.value
+    }
+
+    // MARK: - Writes
+
+    /// Creates the regular file `name` in `directory`, calls `created`, runs
+    /// `fill` with the writer of its data — its holes the size `holeSize`
+    /// gives for the new file's descriptor — then applies `attributes`.
+    ///
+    /// - Throws: ``ClipboardItemFailure`` naming `path` when the file cannot
+    ///   be created, written, given its attributes or closed; or what `fill`
+    ///   threw.
+    private static func writeRegularFile(
+        named name: [UInt8], at path: [UInt8], in directory: Int32, attributes: EntryAttributes,
+        on volume: Volume, holeSize: (Int32) -> Int?, created: () -> Void = {},
+        fill: (inout SparseFile) throws -> Void
+    ) throws {
+        let descriptor = try attempt(path) { () throws(Errno) in try volume.createFile(name, in: directory) }
         created()
         do {
-            try content { piece in
-                var written = 0
-                while written < piece.count {
-                    let count = try Self.attempt(path) { () throws(Errno) in
-                        try volume.write(file, from: UnsafeRawBufferPointer(rebasing: piece[written...]))
-                    }
-                    // `write(2)` returns 0 only for a zero-byte request.
-                    guard count > 0 else {
-                        throw ClipboardItemFailure(
-                            itemPath: ClipboardArchiveCodec.displayPath(path), reason: .unknown)
-                    }
-                    written += count
-                }
-            }
-            try apply(EntryAttributes(fields), to: .descriptor(file), path: path)
+            var file = SparseFile(volume: volume, descriptor: descriptor, holeSize: holeSize(descriptor), path: path)
+            try fill(&file)
+            try file.finish()
+            try apply(attributes, to: .descriptor(descriptor), path: path, on: volume)
         } catch {
-            volume.close(file)
+            volume.close(descriptor)
             throw error
         }
         // With `F_NOCACHE` and no `fsync`, a write failure can surface only
         // here.
-        try Self.attempt(path) { () throws(Errno) in try volume.closeWritten(file) }
+        try attempt(path) { () throws(Errno) in try volume.closeWritten(descriptor) }
     }
 
-    /// Applies `attributes` to `target`, the entry at `path`, one at a time,
-    /// leaving out each one the target cannot hold: the group first, because
-    /// changing it clears the set-id bits the mode then sets.
+    /// A new regular file's data, written in order, each run of whole
+    /// hole-sized blocks of zeros left as a hole.
+    ///
+    /// A run is punched once it lies inside the file, the only place a punch
+    /// frees blocks; until then the volume holds zeros there.
+    private struct SparseFile {
+        let volume: Volume
+        let descriptor: Int32
+        /// The unit and alignment of a hole, `nil` on a volume that makes
+        /// none.
+        let holeSize: Int?
+        /// The entry the file is, for a failure to name.
+        let path: [UInt8]
+        /// The bytes written and skipped so far.
+        private var length: Int64 = 0
+        /// The zeros skipped since the last write, not yet a hole.
+        private var skipped: Range<Int64>?
+
+        init(volume: Volume, descriptor: Int32, holeSize: Int?, path: [UInt8]) {
+            self.volume = volume
+            self.descriptor = descriptor
+            self.holeSize = holeSize
+            self.path = path
+        }
+
+        /// Appends `data`.
+        mutating func write(_ data: UnsafeRawBufferPointer) throws(ClipboardItemFailure) {
+            guard let holeSize else {
+                try writeWhole(data)
+                return
+            }
+            var start = 0
+            while start < data.count {
+                let intoBlock = Int(length % Int64(holeSize))
+                guard intoBlock == 0, data.count - start >= holeSize else {
+                    let end = start + min(data.count - start, holeSize - intoBlock)
+                    try writeWhole(UnsafeRawBufferPointer(rebasing: data[start..<end]))
+                    start = end
+                    continue
+                }
+                let isZero = Self.isZero(data, at: start, count: holeSize)
+                var end = start + holeSize
+                while data.count - end >= holeSize, Self.isZero(data, at: end, count: holeSize) == isZero {
+                    end += holeSize
+                }
+                if isZero {
+                    let run = Int64(end - start)
+                    skipped = (skipped?.lowerBound ?? length)..<(length + run)
+                    length += run
+                } else {
+                    try writeWhole(UnsafeRawBufferPointer(rebasing: data[start..<end]))
+                }
+                start = end
+            }
+        }
+
+        /// Ends the file at the bytes appended, which skipped zeros leave it
+        /// short of.
+        mutating func finish() throws(ClipboardItemFailure) {
+            guard skipped != nil else { return }
+            try attempt(path) { () throws(Errno) in try volume.setSize(of: descriptor, to: length) }
+            punchSkipped()
+        }
+
+        private mutating func writeWhole(_ data: UnsafeRawBufferPointer) throws(ClipboardItemFailure) {
+            var written = 0
+            while written < data.count {
+                let count = try attempt(path) { () throws(Errno) in
+                    try volume.write(
+                        descriptor, from: UnsafeRawBufferPointer(rebasing: data[written...]),
+                        at: length + Int64(written))
+                }
+                // `pwrite(2)` returns 0 only for a zero-byte request.
+                guard count > 0 else {
+                    throw ClipboardItemFailure(
+                        itemPath: ClipboardArchiveCodec.displayPath(path), reason: .unknown)
+                }
+                written += count
+            }
+            length += Int64(written)
+            punchSkipped()
+        }
+
+        private mutating func punchSkipped() {
+            guard let run = skipped else { return }
+            skipped = nil
+            // The run already reads as zeros, so a volume refusing the hole
+            // leaves the file whole, only larger.
+            try? volume.punchHole(in: descriptor, at: run.lowerBound, length: run.upperBound - run.lowerBound)
+        }
+
+        /// Whether the `count` bytes of `data` at `start` are all zero.
+        private static func isZero(_ data: UnsafeRawBufferPointer, at start: Int, count: Int) -> Bool {
+            guard let base = data.baseAddress?.advanced(by: start) else { return true }
+            var offset = 0
+            while count - offset >= 64 {
+                // Eight words at a time: a `SIMD64<UInt8>` comparison scans
+                // fifty times slower.
+                var word: UInt64 = 0
+                for index in 0..<8 { word |= base.loadUnaligned(fromByteOffset: offset + index * 8, as: UInt64.self) }
+                if word != 0 { return false }
+                offset += 64
+            }
+            return UnsafeRawBufferPointer(start: base + offset, count: count - offset).allSatisfy { $0 == 0 }
+        }
+    }
+
+    // MARK: - Attributes
+
+    /// Applies `attributes` to `target`, the entry at `path`: the group
+    /// first, because changing it clears the set-id bits the mode then sets,
+    /// then the rest in one call — or, when the target refuses the call as
+    /// holding one it cannot, one at a time, leaving out each it cannot hold.
     ///
     /// An unprivileged receiver owns what it creates, so the entry's `UID` is
     /// never applied, and a group it cannot give — or a value no group can
     /// have — leaves the one the entry was created with (findings 7 and 11).
-    private func apply(
-        _ attributes: EntryAttributes, to target: ClipboardArchiveEntryTarget, path: [UInt8]
-    ) throws {
+    private static func apply(
+        _ attributes: EntryAttributes, to target: ClipboardArchiveEntryTarget, path: [UInt8], on volume: Volume
+    ) throws(ClipboardItemFailure) {
         var groupApplied = false
         if let group = attributes.group.flatMap({ gid_t(exactly: $0) }) {
-            groupApplied = try Self.applied(path) { () throws(Errno) in try volume.setGroup(group, of: target) }
+            groupApplied = try applied(path) { () throws(Errno) in try volume.setGroup(group, of: target) }
         }
-        for attribute in attributes.settable(groupApplied: groupApplied) {
-            _ = try Self.applied(path) { () throws(Errno) in try volume.setAttribute(attribute, of: target) }
+        let settable = attributes.settable(groupApplied: groupApplied)
+        guard !settable.isEmpty,
+            try !applied(path, { () throws(Errno) in try volume.setAttributes(settable, of: target) })
+        else { return }
+        let separated = settable.separated
+        guard separated.count > 1 else { return }
+        for attribute in separated {
+            _ = try applied(path) { () throws(Errno) in try volume.setAttributes(attribute, of: target) }
         }
     }
 

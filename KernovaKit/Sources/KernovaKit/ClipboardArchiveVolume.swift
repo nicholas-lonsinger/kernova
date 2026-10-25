@@ -34,28 +34,60 @@ enum ClipboardArchiveEntryTarget {
     case name([UInt8], in: Int32)
 }
 
-/// One attribute one `setattrlist` call applies, so a target refusing one
-/// refuses no other.
-enum ClipboardArchiveAttribute {
-    case creation(timespec)
-    case modification(timespec)
-    case flags(UInt32)
+/// The attributes one `setattrlist` call applies, so a target refusing any of
+/// them refuses the call.
+struct ClipboardArchiveAttributes: Sendable {
+    var creation: timespec?
+    var modification: timespec?
+    var flags: UInt32?
     /// Permission and set-id bits, `0o7777` at most.
-    case mode(mode_t)
+    var mode: mode_t?
+
+    init(
+        creation: timespec? = nil, modification: timespec? = nil, flags: UInt32? = nil, mode: mode_t? = nil
+    ) {
+        self.creation = creation
+        self.modification = modification
+        self.flags = flags
+        self.mode = mode
+    }
+
+    var isEmpty: Bool { creation == nil && modification == nil && flags == nil && mode == nil }
+
+    /// Each attribute on its own, so a target refusing one refuses no other.
+    var separated: [ClipboardArchiveAttributes] {
+        [
+            creation.map { ClipboardArchiveAttributes(creation: $0) },
+            modification.map { ClipboardArchiveAttributes(modification: $0) },
+            flags.map { ClipboardArchiveAttributes(flags: $0) },
+            mode.map { ClipboardArchiveAttributes(mode: $0) },
+        ].compactMap { $0 }
+    }
 }
 
 /// The file-system calls the archive extractor, the staged-tree remover and
 /// a staged item's landing make, with the same naming rules as
-/// ``ClipboardArchiveVolume``.
-protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
+/// ``ClipboardArchiveVolume``, from any number of threads at once.
+protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume, Sendable {
     /// Creates the directory `name` in `directory`, searchable and writable
     /// by its owner alone until its own mode is applied.
     func makeDirectory(_ name: [UInt8], in directory: Int32) throws(Errno)
     /// Creates the regular file `name` in `directory` — failing when anything
     /// already has the name — and opens it for writing around the page cache.
     func createFile(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32
-    /// Writes up to `buffer.count` bytes, returning how many were written.
-    func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer) throws(Errno) -> Int
+    /// Writes up to `buffer.count` bytes at `offset`, returning how many were
+    /// written.
+    func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: Int64) throws(Errno) -> Int
+    /// Sets the size of the open file `descriptor`, what it grows by reading
+    /// as zeros.
+    func setSize(of descriptor: Int32, to size: Int64) throws(Errno)
+    /// The size, and alignment, of the holes the volume holding `descriptor`
+    /// makes, or `nil` when it reports none.
+    func holeSize(of descriptor: Int32) -> Int?
+    /// Frees the blocks of `length` bytes at `offset` in the open file
+    /// `descriptor`, which then read as zeros; both are multiples of
+    /// ``holeSize(of:)``, and the range lies inside the file.
+    func punchHole(in descriptor: Int32, at offset: Int64, length: Int64) throws(Errno)
     /// Closes a descriptor that was written through, reporting the write
     /// failure the system deferred to the close.
     func closeWritten(_ descriptor: Int32) throws(Errno)
@@ -63,8 +95,8 @@ protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(Errno)
     /// Sets the group of `target`, leaving its owner as it is.
     func setGroup(_ group: gid_t, of target: ClipboardArchiveEntryTarget) throws(Errno)
-    /// Applies `attribute` to `target`.
-    func setAttribute(_ attribute: ClipboardArchiveAttribute, of target: ClipboardArchiveEntryTarget)
+    /// Applies `attributes` to `target` in one call.
+    func setAttributes(_ attributes: ClipboardArchiveAttributes, of target: ClipboardArchiveEntryTarget)
         throws(Errno)
     /// Removes `name` from `directory` — an empty directory when
     /// `isDirectory`, otherwise anything else, a symlink itself rather than
@@ -79,7 +111,7 @@ protocol ClipboardArchiveWritableVolume: ClipboardArchiveVolume {
 }
 
 /// The volumes this Mac mounts, through the `*at` system calls.
-struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
+struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume {
     func status(of name: [UInt8], in directory: Int32) throws(Errno) -> stat {
         var status = stat()
         try Self.call(name) { fstatat(directory, $0, &status, AT_SYMLINK_NOFOLLOW) }
@@ -161,13 +193,29 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
         return descriptor
     }
 
-    func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer) throws(Errno) -> Int {
+    func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: Int64) throws(Errno) -> Int {
         while true {
-            let written = Darwin.write(descriptor, buffer.baseAddress, buffer.count)
+            let written = pwrite(descriptor, buffer.baseAddress, buffer.count, off_t(offset))
             if written >= 0 { return written }
             let code = errno
             guard code == EINTR else { throw Errno(rawValue: code) }
         }
+    }
+
+    func setSize(of descriptor: Int32, to size: Int64) throws(Errno) {
+        try Self.check(ftruncate(descriptor, off_t(size)))
+    }
+
+    func holeSize(of descriptor: Int32) -> Int? {
+        // 1 reports holes of no stated size (pathconf(2)), which gives a
+        // hole nothing to align to.
+        let size = fpathconf(descriptor, _PC_MIN_HOLE_SIZE)
+        return size > 1 ? size : nil
+    }
+
+    func punchHole(in descriptor: Int32, at offset: Int64, length: Int64) throws(Errno) {
+        var hole = fpunchhole_t(fp_flags: 0, reserved: 0, fp_offset: off_t(offset), fp_length: off_t(length))
+        try Self.check(fcntl(descriptor, F_PUNCHHOLE, &hole))
     }
 
     func closeWritten(_ descriptor: Int32) throws(Errno) {
@@ -189,28 +237,22 @@ struct ClipboardArchiveLocalVolume: ClipboardArchiveWritableVolume, Sendable {
         }
     }
 
-    func setAttribute(_ attribute: ClipboardArchiveAttribute, of target: ClipboardArchiveEntryTarget)
+    func setAttributes(_ attributes: ClipboardArchiveAttributes, of target: ClipboardArchiveEntryTarget)
         throws(Errno)
     {
         var list = attrlist()
         list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
-        // The buffer holds the attribute alone, with no length word ahead of
-        // it (setattrlist(2)).
-        var buffer: [UInt8]
-        switch attribute {
-        case .creation(let time):
-            list.commonattr = attrgroup_t(ATTR_CMN_CRTIME)
-            buffer = withUnsafeBytes(of: time) { Array($0) }
-        case .modification(let time):
-            list.commonattr = attrgroup_t(ATTR_CMN_MODTIME)
-            buffer = withUnsafeBytes(of: time) { Array($0) }
-        case .flags(let flags):
-            list.commonattr = attrgroup_t(ATTR_CMN_FLAGS)
-            buffer = withUnsafeBytes(of: flags) { Array($0) }
-        case .mode(let mode):
-            list.commonattr = attrgroup_t(ATTR_CMN_ACCESSMASK)
-            buffer = withUnsafeBytes(of: UInt32(mode)) { Array($0) }
+        // The buffer holds the attributes in the order of their bits, with no
+        // length word ahead of them (setattrlist(2)).
+        var buffer: [UInt8] = []
+        func append<Value>(_ value: Value, as attribute: Int32) {
+            list.commonattr |= attrgroup_t(attribute)
+            withUnsafeBytes(of: value) { buffer.append(contentsOf: $0) }
         }
+        if let creation = attributes.creation { append(creation, as: ATTR_CMN_CRTIME) }
+        if let modification = attributes.modification { append(modification, as: ATTR_CMN_MODTIME) }
+        if let mode = attributes.mode { append(UInt32(mode), as: ATTR_CMN_ACCESSMASK) }
+        if let flags = attributes.flags { append(flags, as: ATTR_CMN_FLAGS) }
         switch target {
         case .descriptor(let descriptor):
             try Self.check(

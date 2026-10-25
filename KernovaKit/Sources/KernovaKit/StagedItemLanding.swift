@@ -100,7 +100,8 @@ public enum StagedItemLanding {
         let mode = status.st_mode & 0o7777
         let unwritable = (status.st_mode & S_IFMT) == S_IFDIR && mode & S_IWUSR == 0
         if unwritable {
-            try staging.setAttribute(.mode(mode | S_IWUSR), of: .name(sourcePath, in: AT_FDCWD))
+            try staging.setAttributes(
+                ClipboardArchiveAttributes(mode: mode | S_IWUSR), of: .name(sourcePath, in: AT_FDCWD))
         }
         do {
             try target.rename(sourcePath, in: AT_FDCWD, to: destinationPath, in: AT_FDCWD)
@@ -108,7 +109,8 @@ public enum StagedItemLanding {
             let copies = error == .improperLink || error == .notSupported
             if unwritable {
                 do {
-                    try staging.setAttribute(.mode(mode), of: .name(sourcePath, in: AT_FDCWD))
+                    try staging.setAttributes(
+                        ClipboardArchiveAttributes(mode: mode), of: .name(sourcePath, in: AT_FDCWD))
                 } catch let restore {
                     // A copy would carry the added write permission.
                     if copies { throw restore }
@@ -123,7 +125,8 @@ public enum StagedItemLanding {
         }
         if unwritable {
             do {
-                try target.setAttribute(.mode(mode), of: .name(destinationPath, in: AT_FDCWD))
+                try target.setAttributes(
+                    ClipboardArchiveAttributes(mode: mode), of: .name(destinationPath, in: AT_FDCWD))
             } catch {
                 logger.log(
                     .error,

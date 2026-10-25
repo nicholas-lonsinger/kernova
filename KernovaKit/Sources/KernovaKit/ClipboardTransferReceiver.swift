@@ -106,7 +106,7 @@ final class ClipboardTransferReceiver: Sendable {
     private let maxResidentInlineBytes: Int
     private let minimumExtractAllowance: Int
     private let extractPacingBytes: Int
-    private let volume: any ClipboardArchiveWritableVolume & Sendable
+    private let volume: any ClipboardArchiveWritableVolume
     private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
 
     private let queue: DispatchQueue
@@ -145,7 +145,7 @@ final class ClipboardTransferReceiver: Sendable {
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
         extractPacingBytes: Int = ClipboardStreamTuning.extractPacingBytes,
-        volume: any ClipboardArchiveWritableVolume & Sendable = ClipboardArchiveLocalVolume(),
+        volume: any ClipboardArchiveWritableVolume = ClipboardArchiveLocalVolume(),
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
     ) {
         self.transferID = transferID

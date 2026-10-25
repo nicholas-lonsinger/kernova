@@ -141,13 +141,10 @@ struct StagedItemLandingTests {
     /// Gives the item at `url` the test's times, and `mode` and `flags` when
     /// given, without following a symlink.
     private func setAttributes(_ url: URL, mode: mode_t? = nil, flags: UInt32? = nil) throws {
-        let attributes: [ClipboardArchiveAttribute?] = [
-            .creation(Self.creation), .modification(Self.modification), flags.map { .flags($0) },
-            mode.map { .mode($0) },
-        ]
-        for attribute in attributes.compactMap({ $0 }) {
-            try ClipboardArchiveLocalVolume().setAttribute(attribute, of: .name(Array(url.path.utf8), in: AT_FDCWD))
-        }
+        try ClipboardArchiveLocalVolume().setAttributes(
+            ClipboardArchiveAttributes(
+                creation: Self.creation, modification: Self.modification, flags: flags, mode: mode),
+            of: .name(Array(url.path.utf8), in: AT_FDCWD))
     }
 
     /// Stands in for the Trash, so nothing reaches the user's: moves what it
@@ -275,7 +272,8 @@ struct StagedItemLandingTests {
         try setAttributes(tree, mode: 0o750, flags: UInt32(UF_HIDDEN))
         let destination = try destinationFolder().appendingPathComponent("Tree")
         let target = InterposedArchiveVolume(failingRenamesWith: .improperLink) { call throws(Errno) in
-            if case .setAttribute(let attribute, _) = call, ArchiveAttributeKind(attribute) == kind {
+            if case .setAttributes(let attributes, _) = call, ArchiveAttributeKind.kinds(of: attributes).contains(kind)
+            {
                 throw .invalidArgument
             }
         }
@@ -373,7 +371,8 @@ struct StagedItemLandingTests {
         // other than not holding it.
         let target = InterposedArchiveVolume(failingRenamesWith: .improperLink) { call throws(Errno) in
             switch (failure, call) {
-            case (.noSpace, .write), (.ioError, .setAttribute(.mode(_), _)): throw failure
+            case (.noSpace, .write): throw failure
+            case (.ioError, .setAttributes(let attributes, _)) where attributes.mode != nil: throw failure
             default: break
             }
         }
