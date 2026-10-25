@@ -1653,12 +1653,17 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypes.contains(.fileURL) }
 
-        // The guest's own extract fails on the second entry at the same path.
-        let duplicated = try rawArchive([.root(), .file("dup.txt", "first"), .file("dup.txt", "second")])
+        // The guest's own extract refuses a name APFS cannot store.
+        let refused = try rawArchive([
+            .root(),
+            RawArchiveEntry(
+                type: .regularFile, path: Array("caf".utf8) + [0xE9] + Array(".txt".utf8), mode: 0o644,
+                data: Data("x".utf8)),
+        ])
         let pull = lazyPull(pasteboard, forType: .fileURL)
         let connection = try await acceptPull(on: dialled, generation: 35)
         try serveTransfer(
-            fd: connection.fd, transferID: connection.request.transferID, payload: duplicated,
+            fd: connection.fd, transferID: connection.request.transferID, payload: refused,
             isArchive: true, isInline: false)
         #expect(await pull.value == nil)
 
@@ -1669,8 +1674,8 @@ struct VsockGuestClipboardAgentTests {
         }
         #expect(error.code == ClipboardErrorCode.pasteUnpackFailed.rawValue)
         #expect(error.hasItemFailure)
-        #expect(error.itemFailure.itemPath == "Project/dup.txt")
-        #expect(error.itemFailure.posixError == EEXIST)
+        #expect(error.itemFailure.itemPath == "Project/caf\u{FFFD}.txt")
+        #expect(error.itemFailure.posixError == EILSEQ)
         try await notices.changed.wait { notices.value == 1 }
         #expect(
             await MainActor.run { agent.clipboardActivity }

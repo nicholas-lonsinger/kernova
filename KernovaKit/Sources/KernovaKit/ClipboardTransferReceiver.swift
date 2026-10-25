@@ -106,7 +106,6 @@ final class ClipboardTransferReceiver: Sendable {
     private let maxResidentInlineBytes: Int
     private let minimumExtractAllowance: Int
     private let extractPacingBytes: Int
-    private let volume: any ClipboardArchiveWritableVolume
     private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
 
     private let queue: DispatchQueue
@@ -132,7 +131,6 @@ final class ClipboardTransferReceiver: Sendable {
     ///     whatever its offer advertised.
     ///   - extractPacingBytes: output granularity at which the extract
     ///     re-checks its ceiling and the volume.
-    ///   - volume: the calls that create an archive's entries.
     ///   - onTransferTimed: fired just before completion, for a successful
     ///     transfer only.
     init(
@@ -145,7 +143,6 @@ final class ClipboardTransferReceiver: Sendable {
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
         extractPacingBytes: Int = ClipboardStreamTuning.extractPacingBytes,
-        volume: any ClipboardArchiveWritableVolume = ClipboardArchiveLocalVolume(),
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
     ) {
         self.transferID = transferID
@@ -157,7 +154,6 @@ final class ClipboardTransferReceiver: Sendable {
         self.maxResidentInlineBytes = max(0, maxResidentInlineBytes)
         self.minimumExtractAllowance = max(1, minimumExtractAllowance)
         self.extractPacingBytes = max(1, extractPacingBytes)
-        self.volume = volume
         self.onTransferTimed = onTransferTimed
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.transfer-recv.\(transferID)", qos: .userInitiated)
@@ -455,7 +451,7 @@ final class ClipboardTransferReceiver: Sendable {
             }
         }
         let failure = ClipboardArchiveCodec.extract(
-            from: ClipboardArchivePayloadSource(reader: reader), into: destination, on: volume,
+            from: ClipboardArchivePayloadSource(reader: reader), into: destination,
             counted: counted, pacingBytes: extractPacingBytes, onOutputAdvanced: guarded)
 
         if let refused = refusal.recorded {
@@ -672,7 +668,7 @@ final class ClipboardTransferReceiver: Sendable {
         return ReceiveStop(rawCode: rawCode, message: message, itemFailure: unread)
     }
 
-    /// The stop an entry this side could not create ends the transfer with.
+    /// The stop an entry the extract refused ends the transfer with.
     ///
     /// Logged here, where the item is known: whichever pull this resolves may
     /// report the failure without a log line of its own.
@@ -681,9 +677,6 @@ final class ClipboardTransferReceiver: Sendable {
             .notice,
             "Clipboard transfer \(self.transferID, privacy: .public): couldn't write '\(failure.itemPath, privacy: .private)' — \(failure.description, privacy: .public)"
         )
-        if case .posix(let code) = failure.reason, code == ENOSPC || code == EDQUOT {
-            return diskFull(needed: plan.advertisedByteCount)
-        }
         // A folder's entries are named relative to the folder; a file's one
         // entry is the representation itself.
         let placed =
@@ -721,10 +714,9 @@ final class ClipboardTransferReceiver: Sendable {
     /// A local cancellation outranks every other reason — the sender's own
     /// trailer and this side's stops included — so a transfer the owner gave up
     /// on retires quietly however far along the stream the cancellation landed.
-    /// Short of one, an entry this side could not create or would not accept
-    /// is reported as itself. Short of that, the connection's own failure
-    /// outranks the archive failure
-    /// it caused; short of that, the sender's own reason outranks the truncation
+    /// Short of one, an entry the extract refused is reported as itself; short
+    /// of that, the connection's own failure outranks the archive failure it
+    /// caused; short of that, the sender's own reason outranks the truncation
     /// or the archive failure it caused, so an archive cut short by a
     /// supersession retires quietly rather than reporting a corrupt payload.
     private func stop(for error: Error, endedOn reader: ClipboardPayloadReader? = nil)
@@ -732,14 +724,9 @@ final class ClipboardTransferReceiver: Sendable {
     {
         if cancelled { return cancellationStop }
         if let stop = error as? ReceiveStop { return stop }
-        // Raised by this side's own writes and checks, so no ending the sender
-        // wrote can explain them.
+        // Raised by this side's own check, so no ending the sender wrote can
+        // explain it.
         if let failure = error as? ClipboardItemFailure { return stop(forUnwritable: failure) }
-        if let malformed = error as? ClipboardArchiveMalformedEntry {
-            return ReceiveStop(
-                code: .payloadInvalid,
-                message: "The archive holds an entry no sender writes (\(malformed.rule))")
-        }
         if case ClipboardArchiveStreamError.outputRefused(let refusal) = error {
             switch refusal {
             case .diskFull:
@@ -781,6 +768,14 @@ final class ClipboardTransferReceiver: Sendable {
         }
         if case .aborted(let rawCode, let readFailure)? = senderEnding(reader) {
             return stop(fromPeer: rawCode, readFailure: readFailure)
+        }
+        // A volume that filled between the output guard's last check and the
+        // extract's own write surfaces from AppleArchive as an archive failure.
+        // Naming that a corrupt payload sends the user off to retry the copy
+        // instead of to free space, so the volume is asked before the codec is
+        // believed.
+        guard staging.hasCapacity(forByteCount: 0) else {
+            return diskFull(needed: plan.advertisedByteCount)
         }
         return ReceiveStop(
             code: .extractError,

@@ -77,38 +77,13 @@ package final class ClipboardArchiveHeaderBuilder {
     }
 }
 
-/// The fields an arriving entry carries, each `nil` when the header has no
-/// field of that key and type.
+/// The fields of an arriving entry its landing is decided by, each `nil` when
+/// the header has no field of that key and type.
 struct ClipboardArchiveEntryFields {
+    /// `TYP`.
     var type: UInt64?
     /// `PAT`, raw bytes.
     var path: [UInt8]?
-    /// `LNK`, raw bytes.
-    var linkTarget: [UInt8]?
-    var group: UInt64?
-    var mode: UInt64?
-    var flags: UInt64?
-    /// `CTM`, the creation time.
-    var creation: timespec?
-    /// `MTM`.
-    var modification: timespec?
-    /// Every blob field, in header order — the order their data follows the
-    /// header in — or `nil` when one has a key other than three ASCII letters
-    /// or digits.
-    var blobs: [Blob]?
-
-    /// A blob field: its key, and the size of the data it declares.
-    struct Blob {
-        let key: ArchiveHeader.FieldKey
-        let size: UInt64
-
-        /// Whether this is a file's contents, `DAT`.
-        var isData: Bool { key == ArchiveHeader.FieldKey("DAT") }
-    }
-
-    private static func isKeyByte(_ byte: UInt8) -> Bool {
-        (0x30...0x39).contains(byte) || (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte)
-    }
 
     /// The fields of `header`, or `nil` when its encoding does not parse.
     init?(_ header: ArchiveHeader) {
@@ -124,54 +99,19 @@ struct ClipboardArchiveEntryFields {
             let found = __AAHeaderGetKeyIndex(parsed, fieldKey(key))
             return found >= 0 ? UInt32(found) : nil
         }
-        func uint(_ key: String) -> UInt64? {
-            guard let field = index(key) else { return nil }
+        if let field = index("TYP") {
             var value: UInt64 = 0
-            return __AAHeaderGetFieldUInt(parsed, field, &value) >= 0 ? value : nil
+            if __AAHeaderGetFieldUInt(parsed, field, &value) >= 0 { type = value }
         }
-        func string(_ key: String) -> [UInt8]? {
-            guard let field = index(key) else { return nil }
+        if let field = index("PAT") {
             var length = 0
-            guard __AAHeaderGetFieldString(parsed, field, 0, nil, &length) >= 0 else { return nil }
-            // The copy is NUL-terminated, so it needs one byte past the string.
-            var bytes = [CChar](repeating: 0, count: length + 1)
-            guard __AAHeaderGetFieldString(parsed, field, bytes.count, &bytes, &length) >= 0
-            else { return nil }
-            return bytes[..<length].map { UInt8(bitPattern: $0) }
-        }
-        func time(_ key: String) -> timespec? {
-            guard let field = index(key) else { return nil }
-            var value = timespec()
-            return __AAHeaderGetFieldTimespec(parsed, field, &value) >= 0 ? value : nil
-        }
-        func blobFields() -> [Blob]? {
-            var found: [Blob] = []
-            for field in 0..<__AAHeaderGetFieldCount(parsed)
-            where __AAHeaderGetFieldType(parsed, field) == Int32(__AA_FIELD_TYPE_BLOB.rawValue) {
-                let ikey = __AAHeaderGetFieldKey(parsed, field).ikey
-                let bytes = (0..<3).map { UInt8(truncatingIfNeeded: ikey >> ($0 * 8)) }
-                // `FieldKey` takes its key as a `String` and traps on one it
-                // does not accept — a NUL or non-ASCII byte, observed on macOS
-                // 27.2 — so a key is kept to the letters and digits
-                // `AAHeaderSetFieldBlob` itself accepts.
-                guard bytes.allSatisfy(Self.isKeyByte) else { return nil }
-                var size: UInt64 = 0
-                var offset: UInt64 = 0
-                guard __AAHeaderGetFieldBlob(parsed, field, &size, &offset) >= 0 else { return nil }
-                found.append(
-                    Blob(key: ArchiveHeader.FieldKey(String(decoding: bytes, as: UTF8.self)), size: size))
+            if __AAHeaderGetFieldString(parsed, field, 0, nil, &length) >= 0 {
+                // The copy is NUL-terminated, so it needs one byte past the string.
+                var bytes = [CChar](repeating: 0, count: length + 1)
+                if __AAHeaderGetFieldString(parsed, field, bytes.count, &bytes, &length) >= 0 {
+                    path = bytes[..<length].map { UInt8(bitPattern: $0) }
+                }
             }
-            return found
         }
-
-        type = uint("TYP")
-        path = string("PAT")
-        linkTarget = string("LNK")
-        group = uint("GID")
-        mode = uint("MOD")
-        flags = uint("FLG")
-        creation = time("CTM")
-        modification = time("MTM")
-        blobs = blobFields()
     }
 }

@@ -1,6 +1,5 @@
 import Foundation
 import KernovaTestSupport
-import System
 import Testing
 
 @testable import KernovaKit
@@ -548,114 +547,6 @@ struct ClipboardDirectoryTransferTests {
                 == ClipboardItemFailure(itemPath: "Project/sub/caf\u{FFFD}.txt", reason: .posix(EILSEQ)))
         #expect(harness.collector.representation(transferID) == nil)
         #expect(try probe.stagedFiles().isEmpty)
-    }
-
-    @Test("an entry no sender writes aborts with payload.invalid and leaves no tree")
-    func malformedEntryIsAnInvalidPayload() async throws {
-        let probe = StagingProbe()
-        let harness = TransferHarness(freeSpaceProvider: probe.provider)
-        defer { harness.tearDown() }
-        let payload = try rawArchive([.root(), .file("first.txt", "1"), .file("nowhere/x.txt", "x")])
-
-        let transferID: UInt64 = 0x4D
-        harness.expect(transferID: transferID, plan: folderPlan(named: "Project", advertised: 4096))
-        serveWhole(harness, transferID: transferID, payload: payload)
-        try await settle(harness, transferID)
-
-        #expect(try abort(harness).code == .payloadInvalid)
-        #expect(try probe.stagedFiles().isEmpty)
-    }
-
-    /// The guard's last check passed, so only the write itself can say the
-    /// volume filled — and it says so with its errno.
-    @Test("a write that finds the volume full aborts with disk.full, not a corrupt archive")
-    func fullVolumeWriteIsDiskFull() async throws {
-        let probe = StagingProbe()
-        let harness = TransferHarness(freeSpaceProvider: probe.provider)
-        defer { harness.tearDown() }
-        let source = try makeSourceTree()
-        let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
-
-        let transferID: UInt64 = 0x4E
-        let stream = try wholeStream(
-            transferID: transferID, payload: bytes, ending: .complete(digest: sha256(bytes)))
-        let receiver = harness.makeReceiver(
-            transferID: transferID, generation: 1, plan: folderPlan(named: "Project", advertised: 4096),
-            source: .dial(
-                {
-                    try dialToPeer { far in
-                        defer { ClipboardDataConnection.end(fd: far) }
-                        guard readTransferRequest(fd: far) != nil else { return }
-                        try? ClipboardDataConnection.write(fd: far, stream)
-                    }
-                },
-                request: Kernova_V1_ClipboardTransferRequest.with {
-                    $0.generation = 1
-                    $0.transferID = transferID
-                    $0.uti = ClipboardArchive.directoryUTI
-                    $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
-                }),
-            volume: InterposedArchiveVolume(failingWritesWith: .noSpace))
-        let collector = harness.collector
-        receiver.start(
-            onComplete: { collector.complete(transferID, $0) }, onAbort: { collector.abort($0) })
-        try await settle(harness, transferID)
-
-        let info = try abort(harness)
-        #expect(info.code == .diskFull)
-        #expect(info.neededBytes == 4096)
-        #expect(info.itemFailure == nil)
-        #expect(try probe.stagedFiles().isEmpty)
-    }
-
-    /// The failing write cancels the receiver first, so the item failure it
-    /// raises arrives with the cancellation already standing.
-    @Test("an item failure raised after a cancellation still ends the transfer cancelled")
-    func itemFailureAfterCancelIsCancelled() async throws {
-        let probe = StagingProbe()
-        let harness = TransferHarness(freeSpaceProvider: probe.provider)
-        defer { harness.tearDown() }
-        let source = try makeSourceTree()
-        let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
-
-        let transferID: UInt64 = 0x4F
-        let stream = try wholeStream(
-            transferID: transferID, payload: bytes, ending: .complete(digest: sha256(bytes)))
-        let held = Locked<ClipboardTransferReceiver?>(nil)
-        let volume = InterposedArchiveVolume { call throws(Errno) in
-            guard case .write = call else { return }
-            held.withLock { $0 }?.cancel()
-            throw .ioError
-        }
-        let receiver = harness.makeReceiver(
-            transferID: transferID, generation: 1, plan: folderPlan(named: "Project", advertised: 4096),
-            source: .dial(
-                {
-                    try dialToPeer { far in
-                        defer { ClipboardDataConnection.end(fd: far) }
-                        guard readTransferRequest(fd: far) != nil else { return }
-                        try? ClipboardDataConnection.write(fd: far, stream)
-                    }
-                },
-                request: Kernova_V1_ClipboardTransferRequest.with {
-                    $0.generation = 1
-                    $0.transferID = transferID
-                    $0.uti = ClipboardArchive.directoryUTI
-                    $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
-                }),
-            volume: volume)
-        held.withLock { $0 = receiver }
-        let collector = harness.collector
-        receiver.start(
-            onComplete: { collector.complete(transferID, $0) }, onAbort: { collector.abort($0) })
-        try await settle(harness, transferID)
-
-        let info = try abort(harness)
-        #expect(info.code == .cancelled)
-        #expect(info.itemFailure == nil)
-        #expect(collector.representation(transferID) == nil)
-        #expect(try probe.stagedFiles().isEmpty)
-        held.withLock { $0 = nil }
     }
 
     @Test("the sender aborts a folder that outgrows the requester's ceiling")

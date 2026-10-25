@@ -458,18 +458,23 @@ struct VsockGuestDropAgentTests {
                         uti: ClipboardArchive.directoryUTI, byteCount: 64, filename: "Project",
                         isInline: false, isDirectory: true)
                 ]))
-        // The guest's own extract fails on the second entry at the same path.
-        let duplicated = try rawArchive([.root(), .file("dup.txt", "first"), .file("dup.txt", "second")])
+        // The guest's own extract refuses a name APFS cannot store.
+        let refused = try rawArchive([
+            .root(),
+            RawArchiveEntry(
+                type: .regularFile, path: Array("caf".utf8) + [0xE9] + Array(".txt".utf8), mode: 0o644,
+                data: Data("x".utf8)),
+        ])
         try await serveRequest(
-            on: harness.dialled, generation: 1, repIndex: 0, payload: duplicated,
+            on: harness.dialled, generation: 1, repIndex: 0, payload: refused,
             payloadIsArchived: true)
 
         let complete = try await awaitCompletion(on: harness.host)
         #expect(complete.outcome == .failed)
         #expect(complete.code == ClipboardErrorCode.dropUnpackFailed.rawValue)
         #expect(complete.hasItemFailure)
-        #expect(complete.itemFailure.itemPath == "Project/dup.txt")
-        #expect(complete.itemFailure.posixError == EEXIST)
+        #expect(complete.itemFailure.itemPath == "Project/caf\u{FFFD}.txt")
+        #expect(complete.itemFailure.posixError == EILSEQ)
         #expect(harness.revealed.value == nil)
     }
 

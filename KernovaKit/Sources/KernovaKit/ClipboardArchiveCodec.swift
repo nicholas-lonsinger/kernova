@@ -334,17 +334,19 @@ enum ClipboardArchiveCodec {
         return failure ?? closes.failure
     }
 
-    /// Extracts the archive `source` carries into `destinationURL`, as
-    /// ``extractEntries(from:into:on:)`` creates it.
+    /// Extracts the archive `source` carries into `destinationURL`.
     ///
-    /// Same close discipline, and same scoping, as the encode side.
+    /// Same close discipline, and same scoping, as the encode side. Each entry
+    /// passes a ``ClipboardArchiveEntryGate`` before AppleArchive's extract
+    /// sees it: only regular files, directories and symlinks land, any other
+    /// entry is left out, and one the extract is known not to create stops it
+    /// there.
     ///
     /// - Parameters:
     ///   - source: the arriving archive bytes.
     ///   - destinationURL: an existing empty directory to extract into. A
     ///     stopped extract leaves partial output behind for the caller to
     ///     remove.
-    ///   - volume: the calls that create the entries.
     ///   - counted: receives the running **uncompressed** total.
     ///   - pacingBytes: output granularity at which `onOutputAdvanced` is
     ///     consulted, and so how far the extract can overrun a ceiling before
@@ -352,19 +354,17 @@ enum ClipboardArchiveCodec {
     ///   - onOutputAdvanced: the output guard; throwing from it stops the
     ///     extract.
     /// - Returns: the failure that ended the extract — a
-    ///   ``ClipboardItemFailure`` naming the entry that could not be created,
-    ///   a ``ClipboardArchiveMalformedEntry``, or an archive failure — or
-    ///   `nil` when the whole archive was unpacked and every stream closed
-    ///   cleanly.
-    static func extract<
-        Source: ArchiveByteStreamProtocol & AnyObject, Volume: ClipboardArchiveWritableVolume
-    >(
-        from source: Source, into destinationURL: URL, on volume: Volume,
+    ///   ``ClipboardItemFailure`` naming the entry the gate refused, relative
+    ///   to `destinationURL`, or an archive failure — or `nil` when the whole
+    ///   archive was unpacked and every stream closed cleanly.
+    static func extract<Source: ArchiveByteStreamProtocol & AnyObject>(
+        from source: Source, into destinationURL: URL,
         counted: Locked<Int>, pacingBytes: Int,
         onOutputAdvanced: (@Sendable (Int) throws -> Void)?
     ) -> Error? {
         var closes = ArchiveCloseTracker()
         var failure: Error?
+        let refusals = ArchiveRefusalBox()
         do {
             guard let readStream = ArchiveByteStream.customStream(instance: source)
             else { throw ClipboardArchive.ArchiveError.openReadStream }
@@ -397,12 +397,68 @@ enum ClipboardArchiveCodec {
             else { throw ClipboardArchive.ArchiveError.openDecodeStream }
             defer { closes.close { try decodeStream.close() } }
 
-            try extractEntries(from: decodeStream, into: destinationURL.path, on: volume)
+            // Resolved, so the path the extract writes under is the one the
+            // gate measures entries against.
+            let destination = try resolvedPath(of: destinationURL)
+            // Ownership in the entries is the source's; the unprivileged
+            // receiver cannot `chown` to another account, and a file owned by
+            // one — `/etc/hosts`, another user's document — must still extract.
+            guard
+                let extractStream = ArchiveStream.extractStream(
+                    extractingTo: FilePath(destination),
+                    selectUsing: attributeFilter, flags: .ignoreOperationNotPermitted)
+            else { throw ClipboardArchive.ArchiveError.openExtractStream }
+            defer { closes.close { try extractStream.close() } }
+
+            let gate = ClipboardArchiveEntryGate(
+                feeding: extractStream, under: destination, refusals: refusals)
+            guard let gatedStream = ArchiveStream.customStream(instance: gate)
+            else { throw ClipboardArchive.ArchiveError.openExtractStream }
+            defer { closes.close { try gatedStream.close() } }
+
+            _ = try ArchiveStream.process(readingFrom: decodeStream, writingTo: gatedStream)
         } catch {
             failure = error
         }
-        return failure ?? closes.failure
+        // AppleArchive rewraps what the gate throws as its own `ioError`.
+        return refusals.recorded ?? failure ?? closes.failure
     }
+
+    /// `url`'s path with every symlink in it resolved.
+    private static func resolvedPath(of url: URL) throws -> String {
+        // Not `URL.resolvingSymlinksInPath()`, which turns `/private/var`
+        // back into `/var`.
+        guard let resolved = realpath(url.path, nil) else { throw Errno(rawValue: errno) }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// Edits each entry's attributes as the extract applies them.
+    private static func attributeFilter(
+        _ message: ArchiveHeader.EntryMessage, _: FilePath, _ data: ArchiveHeader.EntryFilterData?
+    ) -> ArchiveHeader.EntryMessageStatus {
+        if case (.extractAttributes, .entryAttributes(let attributes)?) = (message, data),
+            let flags = attributes.flg
+        {
+            attributes.flg = flags & ~withheldFlags
+        }
+        return .ok
+    }
+
+    /// The flags an extract leaves off every entry.
+    ///
+    /// The immutable and append-only bits block `unlink` on the entry *and* on
+    /// every directory above it, so one locked entry makes removal fail for the
+    /// whole extracted tree — taking out the generation sweep with it, and every
+    /// later reclaim of the process root that holds it. They are cleared as the
+    /// extract applies them rather than off a walk of the finished tree because
+    /// an extract that stops part-way removes its output immediately, leaving no
+    /// point at which a walk could run.
+    ///
+    /// The superuser flags and `UF_DATAVAULT` are ones an unprivileged receiver
+    /// cannot set, and one that fails costs the entry its mode and times
+    /// (docs/research/2026-10-23-applearchive-extract-semantics.md, finding 5).
+    private static let withheldFlags = UInt32(UF_IMMUTABLE | UF_APPEND | UF_DATAVAULT) | UInt32(SF_SETTABLE)
 
     /// Writes one regular-file entry named `name` carrying `data`, with an
     /// owner-writable mode and the current time — resident bytes have no

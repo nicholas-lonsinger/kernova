@@ -293,15 +293,14 @@ final class TransferHarness: Sendable {
     /// makes.
     func makeReceiver(
         transferID: UInt64, generation: UInt64, plan: ClipboardTransferReceiver.Plan,
-        source: ClipboardTransferReceiver.Source,
-        volume: any ClipboardArchiveWritableVolume = ClipboardArchiveLocalVolume()
+        source: ClipboardTransferReceiver.Source
     ) -> ClipboardTransferReceiver {
         ClipboardTransferReceiver(
             transferID: transferID, generation: generation, source: source,
             plan: plan, staging: staging, socketTimeout: socketTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             minimumExtractAllowance: minimumExtractAllowance,
-            extractPacingBytes: extractPacingBytes, volume: volume)
+            extractPacingBytes: extractPacingBytes)
     }
 
     /// Registers the pull for `transferID` with the inbox.

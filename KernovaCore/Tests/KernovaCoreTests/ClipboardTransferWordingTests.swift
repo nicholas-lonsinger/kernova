@@ -418,7 +418,7 @@ struct ClipboardTransferWordingTests {
         let reasons: [(ClipboardItemFailure.Reason, String)] = [
             (.posix(EILSEQ), " (the disk can't store its name)"),
             (.posix(EEXIST), " (another item in the folder has the same name)"),
-            (.posix(ENAMETOOLONG), " (its name is too long)"),
+            (.posix(ENAMETOOLONG), " (its path is too long)"),
             (.posix(EACCES), " (permission denied)"),
             (.posix(EIO), " (input/output error)"),
             (.unknown, ""),

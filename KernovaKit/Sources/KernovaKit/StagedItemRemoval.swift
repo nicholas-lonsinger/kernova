@@ -93,7 +93,7 @@ public enum StagedItemRemoval {
     ) throws(Errno) -> (descriptor: Int32, status: stat, names: [[UInt8]])? {
         let mode = status.st_mode & 0o7777
         if mode & S_IRWXU != S_IRWXU {
-            try volume.setAttributes(ClipboardArchiveAttributes(mode: mode | S_IRWXU), of: .name(name, in: directory))
+            try volume.setMode(mode | S_IRWXU, of: name, in: directory)
         }
         let descriptor = try volume.openDirectory(name, in: directory)
         do {

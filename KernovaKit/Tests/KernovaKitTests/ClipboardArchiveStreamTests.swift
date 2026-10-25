@@ -436,8 +436,7 @@ struct ClipboardArchiveStreamTests {
         let failure = ClipboardArchiveCodec.extract(
             from: ClipboardArchiveDataSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
-            into: try makeDestination(in: scratch.url), on: ClipboardArchiveLocalVolume(),
-            counted: Locked(0),
+            into: try makeDestination(in: scratch.url), counted: Locked(0),
             pacingBytes: quantum, onOutputAdvanced: { _ in advances.withLock { $0 += 1 } })
 
         #expect(failure == nil)
@@ -467,8 +466,7 @@ struct ClipboardArchiveStreamTests {
         let failure = ClipboardArchiveCodec.extract(
             from: ClipboardArchiveDataSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
-            into: destination, on: ClipboardArchiveLocalVolume(), counted: Locked(0),
-            pacingBytes: quantum,
+            into: destination, counted: Locked(0), pacingBytes: quantum,
             onOutputAdvanced: guarded)
 
         #expect(failure != nil)

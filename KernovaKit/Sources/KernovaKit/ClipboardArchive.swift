@@ -11,9 +11,10 @@ import KernovaSynchronization
 /// framework — never shelling out to `ditto`/`tar`/`zip`, which the App Sandbox
 /// blocks. This type never logs; callers log at their own subsystem.
 public enum ClipboardArchive {
-    /// A stream in the archive pipeline could not be opened, or
-    /// ``fieldKeys`` names a field no entry header produces. A source that cannot be read raises
-    /// ``ClipboardItemFailure`` instead.
+    /// A stream in the archive pipeline could not be opened, ``fieldKeys``
+    /// names a field no entry header produces, or an arriving entry's header
+    /// does not parse. A source that cannot be read, or an entry the extract
+    /// refuses, raises ``ClipboardItemFailure`` instead.
     public enum ArchiveError: Error {
         case openWriteStream
         case openCompressionStream
@@ -21,7 +22,9 @@ public enum ClipboardArchive {
         case openReadStream
         case openDecompressionStream
         case openDecodeStream
+        case openExtractStream
         case unproducibleFieldKey
+        case unreadableEntryHeader
     }
 
     /// The archive's fidelity key set — what a file or folder round trip
@@ -103,8 +106,7 @@ extension ClipboardArchive {
     public static func extract(_ bytes: Data, into destinationURL: URL) throws {
         if let failure = ClipboardArchiveCodec.extract(
             from: ClipboardArchiveDataSource(bytes: bytes), into: destinationURL,
-            on: ClipboardArchiveLocalVolume(), counted: Locked(0),
-            pacingBytes: ClipboardStreamTuning.extractPacingBytes,
+            counted: Locked(0), pacingBytes: ClipboardStreamTuning.extractPacingBytes,
             onOutputAdvanced: nil)
         {
             throw failure

@@ -15,67 +15,38 @@ public enum StagedItemLanding {
     /// never replacing an existing item.
     ///
     /// Where the volume can, the move is one rename, so the item keeps its
-    /// inode and its depth does not matter. Onto another volume — or one that
-    /// cannot rename without replacing — the item is copied there as the
-    /// receiver's extract creates an arriving tree, through descriptors and to
-    /// any depth, and then removed from staging. An attribute the destination
-    /// cannot hold is left out of the copy. Only `destination` itself is named
-    /// by path: its folder is never opened, so access to `destination` alone
-    /// is enough.
-    ///
-    /// A copy that fails part-way moves what it created at `destination` to
-    /// the Trash — the user may have put something into it meanwhile — or,
-    /// when that fails, leaves it there; either way the staged item is left
-    /// for the caller.
+    /// inode. Onto another volume — or one that cannot rename without
+    /// replacing — the item is copied there and then removed from staging.
     ///
     /// - Throws: `CocoaError(.fileNoSuchFile)` for a representation with no
-    ///   staged file; otherwise a `POSIXError` with the `errno` of the call
-    ///   that failed — `EEXIST` when something is at `destination` — or, for a
-    ///   copy that failed naming none, its ``ClipboardItemFailure``.
+    ///   staged file; a `POSIXError` with the `errno` of a rename that failed
+    ///   for another reason — `EEXIST` when something is at `destination`; or
+    ///   the copy's error.
     public static func land(
         _ representation: ClipboardContent.Representation, at destination: URL
     ) throws {
         guard let source = representation.fileURL else { throw CocoaError(.fileNoSuchFile) }
-        try land(
-            source, at: destination, from: ClipboardArchiveLocalVolume(), to: ClipboardArchiveLocalVolume(),
-            trash: { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) })
+        try land(source, at: destination, on: ClipboardArchiveLocalVolume())
     }
 
-    /// ``land(_:at:)`` for the staged item at `source`, read and removed
-    /// through `staging`, created and renamed through `target`, and an
-    /// unfinished copy moved to the Trash through `trash`.
-    static func land<Staging: ClipboardArchiveWritableVolume, Target: ClipboardArchiveWritableVolume>(
-        _ source: URL, at destination: URL, from staging: Staging, to target: Target,
-        trash: (URL) throws -> Void
+    /// ``land(_:at:)`` for the staged item at `source`, renamed and removed
+    /// through `volume`.
+    static func land<Volume: ClipboardArchiveWritableVolume>(
+        _ source: URL, at destination: URL, on volume: Volume
     ) throws {
         do {
-            guard try !rename(source, to: destination, from: staging, to: target) else { return }
+            guard try !rename(source, to: destination, on: volume) else { return }
         } catch {
-            throw posixError(error)
+            throw POSIXErrorCode(rawValue: error.rawValue).map { POSIXError($0) } ?? error
         }
-        do {
-            try TreeMaterializer.materialize(
-                newItemAt: destination.path, on: target,
-                unfinished: { path in
-                    do {
-                        try trash(URL(fileURLWithPath: path))
-                    } catch {
-                        logger.log(
-                            .error,
-                            "Could not move an unfinished copy to the Trash: \(String(describing: error), privacy: .public)"
-                        )
-                    }
-                }
-            ) { materializer in
-                try ClipboardArchiveCodec.walkTree(at: source.path, into: materializer, on: staging)
-            }
-        } catch {
-            throw posixError(error)
-        }
+        try FileManager.default.copyItem(at: source, to: destination)
         // The item has landed, so a staged copy that stays is staging's to
-        // reclaim, not a failed landing.
+        // reclaim, not a failed landing. `FileManager` removes nothing from a
+        // tree holding a folder its owner cannot write
+        // (docs/research/2026-10-23-applearchive-extract-semantics.md,
+        // finding 12).
         do {
-            try StagedItemRemoval.remove(at: source, on: staging)
+            try StagedItemRemoval.remove(at: source, on: volume)
         } catch {
             logger.log(
                 .warning,
@@ -91,26 +62,24 @@ public enum StagedItemLanding {
     /// staged directory whose own mode withholds that from its owner is made
     /// writable for the rename, and given its own mode back after, wherever
     /// it then is.
-    private static func rename<Staging: ClipboardArchiveWritableVolume, Target: ClipboardArchiveWritableVolume>(
-        _ source: URL, to destination: URL, from staging: Staging, to target: Target
+    private static func rename<Volume: ClipboardArchiveWritableVolume>(
+        _ source: URL, to destination: URL, on volume: Volume
     ) throws(Errno) -> Bool {
         let sourcePath = Array(source.path.utf8)
         let destinationPath = Array(destination.path.utf8)
-        let status = try staging.status(of: sourcePath, in: AT_FDCWD)
+        let status = try volume.status(of: sourcePath, in: AT_FDCWD)
         let mode = status.st_mode & 0o7777
         let unwritable = (status.st_mode & S_IFMT) == S_IFDIR && mode & S_IWUSR == 0
         if unwritable {
-            try staging.setAttributes(
-                ClipboardArchiveAttributes(mode: mode | S_IWUSR), of: .name(sourcePath, in: AT_FDCWD))
+            try volume.setMode(mode | S_IWUSR, of: sourcePath, in: AT_FDCWD)
         }
         do {
-            try target.rename(sourcePath, in: AT_FDCWD, to: destinationPath, in: AT_FDCWD)
+            try volume.rename(sourcePath, in: AT_FDCWD, to: destinationPath, in: AT_FDCWD)
         } catch {
             let copies = error == .improperLink || error == .notSupported
             if unwritable {
                 do {
-                    try staging.setAttributes(
-                        ClipboardArchiveAttributes(mode: mode), of: .name(sourcePath, in: AT_FDCWD))
+                    try volume.setMode(mode, of: sourcePath, in: AT_FDCWD)
                 } catch let restore {
                     // A copy would carry the added write permission.
                     if copies { throw restore }
@@ -125,8 +94,7 @@ public enum StagedItemLanding {
         }
         if unwritable {
             do {
-                try target.setAttributes(
-                    ClipboardArchiveAttributes(mode: mode), of: .name(destinationPath, in: AT_FDCWD))
+                try volume.setMode(mode, of: destinationPath, in: AT_FDCWD)
             } catch {
                 logger.log(
                     .error,
@@ -134,17 +102,6 @@ public enum StagedItemLanding {
             }
         }
         return true
-    }
-
-    /// `error` as a `POSIXError` when it carries an `errno`.
-    private static func posixError(_ error: any Error) -> any Error {
-        var code: Int32?
-        if let errno = error as? Errno {
-            code = errno.rawValue
-        } else if let failure = error as? ClipboardItemFailure, case .posix(let errno) = failure.reason {
-            code = errno
-        }
-        return code.flatMap(POSIXErrorCode.init(rawValue:)).map { POSIXError($0) } ?? error
     }
 
     /// Moves `representation`'s staged file or folder into `directory` under

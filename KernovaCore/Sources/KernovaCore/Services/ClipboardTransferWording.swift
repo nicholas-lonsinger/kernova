@@ -418,19 +418,17 @@ package struct ClipboardTransferWording: Equatable {
     /// or `nil` when it gave none.
     ///
     /// `EPERM` and `EACCES` both mean the reader or saver was refused the
-    /// item; neither says what refused it. A save creates each entry by its
-    /// own name in a
-    /// folder it has just made, so `EILSEQ` is the volume refusing that name,
-    /// `EEXIST` an earlier entry of the same folder whose name the volume
-    /// treats as the same, and `ENAMETOOLONG` that one name over the volume's
-    /// limit.
+    /// item; neither says what refused it. A save writes into a folder it has
+    /// just made, so `EILSEQ` is the volume refusing the item's name, `EEXIST`
+    /// an earlier item of the same folder whose name the volume treats as the
+    /// same, and `ENAMETOOLONG` the item's whole path past the system's limit.
     private static func reasonPhrase(
         _ reason: ClipboardItemFailure.Reason, _ access: ItemAccess
     ) -> String? {
         switch (reason, access) {
         case (.posix(EILSEQ), .write): return "the disk can't store its name"
         case (.posix(EEXIST), .write): return "another item in the folder has the same name"
-        case (.posix(ENAMETOOLONG), .write): return "its name is too long"
+        case (.posix(ENAMETOOLONG), .write): return "its path is too long"
         default: break
         }
         switch reason {
