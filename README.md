@@ -47,7 +47,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 
 ### Virtual machines
 
-| | |
+| Feature | What it offers |
 |---|---|
 | **Creation wizard** | macOS from the latest IPSW, a version catalog, a URL, or a local file. Linux from a checksum-verified distribution catalog, an image URL with an optional SHA-256, or a local ISO — EFI/UEFI or direct kernel boot; the VM's settings show a downloaded image's **SHA-256** and what it was verified against. On a macOS 27 host installing macOS 27 or later, an optional **Account** step creates the guest's user — with automatic login and Remote Login if you want them — so the first boot lands past Setup Assistant; the password is never stored. |
 | **Lifecycle** | Start, stop, pause, resume, suspend, and restore — or **discard** a suspended VM's saved state. Force Stop for a hung VM; one-shot Start in Recovery Mode for macOS. |
@@ -77,7 +77,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 
 ### Virtual hardware
 
-| | |
+| Device | What it offers |
 |---|---|
 | **Storage** | **ASIF** sparse disks at near-native SSD speed, used vs. allocated size per disk, extra disks with per-disk read-only and drag-to-reorder boot order. |
 | **Removable media** | ISOs and disk images **hot-plugged** and ejected while the VM runs. |
@@ -108,7 +108,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 
 ### Guest integration
 
-| | |
+| Feature | What it offers |
 |---|---|
 | **Guest agent** (macOS) | A lightweight in-guest helper that clipboard sharing, drag-and-drop, and log forwarding run through — **Install Guest Agent…** attaches its installer disk, and **Update Guest Agent…** appears when Kernova bundles a newer one. Talks to the host over **vsock**; its own menu bar item shows the connection, what's shared, paste progress, and when an update is available, and a sidebar icon flags an agent that needs attention. |
 | **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders through each VM's **clipboard window**, an editable buffer with **Paste from Mac** and **Copy to Mac** that also takes drops. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress. Opt-in **Automatic clipboard passthrough** skips the window and syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
@@ -186,7 +186,7 @@ end tell
 
 ## Requirements
 
-| | |
+| Machine | Supported |
 |---|---|
 | **Host** | macOS 26 (Tahoe) or later · Apple Silicon |
 | **macOS guests** | macOS 12.0.1 (Monterey) and later, including the guest agent |
