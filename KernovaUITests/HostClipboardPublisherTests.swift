@@ -227,7 +227,7 @@ struct HostClipboardPublisherOutcomeTests {
     @Test("A write beside dropped files carries their reasons")
     func writtenCarriesDroppedReasons() async throws {
         let outcome = try await publish([.resolved(Self.inline), .droppedFile(.overPasteBudget)])
-        guard case .written(let count, let dropped, _) = outcome else {
+        guard case .written(let count, let dropped) = outcome else {
             Issue.record("Expected .written, got \(outcome)")
             return
         }

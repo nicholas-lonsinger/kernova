@@ -2,9 +2,10 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Drives automatic clipboard passthrough for one VM: with no window open, it
-/// polls the host pasteboard and forwards changes to the guest, and writes
-/// inbound guest offers straight to the host pasteboard.
+/// Drives automatic clipboard passthrough for one VM, whether or not its
+/// clipboard window is open: it polls the host pasteboard and forwards copies
+/// made while the guest is connected, and writes inbound guest offers straight
+/// to the host pasteboard.
 ///
 /// Both directions funnel through the same choke-points the clipboard window's
 /// gestures use, so only *who triggers* them differs. Echo suppression is
@@ -41,43 +42,41 @@ final class ClipboardPassthroughCoordinator {
     /// a main-queue callout (`NestedEventLoopWait`).
     private var pollTimer: Timer?
 
-    /// The last host-pasteboard change count this coordinator has *settled* — the
-    /// guest holds that copy, or nothing about it can change by offering it
-    /// again.
+    /// The outbound side of one guest connection: a connection forwards only
+    /// host copies made after it came up.
     ///
-    /// Every path that advances this must first hear a delivery verdict from the
-    /// transport (`ClipboardGrabOutcome`), because consuming a count the guest
-    /// never received loses the copy outright: later polls read the change count
-    /// as unchanged and skip, and only `start()` reseeds.
-    ///
-    /// Seeded to ``unobservedChangeCount`` on start so the first poll after the
-    /// guest connects forwards the *current* host clipboard. A change made while
-    /// the guest is disconnected is caught then too, since disconnected polls
-    /// neither forward nor record.
-    private var lastPasteboardChangeCount = ClipboardPassthroughCoordinator.unobservedChangeCount
+    /// A poll that finds a different connected service starts a new one, and a
+    /// resolve launched for an old one never offers to its successor.
+    @MainActor
+    private final class OutboundConnection {
+        weak var service: (any ClipboardServicing)?
 
-    /// `lastPasteboardChangeCount` before this session has forwarded anything.
-    ///
-    /// No real `changeCount` is negative, so the first poll of a session always
-    /// forwards — and knows it is looking at a copy it never watched arrive.
-    private static let unobservedChangeCount = -1
+        /// The last host-pasteboard change count this connection has *settled* —
+        /// the guest holds that copy, or nothing about it can change by offering
+        /// it again.
+        ///
+        /// A forward advances this only once the transport gives a delivery
+        /// verdict (`ClipboardGrabOutcome`): consuming the count of a copy the
+        /// guest never received loses the copy outright, since later polls read
+        /// the change count as unchanged and skip.
+        var settledChangeCount: Int
 
-    /// The change count of the forward whose off-actor file resolve is still
-    /// running.
-    ///
-    /// Neither settled nor retryable: polls firing during a multi-second folder
-    /// walk must not launch a second walk of the same copy, and must not record
-    /// it either, since the forward in flight may still find no live service.
-    private var resolvingChangeCount: Int?
+        /// The change count of the forward whose off-actor file resolve is still
+        /// running.
+        ///
+        /// Neither settled nor retryable: polls firing during a multi-second
+        /// folder walk must not launch a second walk of the same copy.
+        var resolvingChangeCount: Int?
 
-    /// The passthrough session forwards belong to, advanced by every `stop()`.
-    ///
-    /// A forward whose off-actor resolve outlives its session must not offer —
-    /// passthrough was switched off — and must not record its change count
-    /// either: a restarted session reseeds to ``unobservedChangeCount`` precisely
-    /// so its first connected poll forwards the current clipboard, which a stale
-    /// record would suppress.
-    private(set) var runGeneration = 0
+        init(service: any ClipboardServicing, settledChangeCount: Int) {
+            self.service = service
+            self.settledChangeCount = settledChangeCount
+        }
+    }
+
+    /// The connection the poll forwards to, `nil` while the guest is
+    /// disconnected or passthrough is stopped.
+    private var outbound: OutboundConnection?
 
     private var inboundObservation: ObservationLoop?
 
@@ -97,7 +96,7 @@ final class ClipboardPassthroughCoordinator {
     /// once the refusal settled — the state `republishIfCeilingRaised()` acts on.
     ///
     /// The change count is captured here rather than compared against
-    /// `lastPasteboardChangeCount`: a refusal that serves nothing performs no
+    /// `outbound`'s settled count: a refusal that serves nothing performs no
     /// write, so that field still holds whatever the poll last absorbed and
     /// would answer a question about the poll's timing, not about the user.
     ///
@@ -120,11 +119,9 @@ final class ClipboardPassthroughCoordinator {
     var inboundPublishTaskForTesting: Task<Void, Never>? { inboundPublishTask }
 
     /// Fires once the poll's off-actor file resolve has been handled, on every
-    /// outcome, with the `runGeneration` the resolve was launched in — the seam
-    /// a test needs to observe that a forward produced *nothing*, which no
-    /// other signal announces, and to tell a stopped session's resolve from the
-    /// live session's when both are in flight.
-    var onForwardResolvedForTesting: (@MainActor (_ generation: Int) -> Void)?
+    /// outcome — the seam a test needs to observe that a forward produced
+    /// *nothing*, which no other signal announces.
+    var onForwardResolvedForTesting: (@MainActor () -> Void)?
     #endif
 
     private static let logger = KernovaLogger(
@@ -147,9 +144,6 @@ final class ClipboardPassthroughCoordinator {
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        // Force the first connected poll to forward the current host clipboard.
-        lastPasteboardChangeCount = Self.unobservedChangeCount
-        resolvingChangeCount = nil
         lastInboundOfferSeq = instance?.clipboardService?.inboundOfferSeq ?? 0
         startPolling()
         observeInbound()
@@ -164,7 +158,7 @@ final class ClipboardPassthroughCoordinator {
     func stop() {
         guard isRunning else { return }
         isRunning = false
-        runGeneration += 1
+        outbound = nil
         pollTimer?.invalidate()
         pollTimer = nil
         inboundObservation?.cancel()
@@ -189,99 +183,101 @@ final class ClipboardPassthroughCoordinator {
         }
     }
 
-    /// Forwards a genuine host-clipboard change to the guest, skipping our own
-    /// inbound writes.
+    /// Forwards a host copy made while the current guest connection is up,
+    /// skipping our own inbound writes.
     func pollHostClipboard() {
         guard let service = instance?.clipboardService, service.isConnected else {
-            // Don't record the change count while disconnected, so the current
-            // clipboard is forwarded on the first connected poll.
+            outbound = nil
+            return
+        }
+        guard let connection = outbound, connection.service === service else {
+            outbound = OutboundConnection(
+                service: service, settledChangeCount: pasteboard.changeCount)
             return
         }
         let current = pasteboard.changeCount
         // Skip the change our own host-write produced, so guest content is never
         // re-forwarded back to the guest.
         if let selfWritten = publisher.lastWriteChangeCount, current == selfWritten {
-            lastPasteboardChangeCount = current
+            connection.settledChangeCount = current
             return
         }
-        // A copy whose resolve is still walking a folder is neither settled nor
-        // retryable — re-forwarding it here would start a second walk of it.
-        guard current != lastPasteboardChangeCount, current != resolvingChangeCount else { return }
-        forwardHostClipboard(current, to: service)
+        guard current != connection.settledChangeCount,
+            current != connection.resolvingChangeCount
+        else { return }
+        forwardHostClipboard(current, over: connection, to: service)
     }
 
     /// Runs the host pasteboard through the shared intake and offers the result to
     /// the guest, settling `changeCount` only once the copy needs no retry.
-    private func forwardHostClipboard(_ changeCount: Int, to service: any ClipboardServicing) {
+    private func forwardHostClipboard(
+        _ changeCount: Int, over connection: OutboundConnection, to service: any ClipboardServicing
+    ) {
         // Each copy is a gesture of its own, so the refusal this one raises is
         // announced even when the copy before it raised the identical one — the
         // offer's own reset doesn't fire for content the guest already holds.
-        // Not for the session's first forward: that poll re-reads a clipboard
-        // nobody just touched.
-        if lastPasteboardChangeCount != Self.unobservedChangeCount { reporter.gestureBegan() }
+        reporter.gestureBegan()
         let allowsBinary = service.supportsBinaryRepresentations
         switch ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary) {
         case .content(let content, let skipped):
-            recordSettled(changeCount, offer(content, skipped: skipped, to: service))
+            settle(changeCount, on: connection, offer(content, skipped: skipped, to: service))
         case .pendingFiles(let urls, let unresolved):
-            resolvingChangeCount = changeCount
+            connection.resolvingChangeCount = changeCount
             resolveAndForward(
-                urls, unresolved: unresolved, allowsBinary: allowsBinary, changeCount: changeCount)
+                urls, unresolved: unresolved, allowsBinary: allowsBinary, changeCount: changeCount,
+                over: connection)
         case .rejected(let refusal):
             // A verdict on this copy: re-reading the same pasteboard reaches it
             // again.
-            lastPasteboardChangeCount = changeCount
+            connection.settledChangeCount = changeCount
             report(refusal)
         }
     }
 
-    /// Consumes `changeCount` when the grab settled, leaving it for the next
-    /// connected poll to retry when it did not.
-    private func recordSettled(_ changeCount: Int, _ outcome: ClipboardGrabOutcome) {
+    /// Consumes `changeCount` when the grab settled, leaving it for the
+    /// connection's next poll to retry when it did not.
+    private func settle(
+        _ changeCount: Int, on connection: OutboundConnection, _ outcome: ClipboardGrabOutcome
+    ) {
         guard outcome == .settled else { return }
-        lastPasteboardChangeCount = changeCount
+        connection.settledChangeCount = changeCount
     }
 
     /// Resolves copied files/folders off the main actor (the stat and folder
-    /// estimate walk are I/O), then offers them to the current service on the
-    /// way back.
+    /// estimate walk are I/O), then offers them over `connection` on the way
+    /// back, provided it is still the current one.
     private func resolveAndForward(
-        _ urls: [URL], unresolved: Int, allowsBinary: Bool, changeCount: Int
+        _ urls: [URL], unresolved: Int, allowsBinary: Bool, changeCount: Int,
+        over connection: OutboundConnection
     ) {
-        let generation = runGeneration
         Task { @MainActor [weak self] in
             let resolved = await ClipboardPasteboardIntake.read(
                 filesAt: urls, unresolved: unresolved, allowsBinary: allowsBinary)
-            guard let self else { return }
             #if DEBUG
-            defer { self.onForwardResolvedForTesting?(generation) }
+            defer { self?.onForwardResolvedForTesting?() }
             #endif
-            guard self.runGeneration == generation else { return }
-            // Below the session guard, so a resolve outliving its session cannot
-            // release a slot the *new* session armed at the same count and admit
-            // the second walk this field exists to prevent. Declared after the
-            // test hook so it runs before it (defers unwind in reverse), leaving
-            // the coordinator ready to retry by the time the hook observes it.
+            // Declared after the test hook so it runs before it (defers unwind in
+            // reverse), leaving the connection ready to retry by the time the
+            // hook observes it.
             defer {
-                if self.resolvingChangeCount == changeCount { self.resolvingChangeCount = nil }
+                if connection.resolvingChangeCount == changeCount {
+                    connection.resolvingChangeCount = nil
+                }
             }
-            // The host clipboard moved on during the walk: this content is
-            // nobody's copy now, and settling its count would roll the record
-            // backwards over whatever replaced it — which an inbound publish's
-            // own count cannot recover from, since the next poll absorbs that as
-            // our own write rather than forwarding it.
+            guard let self, self.outbound === connection, let service = connection.service
+            else { return }
+            // The host clipboard moved on during the walk, so this content is
+            // nobody's copy now; the next poll takes whatever replaced it.
             guard self.pasteboard.changeCount == changeCount else { return }
-            // The live service may have been torn down or replaced during the
-            // resolve; recording nothing leaves the copy for the next poll.
-            guard let service = self.instance?.clipboardService else { return }
             switch resolved {
             case .content(let content, let skipped):
-                self.recordSettled(changeCount, self.offer(content, skipped: skipped, to: service))
+                self.settle(
+                    changeCount, on: connection, self.offer(content, skipped: skipped, to: service))
             case .rejected(let refusal):
-                self.lastPasteboardChangeCount = changeCount
+                connection.settledChangeCount = changeCount
                 self.report(refusal)
             case .pendingFiles:
-                self.lastPasteboardChangeCount = changeCount
+                connection.settledChangeCount = changeCount
                 Self.logger.log(.fault, "Resolving copied files yielded another pending-files intake")
                 assertionFailure("Resolving copied files yielded another pending-files intake")
             }
@@ -367,10 +363,6 @@ final class ClipboardPassthroughCoordinator {
             } catch {
                 // Stopped, or superseded by a newer offer: nothing landed.
                 return
-            }
-            // Record our own write so the next poll tick skips it.
-            if let changeCount = outcome.postWriteChangeCount {
-                self.lastPasteboardChangeCount = changeCount
             }
             self.budgetRefusedOffer =
                 outcome.droppedReasons.contains(.overPasteBudget)

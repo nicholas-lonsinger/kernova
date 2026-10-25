@@ -96,31 +96,20 @@ struct ClipboardPassthroughCoordinatorTests {
         }
     }
 
-    /// Every forward resolve the coordinator has completed, in completion
-    /// order, each as the session generation it was launched in.
-    ///
-    /// A wait names the resolve it sequences against — the n-th completion, or
-    /// a given session's — never "any resolve": a stopped session's resolve and
-    /// the fresh session's timer-driven first forward can be in flight together,
-    /// and a wait on either completing resumes on whichever finishes first.
+    /// Counts the forward resolves the coordinator has completed.
     @MainActor
     final class ForwardResolveLog {
-        private(set) var generations: [Int] = []
+        private(set) var count = 0
         private let completed = AsyncGate()
 
-        func record(_ generation: Int) {
-            generations.append(generation)
+        func record() {
+            count += 1
             completed.notify()
         }
 
         /// Suspends until `count` resolves have completed.
         func wait(untilCompleted count: Int) async throws {
-            try await completed.wait { generations.count == count }
-        }
-
-        /// Suspends until a resolve launched in session `generation` has completed.
-        func wait(untilSessionResolved generation: Int) async throws {
-            try await completed.wait { generations.contains(generation) }
+            try await completed.wait { self.count == count }
         }
     }
 
@@ -137,7 +126,14 @@ struct ClipboardPassthroughCoordinatorTests {
         let resolves: ForwardResolveLog
     }
 
-    private func makeHarness(preferences: AppPreferences? = nil) -> Harness {
+    /// Builds a coordinator over a connected fake service.
+    ///
+    /// With `bindsConnection`, one poll binds that service before the test
+    /// writes anything, so every copy the test makes is one made while the
+    /// connection is up.
+    private func makeHarness(
+        preferences: AppPreferences? = nil, bindsConnection: Bool = true
+    ) -> Harness {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
@@ -155,7 +151,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: reports.reporter)
         let resolves = ForwardResolveLog()
-        coordinator.onForwardResolvedForTesting = { resolves.record($0) }
+        coordinator.onForwardResolvedForTesting = { resolves.record() }
+        if bindsConnection { coordinator.pollHostClipboard() }
         return Harness(
             coordinator: coordinator, instance: instance, service: service,
             pasteboard: pasteboard, publisher: publisher, reports: reports, resolves: resolves)
@@ -206,15 +203,11 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.service.grabbed.count == 1)
     }
 
-    @Test("A copy during an outage is forwarded once the redial's service reconnects")
-    func copyDuringOutageIsForwardedAfterReconnect() {
+    @Test("A copy made during an outage stays on the host; one made after the reconnect is forwarded")
+    func copyDuringOutageIsNotForwardedAfterReconnect() {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        // The channel went down (the guest closed it on reconnect) and the
-        // service settled — no poll may record the change count while
-        // disconnected, or the copy below would never be noticed once a fresh
-        // service comes up.
         h.service.isConnected = false
         writeText("copied during the outage", to: h.pasteboard)
         h.coordinator.pollHostClipboard()
@@ -225,9 +218,70 @@ struct ClipboardPassthroughCoordinatorTests {
         reconnected.reporter = h.reports.reporter
         h.instance.sessionContext?.clipboardService = reconnected
         h.coordinator.pollHostClipboard()
+        h.coordinator.pollHostClipboard()
+        #expect(reconnected.grabbed.isEmpty)
 
-        #expect(reconnected.grabbed.count == 1)
-        #expect(reconnected.grabbed.first?.text == "copied during the outage")
+        writeText("copied after the reconnect", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(reconnected.grabbed.map(\.text) == ["copied after the reconnect"])
+    }
+
+    @Test("A service that reconnects in place forwards only copies made after it came back")
+    func copyDuringInPlaceOutageIsNotForwarded() {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        // SPICE keeps one service object across a vdagent re-handshake, so the
+        // disconnected poll is the only thing that can end the connection.
+        h.service.isConnected = false
+        h.coordinator.pollHostClipboard()
+        writeText("copied during the outage", to: h.pasteboard)
+        h.service.isConnected = true
+        h.coordinator.pollHostClipboard()
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.isEmpty)
+
+        writeText("copied after the reconnect", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.map(\.text) == ["copied after the reconnect"])
+    }
+
+    @Test("The copy standing at connect is neither forwarded nor reported, even when its file is gone")
+    func standingCopyAtConnectIsIgnored() throws {
+        let h = makeHarness(bindsConnection: false)
+        defer { h.pasteboard.releaseGlobally() }
+
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
+        try Data("doomed".utf8).write(to: doomed)
+        writeFileURLs([doomed], to: h.pasteboard)
+        try FileManager.default.removeItem(at: doomed)
+
+        h.coordinator.pollHostClipboard()
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.isEmpty)
+        #expect(h.reports.failure == nil)
+        #expect(h.reports.refusals.isEmpty)
+
+        writeText("copied once connected", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.map(\.text) == ["copied once connected"])
+    }
+
+    @Test("Passthrough started on a connected guest skips the current clipboard and forwards the next copy")
+    func startOnConnectedServiceSkipsStandingCopy() {
+        let h = makeHarness(bindsConnection: false)
+        defer { h.pasteboard.releaseGlobally() }
+
+        writeText("copied before passthrough started", to: h.pasteboard)
+        h.coordinator.start()
+        defer { h.coordinator.stop() }
+        h.coordinator.pollHostClipboard()
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.isEmpty)
+
+        writeText("copied after passthrough started", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.map(\.text) == ["copied after passthrough started"])
     }
 
     @Test("A forward the transport never delivered is re-offered until it lands")
@@ -367,8 +421,8 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([doomed], to: h.pasteboard)
 
-        // A stale clipboard — the copy's file already gone when passthrough
-        // connects and forwards the current clipboard whatever its age.
+        // A copy made while connected whose file vanished before the poll read
+        // it.
         try FileManager.default.removeItem(at: doomed)
         h.coordinator.pollHostClipboard()
 
@@ -427,8 +481,8 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.reports.failure == nil)
     }
 
-    @Test("A file copy whose service settles mid-resolve reaches the reconnected one")
-    func fileCopyLostMidResolveIsRetried() async throws {
+    @Test("A file resolve whose connection dropped offers nothing to the reconnected service")
+    func resolveOutlivingItsConnectionIsDropped() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
@@ -437,21 +491,26 @@ struct ClipboardPassthroughCoordinatorTests {
         writeFileURLs([file], to: h.pasteboard)
 
         // The resolve's continuation needs the main actor this test holds, so the
-        // channel dies strictly between the poll's read and the offer it leads
-        // to — the window the change count used to be consumed in.
+        // connection drops and the redial's service comes up strictly between
+        // the poll's read and the offer it leads to.
         h.coordinator.pollHostClipboard()
         h.service.isConnected = false
-        try await h.resolves.wait(untilCompleted: 1)
-        #expect(h.service.grabbed.isEmpty)
-
-        // The redial installs a fresh service, and the copy is still outstanding.
+        h.coordinator.pollHostClipboard()
         let reconnected = FakePassthroughService()
         reconnected.reporter = h.reports.reporter
         h.instance.sessionContext?.clipboardService = reconnected
         h.coordinator.pollHostClipboard()
-        try await h.resolves.wait(untilCompleted: 2)
+        try await h.resolves.wait(untilCompleted: 1)
 
-        #expect(reconnected.grabbed.map { $0.representations.map(\.filename) } == [["notes.txt"]])
+        #expect(h.service.grabbed.isEmpty)
+        #expect(reconnected.grabbed.isEmpty)
+        #expect(h.reports.failure == nil)
+        #expect(h.reports.refusals.isEmpty)
+
+        // The copy belonged to the dropped connection, so the new one's polls
+        // leave it on the host.
+        h.coordinator.pollHostClipboard()
+        #expect(reconnected.grabbed.isEmpty)
     }
 
     @Test("A poll during an in-flight file resolve starts no second walk of the same copy")
@@ -500,7 +559,7 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.service.grabbed.map(\.text) == ["copied over the folder"])
     }
 
-    @Test("A file resolve outliving its passthrough session neither offers nor settles")
+    @Test("A file resolve outliving its passthrough session offers nothing, and the next copy still forwards")
     func resolveOutlivingItsSessionIsDropped() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
@@ -509,28 +568,20 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
-        // Passthrough switched off and back on while the walk runs, so its
-        // resolve lands in a session that has already reseeded to `-1`.
+        // Passthrough switched off and back on while the walk runs.
         h.coordinator.start()
-        let stopped = h.coordinator.runGeneration
         h.coordinator.pollHostClipboard()
         h.coordinator.stop()
         h.coordinator.start()
         defer { h.coordinator.stop() }
-        let live = h.coordinator.runGeneration
-
-        // The fresh session's poll timer forwards the same file on its own
-        // schedule, so either session's resolve can complete first: every grab
-        // so far must be the live session's.
-        try await h.resolves.wait(untilSessionResolved: stopped)
-        #expect(h.service.grabbed.count == h.resolves.generations.filter { $0 == live }.count)
-
-        // Nothing was recorded either: the fresh session's first poll — its
-        // timer's or this one — forwards the current clipboard, which a stale
-        // record would suppress.
         h.coordinator.pollHostClipboard()
-        try await h.resolves.wait(untilSessionResolved: live)
-        #expect(h.service.grabbed.map { $0.representations.map(\.filename) } == [["notes.txt"]])
+
+        try await h.resolves.wait(untilCompleted: 1)
+        #expect(h.service.grabbed.isEmpty)
+
+        writeText("copied after the restart", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.map(\.text) == ["copied after the restart"])
     }
 
     @Test("An undelivered forward files no transfer report until its retry lands")
@@ -651,8 +702,8 @@ struct ClipboardPassthroughCoordinatorTests {
         h.coordinator.start()
         // Settle the outbound poll first, so this models a session that has been
         // running rather than one started microseconds ago. Otherwise the 0.5 s
-        // timer's first tick — which forwards unconditionally — lands mid-test on
-        // a loaded machine and overwrites the service buffer with host content.
+        // timer's first tick forwards the host copy mid-test on a loaded machine
+        // and overwrites the service buffer with host content.
         h.coordinator.pollHostClipboard()
 
         h.service.refusesOverCopyBudget = true
