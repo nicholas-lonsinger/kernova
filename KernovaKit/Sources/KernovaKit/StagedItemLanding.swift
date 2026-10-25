@@ -39,7 +39,15 @@ public enum StagedItemLanding {
         } catch {
             throw POSIXErrorCode(rawValue: error.rawValue).map { POSIXError($0) } ?? error
         }
-        try FileManager.default.copyItem(at: source, to: destination)
+        // `FileManager.copyItem` writes out every hole of a sparse file; with
+        // `COPYFILE_DATA_SPARSE`, `copyfile(3)` keeps the holes where both
+        // volumes support them and copies in full where they do not.
+        let flags = copyfile_flags_t(
+            COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_DATA_SPARSE | COPYFILE_EXCL | COPYFILE_NOFOLLOW)
+        guard copyfile(source.path, destination.path, nil, flags) == 0 else {
+            let code = errno
+            throw POSIXErrorCode(rawValue: code).map { POSIXError($0) } ?? Errno(rawValue: code)
+        }
         // The item has landed, so a staged copy that stays is staging's to
         // reclaim, not a failed landing. `FileManager` removes nothing from a
         // tree holding a folder its owner cannot write

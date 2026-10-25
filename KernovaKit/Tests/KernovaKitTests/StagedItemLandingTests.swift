@@ -167,6 +167,30 @@ struct StagedItemLandingTests {
         #expect(!FileManager.default.fileExists(atPath: source.path))
     }
 
+    @Test("across volumes, a sparse file keeps its holes")
+    func sparseFileCopiesSparsely() throws {
+        let staging = scratch.url.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let source = staging.appendingPathComponent("disk.img")
+        let size: off_t = 64 << 20
+        try Data("head".utf8).write(to: source)
+        try #require(truncate(source.path, size) == 0)
+        let allocationBound = Int64(1 << 20)
+        try #require(try linkStatus(source.path).st_blocks * 512 < allocationBound)
+        let destination = try destinationFolder().appendingPathComponent("disk.img")
+
+        try StagedItemLanding.land(
+            source, at: destination, on: InterposedArchiveVolume(failingRenamesWith: .improperLink))
+
+        let landed = try linkStatus(destination.path)
+        #expect(landed.st_size == size)
+        #expect(landed.st_blocks * 512 < allocationBound)
+        let handle = try FileHandle(forReadingFrom: destination)
+        defer { try? handle.close() }
+        #expect(try handle.read(upToCount: 4) == Data("head".utf8))
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
     @Test("across volumes, an existing item is never replaced, and the staged item stays", arguments: [false, true])
     func copyRefusesAnExistingItem(stagedIsFolder: Bool) throws {
         let source = stagedIsFolder ? try stagedTree("Item") : try #require(try staged("Item").fileURL)
