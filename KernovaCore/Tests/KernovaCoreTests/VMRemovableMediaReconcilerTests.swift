@@ -32,12 +32,12 @@ struct VMRemovableMediaReconcilerTests {
 
     private func makeHarness(
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
-        usbAccessoryService: (any USBAccessoryProviding)? = nil
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement)
     ) -> Harness {
         let virtualization = MockVirtualizationService()
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization, removableMedia: removableMediaDeviceService,
-            usbAccessoryService: usbAccessoryService, fileSystem: fileSystem)
+            usbAccessoryPassthrough: usbAccessoryPassthrough, fileSystem: fileSystem)
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage, lifecycle: lifecycle, fileSystem: fileSystem)
         library.onFailure = { [failures] title, message, subject in
@@ -739,7 +739,7 @@ struct VMRemovableMediaReconcilerTests {
     func editDuringAnAttachEndedByAPowerOffDropsItsReconcile() async throws {
         let mock = MockRemovableMediaDeviceService()
         let harness = makeHarness(
-            removableMediaDeviceService: mock, usbAccessoryService: MockUSBAccessoryService())
+            removableMediaDeviceService: mock, usbAccessoryPassthrough: .available(MockUSBAccessoryService()))
         let (instance, _) = makeRunningInstance(in: harness)
         let gate = GatedStep()
         let attach = try launchGated(.attachingUSB(registryID: 7), on: instance, gate: gate)

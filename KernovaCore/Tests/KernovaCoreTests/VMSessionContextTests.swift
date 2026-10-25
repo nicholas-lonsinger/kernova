@@ -122,7 +122,7 @@ struct VMSessionContextTests {
         let accessories = MockUSBAccessoryService()
         accessories.accessories.append(MockUSBAccessoryService.accessory(registryID: registryID))
         accessories.nextDeviceID = deviceID
-        let lifecycle = makeTestLifecycle(usbAccessoryService: accessories)
+        let lifecycle = makeTestLifecycle(usbAccessoryPassthrough: .available(accessories))
         let library = makeWiredLibrary(lifecycle: lifecycle)
         let sessionID = UUID()
         let instance = library.registerFixture(phase: .running(sessionID: sessionID))

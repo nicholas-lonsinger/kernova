@@ -17,11 +17,11 @@ struct VMCommandCoreOperationTests {
 
     private func makeHarness(
         virtualization: any VirtualizationProviding,
-        usbAccessories: MockUSBAccessoryService? = nil,
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
         clock: any EngineClock = makePlatformEngineClock()
     ) -> WiredCommandCore {
         WiredCommandCore(
-            virtualization: virtualization, usbAccessoryService: usbAccessories,
+            virtualization: virtualization, usbAccessoryPassthrough: usbAccessoryPassthrough,
             preferences: preferences, clock: clock)
     }
 
@@ -50,7 +50,7 @@ struct VMCommandCoreOperationTests {
         // is whatever the Stop did to the operation holding the VM.
         virtualization.guestIgnoresShutdownRequest = true
         let accessories = MockUSBAccessoryService()
-        let harness = makeHarness(virtualization: virtualization, usbAccessories: accessories)
+        let harness = makeHarness(virtualization: virtualization, usbAccessoryPassthrough: .available(accessories))
         let session = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: session))
         instance.beginSessionContextForTesting()

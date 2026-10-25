@@ -18,13 +18,13 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization: any VirtualizationProviding = MockVirtualizationService()
     ) -> (VMLifecycleCoordinator, MockUSBAccessoryService) {
         let coordinator = makeTestLifecycle(
-            virtualization: virtualization, usbAccessoryService: accessories)
+            virtualization: virtualization, usbAccessoryPassthrough: .available(accessories))
         return (coordinator, accessories)
     }
 
     /// The libraries this test's VMs are registered in, and the accessory
     /// coordinator routing each one's arrivals, kept for the test's length: a
-    /// VM reads whether its build passes accessories through from the library
+    /// VM reads whether its process passes accessories through from the library
     /// it belongs to, and the service holds the coordinator's callback weakly.
     private let libraries = Libraries()
 

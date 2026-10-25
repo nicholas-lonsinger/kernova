@@ -469,10 +469,9 @@ package final class VMLibrary: VMAdmissionPeers {
         isTerminating = true
     }
 
-    /// Whether this build can pass a host USB accessory through to a guest at
-    /// all — the OS and the signature together, answered once by
-    /// `USBAccessorySupport.makeService(entitlements:)`.
-    var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
+    /// What keeps this process from passing a host USB accessory through to a
+    /// guest, or `nil` when nothing does.
+    var usbPassthroughGap: USBAccessoryPassthrough.Gap? { lifecycle.usbAccessoryPassthrough.gap }
 
     /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
     /// bringing `instance` up under `configuration` would duplicate, unless

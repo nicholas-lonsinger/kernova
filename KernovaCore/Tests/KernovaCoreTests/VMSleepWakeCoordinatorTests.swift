@@ -327,7 +327,7 @@ struct VMSleepWakeCoordinatorTests {
     @Test("Wake while an attach holds a sleep-paused VM resumes it after the attach")
     func wakeDuringAnAttachResumesAfterIt() async throws {
         let (coordinator, roster, virtService) = makeCoordinator()
-        roster.supportsUSBAccessories = true
+        roster.usbPassthroughGap = nil
         let instance = await makeSleepPaused(coordinator, roster: roster, virtService, name: "Held")
         let session = try #require(instance.liveSessionID)
         #expect(instance.phase == .livePaused(sessionID: session))

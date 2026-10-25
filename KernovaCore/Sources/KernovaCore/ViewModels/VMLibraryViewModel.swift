@@ -36,7 +36,7 @@ package final class VMLibraryViewModel {
     private let sleepWake: VMSleepWakeCoordinator
 
     /// Watches the USB accessories macOS assigns to Kernova; `nil` when this
-    /// build cannot pass accessories through at all.
+    /// process cannot pass accessories through at all.
     ///
     /// Held rather than read, for the reason ``sleepWake`` is.
     private let usbAccessories: USBAccessoryCoordinator?
@@ -245,9 +245,9 @@ package final class VMLibraryViewModel {
     /// Every per-VM capability predicate the AppKit surfaces read.
     package var capabilities: VMCapabilityCatalog { library.capabilities }
 
-    /// Whether this build can pass a host USB accessory through to a guest —
-    /// what decides whether the USB Device menu exists at all.
-    package var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
+    /// Whether this process, on this Mac, can pass a host USB accessory through
+    /// to a guest — what decides whether the USB Device menu exists at all.
+    package var supportsUSBAccessories: Bool { library.usbPassthroughGap == nil }
 
     package func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {
@@ -662,8 +662,8 @@ package final class VMLibraryViewModel {
         // user's accessories — registering the listener is a side effect on
         // the whole process, and a default would hand it to every test that
         // builds a view model for something else entirely.
-        usbAccessoryService: (any USBAccessoryProviding)? = nil,
-        // Supplied by `KernovaApp` for the reason `usbAccessoryService` is:
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
+        // Supplied by `KernovaApp` for the reason `usbAccessoryPassthrough` is:
         // the power registration is a side effect on the whole process.
         systemSleep: SystemSleepWatcher? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
@@ -691,7 +691,7 @@ package final class VMLibraryViewModel {
             installService: installService,
             ipswService: ipswService,
             removableMediaDeviceService: removableMediaDeviceService,
-            usbAccessoryService: usbAccessoryService,
+            usbAccessoryPassthrough: usbAccessoryPassthrough,
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,

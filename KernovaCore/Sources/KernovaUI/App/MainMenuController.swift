@@ -42,7 +42,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private var revertSnapshotMenuModel: RevertSnapshotMenuModel?
 
     /// The "USB Device" submenu, retained so it can be rebuilt from the live
-    /// accessory list when it opens. `nil` in a build that cannot pass
+    /// accessory list when it opens. `nil` in a process that cannot pass
     /// accessories through, where the item is never created at all.
     private var usbAccessoryMenu: NSMenu?
     /// What that submenu currently lists, for the reason
@@ -565,9 +565,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Seeded so the parent item is never a live entry onto an empty submenu.
         rebuildRevertSnapshotMenu(revertMenu, for: activeInstance)
         vmMenu.addItem(revertItem)
-        // The capability is a property of this build's signature and OS, so a
-        // build without it never grows the item — there is nothing here to
-        // disable, and nothing to explain.
+        // The capability is a property of this build's signature and the Mac's
+        // macOS, so a process without it never grows the item — there is
+        // nothing here to disable, and nothing to explain.
         if viewModel.supportsUSBAccessories {
             let usbItem = NSMenuItem(title: USBAccessoryMenu.title, action: nil, keyEquivalent: "")
             let usbMenu = NSMenu(title: USBAccessoryMenu.title)

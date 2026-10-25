@@ -764,6 +764,10 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// This build cannot do what was asked: the cause is the build, whatever
     /// VM the verb named, so the refusal names no virtual machine.
     case unsupportedByBuild(capability: String)
+    /// This Mac's macOS predates `minimumVersion`, the first that carries what
+    /// was asked: the cause is the host, whatever VM the verb named, so the
+    /// refusal names no virtual machine.
+    case unsupportedByMacOS(capability: String, minimumVersion: Int)
     /// The VM answered; something the verb named *on* it did not. `item` is
     /// what was looked for, in the words the user reads.
     case itemNotFound(vm: VMSummary, item: String)
@@ -841,8 +845,8 @@ extension CommandErrorDTO {
     public var title: String {
         switch self {
         case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
-            .unsupported, .unsupportedByBuild, .invalidState, .changeTakesStoppedVM, .timedOut,
-            .invalidArgument, .terminating:
+            .unsupported, .unsupportedByBuild, .unsupportedByMacOS, .invalidState, .changeTakesStoppedVM,
+            .timedOut, .invalidArgument, .terminating:
             "Error"
         case .stepRequired(let requirement):
             requirement.title
@@ -917,6 +921,8 @@ extension CommandErrorDTO {
             "This virtual machine does not support \(capability)."
         case .unsupportedByBuild(let capability):
             "This build of Kernova does not support \(capability)."
+        case .unsupportedByMacOS(let capability, let minimumVersion):
+            "Kernova needs macOS \(minimumVersion) or later for \(capability)."
         case .conflict(let vm, let other, let reason):
             Self.conflictMessage(
                 vm: vm.name, other: other.name, otherHeldByAnotherCopy: other.heldByAnotherCopy,

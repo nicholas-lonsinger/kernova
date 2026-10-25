@@ -64,7 +64,7 @@ final class WiredCommandCore {
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
         installService: any MacOSInstallProviding = MockMacOSInstallService(),
         diskImages: MockDiskImageService = MockDiskImageService(),
-        usbAccessoryService: MockUSBAccessoryService? = nil,
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
         removableMedia: MockRemovableMediaDeviceService = MockRemovableMediaDeviceService(),
         storage: MockVMStorageService = MockVMStorageService(),
         fileSystem: MockFileSystem = MockFileSystem(),
@@ -84,7 +84,7 @@ final class WiredCommandCore {
             virtualization: virtualization,
             installService: installService,
             removableMedia: removableMedia,
-            usbAccessoryService: usbAccessoryService,
+            usbAccessoryPassthrough: usbAccessoryPassthrough,
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
@@ -123,7 +123,7 @@ final class WiredCommandCore {
         self.authority = authority
         self.preferences = preferences
         self.passwords = passwords
-        self.usbAccessories = usbAccessoryService
+        self.usbAccessories = usbAccessoryPassthrough.service as? MockUSBAccessoryService
         self.diskImages = diskImages
         self.removableMedia = removableMedia
 

@@ -48,8 +48,9 @@ package enum VMAdmission {
         /// Another attach already holds the accessory an attach names — the
         /// VM it was reserved for or passed through to.
         case accessoryHeld(by: VMInstance)
-        /// This build cannot do what was asked at all.
-        case unsupportedByBuild
+        /// This process cannot pass a host USB accessory through to a guest
+        /// at all, for the reason the gap names.
+        case usbPassthroughUnavailable(USBAccessoryPassthrough.Gap)
         /// The app is terminating, and the request would begin an operation
         /// the termination did not ask for.
         ///
@@ -74,7 +75,7 @@ package enum VMAdmission {
             case (.busy(let l), .busy(let r)): l == r
             case (.takesStoppedVM(let l), .takesStoppedVM(let r)): l == r
             case (.invalidState, .invalidState), (.removed, .removed),
-                (.unsupportedByBuild, .unsupportedByBuild), (.terminating, .terminating),
+                (.terminating, .terminating),
                 (.heldByAnotherCopy, .heldByAnotherCopy),
                 (.ephemeralBaselineUnreadable, .ephemeralBaselineUnreadable):
                 true
@@ -82,6 +83,8 @@ package enum VMAdmission {
                 l.other === r.other && l.reason == r.reason && l.asks == r.asks
             case (.accessoryHeld(let l), .accessoryHeld(let r)):
                 l === r
+            case (.usbPassthroughUnavailable(let l), .usbPassthroughUnavailable(let r)):
+                l == r
             default: false
             }
         }
@@ -110,7 +113,9 @@ package enum VMAdmission {
         var savedStateSurvivesMembershipMove = false
         var clipboardSharingEnabled: Bool
         var hasPendingGuestSetup: Bool
-        var usbSupported: Bool
+        /// What keeps this process from passing a host USB accessory through
+        /// to a guest, or `nil` when nothing does.
+        var usbPassthroughGap: USBAccessoryPassthrough.Gap?
         /// The guest can write to a disk outside its bundle — an external
         /// storage disk or removable media not marked read-only
         /// (``VMConfiguration/writesOutsideBundle``).
@@ -378,10 +383,10 @@ package enum VMAdmission {
             return decideSettledOperation(kind, phase: phase, facts: facts)
         case .edit(let classes):
             // A pairing rule is a preference about which accessory to pass
-            // through, so only a build that cannot pass one through at all
+            // through, so only a process that cannot pass one through at all
             // has nothing to edit.
-            if classes.contains(.pairingRules), !facts.usbSupported {
-                return .refuse(.unsupportedByBuild)
+            if classes.contains(.pairingRules), let gap = facts.usbPassthroughGap {
+                return .refuse(.usbPassthroughUnavailable(gap))
             }
             guard editClasses(settledAt: phase, facts: facts).isSuperset(of: classes) else {
                 return .refuse(.invalidState)
@@ -427,7 +432,7 @@ package enum VMAdmission {
         case .deletingSnapshot:
             admitted = true
         case .attachingUSB, .detachingUSB:
-            guard facts.usbSupported else { return .refuse(.unsupportedByBuild) }
+            if let gap = facts.usbPassthroughGap { return .refuse(.usbPassthroughUnavailable(gap)) }
             admitted = live
         case .discardingSavedState:
             admitted = slot
@@ -505,8 +510,8 @@ package enum VMAdmission {
         case .cancel(let family):
             if holder.belongs(to: family) { return .admit }
         case .edit(let classes):
-            // A tolerated edit still answers to every settled rule — a build
-            // without USB among them.
+            // A tolerated edit still answers to every settled rule — a process
+            // without USB passthrough among them.
             if tolerated(declaration.edits, from: basis, facts: facts).isSuperset(of: classes) {
                 return decideSettled(request, posture: posture, phase: basis, facts: facts)
             }
@@ -683,8 +688,9 @@ struct VMRestorationFailed: LocalizedError {
 /// in it.
 @MainActor
 protocol VMAdmissionPeers: VMInstanceRoster {
-    /// Whether this build can pass a host USB accessory through to a guest.
-    var supportsUSBAccessories: Bool { get }
+    /// What keeps this process from passing a host USB accessory through to a
+    /// guest, or `nil` when nothing does.
+    var usbPassthroughGap: USBAccessoryPassthrough.Gap? { get }
 
     /// Whether the app's termination has begun.
     var isTerminating: Bool { get }

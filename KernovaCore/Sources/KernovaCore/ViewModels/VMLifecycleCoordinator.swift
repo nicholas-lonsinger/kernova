@@ -20,9 +20,13 @@ final class VMLifecycleCoordinator {
     let linuxImageResolveService: any LinuxImageResolving
     let downloadService: any Downloading
 
-    /// Passes host USB accessories through to a guest, or `nil` when this build
-    /// cannot — see `USBAccessorySupport.makeService(entitlements:)`.
-    let usbAccessoryService: (any USBAccessoryProviding)?
+    /// Whether this process can pass host USB accessories through to a guest,
+    /// and if not, why.
+    let usbAccessoryPassthrough: USBAccessoryPassthrough
+
+    /// Passes host USB accessories through to a guest, or `nil` when
+    /// passthrough is unavailable.
+    var usbAccessoryService: (any USBAccessoryProviding)? { usbAccessoryPassthrough.service }
 
     /// Trashes what the user can see: an image that failed verification, the
     /// original of a config file Use Defaults rewrote.
@@ -39,12 +43,7 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         removableMediaDeviceService: any RemovableMediaAttaching,
-        // No default that builds one: ``USBAccessorySupport/makeService(entitlements:)``
-        // is called in exactly one place, the composition root, and a
-        // collaborator that mints its own would register a second
-        // process-wide AccessoryAccess listener. Absent is the capability
-        // being absent, which every surface already reads as such.
-        usbAccessoryService: (any USBAccessoryProviding)? = nil,
+        usbAccessoryPassthrough: USBAccessoryPassthrough,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -56,7 +55,7 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
-        self.usbAccessoryService = usbAccessoryService
+        self.usbAccessoryPassthrough = usbAccessoryPassthrough
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
         self.fileSystem = fileSystem

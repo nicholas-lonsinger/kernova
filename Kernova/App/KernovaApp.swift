@@ -73,7 +73,7 @@ enum KernovaApp {
             localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: RemovableMediaDeviceService(),
             bridgedInterfaces: bridgedInterfaces,
-            usbAccessoryService: USBAccessorySupport.makeService(entitlements: entitlements),
+            usbAccessoryPassthrough: USBAccessorySupport.passthrough(entitlements: entitlements),
             systemSleep: SystemSleepWatcher(
                 systemWillSleep: hostNotifications.systemWillSleep,
                 systemDidWake: hostNotifications.systemDidWake),

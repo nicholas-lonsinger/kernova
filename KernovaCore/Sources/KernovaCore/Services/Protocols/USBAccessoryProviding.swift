@@ -58,3 +58,32 @@ package protocol USBAccessoryProviding: AnyObject {
     /// Detaches the passthrough device `deviceID` names.
     func detach(deviceID: UUID, from instance: VMInstance) async throws
 }
+
+/// Whether this process can pass a host USB accessory through to a guest, and
+/// when it cannot, what stands in the way.
+///
+/// Decided once, at the composition root: the GUI reads presence, and a
+/// refusal reads the gap so it names the cause the user can act on.
+package enum USBAccessoryPassthrough {
+    case available(any USBAccessoryProviding)
+    case unavailable(Gap)
+
+    /// What keeps passthrough from this process.
+    package enum Gap: Sendable, Equatable {
+        /// The OS predates the first macOS whose AccessoryAccess and
+        /// Virtualization carry passthrough, the version given.
+        case needsMacOS(Int)
+        /// The signature lacks `com.apple.developer.accessory-access.usb`.
+        case needsEntitlement
+    }
+
+    /// The service, or `nil` when passthrough is unavailable.
+    package var service: (any USBAccessoryProviding)? {
+        if case .available(let service) = self { service } else { nil }
+    }
+
+    /// What stands in the way, or `nil` when passthrough is available.
+    package var gap: Gap? {
+        if case .unavailable(let gap) = self { gap } else { nil }
+    }
+}

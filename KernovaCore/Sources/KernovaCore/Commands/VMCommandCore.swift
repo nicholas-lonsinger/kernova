@@ -135,7 +135,7 @@ package final class VMCommandCore {
 
     /// What the user's own attaches and detaches mean for what a guest takes
     /// back on its own: told of each, so the menu, the CLI and the pairing
-    /// prompt's answer write the same rule. `nil` in a build that cannot pass
+    /// prompt's answer write the same rule. `nil` in a process that cannot pass
     /// accessories through.
     ///
     /// The lifecycle's own eject sweeps reach it not at all: a stop, a suspend
@@ -392,8 +392,8 @@ package final class VMCommandCore {
             .operationFailed(
                 verb: .editUSBAccessory,
                 message: "That USB accessory is in use by \u{201C}\(holder.name)\u{201D}.")
-        case .unsupportedByBuild:
-            .unsupportedByBuild(capability: Self.usbAccessoryCapability)
+        case .usbPassthroughUnavailable(let gap):
+            Self.usbPassthroughRefusal(gap)
         case .terminating:
             .terminating
         case .heldByAnotherCopy:

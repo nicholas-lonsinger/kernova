@@ -31,7 +31,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .usage: "The command line could not be parsed, or an argument was not valid."
         case .notFound: "Nothing answers to what was named: a VM, or an item on one or the host."
         case .ambiguous: "More than one VM answers to the selector."
-        case .refusedByState: "The VM's state, this build, or a missing consent refused the verb."
+        case .refusedByState: "The VM's state, this build, this Mac's macOS, or a missing consent refused the verb."
         case .busy: "The VM has work in flight, or another copy of Kernova holds it."
         case .timedOut: "A deadline expired before the state arrived."
         case .authorizationRefused: "The app would not accept this process as a peer."
@@ -52,7 +52,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .notFound, .itemNotFound, .itemNotFoundOnHost: self = .notFound
         case .ambiguous: self = .ambiguous
         case .invalidState, .changeTakesStoppedVM, .stepRequired, .unsupported, .unsupportedByBuild,
-            .conflict, .confirmationRequired, .guestAccountPasswordRequired:
+            .unsupportedByMacOS, .conflict, .confirmationRequired, .guestAccountPasswordRequired:
             self = .refusedByState
         case .invalidArgument: self = .usage
         case .busy, .heldByAnotherCopy: self = .busy

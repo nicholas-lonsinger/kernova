@@ -24,12 +24,12 @@ struct VMCapabilityCatalogTests {
 
     private func makeHarness(
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
-        usbAccessories: (any USBAccessoryProviding)? = nil
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement)
     ) -> Harness {
         let storage = MockVMStorageService()
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization,
-            usbAccessoryService: usbAccessories)
+            usbAccessoryPassthrough: usbAccessoryPassthrough)
         let library = makeWiredLibrary(
             storage: storage,
             lifecycle: lifecycle,
@@ -550,15 +550,15 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
     }
 
-    @Test("A USB accessory edit exists only in a build that can pass one through")
+    @Test("A USB accessory edit exists only in a process that can pass one through")
     func usbAccessoryEditFollowsTheCapability() {
         let without = makeHarness()
         let notOffered = makeInstance(in: without, phase: .running(sessionID: UUID()))
-        // A build that cannot claim an accessory must not name the verb among
+        // A process that cannot claim an accessory must not name the verb among
         // those a VM accepts, however the VM is running.
         #expect(!without.catalog.isApplicable(.editUSBAccessories, to: notOffered))
 
-        let with = makeHarness(usbAccessories: MockUSBAccessoryService())
+        let with = makeHarness(usbAccessoryPassthrough: .available(MockUSBAccessoryService()))
         #expect(
             with.catalog.isApplicable(
                 .editUSBAccessories, to: makeInstance(in: with, phase: .running(sessionID: UUID()))))

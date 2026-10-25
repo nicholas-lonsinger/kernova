@@ -55,7 +55,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS)
                 ? buildGuestAgentSection() : buildClipboardSection(),
         ]
-        // Absent, not disabled, in a build that cannot pass accessories
+        // Absent, not disabled, in a process that cannot pass accessories
         // through: there is nothing it could ever list.
         pairingSection = nil
         if viewModel.supportsUSBAccessories {
