@@ -15,7 +15,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
-    <img src="docs/images/hero-light.png" alt="Kernova main window: a sidebar of VMs with a running macOS 27 guest's desktop in the detail pane" width="900">
+    <img src="docs/images/hero-light.png" alt="Kernova main window: a sidebar of VMs with color tags, a folder, and a smart group, beside a running macOS 27 guest's desktop in the detail pane" width="900">
   </picture>
 </p>
 
@@ -29,15 +29,16 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Snapshots** — live memory snapshots, instant copy-on-write, repeatable revert | ✅ | ✅ |
 | **Ephemeral mode** — auto-revert to a baseline at every shutdown | ✅ | ✅ |
 | **Clone** VMs and **import** `.kernova` bundles — instant APFS copies on the same volume | ✅ | ✅ |
+| **Organize** the library — filter, group, sort, and search; **smart groups**, **folders**, color **tags** | ✅ | ✅ |
 | **Headless** operation from the menu bar, **auto-start** at login | ✅ | ✅ |
 | **Shared folders** over VirtioFS | ✅ | ✅ |
-| **NAT**, **bridged**, **host-only** networking | ✅ | ✅ |
+| **NAT**, **bridged**, **host-only** networking, with **isolated** and **named networks** | ✅ | ✅ |
 | **Hot-plug** removable media (ISOs, disk images) | ✅ | ✅ |
 | **USB passthrough** of host accessories | ✅ | ✅ |
 | **Audio** out, opt-in **microphone** passthrough | ✅ | ✅ |
 | **Serial console** log and Unix-socket relay | ✅ | ✅ |
 | **Clipboard sharing** — text, rich text, images, files, folders | ✅ | text only |
-| **Drag-and-drop** files from Finder into the guest | ✅ | — |
+| **Drag-and-drop** files in and out of the guest | ✅ | — |
 | **Guest agent** with log forwarding to Console.app | ✅ | — |
 | **HiDPI** display, **Recovery Mode** boot | ✅ | — |
 | **CLI**, **Shortcuts**, **AppleScript**, **`kernova:` links** | ✅ | ✅ |
@@ -48,11 +49,12 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 
 | | |
 |---|---|
-| **Creation wizard** | macOS from the latest IPSW, a version catalog, a URL, or a local file. Linux from a checksum-verified distribution catalog, an image URL, or a local ISO — EFI/UEFI or direct kernel boot. On a macOS 27 host installing macOS 27 or later, an optional **Account** step creates the guest's user — with automatic login and Remote Login if you want them — so the first boot lands past Setup Assistant; the password is never stored. |
-| **Lifecycle** | Start, stop, pause, resume, suspend, and restore. Force Stop for a hung VM; one-shot Start in Recovery Mode for macOS. |
+| **Creation wizard** | macOS from the latest IPSW, a version catalog, a URL, or a local file. Linux from a checksum-verified distribution catalog, an image URL with an optional SHA-256, or a local ISO — EFI/UEFI or direct kernel boot; the VM's settings show a downloaded image's **SHA-256** and what it was verified against. On a macOS 27 host installing macOS 27 or later, an optional **Account** step creates the guest's user — with automatic login and Remote Login if you want them — so the first boot lands past Setup Assistant; the password is never stored. |
+| **Lifecycle** | Start, stop, pause, resume, suspend, and restore — or **discard** a suspended VM's saved state. Force Stop for a hung VM; one-shot Start in Recovery Mode for macOS. |
 | **Snapshots** | Named restore points with notes, taken running, suspended, or stopped — the first two capture memory too. Copy-on-write with the VM's own disks, so a snapshot is near-instant and adds little on disk. Revert is repeatable. |
-| **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot. Suspend keeps the session; a sidebar badge marks the throwaway VM. |
-| **Clone & import** | Clone as a New Machine, with its own machine identity and MAC address, or as an Exact Copy that keeps both and its snapshots, Ephemeral Mode and display preferences, which never runs on the same network as its source at once and runs beside it only when you start it anyway — a setting picks the default, and the Virtual Machine menu's second Clone item does the other. A guest running macOS 12 or earlier is cloned as an Exact Copy only. Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
+| **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot, and turning the mode on can take that snapshot for you. A session cut short when Kernova quits unexpectedly reverts at the next launch. Suspend keeps the session; a sidebar badge marks the throwaway VM. |
+| **Clone & import** | Clone a VM stopped, suspended, paused, or running — as a **New Machine**, with its own machine identity and MAC address, or as an **Exact Copy** that keeps both, plus its saved state, snapshots, Ephemeral Mode, and display preferences. An Exact Copy never runs on the same network as its source at once, and runs beside it only when you start it anyway. A setting picks the default, and the Virtual Machine menu's second Clone item does the other. A guest running macOS 12 or earlier is cloned as an Exact Copy only. Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
+| **Library** | Filter the sidebar by guest OS, state, network, tag, guest agent, Ephemeral Mode, or snapshots; group it by guest OS, state, network, or tag; sort by name, date created, **last run**, or by hand. Save a filter as a **smart group**, gather VMs into **folders**, and mark them with color **tags**; a smart group or folder starts, suspends, or stops all its VMs at once. **Search** by name with ⌘F. |
 | **Headless** | A menu bar item keeps VMs running after the last window closes and lists each one with its status. Quit save-suspends; sleep pauses, wake resumes. |
 | **Auto-start** | Per-VM boot (or resume) whenever Kernova opens — with Open at Login, the Mac comes up with them running. |
 
@@ -77,18 +79,18 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 
 | | |
 |---|---|
-| **Storage** | **ASIF** sparse disks at near-native SSD speed, live on-disk vs. allocated size, extra disks with per-disk read-only and drag-to-reorder boot order. |
+| **Storage** | **ASIF** sparse disks at near-native SSD speed, used vs. allocated size per disk, extra disks with per-disk read-only and drag-to-reorder boot order. |
 | **Removable media** | ISOs and disk images **hot-plugged** and ejected while the VM runs. |
 | **USB accessories** | On a macOS 27 host, a USB device you assign to Kernova in the **Virtual Machine Accessories** menu extra **passes through** to a running guest — from **Virtual Machine → USB Device** or `kernova usb attach`. Kernova **remembers** the pairing and passes the device through again when you plug it in and when the VM starts. Forget one in the Sharing settings or with `kernova usb forget`. |
-| **Shared folders** | Host folders over **VirtioFS**, read-only or read-write. |
+| **Shared folders** | Host folders over **VirtioFS**, read-only or read-write. A running macOS guest takes share changes **live**, as long as one share stays in place throughout. |
 | **Display** | Resolution presets or custom size, **HiDPI**, size-to-fit at startup, live auto-resize. Inline, pop-out window, or **fullscreen** per VM; flip between the live display and its settings while running — settings that apply at boot lock, the rest stay live. |
 | **Input** | Mac or USB keyboard and pointer, picked by guest version or chosen per macOS VM. Per-VM choice of when **system hot keys** reach the guest: never, in full screen, or always — live-switchable. |
 | **Audio** | Guest audio to the host, on by default. **Microphone** passthrough opt-in per VM, off by default. |
-| **Network** | **NAT** · **Bridged** to a chosen interface or Automatic · **Host Only** · None. Live **IP address** readout on NAT and Host Only — the address this Mac last saw the guest use; a bridged guest's comes from your network, so Kernova shows none. Persistent, editable **MAC address** with one-click regeneration and a duplicate warning. |
+| **Network** | **NAT** and **Host Only**, each on its **Common** network, an **Isolated** network of the VM's own, or a **named network** shared only by the VMs you put on it · **Bridged** to a chosen interface or Automatic · None. A running or paused VM switches networks without a restart, except to or from None. Live **IP address** readout on NAT and Host Only — the address this Mac last saw the guest use; a bridged guest's comes from your network, so Kernova shows none. Persistent, editable **MAC address** with one-click regeneration and a duplicate warning; a VM never starts on a network where another VM already uses its address, and the refusal offers the fixes that apply. |
 | **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
 
 > [!NOTE]
-> **Bridged**, **Host Only**, and the guest **IP address** need `com.apple.vm.networking`, a capability Apple grants; on a macOS 27 host the IP address also needs `com.apple.developer.networking.topology-observation`. **USB accessories** need `com.apple.developer.accessory-access.usb`, which any App ID can enable in Xcode as *Claim USB Accessory*. Each must be authorized by a provisioning profile, so a build without one doesn't offer what it enables, and everything else works unchanged.
+> **Bridged**, **Host Only**, **Isolated** and **named networks**, and the guest **IP address** need `com.apple.vm.networking`, a capability Apple grants; on a macOS 27 host the IP address also needs `com.apple.developer.networking.topology-observation`. **USB accessories** need `com.apple.developer.accessory-access.usb`, which any App ID can enable in Xcode as *Claim USB Accessory*. Each must be authorized by a provisioning profile, so a build without one doesn't offer what it enables, and everything else works unchanged.
 
 <p align="center">
   <picture>
@@ -97,32 +99,41 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
   </picture>
 </p>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/network-dark.png">
+    <img src="docs/images/network-light.png" alt="A VM's Network settings with the Mode menu open: NAT and Host Only each list their Common network, an Isolated network, and named networks; Bridged lists Automatic and each interface" width="680">
+  </picture>
+</p>
+
 ### Guest integration
 
 | | |
 |---|---|
-| **Guest agent** (macOS) | A lightweight in-guest helper installed from an attachable disk. Talks to the host over **vsock**; its own menu bar item shows the connection, what's shared, and when an update is available. |
-| **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress in a clipboard window. Opt-in **Automatic Passthrough** syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
-| **Drag-and-drop** (macOS) | Drop files from Finder onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. Drag files out of the display onto the Mac and they are copied where you drop them, crossing only once a destination asks. |
+| **Guest agent** (macOS) | A lightweight in-guest helper that clipboard sharing, drag-and-drop, and log forwarding run through — **Install Guest Agent…** attaches its installer disk, and **Update Guest Agent…** appears when Kernova bundles a newer one. Talks to the host over **vsock**; its own menu bar item shows the connection, what's shared, paste progress, and when an update is available, and a sidebar icon flags an agent that needs attention. |
+| **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders through each VM's **clipboard window**, an editable buffer with **Paste from Mac** and **Copy to Mac** that also takes drops. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress. Opt-in **Automatic clipboard passthrough** skips the window and syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
+| **Drag-and-drop** (macOS) | Drop files and folders from Finder, or items from apps such as Photos and Mail, onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. Drag files, folders, and guest apps' items such as photos and Mail attachments out of the display onto the Mac; they are copied where you drop them, crossing only once a destination asks. |
 | **Log forwarding** (macOS) | Opt-in, live-toggleable: the guest agent's `os.Logger` records appear in **Console.app** under `app.kernova.guest`. |
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png">
-    <img src="docs/images/clipboard-light.png" alt="The clipboard window for a running macOS guest, showing rich text with an embedded photo and caption, with Automatic passthrough on" width="720">
+    <img src="docs/images/clipboard-light.png" alt="The clipboard window for a running macOS guest, holding rich text with an embedded photo and caption, with Paste from Mac, Copy to Mac, and Automatic passthrough off" width="720">
   </picture>
 </p>
 
 ### The app
 
-Pure AppKit in the **Liquid Glass** design language — a source-list sidebar with drag reordering and inline rename, a customizable toolbar, and a delete sheet that offers to trash a VM's external attachments with it.
+Pure AppKit in the **Liquid Glass** design language — a source-list sidebar with drag reordering and inline rename, a customizable toolbar, and a delete sheet that offers to trash a VM's external attachments with it. **File → Check Config Files…** lists every config file Kernova can't read and repairs the ones it can.
 
 | Settings pane (⌘,) | Holds |
 |---|---|
-| **General** | Open at Login · keep running in the menu bar |
-| **Reminders** | Menu bar quit reminder · guest-agent install nudge, app-wide and per VM |
+| **General** | Open at Login · continue running in the menu bar |
+| **Reminders** | Menu bar quit reminder · guest agent install reminder, app-wide and per VM · reset all reminders |
 | **Clipboard** | Maximum paste size |
-| **Advanced** | Always show the ⌥-revealed context-menu items · offer to start duplicate machine IDs anyway · clone as New Machine or Exact Copy · install the CLI and shell completions |
+| **Networks** | Named NAT and Host Only networks — create, rename, and delete them, and see which VMs are on each |
+| **Tags** | Create, rename, recolor, and delete tags |
+| **Advanced** | Always show advanced options — the ⌥-revealed context-menu items · offer to start duplicate machine IDs anyway · clone as New Machine or Exact Copy · install the CLI and shell completions |
 
 ## Automation
 
@@ -131,8 +142,8 @@ Four surfaces, one library, the same verbs.
 | Surface | What it offers |
 |---|---|
 | **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, cancel guest setup), the library (search, import, clone, cancel a copy, rename, delete), snapshots (take, find, revert, rename, notes, delete), named networks (create, find, rename, delete), changing any of a VM's settings, starting, suspending or stopping every VM in a smart group or folder, reading state, IP, or disks, and quitting Kernova — each VM and group a typed entity you pick by name. |
-| **AppleScript** | A scripting dictionary with the lifecycle verbs and each VM's state, configuration, storage disks, and IP address, for Script Editor and Automator. |
-| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle — for one VM, or every VM in a smart group or folder — the library (list, info, clone, import, rename, delete, reveal), settings read/write, snapshots, shared folders, USB accessories, `wait`, and `--format json` for scripts. Shell completions for zsh, bash, and fish. |
+| **AppleScript** | A scripting dictionary for Script Editor and Automator: the lifecycle verbs and `reveal`; each VM's state, resources, storage disks, and IP address, with its network mode, membership, and MAC address settable; and named networks to make, rename, and delete. |
+| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle — `start`, `stop`, and `suspend` also for every VM in a smart group or folder — the library (list with filters and sorting, groups, info, clone, import, rename, delete, reveal in the Finder), settings read/write, snapshots, shared folders, USB accessories, named networks, `wait`, and `--format json` for scripts. Shell completions for zsh, bash, and fish. |
 | **URL scheme** | Clickable links from a browser, a note, or a script. `kernova://open/<name>` brings a running VM's display forward and refuses when it has none; `kernova://reveal/<name>` never refuses — the display when there is one, the VM's library row otherwise. |
 
 ```bash
@@ -144,7 +155,7 @@ kernova share add Alpha ~/Projects --read-only
 kernova get Alpha memory --format json
 ```
 
-A verb launches Kernova hidden when it isn't running; `--no-launch` refuses instead. `kernova --help` lists every verb, flag, and the exit codes a script branches on.
+A verb launches Kernova hidden when it isn't running; `--no-launch` refuses instead. `kernova --help` lists every verb and the exit codes a script branches on, and `kernova <verb> --help` that verb's flags.
 
 <details>
 <summary><b>AppleScript idioms</b> the dictionary alone doesn't show</summary>
