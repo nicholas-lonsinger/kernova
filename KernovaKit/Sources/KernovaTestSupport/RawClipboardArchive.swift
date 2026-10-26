@@ -78,9 +78,9 @@ public struct RawArchiveEntry {
 }
 
 /// What stopped ``rawArchive(_:)`` writing an archive.
-public struct RawArchiveError: Error, Sendable {
+private struct RawArchiveError: Error, Sendable {
     /// The stream or header AppleArchive refused.
-    public let step: String
+    let step: String
 }
 
 /// The LZ4 archive holding `entries`, in order, with their fields in the
