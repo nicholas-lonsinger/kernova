@@ -1,5 +1,5 @@
 {
-  "generatedAt" : "2026-10-03",
+  "generatedAt" : "2026-10-27",
   "images" : [
     {
       "approxSizeBytes" : 4154798080,
@@ -76,14 +76,14 @@
       "version" : "43"
     },
     {
-      "approxSizeBytes" : 3972624384,
+      "approxSizeBytes" : 4051513344,
       "checksumManifest" : "SHA256SUMS",
-      "directoryURL" : "https://cdimage.kali.org/kali-2026.2/",
+      "directoryURL" : "https://cdimage.kali.org/kali-2026.3/",
       "distribution" : "Kali Linux",
       "id" : "kali-current",
-      "isoPattern" : "kali-linux-2026.2*-installer-arm64.iso",
-      "manifestDirectoryURL" : "https://kali.download/base-images/kali-2026.2/",
-      "version" : "2026.2"
+      "isoPattern" : "kali-linux-2026.3*-installer-arm64.iso",
+      "manifestDirectoryURL" : "https://kali.download/base-images/kali-2026.3/",
+      "version" : "2026.3"
     }
   ]
 }
