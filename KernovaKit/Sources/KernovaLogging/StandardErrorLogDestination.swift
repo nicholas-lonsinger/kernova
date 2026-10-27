@@ -1,4 +1,3 @@
-#if !canImport(os)
 import Foundation
 
 /// Where a `KernovaLogger` records locally where there is no unified log: one
@@ -8,7 +7,7 @@ import Foundation
 /// Each line opens with its level's syslog priority as `<N>`, which journald
 /// strips and files as the entry's priority (`SyslogLevelPrefix=`, on by
 /// default — systemd.exec(5); the prefixes are sd-daemon(3)'s).
-struct LocalLogDestination: Sendable {
+struct StandardErrorLogDestination: Sendable {
     /// The least severe level written. `.debug` is left out, as the unified
     /// log keeps it only while a client streams.
     static let threshold = KernovaLogLevel.info
@@ -76,4 +75,3 @@ extension KernovaLogLevel {
         }
     }
 }
-#endif

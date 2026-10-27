@@ -3,7 +3,7 @@ import os
 
 /// Where a `KernovaLogger` records locally on Apple platforms: the unified
 /// log, under the logger's subsystem and category.
-struct LocalLogDestination: Sendable {
+struct UnifiedLogDestination: Sendable {
     private let osLog: OSLog
     private let osLogger: os.Logger
 
@@ -22,4 +22,11 @@ struct LocalLogDestination: Sendable {
         LocalLogRecord(segments: segments).emit(to: osLogger, at: level.osLogType)
     }
 }
+#endif
+
+/// Where a `KernovaLogger` records locally on this platform.
+#if canImport(os)
+typealias LocalLogDestination = UnifiedLogDestination
+#else
+typealias LocalLogDestination = StandardErrorLogDestination
 #endif

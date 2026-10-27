@@ -9,11 +9,11 @@ let sharedSwiftSettings: [SwiftSetting] = [
 ]
 
 // The portable targets build wherever Swift does — macOS, Linux, Windows — and
-// are the code every guest agent shares. Everything else is Apple-only and is
-// declared only where the manifest is evaluated on macOS, so `swift build` and
-// `swift test` on Linux or Windows build exactly the portable targets. A cross
-// build from a Mac evaluates the manifest for macOS, so it names its targets
-// (the Makefile's `PORTABLE_TARGETS`).
+// are the code that builds off Apple platforms. Everything else is Apple-only
+// and is declared only where the manifest is evaluated on macOS, so
+// `swift build` and `swift test` on Linux or Windows build exactly the portable
+// targets. A cross build from a Mac evaluates the manifest for macOS, so it
+// names its targets (the Makefile's `PORTABLE_TARGETS`).
 var products: [Product] = [
     // Static, and it has to stay static: Xcode gives every target that links a
     // *dynamic* package product a command copying that framework into the

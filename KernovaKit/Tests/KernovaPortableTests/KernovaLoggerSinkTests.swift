@@ -43,7 +43,7 @@ struct KernovaLoggerSinkTests {
             ])
     }
 
-    @Test("A debug message reaches the sink whether or not the unified log records debug")
+    @Test("A debug message reaches the sink whether or not the local log records debug")
     func debugReachesTheSink() {
         let records = Locked<[Record]>([])
         let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Debug") {

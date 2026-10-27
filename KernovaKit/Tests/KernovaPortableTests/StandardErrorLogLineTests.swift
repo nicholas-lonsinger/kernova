@@ -1,11 +1,10 @@
-#if !canImport(os)
 import Testing
 
 @testable import KernovaLogging
 
 @Suite("The standard-error line a record prints as")
 struct StandardErrorLogLineTests {
-    private let destination = LocalLogDestination(subsystem: "app.kernova.agent", category: "Clipboard")
+    private let destination = StandardErrorLogDestination(subsystem: "app.kernova.agent", category: "Clipboard")
 
     private func pub(_ text: String) -> LogSegment {
         LogSegment(text: text, isPrivate: false)
@@ -54,4 +53,3 @@ struct StandardErrorLogLineTests {
         }
     }
 }
-#endif

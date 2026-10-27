@@ -1,9 +1,9 @@
-import KernovaTestSupport
+#if canImport(os)
 import Testing
 
 @testable import KernovaLogging
 
-@Suite("The unified-log record a LogMessage emits as", .caseScoped)
+@Suite("The unified-log record a LogMessage emits as")
 struct LocalLogRecordTests {
     private func pub(_ text: String) -> LogSegment {
         LogSegment(text: text, isPrivate: false)
@@ -43,3 +43,4 @@ struct LocalLogRecordTests {
             ]) == .threePrivate("", "1", "a", "2", "b", "3c4d5", "e"))
     }
 }
+#endif
