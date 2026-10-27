@@ -75,7 +75,8 @@ final class IPSWSelectionContentViewController: NSViewController {
             for: .downloadLatest,
             symbol: "arrow.down.circle",
             title: "Download Latest",
-            description: "Download the latest compatible macOS restore image from Apple."
+            description: "Download the latest compatible macOS restore image from Apple.",
+            doubleAction: #selector(downloadLatestDoubleClicked(_:))
         )
         let catalogOption = makeSourceRadio(
             for: .catalogVersion,
@@ -187,10 +188,12 @@ final class IPSWSelectionContentViewController: NSViewController {
     // MARK: - Source radios
 
     private func makeSourceRadio(
-        for source: IPSWSource, symbol: String, title: String, description: String
+        for source: IPSWSource, symbol: String, title: String, description: String,
+        doubleAction: Selector? = nil
     ) -> NSView {
-        let radio = NSButton(
+        let radio = DoubleClickRadioButton(
             radioButtonWithTitle: title, target: self, action: #selector(sourceRadioClicked(_:)))
+        radio.doubleAction = doubleAction
         radios[source] = radio
         return makeWizardRadioOption(radio: radio, iconSymbol: symbol, description: description)
     }
@@ -219,6 +222,11 @@ final class IPSWSelectionContentViewController: NSViewController {
             refresh()
             selectIPSWFile()
         }
+    }
+
+    @objc private func downloadLatestDoubleClicked(_ sender: NSButton) {
+        sourceRadioClicked(sender)
+        creationVM.goNext()
     }
 
     // MARK: - Refresh

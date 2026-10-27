@@ -402,6 +402,31 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(!vm.unattendedSetupActive)
     }
 
+    @Test("Double-clicking Download Latest selects it and advances to the next step")
+    func doubleClickDownloadLatestAdvances() throws {
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+        vm.currentStep = .bootConfig
+        // The destination is the real Downloads folder, so whatever already sits
+        // there must not raise the overwrite warning that blocks the step.
+        vm.confirmOverwrite()
+        #expect(!vm.shouldShowOverwriteWarning)
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        // A plain NSButton would start a tracking loop waiting for a real mouse-up.
+        let radio = try #require(
+            findButton(titled: "Download Latest", in: vc.view) as? DoubleClickRadioButton)
+        let doubleClick = try #require(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
+
+        radio.mouseDown(with: doubleClick)
+
+        #expect(vm.ipswSource == .downloadLatest)
+        #expect(vm.currentStep == .resources)
+    }
+
     // MARK: - Helpers
 
     @MainActor
