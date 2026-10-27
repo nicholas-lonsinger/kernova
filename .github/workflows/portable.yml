@@ -99,8 +99,11 @@ jobs:
       - name: Show the toolchain
         run: swift --version
 
+      # swift-protobuf's `protoc` target compiles abseil without NOMINMAX, so
+      # <windows.h>'s `min` and `max` macros break `numeric_limits<T>::max()`
+      # in absl/time/time.cc; abseil's own build defines it on Windows.
       - name: Build
-        run: swift build --package-path KernovaKit
+        run: swift build --package-path KernovaKit -Xcc -DNOMINMAX -Xcxx -DNOMINMAX
 
       - name: Test
-        run: swift test --package-path KernovaKit
+        run: swift test --package-path KernovaKit -Xcc -DNOMINMAX -Xcxx -DNOMINMAX
