@@ -34,7 +34,6 @@ var products: [Product] = [
 ]
 
 var dependencies: [Package.Dependency] = [
-    // Its plugin builds `protoc` from source, so no host needs it installed.
     .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")
 ]
 
@@ -62,8 +61,9 @@ var targets: [Target] = [
             "CKernovaShims",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
-        swiftSettings: sharedSwiftSettings,
-        plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
+        // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
+        exclude: ["Proto/kernova_v2.proto"],
+        swiftSettings: sharedSwiftSettings
     ),
     // The C intrinsics Swift cannot spell: the CRC32C instructions.
     .target(name: "CKernovaShims"),
@@ -116,13 +116,14 @@ targets += [
             "KernovaSynchronization",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
+        // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
+        exclude: ["Proto/kernova.proto"],
         swiftSettings: sharedSwiftSettings,
         // `import AppleArchive` does not autolink the C library its
         // `__AAHeader…` functions live in
         // (docs/research/2026-10-23-applearchive-extract-semantics.md,
         // finding 3).
-        linkerSettings: [.linkedLibrary("AppleArchive")],
-        plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
+        linkerSettings: [.linkedLibrary("AppleArchive")]
     ),
     // What the app and the `kernova` tool share and no guest agent links:
     // the command wire, the library's queries, config-file decoding.
