@@ -1,9 +1,27 @@
-import Foundation
+import Dispatch
 import KernovaSynchronization
-import KernovaTestSupport
 import Testing
 
-@Suite("Locked", .caseScoped)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(WinSDK)
+import WinSDK
+#endif
+
+/// Gives up the processor so another thread can run.
+private func yieldProcessor() {
+    #if canImport(WinSDK)
+    _ = SwitchToThread()
+    #else
+    sched_yield()
+    #endif
+}
+
+@Suite("Locked")
 struct LockedTests {
     private struct Refusal: Error, Equatable {
         let code: Int
@@ -18,7 +36,7 @@ struct LockedTests {
                 // Read, yield, then write: without exclusion another thread's
                 // increment lands between the two and is lost.
                 let read = value
-                sched_yield()
+                yieldProcessor()
                 value = read + 1
             }
         }

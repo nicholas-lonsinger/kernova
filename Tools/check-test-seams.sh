@@ -62,7 +62,9 @@
 # has neither: a `TestScratchDirectory` it mints stops the process. A nested
 # suite inherits the trait, so the finding is a top-level `@Suite` attribute —
 # one starting a line, alone or after other attributes, read to its closing
-# parenthesis — that does not name it.
+# parenthesis — that does not name it. A test target that builds where
+# `KernovaTestSupport` does not, `unscoped_test_roots`, has no trait to name and
+# cannot mint scratch, so the gate skips it.
 #
 # The fifth gate runs over the second one's files too. The temporary directory
 # is shared by every test, so what a test leaves there outlives it and piles up
@@ -98,6 +100,9 @@ test_only_calls='placeForTesting bindSessionForTesting beginSessionContextForTes
 # The test files that may name the temporary directory, as the fifth gate
 # reads them: the owner and its own test.
 scratch_owners='KernovaKit/Sources/KernovaTestSupport/TestScratchDirectory.swift KernovaKit/Tests/KernovaKitTests/TestScratchDirectoryTests.swift'
+
+# The test targets the fourth gate skips, as its header paragraph reads them.
+unscoped_test_roots='^KernovaKit/Tests/KernovaPortableTests/'
 
 report() {
     local summary=$1 text=$2
@@ -233,6 +238,7 @@ store_scan_status=$?
 
 suite_findings=$(git ls-files '*.swift' \
     | grep -E "$test_paths" \
+    | grep -vE "$unscoped_test_roots" \
     | tr '\n' '\0' \
     | xargs -0 awk '
         function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }

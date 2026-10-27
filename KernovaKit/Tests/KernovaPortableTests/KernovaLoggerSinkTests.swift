@@ -1,14 +1,15 @@
-import Foundation
 import KernovaLogging
 import KernovaSynchronization
-import KernovaTestSupport
-import OSLog
 import Testing
+
+#if canImport(os)
+import OSLog
+#endif
 
 /// What `KernovaLogger.log(_:_:)` does in a process whose sink is never
 /// bootstrapped: forwards to a logger's own sink, or builds the message only
-/// when the unified log records it.
-@Suite("KernovaLogger's own sink", .caseScoped)
+/// when the local log records it.
+@Suite("KernovaLogger's own sink")
 struct KernovaLoggerSinkTests {
     private struct Record: Equatable {
         let level: KernovaLogLevel
@@ -66,6 +67,7 @@ struct KernovaLoggerSinkTests {
             ])
     }
 
+    #if canImport(os)
     @Test("A message is built only when the unified log records its level, absent a sink")
     func messageWithoutASinkIsBuiltOnlyWhenRecorded() {
         let evaluations = Locked(0)
@@ -80,6 +82,23 @@ struct KernovaLoggerSinkTests {
         let recorded = OSLog(subsystem: "app.kernova.tests", category: "Unsunk").isEnabled(type: .debug)
         #expect(evaluations.withLock { $0 } == (recorded ? 1 : 0))
     }
+    #else
+    @Test("Absent a sink, a message below info is never built, and one at info is built once")
+    func messageWithoutASinkIsBuiltOnlyAtTheThreshold() {
+        let evaluations = Locked(0)
+        func counted() -> Int {
+            evaluations.withLock { $0 += 1 }
+            return 0
+        }
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Unsunk")
+
+        logger.log(.debug, "value \(counted(), privacy: .public)")
+        #expect(evaluations.withLock { $0 } == 0)
+
+        logger.log(.info, "value \(counted(), privacy: .public)")
+        #expect(evaluations.withLock { $0 } == 1)
+    }
+    #endif
 
     @Test("A message forwarded to a sink is built exactly once")
     func messageWithASinkIsBuiltOnce() {

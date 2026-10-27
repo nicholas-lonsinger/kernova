@@ -1,17 +1,17 @@
 import KernovaSynchronization
-import os
 
-/// Emits each message to the unified log under its subsystem and category,
-/// and to the forwarding sink when there is one.
+/// Emits each message to the platform's local log under its subsystem and
+/// category, and to the forwarding sink when there is one.
 public struct KernovaLogger: Sendable {
-    /// The `os.Logger` subsystem, also tagged on each forwarded record.
+    /// The subsystem the local log files each record under, also tagged on
+    /// each forwarded record.
     public let subsystem: String
 
-    /// The `os.Logger` category, also tagged on each forwarded record.
+    /// The category the local log files each record under, also tagged on
+    /// each forwarded record.
     public let category: String
 
-    private let osLog: OSLog
-    private let osLogger: os.Logger
+    private let localLog: LocalLogDestination
 
     /// This logger's own sink, which `forwardingSink` prefers over the
     /// `processSink`.
@@ -22,23 +22,21 @@ public struct KernovaLogger: Sendable {
     public init(subsystem: String, category: String, sink: ForwardingSink? = nil) {
         self.subsystem = subsystem
         self.category = category
-        self.osLog = OSLog(subsystem: subsystem, category: category)
-        self.osLogger = os.Logger(osLog)
+        self.localLog = LocalLogDestination(subsystem: subsystem, category: category)
         self.sink = sink
     }
 
     /// Logs `message` at `level`.
     ///
-    /// `message` is built only when the unified log records `level` for this
+    /// `message` is built only when the local log records `level` for this
     /// logger or a forwarding sink exists; otherwise it is never evaluated.
     public func log(_ level: KernovaLogLevel, _ message: @autoclosure () -> LogMessage) {
         let sink = forwardingSink
-        let type = level.osLogType
-        let isEnabled = osLog.isEnabled(type: type)
-        guard isEnabled || sink != nil else { return }
+        let isRecorded = localLog.records(level)
+        guard isRecorded || sink != nil else { return }
         let segments = message().segments
-        if isEnabled {
-            LocalLogRecord(segments: segments).emit(to: osLogger, at: type)
+        if isRecorded {
+            localLog.emit(segments, at: level)
         }
         sink?(level, subsystem, category, segments)
     }
