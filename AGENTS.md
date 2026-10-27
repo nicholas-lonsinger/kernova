@@ -33,7 +33,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `VMSettingsNetworkPanelViewController.modeInfoParagraphs(offered:isolationOffered:namedNetworksOffered:natAddressShown:guestOS:)`.
 - **Outcome names or the field's standard term in the UI; vendor terms at the platform boundary.** A UI name says what the thing does for the user, or is the term networking or virtualization already uses for it (NAT, DHCP) — never a vendor's API spelling. Where Apple's own UI names the thing, keep Apple's term at that boundary and the domain term everywhere else. Worked case: `NetworkModeChoice.label(attachable:interfaces:networks:)`.
 - **Apple's control, with its platform behavior.** Where Apple ships a control for the job, Kernova uses it and accepts how the platform makes it behave; a quirk in that behavior is filed as an issue and a Feedback, never a reason to draw a replacement. Worked case: `GuestSetupProgressViewController.progressBar`.
-- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `GuestIPAddress`.
+- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `GuestIPAddress`. Across guest OSes this means one implementation of everything Kernova defines — formats, codecs, policies, the protocol — shared by the host and every agent; only the calls into an OS are written per OS.
 
 ## Build & Test
 
@@ -73,7 +73,7 @@ An optional-returning API called with a compile-time constant gets `assertionFai
 
 ### Guest scope
 
-A new host↔guest feature scopes to macOS guests: its issue or design states the Linux gap as fact, and carries no Linux open question and no partial Linux mechanism. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
+A host↔guest feature is designed for every guest OS that has a Kernova agent, and each agent offers it where its platform can deliver it; where one can't, the capability is absent on that OS. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
 
 ### Current-Only Surfaces
 
