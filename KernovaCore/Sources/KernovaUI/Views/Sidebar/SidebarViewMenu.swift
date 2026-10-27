@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// The menus a sidebar section's header opens — from its button or a
 /// right-click: the library section's filter, group and sort menu, a smart

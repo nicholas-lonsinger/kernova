@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension KernovaCommand {
     /// `kernova usb` — the host USB accessories a running guest can hold.

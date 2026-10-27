@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension SnapshotSize {
     /// Measures everything under `directory`, or `nil` when an allocated size

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The one decision every request on a VM goes through: what the catalog
 /// offers, what a verb accepts, and what ``VMActivity`` commits.

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// A way out of a failure that a caller performs by acting on the app's own
 /// model, offered as data rather than as a presenter call.

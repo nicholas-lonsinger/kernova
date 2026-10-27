@@ -1,7 +1,8 @@
 import AppKit
-@testable import KernovaUI
-import KernovaKit
+import KernovaAppKitShared
 import Testing
+
+@testable import KernovaUI
 
 @Suite("InfoPopoverContentViewController Tests", .caseScoped)
 @MainActor

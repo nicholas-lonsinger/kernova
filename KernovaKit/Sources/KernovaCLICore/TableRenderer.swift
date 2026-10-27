@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Column-aligned text for a person reading a terminal.
 ///

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Whether the guest agent is installed and current relative to what the host
 /// bundles, and whether it's actively responding.

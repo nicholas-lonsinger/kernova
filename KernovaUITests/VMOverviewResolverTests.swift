@@ -1,5 +1,5 @@
 import AVFoundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaTestSupport
 import Synchronization
 import Testing

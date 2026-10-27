@@ -1,5 +1,5 @@
 import AppKit
-import KernovaKit
+import KernovaCommandModel
 import Testing
 
 @testable import KernovaCore

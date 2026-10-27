@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.

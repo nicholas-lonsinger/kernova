@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import System
 
 /// This process's claim to be the one running process of its copy of Kernova,

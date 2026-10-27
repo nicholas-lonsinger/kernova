@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// A library file every copy of Kernova sharing the library reads and
 /// changes, each access under `NSFileCoordinator`.

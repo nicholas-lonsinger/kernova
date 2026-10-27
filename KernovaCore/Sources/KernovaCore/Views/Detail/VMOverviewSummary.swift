@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// A mirrored boolean: a setting a panel row writes, which an overview card may
 /// carry as a switch of its own.

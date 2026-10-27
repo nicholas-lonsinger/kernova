@@ -2,6 +2,7 @@ import AppKit
 import KernovaTestSupport
 import Testing
 
+@testable import KernovaAppKitShared
 @testable import KernovaKit
 
 /// Unit tests for the transfer readout the status item's dropdown and callout

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension VMStatus {
     /// Overlay label for save/restore transitions, or `nil` for all other

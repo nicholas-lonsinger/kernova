@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Which of the library's entries a listing admits, and in what order: a
 /// ``VMListQuery`` with every name in it resolved, so reading one fails for

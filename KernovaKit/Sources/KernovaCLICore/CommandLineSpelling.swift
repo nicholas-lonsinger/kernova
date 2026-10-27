@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How a request is spelled as a `kernova` command line a shell runs.
 enum CommandLineSpelling {

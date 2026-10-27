@@ -1,6 +1,6 @@
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The Apple event front door: everything Script Editor, Automator, and

@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaAppRegistry
-import KernovaKit
+import KernovaCommandModel
 
 extension KernovaCommand {
     /// `kernova quit` — take Kernova down, saving whatever is running.

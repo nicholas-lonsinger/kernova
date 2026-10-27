@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension AppIntent {
     /// Runs a verb, raising the framework's own confirmation for each consent

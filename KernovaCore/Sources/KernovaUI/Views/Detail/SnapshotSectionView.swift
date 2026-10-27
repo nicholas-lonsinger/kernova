@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// The VM Settings pane's Snapshots section: header readout, one row per
 /// snapshot newest-first, and the "Take Snapshot…" footer link.

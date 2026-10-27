@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// A status item's one callout slot, as the readout presenter uses it.
 ///

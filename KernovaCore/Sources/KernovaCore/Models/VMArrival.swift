@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One row of the library: a VM, a create, clone or import whose bundle is
 /// still being written, or a bundle whose files Kernova can't read.

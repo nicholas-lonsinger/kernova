@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// The USB accessory verbs: what a guest is holding, what macOS has assigned to

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import KernovaLogging
 
 /// Presents a transfer's progress readout inside a menu-bar status item's

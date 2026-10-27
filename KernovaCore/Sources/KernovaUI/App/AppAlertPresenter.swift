@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// A ``GuestAccountPasswordRequest`` whose answer fires at most once, whichever

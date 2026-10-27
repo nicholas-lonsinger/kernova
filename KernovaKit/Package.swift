@@ -17,6 +17,8 @@ let package = Package(
     ],
     products: [
         .library(name: "KernovaKit", targets: ["KernovaKit"]),
+        .library(name: "KernovaCommandModel", targets: ["KernovaCommandModel"]),
+        .library(name: "KernovaAppKitShared", targets: ["KernovaAppKitShared"]),
         // Static, and it has to stay static: Xcode gives every target that
         // links a *dynamic* package product a command copying that framework
         // into the shared `Products/<config>/Frameworks`, and the destination
@@ -72,6 +74,19 @@ let package = Package(
             linkerSettings: [.linkedLibrary("AppleArchive")],
             plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
         ),
+        // What the app and the `kernova` tool share and no guest agent links:
+        // the command wire, the library's queries, config-file decoding.
+        .target(
+            name: "KernovaCommandModel",
+            dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The AppKit UI the app and the macOS guest agent share.
+        .target(
+            name: "KernovaAppKitShared",
+            dependencies: ["KernovaKit", "KernovaLogging"],
+            swiftSettings: sharedSwiftSettings
+        ),
         // The one logging spelling: `KernovaLogger` and the `LogMessage` its
         // `log(_:_:)` takes. Its own target so the relaunch helper can link it
         // without linking everything else, and so it stays clear of
@@ -102,6 +117,7 @@ let package = Package(
             name: "KernovaCLICore",
             dependencies: [
                 "KernovaKit",
+                "KernovaCommandModel",
                 "KernovaAppRegistry",
                 "KernovaSynchronization",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
@@ -116,8 +132,8 @@ let package = Package(
         .testTarget(
             name: "KernovaKitTests",
             dependencies: [
-                "KernovaKit", "KernovaAppRegistry", "KernovaCLICore", "KernovaTestSupport",
-                "KernovaLogging", "KernovaSynchronization",
+                "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
+                "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
             ],
             swiftSettings: sharedSwiftSettings
         ),

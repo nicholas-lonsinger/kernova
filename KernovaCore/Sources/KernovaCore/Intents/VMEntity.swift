@@ -1,7 +1,7 @@
 import AppIntents
 import CoreSpotlight
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One virtual machine, as Shortcuts and Spotlight name it.
 ///

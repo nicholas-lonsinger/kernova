@@ -31,7 +31,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-core_modules='Foundation KernovaKit KernovaLogging AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
+core_modules='Foundation KernovaCommandModel KernovaKit KernovaLogging AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
 test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport KernovaSynchronization SwiftProtobuf CoreGraphics Observation'
 support_modules='Testing KernovaCore KernovaTestSupport KernovaSynchronization CoreGraphics Observation'
 

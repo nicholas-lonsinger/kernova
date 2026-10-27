@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A persisted field with a default decodes through the config-field forms in
-# KernovaKit/Sources/KernovaKit/ConfigFileDecoding.swift. Spelled as a
+# KernovaKit/Sources/KernovaCommandModel/ConfigFileDecoding.swift. Spelled as a
 # fallback after the decode instead, it decodes the same in a strict read, but
 # File > Check Config Files cannot repair a bad value in it: only those forms
 # record one with its repair.
@@ -31,7 +31,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-helper='KernovaKit/Sources/KernovaKit/ConfigFileDecoding.swift'
+helper='KernovaKit/Sources/KernovaCommandModel/ConfigFileDecoding.swift'
 
 if [ "$#" -gt 0 ]; then
     files=("$@")

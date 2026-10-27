@@ -1,6 +1,6 @@
 import AVFoundation
 import AppKit
-import KernovaKit
+import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 

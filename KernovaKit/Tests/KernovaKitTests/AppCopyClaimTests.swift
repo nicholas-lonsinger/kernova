@@ -2,7 +2,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaCommandModel
 
 /// One claim per copy of Kernova: what lets exactly one process of a copy run
 /// and bind its socket.

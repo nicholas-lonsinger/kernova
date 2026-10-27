@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// When a key takes a write, and which capability answers that for a given VM.
 ///

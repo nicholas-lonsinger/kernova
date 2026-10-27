@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// What a clone is of its source, offered as a Shortcuts picker.
 ///
@@ -8,9 +8,9 @@ import KernovaKit
 /// metadata processor reads an `AppEnum`'s cases and case display
 /// representations out of the declaring target's own source ("enums implemented
 /// in an imported framework or library are not supported"), and
-/// ``CloneOutcome`` lives in KernovaKit, which the guest agent links and so
-/// cannot import AppIntents. ``init(_:)`` is exhaustive over the outcomes, so a
-/// new one fails to build here rather than reaching Shortcuts unnamed.
+/// ``CloneOutcome`` lives in the KernovaCommandModel library. ``init(_:)`` is
+/// exhaustive over the outcomes, so a new one fails to build here rather than
+/// reaching Shortcuts unnamed.
 enum VMCloneOutcome: String, AppEnum {
     case followPreference
     case newMachine

@@ -1,5 +1,5 @@
-import KernovaKit
 import Foundation
+import KernovaCommandModel
 
 /// What a snapshot captured, which decides what reverting to it produces.
 package enum VMSnapshotKind: String, Codable, Sendable {

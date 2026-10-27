@@ -4,7 +4,7 @@ import System
 import Testing
 
 @testable import KernovaCLICore
-@testable import KernovaKit
+@testable import KernovaCommandModel
 
 /// Which command socket a copy of Kernova answers on: one per copy, named the
 /// same way by the app and by the tool inside it, however either spells the

@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One configuration key, as Shortcuts names it: the keyspace `kernova get`
 /// and `kernova set` address, built from its ``ConfigurationKeyDescriptor``.

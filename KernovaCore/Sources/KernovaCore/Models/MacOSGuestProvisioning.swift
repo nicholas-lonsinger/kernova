@@ -1,5 +1,6 @@
-import KernovaKit
 import Foundation
+import KernovaCommandModel
+import KernovaKit
 
 /// The account a macOS guest is asked to create on its first boot after
 /// restore, minus the password.

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.

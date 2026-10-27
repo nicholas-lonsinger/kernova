@@ -1,4 +1,4 @@
-import KernovaKit
+import KernovaCommandModel
 
 /// The CPU and memory a virtual machine may be given on this Mac — the same for
 /// every guest, as ``VirtualizationHostProviding/resourceLimits`` reports them.

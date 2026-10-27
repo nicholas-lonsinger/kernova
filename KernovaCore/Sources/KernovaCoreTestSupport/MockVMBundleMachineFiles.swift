@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import Synchronization
 
 #if SWIFT_PACKAGE

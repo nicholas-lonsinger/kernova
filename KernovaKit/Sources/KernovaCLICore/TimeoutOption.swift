@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// What every `--timeout` on the tool accepts: ``CommandTimeout``'s rule,
 /// refused here so a usage error never dials the app.

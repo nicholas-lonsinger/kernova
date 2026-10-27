@@ -1,5 +1,5 @@
 import AppKit
-import KernovaKit
+import KernovaAppKitShared
 
 /// Content for the callout the status item shows when a clipboard gesture made
 /// in this guest ends in a notice: the dropdown's own line for it.

@@ -1,7 +1,7 @@
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaAppKitShared
 
 /// Unit tests for which showing holds the status item's popover slot.
 @Suite("TransientStatusItemPopover.Tenancy", .caseScoped)

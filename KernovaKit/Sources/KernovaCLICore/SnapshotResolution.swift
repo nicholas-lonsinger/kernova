@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How the tool turns a typed snapshot argument into the snapshot it names.
 ///

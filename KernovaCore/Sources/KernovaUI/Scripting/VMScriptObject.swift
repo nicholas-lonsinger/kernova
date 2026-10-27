@@ -1,6 +1,6 @@
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// One VM as the scripting dictionary's `virtual machine`, one property per

@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The mode every VM on a named network runs in, offered as a Shortcuts
 /// picker.

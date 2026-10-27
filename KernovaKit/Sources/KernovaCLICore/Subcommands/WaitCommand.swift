@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// What `kernova wait` is waiting for.
 enum WaitCondition: String, ExpressibleByArgument, Sendable, CaseIterable {

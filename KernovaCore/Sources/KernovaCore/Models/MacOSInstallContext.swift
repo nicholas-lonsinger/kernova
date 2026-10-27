@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Persisted intent to install macOS into a VM that has not yet completed
 /// its initial boot.

@@ -1,6 +1,7 @@
 import AppKit
+import KernovaAppKitShared
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The "Advanced" pane of the Settings window.

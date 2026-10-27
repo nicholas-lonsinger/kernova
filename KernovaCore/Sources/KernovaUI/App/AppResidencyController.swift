@@ -1,7 +1,7 @@
 import AppIntents
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The residency decisions a window owner needs but cannot make.

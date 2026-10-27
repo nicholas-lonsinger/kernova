@@ -1,7 +1,7 @@
 import AVFoundation
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// The bindings every settings panel reads: the VM under edit, the view model
 /// to write through, the read-only state, and the injected services a panel

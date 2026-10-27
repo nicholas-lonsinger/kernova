@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Answers a VM's runtime state as the wire name every other front door
 /// reports, with the words a person reads carried in the spoken dialog.

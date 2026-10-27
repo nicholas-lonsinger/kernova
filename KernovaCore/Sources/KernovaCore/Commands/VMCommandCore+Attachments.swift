@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// A file the user picked, carrying the app-scoped bookmark minted at the pick.

@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One disk a VM attaches, as a Shortcut reads it.
 ///

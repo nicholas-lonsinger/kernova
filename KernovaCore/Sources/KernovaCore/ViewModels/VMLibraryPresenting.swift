@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Why the guest-agent installer disk was attached, so the post-mount alert can
 /// point the user at the right next step.

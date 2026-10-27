@@ -1,7 +1,7 @@
 import AppIntents
 import CoreSpotlight
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 

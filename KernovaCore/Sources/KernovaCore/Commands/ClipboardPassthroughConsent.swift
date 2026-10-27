@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The one gate on automatic clipboard passthrough: when consent is owed, and
 /// what the user is being asked for.

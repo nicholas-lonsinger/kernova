@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 
 /// Copies a bundle a workflow holds into the library.

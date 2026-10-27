@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The refusal a MAC address conflict raises: another active VM uses the VM's
 /// MAC address on the network it would join.

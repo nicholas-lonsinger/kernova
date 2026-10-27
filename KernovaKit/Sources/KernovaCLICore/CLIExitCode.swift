@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// What `kernova` exits with, and the one place any refusal is turned into a
 /// number.

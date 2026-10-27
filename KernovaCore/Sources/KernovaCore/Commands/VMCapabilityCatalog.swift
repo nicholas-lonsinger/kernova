@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One thing a VM can be asked to do — every wire verb, plus the GUI-only
 /// affordances that carry a predicate of their own.

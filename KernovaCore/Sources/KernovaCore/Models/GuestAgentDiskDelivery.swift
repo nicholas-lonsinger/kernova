@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 
 /// How the bundled guest-agent installer image reaches a macOS guest.

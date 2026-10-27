@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The library's smart groups, changed through ``organization`` — each change
 /// followed by the selection moving onto what the sidebar then lists.

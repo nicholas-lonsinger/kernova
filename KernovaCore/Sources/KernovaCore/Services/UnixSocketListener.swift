@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import Synchronization
 
 /// An `AF_UNIX` stream socket the app binds, listens on, and accepts clients

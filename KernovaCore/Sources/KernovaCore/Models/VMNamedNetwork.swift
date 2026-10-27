@@ -1,5 +1,5 @@
-import KernovaKit
 import Foundation
+import KernovaCommandModel
 
 /// A network the user named: the VMs naming it in their membership
 /// (``VMNetworkMembership/network(_:)``) reach each other on it, and no other

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension NetworkModeChoice {
     package init(_ configuration: VMConfiguration) {
