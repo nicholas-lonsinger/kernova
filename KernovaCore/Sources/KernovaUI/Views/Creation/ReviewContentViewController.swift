@@ -6,8 +6,7 @@ import KernovaKit
 ///
 /// Read-only rows plus a "start after create" switch, built from a snapshot of
 /// the shared ``VMCreationViewModel``. The shell rebuilds this VC each time the
-/// review step is entered, so it always reflects current values; the only
-/// intra-step change is the latest-image lookup.
+/// review step is entered, so it always reflects current values.
 @MainActor
 final class ReviewContentViewController: NSViewController {
     /// What the Account section shows in place of the guest password.
@@ -19,15 +18,6 @@ final class ReviewContentViewController: NSViewController {
 
     private let creationVM: VMCreationViewModel
     private let startSwitch = NSSwitch()
-    /// Rebuilt by ``rebuildSummary()`` when the latest-image lookup lands.
-    private let summary = NSStackView()
-    /// Redraws the rows once the model's latest-image lookup lands.
-    private var latestImageTask: Task<Void, Never>?
-
-    #if DEBUG
-    /// Awaited by tests instead of polling for the rows to be redrawn.
-    var latestImageTaskForTesting: Task<Void, Never>? { latestImageTask }
-    #endif
     /// Shows the "more content below" cue while this summary doesn't fit the
     /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
@@ -45,11 +35,12 @@ final class ReviewContentViewController: NSViewController {
     override func loadView() {
         let title = makeWizardTitle("Review Configuration")
 
+        let summary = NSStackView()
         summary.orientation = .vertical
         summary.alignment = .leading
         summary.spacing = Spacing.standard
         summary.translatesAutoresizingMaskIntoConstraints = false
-        rebuildSummary()
+        fillSummary(summary)
 
         let stack = NSStackView(views: [title, summary])
         stack.orientation = .vertical
@@ -65,50 +56,8 @@ final class ReviewContentViewController: NSViewController {
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
     }
 
-    override func viewDidAppear() {
-        super.viewDidAppear()
-        startLatestImageLookup()
-    }
-
-    override func viewWillDisappear() {
-        super.viewWillDisappear()
-        // Only this VC's redraw is dropped: the lookup itself belongs to the
-        // model, so it still lands for the step shown next.
-        latestImageTask?.cancel()
-        latestImageTask = nil
-    }
-
-    /// Asks the model what "Download Latest" will fetch, and names it in the rows
-    /// when the answer lands.
-    ///
-    /// A user who reached this step before a slow lookup answered would otherwise
-    /// never see those rows. The model's lookup is idempotent, so this joins one
-    /// already running rather than starting a second, and retries one that failed
-    /// on an earlier step.
-    private func startLatestImageLookup() {
-        // The rows it fills in belong to this one source; every other source
-        // already names its image, and a Linux guest has none.
-        guard creationVM.selectedOS == .macOS, creationVM.ipswSource == .downloadLatest else {
-            return
-        }
-        guard latestImageTask == nil, let lookup = creationVM.loadLatestImageDetails() else {
-            return
-        }
-        latestImageTask = Task { [weak self] in
-            await lookup.value
-            guard let self, !Task.isCancelled else { return }
-            self.latestImageTask = nil
-            self.rebuildSummary()
-        }
-    }
-
-    /// Fills the summary in from the model, replacing whatever it already held.
-    private func rebuildSummary() {
-        for view in summary.arrangedSubviews {
-            summary.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-
+    /// Fills `summary` in from the model.
+    private func fillSummary(_ summary: NSStackView) {
         addSection(
             "General",
             rows: [
@@ -140,12 +89,12 @@ final class ReviewContentViewController: NSViewController {
             switch creationVM.ipswSelection {
             case .downloadLatest:
                 rows.append(valueRow("Restore image", "Download Latest"))
-                // Only once the lookup has answered — this source names no
+                // Only once the lookup has found it — this source names no
                 // particular image on its own.
-                if let latest = creationVM.latestImage {
+                if case .found(let latest, let sizeBytes) = creationVM.latestImageLookup {
                     rows.append(
                         valueRow("macOS version", "\(latest.version) (\(latest.build))"))
-                    if let sizeBytes = creationVM.latestImageSizeBytes {
+                    if let sizeBytes {
                         rows.append(
                             valueRow("Download size", DataFormatters.formatBytes(sizeBytes)))
                     }
@@ -171,9 +120,16 @@ final class ReviewContentViewController: NSViewController {
                     }
                 }
             }
-            if creationVM.ipswSource.downloadsImage {
+            if let destination = creationVM.ipswDownloadPath {
+                rows.append(valueRow("Save to", wizardAbbreviateWithTilde(destination)))
+            } else if creationVM.ipswSource == .downloadLatest {
+                // The folder, not a file: with no image found, the install
+                // names the file from the image it fetches.
                 rows.append(
-                    valueRow("Save to", wizardAbbreviateWithTilde(creationVM.ipswDownloadPath)))
+                    valueRow(
+                        "Save to",
+                        wizardAbbreviateWithTilde(
+                            creationVM.downloadsDirectory.path(percentEncoded: false))))
             }
             addSection("Installation", rows: rows, to: summary)
 
@@ -212,7 +168,7 @@ final class ReviewContentViewController: NSViewController {
                         valueRow(
                             "Save to",
                             wizardAbbreviateWithTilde(
-                                VMCreationViewModel.downloadsDirectory.path(percentEncoded: false))))
+                                creationVM.downloadsDirectory.path(percentEncoded: false))))
                 case .customURL(let image, let sizeBytes):
                     rows.append(valueRow("Installer image", "From URL"))
                     rows.append(valueRow("File", image.displayName))
@@ -228,7 +184,7 @@ final class ReviewContentViewController: NSViewController {
                         valueRow(
                             "Save to",
                             wizardAbbreviateWithTilde(
-                                VMCreationViewModel.downloadPath(
+                                creationVM.downloadPath(
                                     forFilename: LinuxImageFilename.destination(for: image.url)))))
                 case .localISO(let path, _):
                     rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
@@ -269,8 +225,7 @@ final class ReviewContentViewController: NSViewController {
 
     private func addCard(_ rows: [NSView], to form: NSStackView) {
         let card = makeGroupedFormCard(rows: rows)
-        form.addArrangedSubview(card)
-        card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+        addGroupedFormFullWidth(card, to: form)
     }
 
     private func valueRow(_ label: String, _ value: String) -> NSView {

@@ -48,7 +48,7 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         bridgedInterfaces: HostBridgedInterfaceProvider(),
         fileSystem: MockFileSystem(),
-        downloadsDirectory: nil,
+        downloadsDirectory: makeTestDownloadsDirectory(),
         preferences: preferences,
         vmnetNetworks: VmnetNetworkService.scripted(),
         arpTable: ScriptedARPTable(),

@@ -12,6 +12,10 @@ import Testing
 @MainActor
 struct VMLifecycleCoordinatorTests {
     private let scratch = TestScratchDirectory(prefix: "VMLifecycleCoordinatorTests")
+    /// A destination the wizard previewed for an older build than the one the
+    /// install resolves.
+    private static let olderBuildFilename = "UniversalMac_26.4_25E200_Restore.ipsw"
+
     /// The pinned catalog image the `.catalogVersion` cases install from.
     private static let pinnedRestoreImageURL = URL(
         string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw")
@@ -20,7 +24,7 @@ struct VMLifecycleCoordinatorTests {
     /// invariant to a test-owned directory, so destination tests can name paths
     /// that must be honored without touching the user's Downloads.
     private func makeCoordinator(
-        downloadsDirectory: URL? = nil
+        downloadsDirectory: URL = makeTestDownloadsDirectory()
     ) -> (
         VMLifecycleCoordinator,
         MockVirtualizationService,
@@ -327,9 +331,7 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("installLatest", isDirectory: true)
         let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator(
             downloadsDirectory: downloads)
-        // What the wizard persisted: the fallback name it shows before its own
-        // lookup answers.
-        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let persisted = downloads.appendingPathComponent(Self.olderBuildFilename)
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
@@ -351,6 +353,45 @@ struct VMLifecycleCoordinatorTests {
         #expect(installService.lastRestoreImageURL == expected)
     }
 
+    @Test("A Download Latest VM created after a failed lookup is named, and its name kept, at Start")
+    func installMacOSLatestWithNoStoredDestination() async throws {
+        // Read on the failure path: a successful install clears the context.
+        let downloads = scratch.url
+            .appendingPathComponent("latestUnnamed", isDirectory: true)
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(
+            downloadsDirectory: downloads)
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
+        let failing = MockIPSWService()
+        failing.fetchError = URLError(.notConnectedToInternet)
+        let wizard = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: failing,
+            downloadsDirectory: downloads)
+        await wizard.loadLatestImageDetails()?.value
+        var context = wizard.buildInstallContext()
+        #expect(context.source == .downloadLatest)
+        #expect(context.downloadDestinationPath == nil)
+        // A confirmation can only be about a file the wizard named; one carried
+        // with no file named lapses, as one about a moved file does.
+        context.requestedFreshDownload = true
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
+        defer { withExtendedLifetime(library) {} }
+
+        await #expect(throws: DownloadError.self) {
+            try await coordinator.launchGuestSetup(on: instance).value()
+        }
+
+        let expected = downloads.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
+        #expect(downloadService.lastDownloadDestinationURL == expected)
+        #expect(downloadService.lastDownloadDiscardsExisting == false)
+        #expect(downloadService.discardResumeDataCallCount == 0)
+        #expect(
+            instance.configuration.installContext?.downloadDestinationPath
+                == expected.path(percentEncoded: false))
+        #expect(instance.configuration.installContext?.requestedFreshDownload == false)
+    }
+
     @Test("A latest install re-points the persisted destination at the file it downloads")
     func installMacOSLatestPersistsTheDerivedDestination() async {
         // The persisted path is what a resume across relaunches and a delete's
@@ -361,7 +402,7 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("latestDestination", isDirectory: true)
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
         downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
-        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let persisted = downloads.appendingPathComponent(Self.olderBuildFilename)
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
@@ -398,7 +439,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(
             downloadsDirectory: downloads)
         downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
-        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let persisted = downloads.appendingPathComponent(Self.olderBuildFilename)
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
@@ -472,8 +513,6 @@ struct VMLifecycleCoordinatorTests {
             for: elsewhere, remoteURL: pinned)
 
         #expect(normalized.lastPathComponent == "UniversalMac_15.6.1_24G90_Restore.ipsw")
-        #expect(
-            normalized.path(percentEncoded: false) != VMCreationViewModel.defaultIPSWDownloadPath)
     }
 
     @Test("installMacOS sets status to error on service failure")
@@ -613,7 +652,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
         downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
 
-        let persisted = temp.appendingPathComponent(RestoreImageFilename.fallback)
+        let persisted = temp.appendingPathComponent(Self.olderBuildFilename)
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false),
@@ -850,7 +889,7 @@ struct VMLifecycleCoordinatorTests {
             downloadsDirectory: downloads)
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: downloads.appendingPathComponent(RestoreImageFilename.fallback)
+            downloadDestinationPath: downloads.appendingPathComponent(Self.olderBuildFilename)
                 .path(percentEncoded: false))
         let storage = MockVMStorageService()
         let (instance, library) = makeInstallingInstance(context: context, storage: storage)
@@ -1202,27 +1241,12 @@ struct VMLifecycleCoordinatorTests {
         #expect(fixture.downloadService.discardResumeDataCallCount == 0)
     }
 
-    @Test("linuxDownloadDestination names the file inside Downloads, never from the persisted path")
-    func linuxDownloadDestinationIgnoresPersisted() throws {
+    @Test("linuxDownloadDestination names the file inside Downloads")
+    func linuxDownloadDestinationIsInDownloads() throws {
         let fixture = try makeLinuxFixture()
 
-        let derived = fixture.coordinator.linuxDownloadDestination(
-            persisted: URL(fileURLWithPath: "/Users/Shared/old.iso"), filename: "debian.iso")
+        let derived = fixture.coordinator.linuxDownloadDestination(filename: "debian.iso")
         #expect(derived == fixture.downloads.appendingPathComponent("debian.iso"))
-
-        // With normalization disabled the persisted path is all there is, and
-        // it is taken only while it still names an ISO: the download writes
-        // over it and a digest failure trashes it.
-        let unnormalized = makeTestLifecycle(downloadsDirectory: nil)
-        let persisted = URL(fileURLWithPath: "/Users/Shared/old.iso")
-        #expect(
-            unnormalized.linuxDownloadDestination(persisted: persisted, filename: "debian.iso")
-                == persisted)
-        #expect(unnormalized.linuxDownloadDestination(persisted: nil, filename: "debian.iso") == nil)
-        #expect(
-            unnormalized.linuxDownloadDestination(
-                persisted: URL(fileURLWithPath: "/Users/Shared/notes.txt"), filename: "debian.iso")
-                == nil)
     }
 
     @Test("A checksum mismatch trashes the image, discards its bundle, and keeps the context")
@@ -1872,19 +1896,23 @@ struct VMLifecycleCoordinatorTests {
 
     // MARK: - Download Destination Normalization
 
-    @Test("normalizedDownloadDestination keeps Downloads paths and redirects others to the default")
+    @Test("normalizedDownloadDestination keeps Downloads paths and names others from the pinned URL")
     func normalizedDownloadDestinationEnforcesDownloads() throws {
         let downloads = scratch.url
             .appendingPathComponent("Downloads", isDirectory: true)
         let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let pinned = try #require(Self.pinnedRestoreImageURL)
         let inDownloads = downloads.appendingPathComponent("Custom.ipsw")
-        #expect(coordinator.normalizedDownloadDestination(for: inDownloads) == inDownloads)
+        #expect(
+            coordinator.normalizedDownloadDestination(for: inDownloads, remoteURL: pinned)
+                == inDownloads)
 
         // A pre-sandbox custom destination outside Downloads can never be
-        // written under the sandbox — it must fall back to the default.
+        // written under the sandbox.
         let elsewhere = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
-        let normalized = coordinator.normalizedDownloadDestination(for: elsewhere)
-        #expect(normalized == downloads.appendingPathComponent(RestoreImageFilename.fallback))
+        let normalized = coordinator.normalizedDownloadDestination(for: elsewhere, remoteURL: pinned)
+        #expect(
+            normalized == downloads.appendingPathComponent("UniversalMac_15.6.1_24G90_Restore.ipsw"))
     }
 
     @Test("Every destination a hand-edited config can name lands inside Downloads")
@@ -1907,14 +1935,14 @@ struct VMLifecycleCoordinatorTests {
         // the Downloads directory itself.
         let traversal = try #require(URL(string: "https://host/a%2F..%2F..%2Fevil.ipsw"))
         let pathless = try #require(URL(string: "https://example.com"))
-        let remoteSpellings: [URL?] = [nil, traversal, pathless]
+        let remoteSpellings = [traversal, pathless]
 
         for persisted in persistedSpellings {
             for remote in remoteSpellings {
                 let normalized = coordinator.normalizedDownloadDestination(
                     for: persisted, remoteURL: remote)
                 let context =
-                    "persisted '\(persisted.path(percentEncoded: false))', remote '\(remote?.absoluteString ?? "none")'"
+                    "persisted '\(persisted.path(percentEncoded: false))', remote '\(remote.absoluteString)'"
                 #expect(
                     canonicalPath(normalized.deletingLastPathComponent())
                         == canonicalPath(downloads), "escaped Downloads for \(context)")
@@ -1933,15 +1961,13 @@ struct VMLifecycleCoordinatorTests {
         let downloads = scratch.url
             .appendingPathComponent("latestFollowsURL", isDirectory: true)
         let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
-        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let resolved = try #require(
             URL(
                 string:
                     "https://updates.cdn-apple.com/fullrestores/UniversalMac_26.5.2_25F84_Restore.ipsw"
             ))
 
-        let destination = coordinator.latestDownloadDestination(
-            persisted: persisted, resolvedURL: resolved)
+        let destination = coordinator.latestDownloadDestination(resolvedURL: resolved)
 
         #expect(
             destination
@@ -1953,35 +1979,13 @@ struct VMLifecycleCoordinatorTests {
         let downloads = scratch.url
             .appendingPathComponent("latestOffConvention", isDirectory: true)
         let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
-        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let resolved = try #require(URL(string: "https://example.com/restore.ipsw"))
 
-        let destination = coordinator.latestDownloadDestination(
-            persisted: persisted, resolvedURL: resolved)
+        let destination = coordinator.latestDownloadDestination(resolvedURL: resolved)
 
         #expect(
             destination
                 == downloads.appendingPathComponent(RestoreImageFilename.unique(for: resolved)))
-        // Sharing the fallback would let an unrelated image already sitting
-        // there satisfy this download.
-        #expect(destination != persisted)
-    }
-
-    @Test("With normalization disabled the persisted destination is what the install writes")
-    func latestDestinationKeepsPersistedWithoutDownloads() throws {
-        // No Downloads directory at all — the one state that leaves a persisted
-        // path unexamined.
-        let coordinator = makeTestLifecycle(downloadsDirectory: nil)
-        let persisted = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
-        let resolved = try #require(
-            URL(
-                string:
-                    "https://updates.cdn-apple.com/fullrestores/UniversalMac_26.5.2_25F84_Restore.ipsw"
-            ))
-
-        #expect(
-            coordinator.latestDownloadDestination(persisted: persisted, resolvedURL: resolved)
-                == persisted)
     }
 
     /// A path with `..` collapsed and any trailing separator dropped, so a

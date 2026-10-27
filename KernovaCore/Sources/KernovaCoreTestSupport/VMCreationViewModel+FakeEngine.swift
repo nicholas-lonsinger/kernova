@@ -10,11 +10,13 @@ extension VMCreationViewModel {
         localImageInspector: any LocalRestoreImageInspecting = MockLocalRestoreImageInspector(),
         ipswService: any IPSWProviding = MockIPSWService(),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
-        host: any VirtualizationHostProviding = FakeVirtualizationHost()
+        host: any VirtualizationHostProviding = FakeVirtualizationHost(),
+        downloadsDirectory: URL = makeTestDownloadsDirectory()
     ) -> VMCreationViewModel {
         VMCreationViewModel(
             probeService: probeService, host: host,
             localImageInspector: localImageInspector, ipswService: ipswService,
-            linuxImageResolveService: linuxImageResolveService)
+            linuxImageResolveService: linuxImageResolveService,
+            downloadsDirectory: downloadsDirectory)
     }
 }

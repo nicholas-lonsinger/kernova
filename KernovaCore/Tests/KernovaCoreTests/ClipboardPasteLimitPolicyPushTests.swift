@@ -67,7 +67,7 @@ struct ClipboardPasteLimitPolicyPushTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),

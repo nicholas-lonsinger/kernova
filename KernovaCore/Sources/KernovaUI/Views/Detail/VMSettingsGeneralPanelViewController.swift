@@ -48,8 +48,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         renderedAutoStartWarning = nil
 
         for section in [buildGeneralSection(), buildStartupSection()] {
-            panelStack.addArrangedSubview(section)
-            section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(section, to: panelStack)
         }
     }
 

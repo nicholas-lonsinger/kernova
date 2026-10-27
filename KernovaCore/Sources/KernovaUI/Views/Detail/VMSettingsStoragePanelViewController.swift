@@ -51,8 +51,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         // over it, which is what drops the rows and edit state of the VM the
         // panel was showing.
         for section in [buildStorageSection(), buildRemovableMediaSection()] {
-            panelStack.addArrangedSubview(section)
-            section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(section, to: panelStack)
         }
     }
 

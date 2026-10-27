@@ -30,15 +30,6 @@ package enum IPSWSource: Sendable {
     case catalogVersion
     case customURL
     case localFile
-
-    /// Whether this source obtains the image over the network, and so shares
-    /// the download destination, overwrite warning, and resume affordance.
-    package var downloadsImage: Bool {
-        switch self {
-        case .downloadLatest, .catalogVersion, .customURL: true
-        case .localFile: false
-        }
-    }
 }
 
 /// The chosen source together with what that source needs to install, so a
@@ -79,6 +70,24 @@ package enum LinuxImageSelection: Sendable, Equatable {
     case localISO(path: String, bookmark: Data?)
 }
 
+/// Where the lookup of what "Download Latest" would fetch stands.
+package enum LatestImageLookup: Sendable, Equatable {
+    /// No answer yet: the lookup has not run, or is running.
+    case unanswered
+    /// The newest image Apple offers this host, with its size when the server
+    /// reported one.
+    case found(LatestRestoreImage, sizeBytes: UInt64?)
+    /// The lookup failed; ``VMCreationViewModel/loadLatestImageDetails()``
+    /// tries again.
+    case failed
+
+    /// The image the lookup found, or `nil` when it has named none.
+    package var foundImage: LatestRestoreImage? {
+        guard case .found(let image, _) = self else { return nil }
+        return image
+    }
+}
+
 /// State machine for the VM creation wizard.
 @MainActor
 @Observable
@@ -114,17 +123,24 @@ package final class VMCreationViewModel {
     /// account the wizard gathers.
     package let host: any VirtualizationHostProviding
 
+    /// The folder every image the wizard downloads lands in, and so the one
+    /// every download destination it names sits in.
+    package let downloadsDirectory: URL
+
     /// The Virtualization-backed collaborators — `host`, `localImageInspector`
     /// and `ipswService` — take no default: the engine makes them, and
-    /// ``VMLibraryViewModel/makeCreationViewModel()`` hands them over.
+    /// ``VMLibraryViewModel/makeCreationViewModel()`` hands them over. Nor does
+    /// `downloadsDirectory`, which is the user's own folder.
     init(
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
         host: any VirtualizationHostProviding,
         localImageInspector: any LocalRestoreImageInspecting,
         ipswService: any IPSWProviding,
-        linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService()
+        linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
+        downloadsDirectory: URL
     ) {
         self.host = host
+        self.downloadsDirectory = downloadsDirectory
         self.probeService = probeService
         self.localImageInspector = localImageInspector
         self.ipswService = ipswService
@@ -193,22 +209,16 @@ package final class VMCreationViewModel {
     /// Which source is current, for the radios and the source labels.
     package var ipswSource: IPSWSource { ipswSelection.source }
 
-    /// What "Download Latest" will fetch, once ``loadLatestImageDetails()`` has
-    /// answered; `nil` until then, and after a lookup that failed.
+    /// What ``loadLatestImageDetails()`` has found out about the image
+    /// "Download Latest" will fetch.
     ///
-    /// A preview on the terms ``LatestRestoreImage`` states, read for display
-    /// and to name the download destination. It carries the version the account
-    /// is offered against under that source, so it decides the walk — see
-    /// ``clampToWalkedStep()``.
-    package private(set) var latestImage: LatestRestoreImage? {
+    /// A found image is a preview on the terms ``LatestRestoreImage`` states,
+    /// read for display and to name that source's download destination. It
+    /// carries the version the account is offered against under that source,
+    /// so it decides the walk — see ``clampToWalkedStep()``.
+    package private(set) var latestImageLookup: LatestImageLookup = .unanswered {
         didSet { clampToWalkedStep() }
     }
-
-    /// How large ``latestImage`` is, when the server reported a size.
-    ///
-    /// A second read, so it can be absent while the version and build are
-    /// known; the wizard then names those alone.
-    package private(set) var latestImageSizeBytes: UInt64?
 
     /// The lookup in flight, so a second trigger joins it instead of starting
     /// another.
@@ -235,18 +245,28 @@ package final class VMCreationViewModel {
     package private(set) var lastCatalogPick: RestoreImageCatalogEntry?
     /// The last checked URL, on the same terms.
     package private(set) var lastPastedImage: ProbedRestoreImage?
-    /// Always inside Downloads — there is no custom-destination picker.
+
+    /// Where the selected download source writes its image, inside
+    /// ``downloadsDirectory``, or `nil` when the wizard can name no file: a
+    /// local file, and "Download Latest" until a lookup has found the image.
     ///
-    /// Every download source names the file through ``RestoreImageFilename``;
-    /// "Download Latest" starts on the fixed fallback and adopts the looked-up
-    /// image's name once ``loadLatestImageDetails()`` answers.
-    package var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
-        didSet {
-            if ipswDownloadPath != confirmedOverwritePath {
-                confirmedOverwritePath = nil
-            }
+    /// Named per image through ``RestoreImageFilename``, which is what keeps a
+    /// pick honest: a single fixed filename would let an already-downloaded
+    /// image of a *different* version satisfy the download step, installing
+    /// something other than what the wizard shows. "Download Latest" with no
+    /// image found is named by the install, from the URL it resolves at Start.
+    package var ipswDownloadPath: String? {
+        switch ipswSelection {
+        case .downloadLatest:
+            latestImageLookup.foundImage.map { downloadPath(forFilename: $0.suggestedFilename) }
+        case .catalogVersion(let entry): downloadPath(forFilename: entry.suggestedFilename)
+        case .customURL(let image): downloadPath(forFilename: image.suggestedFilename)
+        case .localFile: nil
         }
     }
+
+    /// The destination the user confirmed "Download & Replace" for; the
+    /// confirmation applies whenever that path is the destination.
     private var confirmedOverwritePath: String?
 
     /// The Linux EFI image, once chosen; `nil` until the user picks one.
@@ -300,7 +320,7 @@ package final class VMCreationViewModel {
     /// not follow Apple's convention, a file mid-inspection.
     var selectedImageVersion: MacOSVersion? {
         switch ipswSelection {
-        case .downloadLatest: latestImage.flatMap { MacOSVersion($0.version) }
+        case .downloadLatest: latestImageLookup.foundImage.flatMap { MacOSVersion($0.version) }
         case .catalogVersion(let entry): MacOSVersion(entry.version)
         case .customURL(let image): image.version.flatMap(MacOSVersion.init)
         case .localFile(let image): image.inspection.usable.flatMap { MacOSVersion($0.version) }
@@ -418,6 +438,9 @@ package final class VMCreationViewModel {
         case .bootConfig:
             switch selectedOS {
             case .macOS:
+                if awaitingLatestImage {
+                    return "Looking up the latest macOS\u{2026}"
+                }
                 if shouldShowOverwriteWarning {
                     return "Resolve the file conflict above to continue."
                 }
@@ -487,7 +510,7 @@ package final class VMCreationViewModel {
     private var bootConfigValid: Bool {
         switch selectedOS {
         case .macOS:
-            if shouldShowOverwriteWarning { return false }
+            if awaitingLatestImage || shouldShowOverwriteWarning { return false }
             if case .localFile(let image) = ipswSelection {
                 return image.inspection.usable != nil
             }
@@ -499,6 +522,12 @@ package final class VMCreationViewModel {
             case .macOS: return false
             }
         }
+    }
+
+    /// Whether "Download Latest" is selected and still waiting on the lookup to
+    /// name the image, and so its destination.
+    private var awaitingLatestImage: Bool {
+        ipswSelection == .downloadLatest && latestImageLookup == .unanswered
     }
 
     /// Moves to the next step, or does nothing while ``canAdvance`` is false.
@@ -528,66 +557,37 @@ package final class VMCreationViewModel {
         return steps[currentIndex - 1]
     }
 
-    // MARK: - Defaults
+    // MARK: - Downloads
 
-    static var defaultIPSWDownloadPath: String {
-        downloadPath(forFilename: RestoreImageFilename.fallback)
+    /// The path in ``downloadsDirectory`` for a given image filename.
+    package func downloadPath(forFilename filename: String) -> String {
+        Self.downloadPath(forFilename: filename, in: downloadsDirectory)
     }
 
-    /// Where every image the wizard downloads lands.
-    ///
-    /// Asks the system for the Downloads location rather than assuming a
-    /// home-relative layout: under the sandbox this resolves through the
-    /// container's `Downloads` symlink, which the downloads.read-write
-    /// entitlement covers — no save panel or bookmark needed.
-    package static var downloadsDirectory: URL {
-        guard
-            let downloads = FileManager.default.urls(
-                for: .downloadsDirectory, in: .userDomainMask
-            ).first
-        else {
-            logger.log(.fault, "No Downloads directory in userDomainMask")
-            assertionFailure("FileManager returned no Downloads directory")
-            return FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Downloads")
-        }
-        return downloads
-    }
-
-    /// The Downloads path for a given image filename.
+    /// The path in `downloadsDirectory` for a given image filename.
     ///
     /// `filename` must be one path component: callers derive it through
     /// ``SafeFilename``, which is what keeps a URL-supplied name from walking
     /// out of Downloads.
-    package static func downloadPath(forFilename filename: String) -> String {
+    package static func downloadPath(forFilename filename: String, in downloadsDirectory: URL) -> String {
         downloadsDirectory.appendingPathComponent(filename).path(percentEncoded: false)
     }
 
     // MARK: - Source Selection
 
-    /// Commits a catalog pick, moving the download destination to Apple's own
-    /// filename for that build.
-    ///
-    /// Per-build destinations are what keep a pick honest: a single fixed
-    /// filename would let an already-downloaded image of a *different* version
-    /// satisfy the download step, installing something other than what the
-    /// wizard shows.
+    /// Commits a catalog pick.
     package func selectCatalogEntry(_ entry: RestoreImageCatalogEntry) {
         ipswSelection = .catalogVersion(entry)
         lastCatalogPick = entry
-        ipswDownloadPath = Self.downloadPath(forFilename: entry.suggestedFilename)
     }
 
-    /// Commits a checked URL, on the same per-image destination terms as a
-    /// catalog pick.
+    /// Commits a checked URL.
     package func selectPastedImage(_ image: ProbedRestoreImage) {
         ipswSelection = .customURL(image)
         lastPastedImage = image
-        ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
     }
 
-    /// Commits the "Download Latest" source, naming the destination for the
-    /// image the lookup found — or the fixed fallback while none has answered.
+    /// Commits the "Download Latest" source.
     ///
     /// The one operation that drops both sheet seeds: choosing to install
     /// whatever is newest retracts the earlier "install *this* build" answers.
@@ -595,8 +595,6 @@ package final class VMCreationViewModel {
         ipswSelection = .downloadLatest
         lastCatalogPick = nil
         lastPastedImage = nil
-        ipswDownloadPath = Self.downloadPath(
-            forFilename: latestImage?.suggestedFilename ?? RestoreImageFilename.fallback)
     }
 
     /// Commits a panel-picked file together with the grant minted for it, which
@@ -677,18 +675,17 @@ package final class VMCreationViewModel {
     /// version, build, size and destination filename that source otherwise
     /// leaves unsaid.
     ///
-    /// Idempotent: calls while a lookup runs join it, calls after one succeeded
-    /// do nothing, and one that failed retries on the next call — a wizard the
-    /// user is walking through triggers this more than once. A failure is not
-    /// surfaced: the wizard names the download destination alone, which is what
-    /// it showed before the lookup existed.
+    /// Idempotent: calls while a lookup runs join it, calls after one found the
+    /// image do nothing, and a call after one failed puts
+    /// ``latestImageLookup`` back to unanswered and tries again.
     ///
-    /// - Returns: the lookup to await for its result, or `nil` when the details
-    ///   are already known and nothing had to run.
+    /// - Returns: the lookup to await for its result, or `nil` when the image
+    ///   is already found and nothing had to run.
     @discardableResult
     package func loadLatestImageDetails() -> Task<Void, Never>? {
         if let latestImageTask { return latestImageTask }
-        guard latestImage == nil else { return nil }
+        if latestImageLookup.foundImage != nil { return nil }
+        latestImageLookup = .unanswered
         let ipswService = self.ipswService
         let probeService = self.probeService
         let task = Task { [weak self] in
@@ -701,20 +698,13 @@ package final class VMCreationViewModel {
                     .warning,
                     "Could not look up the latest restore image: \(error.localizedDescription, privacy: .public)"
                 )
+                self?.latestImageLookup = .failed
                 return
             }
             // The size is a separate request, and the version and build are
             // worth showing without it.
             let sizeBytes = try? await probeService.size(of: image.url)
-            guard let self else { return }
-            self.latestImage = image
-            self.latestImageSizeBytes = sizeBytes
-            // Only while the source is still current — a pick made while the
-            // lookup ran named its own destination.
-            if self.ipswSelection == .downloadLatest {
-                self.ipswDownloadPath = Self.downloadPath(
-                    forFilename: image.suggestedFilename)
-            }
+            self?.latestImageLookup = .found(image, sizeBytes: sizeBytes)
         }
         latestImageTask = task
         return task
@@ -722,14 +712,9 @@ package final class VMCreationViewModel {
 
     // MARK: - Overwrite Warning
 
-    var ipswDownloadPathFileExists: Bool {
-        FileManager.default.fileExists(atPath: ipswDownloadPath)
-    }
-
     package var shouldShowOverwriteWarning: Bool {
-        ipswSource.downloadsImage
-            && ipswDownloadPathFileExists
-            && confirmedOverwritePath != ipswDownloadPath
+        guard let path = ipswDownloadPath else { return false }
+        return FileManager.default.fileExists(atPath: path) && confirmedOverwritePath != path
     }
 
     // MARK: - Install Context
@@ -795,7 +780,7 @@ package final class VMCreationViewModel {
         case .customURL(let image, _):
             return LinuxInstallContext(
                 source: .customURL(image),
-                downloadDestinationPath: Self.downloadPath(
+                downloadDestinationPath: downloadPath(
                     forFilename: LinuxImageFilename.destination(for: image.url)))
         case .localISO, nil:
             return nil
@@ -805,7 +790,8 @@ package final class VMCreationViewModel {
     /// Whether the user confirmed overwriting the destination the wizard is
     /// currently pointing at.
     private var requestedFreshDownload: Bool {
-        confirmedOverwritePath == ipswDownloadPath
+        guard let path = ipswDownloadPath else { return false }
+        return confirmedOverwritePath == path
     }
 
     // MARK: - Resume Detection
@@ -818,10 +804,10 @@ package final class VMCreationViewModel {
     /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by
     /// a failed disposal from offering a resume with nothing behind it.
     package var hasResumableDownload: Bool {
-        guard ipswSource.downloadsImage,
-            !ipswDownloadPathFileExists
-        else { return false }
-        let bundleURL = DownloadService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
+        guard let path = ipswDownloadPath, !FileManager.default.fileExists(atPath: path) else {
+            return false
+        }
+        let bundleURL = DownloadService.resumeBundleURL(for: URL(fileURLWithPath: path))
         return DownloadBundle(url: bundleURL).isResumable
     }
 
@@ -832,11 +818,9 @@ package final class VMCreationViewModel {
     /// Adopts the file at `path`, which the caller inspected or the user
     /// explicitly accepted.
     ///
-    /// The caller supplies the path it showed the user rather than this reading
-    /// ``ipswDownloadPath``, which the latest-image lookup can move while a
-    /// decision is pending. `inspected` is required — both call sites already
-    /// inspected the file, and a default would let a route silently lose the
-    /// metadata the card and the Review step show for it.
+    /// `inspected` is required — both call sites already inspected the file,
+    /// and a default would let a route silently lose the metadata the card and
+    /// the Review step show for it.
     ///
     /// No bookmark: the file was adopted without a panel, so there is no grant
     /// to capture — and none is needed, the Downloads location being
@@ -852,7 +836,7 @@ package final class VMCreationViewModel {
         switch ipswSelection {
         case .catalogVersion(let entry): entry.build
         case .customURL(let image): image.build
-        case .downloadLatest: latestImage?.build
+        case .downloadLatest: latestImageLookup.foundImage?.build
         case .localFile: nil
         }
     }
@@ -871,9 +855,8 @@ package final class VMCreationViewModel {
         case cancelled
     }
 
-    /// Checks the file at `path` — the caller's snapshot of the destination it
-    /// showed the user — and adopts it only if it is the image the wizard is
-    /// promising.
+    /// Checks the file at `path` — the destination the caller showed the user —
+    /// and adopts it only if it is the image the wizard is promising.
     ///
     /// Without this, "Use Existing File" takes whatever is at the path. A file
     /// that is a *valid but different* macOS installs silently — the same
@@ -881,12 +864,8 @@ package final class VMCreationViewModel {
     /// a stale or hand-placed file reintroduces.
     ///
     /// Reading a multi-gigabyte image takes seconds, in which the user can pick
-    /// another source or leave the step — a cancelled call returns
-    /// ``ExistingFileVerdict/cancelled`` having changed nothing — and the
-    /// latest-image lookup can move ``ipswDownloadPath`` and ``expectedBuild``:
-    /// both the verdict and any adoption describe the file the user was asked
-    /// about, so the path comes in as the caller's snapshot and the build is
-    /// snapshotted before the inspection.
+    /// another source or leave the step; a cancelled call returns
+    /// ``ExistingFileVerdict/cancelled`` having changed nothing.
     package func adoptExistingDownloadFile(at path: String) async -> ExistingFileVerdict {
         let expectedBuild = expectedBuild
         let url = URL(fileURLWithPath: path)

@@ -54,8 +54,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         sections.append(buildInputSection())
         sections.append(buildSerialRelaySection())
         for section in sections {
-            panelStack.addArrangedSubview(section)
-            section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(section, to: panelStack)
         }
     }
 

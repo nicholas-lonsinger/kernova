@@ -7,9 +7,6 @@ import Foundation
 /// context — resolves its destination here, so no filename a remote server or a
 /// hand-edited `config.json` controls reaches the filesystem unchecked.
 enum RestoreImageFilename {
-    /// The destination filename for an image whose URL names none.
-    static let fallback = "\(defaultStem).ipsw"
-
     /// The download destination's filename for the image at `url`.
     ///
     /// Apple's `UniversalMac_<version>_<build>_Restore.ipsw` convention passes

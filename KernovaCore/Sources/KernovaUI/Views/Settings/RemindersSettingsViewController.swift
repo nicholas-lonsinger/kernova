@@ -260,8 +260,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         }
         guard !reminded.isEmpty else {
             let empty = makeGroupedFormContentText("No macOS virtual machines yet.")
-            vmSection.addArrangedSubview(empty)
-            empty.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
+            addGroupedFormFullWidth(empty, to: vmSection)
             return
         }
 
@@ -277,8 +276,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         }
 
         let card = makeGroupedFormCard(rows: rows, notes: [vmOverrideCaption])
-        vmSection.addArrangedSubview(card)
-        card.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
+        addGroupedFormFullWidth(card, to: vmSection)
     }
 
     /// Mirrors every switch to current state — ON when the reminder is shown

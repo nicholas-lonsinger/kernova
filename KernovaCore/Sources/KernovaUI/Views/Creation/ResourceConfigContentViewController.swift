@@ -96,8 +96,7 @@ final class ResourceConfigContentViewController: NSViewController {
     /// Adds a grouped card spanning the form width.
     private func addCard(_ rows: [NSView], to form: NSStackView) {
         let card = makeGroupedFormCard(rows: rows)
-        form.addArrangedSubview(card)
-        card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+        addGroupedFormFullWidth(card, to: form)
     }
 
     /// Adds a section-header label with extra space above it and a tight gap to

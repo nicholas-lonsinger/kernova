@@ -32,7 +32,7 @@ func makeLibraryViewModel(
         bridgedInterfaces: MockBridgedInterfaceProvider(),
         usbAccessoryPassthrough: usbAccessoryPassthrough,
         fileSystem: fileSystem,
-        downloadsDirectory: nil,
+        downloadsDirectory: makeTestDownloadsDirectory(),
         preferences: preferences,
         vmnetNetworks: VmnetNetworkService.scripted(),
         arpTable: ScriptedARPTable(),

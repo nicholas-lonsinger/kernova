@@ -42,8 +42,7 @@ final class VMSettingsOverviewViewController: NSViewController {
         cards.removeAll()
         for category in VMSettingsCategory.allCases {
             let card = makeCard(for: category, instance: instance)
-            stack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(card, to: stack)
         }
     }
 
