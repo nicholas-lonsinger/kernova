@@ -33,7 +33,10 @@ var products: [Product] = [
         name: "KernovaLogging", type: .static, targets: ["KernovaLogging", "KernovaSynchronization"])
 ]
 
-var dependencies: [Package.Dependency] = []
+var dependencies: [Package.Dependency] = [
+    // Its plugin builds `protoc` from source, so no host needs it installed.
+    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")
+]
 
 var targets: [Target] = [
     // The one logging spelling: `KernovaLogger` and the `LogMessage` its
@@ -49,6 +52,25 @@ var targets: [Target] = [
     // A leaf, so `KernovaLogging` can hold its process sink in a `Locked`.
     .target(
         name: "KernovaSynchronization",
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The guest-agent protocol's wire layer: the generated schema, the frame
+    // codec, CRC32C and LZ4.
+    .target(
+        name: "KernovaWire",
+        dependencies: [
+            "CKernovaShims",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings,
+        plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
+    ),
+    // The C intrinsics Swift cannot spell: the CRC32C instructions.
+    .target(name: "CKernovaShims"),
+    // Like `KernovaPortableTests` below, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaWireTests",
+        dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
@@ -81,10 +103,9 @@ products += [
 ]
 
 dependencies += [
-    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0"),
     // Linked by KernovaCLICore alone — neither the app nor the guest agent
     // gains a dependency.
-    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
 ]
 
 targets += [

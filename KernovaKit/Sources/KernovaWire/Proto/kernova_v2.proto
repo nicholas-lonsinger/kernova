@@ -1,0 +1,592 @@
+// Kernova agent wire protocol, generation 2.
+//
+// One connection per agent process (a "peer"), dialed by the guest to one host
+// endpoint: vsock port 49160 at host CID 2 (Hyper-V socket service GUID
+// 0000C008-facb-11e6-bd58-64006a7986d3 under Kernova's own monitor). FROZEN.
+// The connection's byte layout is not protobuf and lives in
+// KernovaWire (phase2-spec.md §2): a 4-byte preamble each way, then frames of
+// a 10-byte big-endian header (stream id u32, type u8, flags u8, length u32)
+// and a payload. This file holds every protobuf payload:
+//
+//   Frame                         Payload
+//   ----------------------------  ------------------------------------------------
+//   OPEN                          Open
+//   DATA, flag MESSAGE, stream 0  SessionMessage
+//   DATA, flag MESSAGE, stream n  the stream kind's message for that direction
+//   DATA, no flags                raw bytes (only where the kind's table allows)
+//   END                           the kind's END message for that side, or empty
+//   RESET                         Error (on stream 0: the connection's close reason)
+//   WINDOW                        u32 big-endian credit increment (not protobuf)
+//   PING                          8 opaque bytes (not protobuf); each side sends
+//                                 one at least every 5 s (FROZEN)
+//
+// FREEZE RULES
+//
+// Messages, enums, fields and values marked FROZEN form the bootstrap subset:
+// Hello, peer identity and version, the update stream, power, and the
+// envelopes that carry them. Every agent ever shipped must keep reaching them,
+// so they change only additively:
+//   - never renumber, retype, or reuse a field number or enum value;
+//   - a new field or enum value is added only when a receiver that ignores it
+//     still does the right thing. A field whose being ignored would change a
+//     request's meaning (a "force" flag on PowerRequest, say) is added together
+//     with a capability parameter the receiver advertises, and the sender sets
+//     it only toward a receiver that advertised it;
+//   - an unrecognized enum value reads as the enum's documented fallback;
+//   - no `map` fields anywhere in this file: golden transcripts need
+//     byte-deterministic encoding.
+//
+// Everything not marked FROZEN is current-only: it changes freely with the
+// FeatureAdvert.version or Hello.protocol_version that owns it, with no
+// compatibility path. A frozen envelope never embeds a non-frozen message as a
+// typed field: non-frozen content travels as `bytes`, decoded only once the
+// owning version is known to match, so a shape change in a current-only
+// feature can never make a frozen message fail to decode.
+
+syntax = "proto3";
+
+package kernova.v2;
+
+// ============================================================================
+// Shared enums
+// ============================================================================
+
+// FROZEN. A feature is the unit of capability, version, policy and routing.
+// Fallback for an unrecognized value: the advert or policy entry is ignored.
+enum FeatureId {
+  FEATURE_ID_UNSPECIFIED = 0;
+  FEATURE_ID_POWER = 1;   // FROZEN feature, version 1 forever.
+  FEATURE_ID_UPDATE = 2;  // FROZEN feature, version 1 forever.
+  FEATURE_ID_LOGS = 3;    // current-only, version 1.
+
+  // Guest status: guest info (hostname, addresses, uptime) 4, metrics 5.
+  reserved 4 to 9;
+  // Phase 4 data plane: clipboard 10, drop onto the VM 11, drag out 12,
+  // item transfer (pulls) 13.
+  reserved 10 to 19;
+  // Exec, file browsing, and other later features.
+  reserved 20 to 49;
+}
+
+// FROZEN. What an OPEN asks for. Each kind belongs to exactly one feature and
+// is opened by exactly one role. Fallback for an unrecognized value: the
+// acceptor answers RESET(ERROR_CODE_UNSUPPORTED_KIND).
+//
+// | Kind          | Feature | Opener | OPEN body    | Opener -> acceptor | Acceptor -> opener   | Opener END     | Acceptor END  |
+// |---------------|---------|--------|--------------|--------------------|----------------------|----------------|---------------|
+// | POWER_REQUEST | POWER   | host   | PowerRequest | nothing            | PowerProgress msgs   | empty, at once | PowerOutcome  |
+// | UPDATE_PULL   | UPDATE  | peer   | UpdatePull   | nothing            | raw DATA only        | UpdateResult   | empty         |
+// | LOG_FORWARD   | LOGS    | peer   | LogOpen      | LogBatch msgs      | nothing              | empty          | empty         |
+//
+// "Opener END: empty, at once" means the opener sends END right after OPEN.
+// UPDATE_PULL's opener END is sent only after the acceptor's END.
+// LOG_FORWARD's acceptor END answers the opener's END; at most one
+// LOG_FORWARD is open per connection.
+// A stream code a receiver does not expect on a stream RESET (a connection
+// code, another feature's code, an unrecognized value) reads as
+// ERROR_CODE_STREAM_PROTOCOL_ERROR.
+enum StreamKind {
+  STREAM_KIND_UNSPECIFIED = 0;
+  reserved 1 to 99;                 // session layer
+  STREAM_KIND_POWER_REQUEST = 100;  // FROZEN
+  reserved 101 to 199;              // power
+  STREAM_KIND_UPDATE_PULL = 200;    // FROZEN
+  reserved 201 to 299;              // update
+  STREAM_KIND_LOG_FORWARD = 300;
+  reserved 301 to 399;              // logs
+  reserved 400 to 499;              // guest info, metrics
+  // Phase 4: item-set offer 1000, item pull 1001, and their kin.
+  reserved 1000 to 1099;
+  reserved 1100 to 1199;            // exec
+}
+
+// FROZEN. The one error vocabulary: RESET payloads, END outcomes, absences.
+// The host composes every user-facing sentence from these codes; no peer text
+// reaches the UI. Fallback for an unrecognized value: ERROR_CODE_INTERNAL.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+
+  // 1-49: connection. Carried by RESET on stream 0, which closes the
+  // connection. All FROZEN.
+  ERROR_CODE_PROTOCOL_ERROR = 1;        // a framing or session rule was broken
+  ERROR_CODE_FRAME_TOO_LARGE = 2;       // a header declared more than its type allows
+  ERROR_CODE_FLOW_CONTROL_ERROR = 3;    // DATA beyond credit, or a window past 2^31-1
+  ERROR_CODE_HELLO_TIMEOUT = 4;
+  ERROR_CODE_LIVENESS_EXPIRED = 5;
+  ERROR_CODE_SHUTTING_DOWN = 6;         // the sender is exiting or restarting
+  ERROR_CODE_DUPLICATE_PEER = 7;        // refused: another live process holds this identity; redial after retry_after_ms
+  ERROR_CODE_STREAM_IDS_EXHAUSTED = 8;
+  ERROR_CODE_INTERNAL = 9;              // the sender hit its own bug; reconnecting is safe
+  ERROR_CODE_SUPERSEDED = 10;           // a newer connection with this identity took over; do not redial
+  reserved 11 to 49;
+
+  // 50-99: stream. Carried by RESET on a stream, or inside an END outcome.
+  ERROR_CODE_CANCELLED = 50;
+  ERROR_CODE_UNSUPPORTED_KIND = 51;     // unknown kind, or a kind the opener's role never opens
+  ERROR_CODE_FEATURE_UNAVAILABLE = 52;  // Error.absence says why
+  ERROR_CODE_STREAM_PROTOCOL_ERROR = 53;// a frame or message the kind's grammar forbids here
+  ERROR_CODE_MALFORMED_MESSAGE = 54;    // a payload that does not decode as the kind's message
+  ERROR_CODE_TOO_MANY_STREAMS = 55;
+  ERROR_CODE_TIMEOUT = 56;
+  ERROR_CODE_CAPABILITY_WITHDRAWN = 57; // the feature became absent while the stream was open
+  ERROR_CODE_DISABLED_BY_POLICY = 58;
+  ERROR_CODE_TOO_LARGE = 59;            // Error.limit carries the limit
+  ERROR_CODE_DISK_FULL = 60;
+  ERROR_CODE_READ_FAILED = 61;          // Error.item / Error.posix_errno say what and how
+  ERROR_CODE_WRITE_FAILED = 62;
+  reserved 63 to 99;
+
+  // 100-119: power. FROZEN values.
+  ERROR_CODE_POWER_NOT_ON_CONSOLE = 100;
+  ERROR_CODE_POWER_NOT_PERMITTED = 101;   // the guest OS refused this peer
+  ERROR_CODE_POWER_ACTION_UNSUPPORTED = 102;
+  ERROR_CODE_POWER_IN_PROGRESS = 103;     // another power request holds this peer
+  ERROR_CODE_POWER_OS_FAILED = 104;       // the OS call failed; posix_errno or debug_detail say how
+  reserved 105 to 119;
+
+  // 120-139: update. FROZEN values.
+  ERROR_CODE_UPDATE_UNAVAILABLE = 120;      // the host bundles no payload for this peer
+  ERROR_CODE_UPDATE_STALE = 121;            // the requested hash is not the one bundled now
+  ERROR_CODE_UPDATE_HASH_MISMATCH = 122;
+  ERROR_CODE_UPDATE_SIZE_MISMATCH = 123;
+  ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED = 124;
+  ERROR_CODE_UPDATE_INSTALL_FAILED = 125;
+  ERROR_CODE_UPDATE_IN_PROGRESS = 126;
+  reserved 127 to 139;
+
+  // 140-199: logs, guest info, metrics.
+  reserved 140 to 199;
+
+  // 1000-1199: phase 4 transfer codes (offer stale, representation
+  // unavailable, unpack refused, container malformed, ...).
+  reserved 1000 to 1199;
+}
+
+// FROZEN. Why a feature is absent.
+// 1-99: sent by the side that lacks the feature, in FeatureAdvert.absent.
+// 100-199: computed by the side that judges the pair. Never in a FeatureAdvert;
+// may appear in Error.absence of a RESET(FEATURE_UNAVAILABLE), and in the
+// host's merged status.
+// Fallback for an unrecognized value: ABSENCE_REASON_UNSPECIFIED
+// ("unavailable", no reason shown).
+enum AbsenceReason {
+  ABSENCE_REASON_UNSPECIFIED = 0;
+  ABSENCE_REASON_NOT_IMPLEMENTED = 1;      // this build has no implementation on this OS
+  ABSENCE_REASON_NOT_SERVED_BY_ROLE = 2;   // this role never serves it (system peer: clipboard)
+  ABSENCE_REASON_NOT_ON_CONSOLE = 3;
+  ABSENCE_REASON_NO_USER_SESSION = 4;
+  ABSENCE_REASON_NOT_PERMITTED = 5;        // the guest OS denies this peer
+  ABSENCE_REASON_MISSING_OS_COMPONENT = 6; // e.g. no logind, no data-control protocol
+  ABSENCE_REASON_TURNED_OFF_IN_GUEST = 7;  // the guest user switched it off in the agent
+  reserved 8 to 99;
+
+  ABSENCE_REASON_VERSION_MISMATCH = 100;   // both sides have it, at different versions
+  ABSENCE_REASON_DISABLED_BY_POLICY = 101; // the VM's settings turn it off
+  ABSENCE_REASON_PROTOCOL_MISMATCH = 102;  // protocol_version differs; frozen features only
+  ABSENCE_REASON_NO_AGENT = 103;           // host status only: no connected peer offers it
+  reserved 104 to 199;
+}
+
+// ============================================================================
+// Envelopes
+// ============================================================================
+
+// FROZEN. The payload of every OPEN frame.
+message Open {
+  StreamKind kind = 1;
+  // The kind's OPEN body message (table under StreamKind), encoded. Empty is
+  // the body's default value.
+  bytes body = 2;
+}
+
+// FROZEN. The payload of every RESET frame, and the error inside outcomes.
+message Error {
+  ErrorCode code = 1;
+  // READ_FAILED / WRITE_FAILED: the item, when one is known.
+  ItemFailure item = 2;
+  // The errno an OS call failed with; 0 when none.
+  int32 posix_errno = 3;
+  // TOO_LARGE: the limit, in bytes.
+  uint64 limit = 4;
+  // FEATURE_UNAVAILABLE: why.
+  AbsenceReason absence = 5;
+  // On RESET(0) only: the receiver waits at least this long before dialing
+  // again. 0 = no instruction.
+  uint64 retry_after_ms = 6;
+  // Diagnostic text for the receiver's log, logged as private, at most 1 KiB.
+  // Never rendered in UI, never parsed.
+  string debug_detail = 15;
+}
+
+// FROZEN. Which item an operation failed on.
+message ItemFailure {
+  // The item's path as byte components, first component the item's own name.
+  // Bytes, not a string: names need not be valid UTF-8.
+  repeated bytes path = 1;
+  int32 posix_errno = 2;
+  // The item ended before the size its header declared (read side only).
+  bool ended_early = 3;
+}
+
+// ============================================================================
+// Session (stream 0)
+// ============================================================================
+
+// FROZEN. Every DATA+MESSAGE frame on stream 0 carries exactly one of these.
+// A message with no case set (a case added after this build) is ignored.
+message SessionMessage {
+  oneof message {
+    Hello hello = 1;                      // FROZEN; the first frame each way, exactly once
+    PeerState peer_state = 2;             // FROZEN; peer -> host, on every change
+    CapabilityUpdate capabilities = 3;    // FROZEN; either way, on every local change
+    PolicyUpdate policy = 4;              // FROZEN envelope; host -> peer
+    UpdateAvailable update_available = 5; // FROZEN; host -> peer
+    // Non-frozen session-layer content (`SessionExtension`), decoded only when
+    // both Hellos carry the same protocol_version; ignored otherwise.
+    bytes extension = 15;
+  }
+  // 6: a joining connection's first message (#1694), if that issue finds
+  // extra connections are needed; when defined it is `bytes` holding a
+  // non-frozen message. 7-14: later frozen session messages.
+  reserved 6 to 14;
+}
+
+// FROZEN. The first session message each way. Both sides send theirs at once,
+// without waiting for the other's.
+message Hello {
+  // The session layer's version: what `SessionMessage.extension` and every
+  // non-frozen session rule mean. Equal: full session. Different: frozen
+  // subset only (phase2-spec.md §4.2). Currently 1.
+  uint32 protocol_version = 1;
+  PeerIdentity identity = 2;
+  // Every feature this side knows, available or absent, at most one entry per
+  // feature. Unlisted = absent with ABSENCE_REASON_NOT_IMPLEMENTED.
+  repeated FeatureAdvert features = 3;
+  // Peers only: initial state. The host leaves it unset.
+  PeerState state = 4;
+  // Host only: 16 random bytes naming this session, for connections that may
+  // later join it (#1694). Peers leave it empty, and keep but do not use it.
+  bytes session_token = 5;
+  // A joining connection's purpose and limits (#1694); when defined, each is
+  // `bytes` holding a non-frozen message.
+  reserved 6 to 9;
+}
+
+// FROZEN. Who this side claims to be. Claimed, shown, never proven. Every
+// string is display text: the receiver strips control and format characters
+// and clips it to 64 UTF-8 bytes.
+message PeerIdentity {
+  enum Role {
+    ROLE_UNSPECIFIED = 0;  // fallback: the Hello is refused with PROTOCOL_ERROR
+    ROLE_HOST = 1;
+    ROLE_SESSION_PEER = 2; // one per GUI session
+    ROLE_SYSTEM_PEER = 3;  // one per guest, optional
+  }
+  // A ROLE_SYSTEM_PEER Hello with any scope but SYSTEM is refused with
+  // ERROR_CODE_PROTOCOL_ERROR.
+  enum InstallScope {
+    INSTALL_SCOPE_UNSPECIFIED = 0; // the host; also a development build run in place
+    INSTALL_SCOPE_USER = 1;
+    INSTALL_SCOPE_SYSTEM = 2;
+  }
+  enum OsFamily {
+    OS_FAMILY_UNSPECIFIED = 0;
+    OS_FAMILY_MACOS = 1;
+    OS_FAMILY_LINUX = 2;
+    OS_FAMILY_WINDOWS = 3;
+  }
+  enum Architecture {
+    ARCHITECTURE_UNSPECIFIED = 0;
+    ARCHITECTURE_ARM64 = 1;
+    ARCHITECTURE_X86_64 = 2;
+  }
+  Role role = 1;
+  InstallScope install_scope = 2;
+  OsFamily os = 3;
+  // macOS: "15.3.1" / "24D70". Linux: os-release VERSION_ID / `uname -r`.
+  // Windows: display version / build number.
+  string os_version = 4;
+  string os_build = 5;
+  // Linux only: os-release ID ("ubuntu", "fedora").
+  string os_distribution = 6;
+  Architecture architecture = 7;
+  // SHA-256 of the exact update payload this install came from: the agent's
+  // identity. Empty for the host, and for an agent not installed from a
+  // payload (a development build).
+  bytes payload_hash = 8;
+  // Display version (MARKETING_VERSION). The host's Hello carries Kernova's.
+  string version_label = 9;
+  // 16 random bytes drawn once per process start. Tells a reconnect of the
+  // same process from a second process claiming the same identity. Empty
+  // matches nothing.
+  bytes instance_id = 10;
+}
+
+// FROZEN. A peer's place in the guest's sessions, sent in Hello and again as a
+// full snapshot whenever any field changes. Strings as in PeerIdentity.
+message PeerState {
+  enum Console {
+    CONSOLE_UNKNOWN = 0;  // fallback
+    CONSOLE_ON = 1;       // session peer: its session owns the console.
+                          // system peer: a user session owns it (console_session_id).
+    CONSOLE_OFF = 2;      // session peer: switched out, remote, or locked out.
+                          // system peer: login window, or no display at all.
+  }
+  Console console = 1;
+  // Session peer: its own session's identifier (macOS audit session id,
+  // logind session id, Windows session id), as the OS spells it. Fixed for
+  // the connection: a later PeerState with a different value is a
+  // PROTOCOL_ERROR.
+  string session_id = 2;
+  // Session peer: the session user's login name. Claimed; shown in status.
+  string user_name = 3;
+  // System peer: the session that owns the console when console = CONSOLE_ON.
+  // The system peer's report outranks session peers' own claims.
+  string console_session_id = 4;
+}
+
+// FROZEN. One feature as one side has it.
+// An advert with neither `params` nor `absent` set is absent with
+// ABSENCE_REASON_UNSPECIFIED.
+message FeatureAdvert {
+  FeatureId feature = 1;
+  // Exact-match version of the feature's messages and behavior. Frozen
+  // features are version 1 forever.
+  uint32 version = 2;
+  oneof availability {
+    // Available; the feature's capability message (PowerCapability,
+    // UpdateCapability, LogCapability, ...), encoded. Decoded only when both
+    // sides' versions are equal.
+    bytes params = 3;
+    Absence absent = 4;
+  }
+}
+
+// FROZEN.
+message Absence {
+  AbsenceReason reason = 1;    // 1-99 only
+  string debug_detail = 2;     // logged as private, at most 1 KiB; never UI
+}
+
+// FROZEN. A full snapshot of the sender's features, replacing what its Hello
+// or its previous CapabilityUpdate said.
+message CapabilityUpdate {
+  repeated FeatureAdvert features = 1;
+}
+
+// FROZEN envelope. Host -> peer: the VM's settings for policy-governed
+// features, a full snapshot each time. Sent right after the host reads the
+// peer's Hello, then on every settings change. A policy-governed feature not
+// listed is disabled.
+message PolicyUpdate {
+  repeated FeaturePolicy features = 1;
+}
+
+// FROZEN envelope.
+message FeaturePolicy {
+  FeatureId feature = 1;
+  // The version `params` is encoded for; params are decoded only when it
+  // equals the receiver's version of the feature.
+  uint32 version = 2;
+  bool enabled = 3;
+  // The feature's policy message (LogPolicy, ...), encoded.
+  bytes params = 4;
+}
+
+// Non-frozen session-layer content, gated by Hello.protocol_version. Empty at
+// protocol_version 1; the home for session-wide additions such as trace
+// context (#1696).
+message SessionExtension {
+}
+
+// ============================================================================
+// Power (FROZEN feature, version 1)
+// ============================================================================
+
+// FROZEN.
+enum PowerAction {
+  POWER_ACTION_UNSPECIFIED = 0; // fallback: refused with POWER_ACTION_UNSUPPORTED
+  POWER_ACTION_SHUTDOWN = 1;
+  POWER_ACTION_RESTART = 2;
+}
+
+// FROZEN. FeatureAdvert.params for POWER. The host's is empty.
+message PowerCapability {
+  // The actions this peer can perform right now; at most one entry each.
+  repeated PowerAction actions = 1;
+  // The peer asks running apps to quit (macOS loginwindow, logind delay
+  // inhibitors), so apps can save, and may block.
+  bool asks_apps_to_quit = 2;
+}
+
+// FROZEN. OPEN body of POWER_REQUEST (host -> peer).
+message PowerRequest {
+  PowerAction action = 1;
+  // The peer's acceptance deadline, timed from the OPEN's arrival; 0 = none.
+  // A peer that has not accepted when it elapses cancels the OS request and,
+  // once the OS confirms nothing was started, ENDs REFUSED with
+  // ERROR_CODE_TIMEOUT. The host waits longer, for that refusal to arrive.
+  uint32 acceptance_deadline_ms = 2;
+}
+
+// FROZEN. Peer -> host on POWER_REQUEST, zero or more, before the peer's END.
+message PowerProgress {
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;     // fallback: ignored
+    STAGE_ACCEPTED = 1;        // the OS took the request; first, at most once
+    STAGE_ASKING_APPS = 2;     // after ACCEPTED: apps are being asked to quit
+    STAGE_WAITING_ON_APPS = 3; // after ACCEPTED: `apps` are holding it up
+  }
+  Stage stage = 1;
+  // WAITING_ON_APPS: at most 32; the receiver drops the rest.
+  repeated BlockingApp apps = 2;
+}
+
+// FROZEN. The peer's END body on POWER_REQUEST.
+message PowerOutcome {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;        // fallback: the host cannot tell what happened and stops routing
+    // Valid only before STAGE_ACCEPTED:
+    KIND_REFUSED = 1;            // nothing was done; `error` says why. The host tries the next
+                                 // provider, except on POWER_IN_PROGRESS, where it stops routing.
+    // Valid only after STAGE_ACCEPTED (the host never tries another provider):
+    KIND_HANDED_OFF = 2;         // the OS is going down; nothing more will come
+    KIND_BLOCKED = 3;            // an app stopped it; `apps` name them
+    KIND_CANCELLED_IN_GUEST = 4; // a user in the guest cancelled it
+    KIND_FAILED = 5;             // the OS gave up after accepting; `error` says how
+  }
+  Kind kind = 1;
+  Error error = 2;
+  repeated BlockingApp apps = 3;  // BLOCKED: at most 32
+}
+
+// FROZEN. An app the guest reports as holding a power request. Claimed.
+// Strings stripped of control and format characters and clipped by the
+// receiver: display_name to 128 UTF-8 bytes, identifier to 256.
+message BlockingApp {
+  string display_name = 1;
+  // Bundle identifier (macOS), desktop-file id or executable name (Linux),
+  // executable name (Windows).
+  string identifier = 2;
+  int32 process_id = 3;
+}
+
+// ============================================================================
+// Update (FROZEN feature, version 1). Installers: Linux phase 3, macOS phase 5.
+// ============================================================================
+
+// FROZEN.
+enum PayloadFormat {
+  PAYLOAD_FORMAT_UNSPECIFIED = 0;  // fallback: UPDATE_FORMAT_UNSUPPORTED
+  // One executable file: the static Linux `kernova-agent`. The agent writes
+  // its own unit and autostart files when it installs.
+  PAYLOAD_FORMAT_EXECUTABLE = 1;
+  // An uncompressed POSIX.1-2001 pax archive of the macOS install tree
+  // (phase2-spec.md §8.3), extracted by the never-resolve-a-path writer.
+  PAYLOAD_FORMAT_PAX_TREE = 2;
+  // 3: Windows (phase 8). 4-9: later.
+  reserved 3 to 9;
+}
+
+// FROZEN. FeatureAdvert.params for UPDATE. The host's is empty.
+message UpdateCapability {
+  // Formats this peer installs; at most one entry each. The host serves only
+  // a listed one.
+  repeated PayloadFormat formats = 1;
+}
+
+// FROZEN. What one bundled payload is.
+message UpdateManifest {
+  // SHA-256 of the payload: the identity the installed agent will report in
+  // PeerIdentity.payload_hash.
+  bytes payload_hash = 1;
+  uint64 payload_size = 2;
+  PayloadFormat format = 3;
+  string version_label = 4;
+}
+
+// FROZEN. Host -> peer on stream 0: what the host bundles for this peer's
+// (os, architecture, install_scope). A SYSTEM-scope payload is offered only to
+// ROLE_SYSTEM_PEER; a USER-scope one only to ROLE_SESSION_PEER. Sent right
+// after the host's PolicyUpdate, and again whenever it changes. An unset
+// `manifest` means the host offers this peer nothing.
+message UpdateAvailable {
+  UpdateManifest manifest = 1;
+}
+
+// FROZEN. OPEN body of UPDATE_PULL (peer -> host).
+message UpdatePull {
+  // The manifest hash the peer read in UpdateAvailable. The host answers
+  // RESET(UPDATE_UNAVAILABLE) when it offers this peer nothing, else
+  // RESET(UPDATE_STALE) when the hash is not the one it offers, else exactly
+  // payload_size raw DATA bytes, then END. If the offer changes mid-pull, the
+  // host RESETs the pull with UPDATE_STALE.
+  bytes payload_hash = 1;
+}
+
+// FROZEN. The peer's END body on UPDATE_PULL, sent after the host's END.
+message UpdateResult {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;  // fallback: treated as KIND_REJECTED
+    KIND_STAGED = 1;       // verified and installed in the spare slot; the peer switches and relaunches
+    KIND_REJECTED = 2;     // `error` says why; nothing changed
+  }
+  Kind kind = 1;
+  Error error = 2;
+}
+
+// ============================================================================
+// Logs (feature version 1; current-only)
+// ============================================================================
+
+// FeatureAdvert.params for LOGS, both sides.
+message LogCapability {
+}
+
+// FeaturePolicy.params for LOGS. Forwarding on or off is FeaturePolicy.enabled.
+message LogPolicy {
+}
+
+// OPEN body of LOG_FORWARD (peer -> host).
+message LogOpen {
+}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;  // republished at notice
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_NOTICE = 3;
+  LOG_LEVEL_WARNING = 4;
+  LOG_LEVEL_ERROR = 5;
+  LOG_LEVEL_FAULT = 6;
+}
+
+// One run of a message: a piece of the literal, or one rendered interpolation.
+// Cleartext either way; `private` carries the emitting side's privacy so the
+// host redacts by default and reveals on demand.
+message LogSegment {
+  string text = 1;
+  bool private = 2;
+}
+
+// One record as `KernovaLogger.log(_:_:)` emitted it in the guest.
+message LogRecord {
+  // Wall clock at emission, milliseconds since the Unix epoch, UTC.
+  int64 timestamp_ms = 1;
+  LogLevel level = 2;
+  // At most 128 UTF-8 bytes each.
+  string subsystem = 3;
+  string category = 4;
+  // In emission order, at most 256; concatenating every `text` gives the
+  // message whole.
+  repeated LogSegment segments = 5;
+  // The peer cut the segments to fit 16 KiB of text.
+  bool truncated = 6;
+}
+
+// Peer -> host on LOG_FORWARD. At most 64 records.
+message LogBatch {
+  repeated LogRecord records = 1;
+  // Records the peer evicted, unsent, immediately before records[0].
+  uint64 dropped_before = 2;
+}
