@@ -33,7 +33,7 @@ struct OSSelectionContentViewControllerTests {
         #expect(findButton(titled: "Linux", in: vc.view)?.state == .off)
     }
 
-    @Test("Selecting an OS updates the model and enforces radio exclusivity")
+    @Test("Selecting an OS updates the model and enforces radio exclusivity, staying on the step")
     func selectingUpdatesModelAndChrome() {
         let vm = VMCreationViewModel.overEngine()
         let vc = OSSelectionContentViewController(creationVM: vm)
@@ -44,5 +44,29 @@ struct OSSelectionContentViewControllerTests {
         #expect(vm.selectedOS == .linux)
         #expect(findButton(titled: "Linux", in: vc.view)?.state == .on)
         #expect(findButton(titled: "macOS", in: vc.view)?.state == .off)
+        #expect(vm.currentStep == .osSelection)
+    }
+
+    @Test("Double-clicking an OS selects it and advances to the next step")
+    func doubleClickSelectsAndAdvances() throws {
+        let vm = VMCreationViewModel.overEngine()
+        let vc = OSSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        // A plain NSButton would start a tracking loop waiting for a real mouse-up.
+        let radio = try #require(findButton(titled: "Linux", in: vc.view) as? DoubleClickRadioButton)
+
+        radio.mouseDown(with: try doubleClick())
+
+        #expect(vm.selectedOS == .linux)
+        #expect(findButton(titled: "Linux", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "macOS", in: vc.view)?.state == .off)
+        #expect(vm.currentStep == .bootConfig)
+    }
+
+    private func doubleClick() throws -> NSEvent {
+        try #require(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
     }
 }

@@ -67,8 +67,9 @@ final class OSSelectionContentViewController: NSViewController {
     }
 
     private func makeOSOption(_ os: VMGuestOS) -> NSView {
-        let radio = NSButton(
+        let radio = DoubleClickRadioButton(
             radioButtonWithTitle: os.displayName, target: self, action: #selector(osChanged(_:)))
+        radio.doubleAction = #selector(osDoubleClicked(_:))
         radios[os] = radio
         return makeWizardRadioOption(
             radio: radio, iconSymbol: os.iconName, description: Self.description(for: os))
@@ -78,6 +79,11 @@ final class OSSelectionContentViewController: NSViewController {
         guard let os = radios.first(where: { $0.value === sender })?.key else { return }
         creationVM.selectedOS = os
         updateSelection()
+    }
+
+    @objc private func osDoubleClicked(_ sender: NSButton) {
+        osChanged(sender)
+        creationVM.goNext()
     }
 
     private func updateSelection() {

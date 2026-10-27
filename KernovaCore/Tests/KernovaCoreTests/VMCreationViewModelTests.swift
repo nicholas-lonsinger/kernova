@@ -46,6 +46,17 @@ struct VMCreationViewModelTests {
         #expect(vm.currentStep == .review)
     }
 
+    @Test("goNext refuses a step that can't advance")
+    func goNextRefusesAStepThatCannotAdvance() {
+        let vm = VMCreationViewModel.overFakeEngine()
+        vm.selectedOS = .linux
+        vm.currentStep = .bootConfig
+        #expect(!vm.canAdvance)
+
+        vm.goNext()
+        #expect(vm.currentStep == .bootConfig)
+    }
+
     @Test("goBack retreats through steps in order")
     func goBackRetreatsThroughSteps() {
         let vm = VMCreationViewModel.overFakeEngine()

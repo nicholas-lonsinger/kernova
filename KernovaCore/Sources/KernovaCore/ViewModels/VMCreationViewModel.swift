@@ -501,8 +501,9 @@ package final class VMCreationViewModel {
         }
     }
 
+    /// Moves to the next step, or does nothing while ``canAdvance`` is false.
     package func goNext() {
-        guard let nextStep = nextStep else { return }
+        guard canAdvance, let nextStep = nextStep else { return }
         currentStep = nextStep
     }
 
