@@ -14,6 +14,8 @@ Take an offered agent update before observing anything: what an older agent does
 
 Keystrokes a screen-control tool sends into a VM's display can reach the guest as other characters, or not at all, while the tool reports success, so read the guest screen back before pressing Return. Move anything longer than a short answer by clipboard: with the VM's **Clipboard sharing** on, the Clipboard window's **Paste from Mac** takes in the host pasteboard and offers it to the guest, where ⌘V pastes it.
 
+A drag out of the guest's display lands only once the host's catcher becomes the drag target. A screen-control drag whose pointer leaves the display and then holds still was abandoned after `GuestDragTake.handOffDeadline` ("the guest went 3.0 s without its catcher becoming the target"), so keep the pointer moving in small steps for about 2 s past the display's edge before releasing.
+
 ## App Intents
 
 Spotlight and Siri see Kernova's intents only from a build installed in `/Applications` and launched once. A build running from DerivedData shows only its app row in Spotlight while Shortcuts still lists and runs every intent, which reads like broken intent metadata. `ditto` the build to `/Applications/Kernova.app`, confirm no other on-disk copy outranks it, and launch that copy.
