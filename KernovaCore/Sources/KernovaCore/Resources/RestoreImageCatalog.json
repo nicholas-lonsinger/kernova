@@ -1,7 +1,15 @@
 {
   "device" : "VirtualMac2,1",
-  "generatedAt" : "2026-10-03",
+  "generatedAt" : "2026-10-27",
   "images" : [
+    {
+      "build" : "26B123",
+      "lastModified" : "Fri, 23 Oct 2026 13:19:03 GMT",
+      "sizeBytes" : 25595669503,
+      "source" : "apple-live",
+      "url" : "https://updates.cdn-apple.com/2026FallFCS/c9671975-52db-4fb5-9af2-00217169ba8d/UniversalMac_27.2_26B123_Restore.ipsw",
+      "version" : "27.2"
+    },
     {
       "build" : "26A434",
       "lastModified" : "Thu, 24 Sep 2026 21:23:41 GMT",
