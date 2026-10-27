@@ -1,0 +1,47 @@
+#include "CKernovaShims.h"
+
+#include <string.h>
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_acle.h>
+
+__attribute__((target("crc")))
+uint32_t kernova_crc32c_hardware_update(uint32_t crc, const uint8_t *bytes, size_t count) {
+    while (count >= 8) {
+        uint64_t word;
+        memcpy(&word, bytes, sizeof word);
+        crc = __crc32cd(crc, word);
+        bytes += 8;
+        count -= 8;
+    }
+    while (count > 0) {
+        crc = __crc32cb(crc, *bytes);
+        bytes += 1;
+        count -= 1;
+    }
+    return crc;
+}
+
+#elif defined(__x86_64__) || defined(_M_X64)
+#include <nmmintrin.h>
+
+__attribute__((target("sse4.2")))
+uint32_t kernova_crc32c_hardware_update(uint32_t crc, const uint8_t *bytes, size_t count) {
+    uint64_t wide = crc;
+    while (count >= 8) {
+        uint64_t word;
+        memcpy(&word, bytes, sizeof word);
+        wide = _mm_crc32_u64(wide, word);
+        bytes += 8;
+        count -= 8;
+    }
+    crc = (uint32_t)wide;
+    while (count > 0) {
+        crc = _mm_crc32_u8(crc, *bytes);
+        bytes += 1;
+        count -= 1;
+    }
+    return crc;
+}
+
+#endif

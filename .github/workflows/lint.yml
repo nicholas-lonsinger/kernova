@@ -16,7 +16,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
     runs-on: xcode-27
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -32,6 +32,14 @@ jobs:
       # here (it hard-fails on CI without it).
       - name: Ensure shellcheck
         run: Tools/brew-install.sh shellcheck
+
+      # The protoc and protoc-gen-swift Tools/check-generated-protos.sh builds
+      # for the pinned swift-protobuf revision; a cold build takes minutes.
+      - name: Restore the protobuf generators
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/kernova-dev/swift-protobuf-*
+          key: swift-protobuf-tools-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: make lint
         run: make lint

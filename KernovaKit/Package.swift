@@ -33,7 +33,9 @@ var products: [Product] = [
         name: "KernovaLogging", type: .static, targets: ["KernovaLogging", "KernovaSynchronization"])
 ]
 
-var dependencies: [Package.Dependency] = []
+var dependencies: [Package.Dependency] = [
+    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")
+]
 
 var targets: [Target] = [
     // The one logging spelling: `KernovaLogger` and the `LogMessage` its
@@ -49,6 +51,25 @@ var targets: [Target] = [
     // A leaf, so `KernovaLogging` can hold its process sink in a `Locked`.
     .target(
         name: "KernovaSynchronization",
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The guest-agent protocol's wire layer.
+    .target(
+        name: "KernovaWire",
+        dependencies: [
+            "CKernovaShims",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
+        exclude: ["Proto/kernova_v2.proto"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The C intrinsics Swift cannot spell: the CRC32C instructions.
+    .target(name: "CKernovaShims"),
+    // Like `KernovaPortableTests` below, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaWireTests",
+        dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
@@ -81,10 +102,9 @@ products += [
 ]
 
 dependencies += [
-    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0"),
     // Linked by KernovaCLICore alone — neither the app nor the guest agent
     // gains a dependency.
-    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
 ]
 
 targets += [
@@ -95,13 +115,14 @@ targets += [
             "KernovaSynchronization",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
+        // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
+        exclude: ["Proto/kernova.proto"],
         swiftSettings: sharedSwiftSettings,
         // `import AppleArchive` does not autolink the C library its
         // `__AAHeader…` functions live in
         // (docs/research/2026-10-23-applearchive-extract-semantics.md,
         // finding 3).
-        linkerSettings: [.linkedLibrary("AppleArchive")],
-        plugins: [.plugin(name: "SwiftProtobufPlugin", package: "swift-protobuf")]
+        linkerSettings: [.linkedLibrary("AppleArchive")]
     ),
     // What the app and the `kernova` tool share and no guest agent links:
     // the command wire, the library's queries, config-file decoding.

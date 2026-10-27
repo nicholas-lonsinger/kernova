@@ -37,13 +37,11 @@ endif
 # Release, e.g. `make build CONFIGURATION=Release`.
 CONFIGURATION ?= Debug
 
-# Plugin validation is an interactive trust prompt no terminal build can answer.
 XCODEBUILD_FLAGS = -project $(PROJECT) \
                    -scheme $(SCHEME) \
                    -destination '$(DESTINATION)' \
                    $(DERIVED_DATA_FLAG) \
                    -configuration $(CONFIGURATION) \
-                   -skipPackagePluginValidation \
                    $(CI_FLAGS)
 
 # Every command that runs xcodebuild against this checkout — Periphery's
@@ -238,7 +236,7 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # names them; the Linux and Windows CI jobs build the manifest's own set. Its
 # own scratch path keeps the swift.org toolchain's build state apart from the
 # Xcode toolchain's, which `test-unhosted` uses.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
@@ -266,7 +264,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, and KernovaCore's import allowlist
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, KernovaCore's import allowlist, and the checked-in protobuf Swift against its schemas
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -293,13 +291,14 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-build-phases.sh
 	@bash Tools/check-package-reference.sh
 	@bash Tools/check-core-imports.sh
+	@bash Tools/check-generated-protos.sh
 
 # Unused-code scan, reading .periphery.yml, over one fixed arena per checkout.
 # Periphery's own build would go to ~/Library/Caches/com.github.peripheryapp
 # under a name hashed from its schemes in a Swift `Set`'s per-process order, a
 # new multi-gigabyte arena most runs; the GUI's arena, indexed while editing,
-# is no single build's index. The flags are Periphery 3.x's own plus
-# `-skipPackagePluginValidation` and the compilation cache off: a compile the
+# is no single build's index. The flags are Periphery 3.x's own plus the
+# compilation cache off: a compile the
 # cache serves writes no index unit, leaving the unit an earlier compile wrote
 # — after a revert, a cached scan reported 27 findings in code that no longer
 # existed (Xcode 27.1). Stdout carries Periphery's report alone —
@@ -320,7 +319,7 @@ locked-dead-code:
 	for scheme in $$schemes; do \
 		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
 			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
-			-skipPackagePluginValidation build-for-testing \
+			build-for-testing \
 			CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf \
 			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
 			COMPILATION_CACHE_ENABLE_CACHING=NO >&2 || exit 1; \
