@@ -1,3 +1,4 @@
+#if canImport(os)
 import os
 
 /// A message's segments as the one `os.Logger` record emitted locally: public
@@ -68,3 +69,4 @@ enum LocalLogRecord: Equatable {
         }
     }
 }
+#endif

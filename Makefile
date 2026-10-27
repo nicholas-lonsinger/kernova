@@ -88,7 +88,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -229,6 +229,22 @@ test-unhosted: ## Run only the unhosted lanes: each local package's tests under 
 # runtime in that child.
 test-unhosted-tsan: ## Run the unhosted lanes under Thread Sanitizer
 	@TSAN_OPTIONS='strip_env=0 $(TSAN_OPTIONS)' $(MAKE) --no-print-directory test-unhosted SWIFT_TEST_FLAGS=--sanitize=thread
+
+swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins, and its Static Linux SDK
+	@Tools/install-swift-toolchain.sh >/dev/null
+
+# The targets KernovaKit/Package.swift declares off macOS. A cross build
+# evaluates the manifest on this Mac, where every target is declared, so it
+# names them; the Linux and Windows CI jobs build the manifest's own set. Its
+# own scratch path keeps the swift.org toolchain's build state apart from the
+# Xcode toolchain's, which `test-unhosted` uses.
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging
+
+linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
+	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
+	"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
+		--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
+		$(addprefix --target ,$(PORTABLE_TARGETS))
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \

@@ -1,5 +1,3 @@
-import os
-
 /// The level a `KernovaLogger` emission carries, locally and on the wire.
 public enum KernovaLogLevel: Sendable {
     /// Method entry and intermediate state.
@@ -14,7 +12,12 @@ public enum KernovaLogLevel: Sendable {
     case error
     /// A programming error; pairs with `assertionFailure`.
     case fault
+}
 
+#if canImport(os)
+import os
+
+extension KernovaLogLevel {
     /// The `OSLogType` `os.Logger`'s same-named method would log at.
     ///
     /// `.warning` and `.error` share `OSLogType.error`, as they do in
@@ -29,3 +32,4 @@ public enum KernovaLogLevel: Sendable {
         }
     }
 }
+#endif

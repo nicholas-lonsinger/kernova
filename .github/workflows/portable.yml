@@ -1,0 +1,106 @@
+name: Portable Targets
+
+# Builds and tests the KernovaKit targets its manifest declares off macOS, on
+# Linux and on Windows, with the swift.org release `.swift-version` pins.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'KernovaKit/**'
+      - '.github/workflows/**'
+      - '.swift-version'
+  pull_request:
+    paths:
+      - 'KernovaKit/**'
+      - '.github/workflows/**'
+      - '.swift-version'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-version:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: .swift-version
+          sparse-checkout-cone-mode: false
+
+      - name: Read .swift-version
+        id: read
+        run: echo "version=$(tr -d '[:space:]' < .swift-version)" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux (aarch64)
+    needs: swift-version
+    runs-on: ubuntu-24.04-arm
+    container: swift:${{ needs.swift-version.outputs.version }}-noble
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Build
+        run: swift build --package-path KernovaKit
+
+      - name: Test
+        run: swift test --package-path KernovaKit
+
+  windows:
+    name: Windows (arm64)
+    needs: swift-version
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # swift.org's own installer. It records PATH and SDKROOT in the
+      # registry, which a later step's environment is not rebuilt from, so the
+      # values it set are handed on through GITHUB_PATH and GITHUB_ENV.
+      - name: Install Swift
+        shell: pwsh
+        run: |
+          $version = '${{ needs.swift-version.outputs.version }}'
+          $release = "swift-$version-RELEASE"
+          $url = "https://download.swift.org/swift-$version-release/windows10-arm64/$release/$release-windows10-arm64.exe"
+          $installer = Join-Path $env:RUNNER_TEMP 'swift-installer.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $process = Start-Process -FilePath $installer -ArgumentList '/quiet', '/norestart' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The Swift installer exited $($process.ExitCode)" }
+
+          $before = $env:Path -split ';'
+          foreach ($scope in 'Machine', 'User') {
+            $path = [Environment]::GetEnvironmentVariable('Path', $scope)
+            if ($path) {
+              $path -split ';' | Where-Object { $_ -and ($before -notcontains $_) } | ForEach-Object {
+                Add-Content -Path $env:GITHUB_PATH -Value $_
+              }
+            }
+            $sdkRoot = [Environment]::GetEnvironmentVariable('SDKROOT', $scope)
+            if ($sdkRoot) { Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot" }
+          }
+
+      - name: Show the toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build --package-path KernovaKit
+
+      - name: Test
+        run: swift test --package-path KernovaKit

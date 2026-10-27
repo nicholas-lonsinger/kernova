@@ -63,6 +63,14 @@
     {
       "parallelizable" : true,
       "target" : {
+        "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaPortableTests",
+        "name" : "KernovaPortableTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
         "containerPath" : "container:KernovaCore",
         "identifier" : "KernovaCoreTests",
         "name" : "KernovaCoreTests"
