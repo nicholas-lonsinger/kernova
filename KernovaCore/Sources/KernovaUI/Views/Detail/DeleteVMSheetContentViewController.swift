@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// Confirmation sheet shown when deleting a VM.
 ///

@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// The two secure fields the guest-account prompt gathers, plus the refusal it
 /// shows when one of them is turned down.

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The user's preferred display hosting for a VM on start/resume.
 package enum VMDisplayPreference: String, Codable, Sendable, Equatable, CaseIterable {

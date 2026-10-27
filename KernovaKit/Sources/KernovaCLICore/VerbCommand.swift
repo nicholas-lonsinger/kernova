@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// A subcommand whose whole request is decided from the command line alone.
 ///

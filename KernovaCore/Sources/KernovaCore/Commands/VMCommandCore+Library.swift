@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// The library verbs — create, clone, rename, delete, import, and the cancel

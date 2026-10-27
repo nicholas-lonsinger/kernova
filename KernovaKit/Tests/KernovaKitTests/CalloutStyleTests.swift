@@ -2,7 +2,7 @@ import AppKit
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaAppKitShared
 
 @Suite("CalloutStyle Tests", .caseScoped)
 @MainActor

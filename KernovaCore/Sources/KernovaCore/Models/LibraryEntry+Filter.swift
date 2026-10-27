@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension VMLifecyclePhase {
     /// The coarse state this phase is in: running while a session is live,

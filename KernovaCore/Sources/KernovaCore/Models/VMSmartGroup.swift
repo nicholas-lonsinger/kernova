@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// A named, saved library filter, which the sidebar lists as a section of its
 /// own.

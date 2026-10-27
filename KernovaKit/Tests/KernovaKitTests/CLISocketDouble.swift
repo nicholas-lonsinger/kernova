@@ -1,6 +1,7 @@
 import ArgumentParser
 import Darwin
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport

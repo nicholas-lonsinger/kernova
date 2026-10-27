@@ -3,6 +3,7 @@ import KernovaTestSupport
 import System
 import Testing
 
+@testable import KernovaCommandModel
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 @testable import KernovaKit

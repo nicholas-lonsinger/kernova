@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// The App Intents front door: everything Shortcuts and Spotlight ask of

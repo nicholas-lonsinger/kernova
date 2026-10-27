@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Which of a bundle's state files one is, by the write path that repairs it.
 enum VMBundleStateFileID: Sendable, Hashable {

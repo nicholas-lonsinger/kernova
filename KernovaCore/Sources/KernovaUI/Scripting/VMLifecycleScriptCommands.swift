@@ -1,7 +1,7 @@
 import Cocoa
 import CoreServices
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The dictionary's `VM stop method` enumeration, in Swift.

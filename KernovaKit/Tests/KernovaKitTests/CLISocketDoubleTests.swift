@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaSynchronization
 import KernovaTestSupport
 import Testing

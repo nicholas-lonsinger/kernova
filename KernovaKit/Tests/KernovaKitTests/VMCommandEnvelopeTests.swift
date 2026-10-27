@@ -2,7 +2,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaCommandModel
 
 /// The wire envelope's whole job: every request and every response survives a
 /// round trip unchanged, so a transport carries what the core said and not an

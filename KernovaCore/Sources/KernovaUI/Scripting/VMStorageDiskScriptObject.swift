@@ -1,6 +1,6 @@
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// One disk a VM attaches, as the scripting dictionary's `storage disk`.

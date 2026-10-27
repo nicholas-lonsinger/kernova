@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// Turns a serialized ``VMCommandRequest`` into a ``VMCommandCore`` call and

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 
 /// Whether the VM display takes files dragged onto it, and if not, why.

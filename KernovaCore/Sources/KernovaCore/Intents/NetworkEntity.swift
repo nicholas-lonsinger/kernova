@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One of the library's named networks, as Shortcuts names it.
 ///

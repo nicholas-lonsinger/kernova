@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 

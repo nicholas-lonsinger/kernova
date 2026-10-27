@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Fans one batch of ``VMLibraryEvent`` values out to every stream
 /// ``VMCommandCore/events()`` handed out.

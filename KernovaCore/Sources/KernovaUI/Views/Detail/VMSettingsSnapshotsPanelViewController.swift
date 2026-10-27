@@ -1,6 +1,6 @@
 import AppKit
+import KernovaAppKitShared
 import KernovaCore
-import KernovaKit
 
 /// The Snapshots category: the snapshot list, its inline edits, and the on-disk
 /// size read behind them.

@@ -10,7 +10,7 @@ import Foundation
 /// a status-item menu opened from a main-queue block stayed open). A run-loop
 /// block leaves that drain free.
 @MainActor
-func performOnMainRunLoop(_ body: @escaping @MainActor () -> Void) {
+package func performOnMainRunLoop(_ body: @escaping @MainActor () -> Void) {
     RunLoop.main.perform(inModes: [.common]) {
         // The main run loop runs on the main thread by definition.
         MainActor.assumeIsolated { body() }

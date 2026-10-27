@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension VMGuestOS {
     package var iconName: String {

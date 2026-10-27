@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How a failure Virtualization reported is classified: which start failures
 /// are transient, which are this copy's own file-lock contention, and what a

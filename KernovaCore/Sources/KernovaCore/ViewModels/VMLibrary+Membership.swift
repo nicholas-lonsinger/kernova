@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// How bundles on disk become library membership: the library read, the

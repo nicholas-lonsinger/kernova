@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 extension KernovaCommand {
     /// `kernova share` — the folders a virtual machine shares with its guest.

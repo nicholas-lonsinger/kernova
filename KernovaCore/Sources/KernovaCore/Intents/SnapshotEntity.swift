@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How Shortcuts names one snapshot: the VM that owns it, and the snapshot.
 ///

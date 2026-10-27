@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// One accessory nobody has placed, and the running guests that could take it.

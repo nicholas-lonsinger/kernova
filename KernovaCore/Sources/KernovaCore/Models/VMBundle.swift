@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// One VM bundle on disk: its state files — `config.json`, `host-state.json`,

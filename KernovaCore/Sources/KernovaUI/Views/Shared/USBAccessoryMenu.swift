@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// Identifies which VM and accessory a USB Device item names, carried as the
 /// item's `representedObject`.

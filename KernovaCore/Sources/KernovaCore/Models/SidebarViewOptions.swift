@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How the sidebar's library section narrows, orders and groups the library.
 ///

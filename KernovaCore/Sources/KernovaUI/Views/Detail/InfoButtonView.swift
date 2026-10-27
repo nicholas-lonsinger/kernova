@@ -1,6 +1,6 @@
 import AppKit
+import KernovaAppKitShared
 import KernovaCore
-import KernovaKit
 
 /// Info-circle `NSButton` that opens an `NSPopover` of body paragraphs when
 /// clicked.

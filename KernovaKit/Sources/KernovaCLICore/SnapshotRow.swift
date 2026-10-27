@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One snapshot as the tool prints it: the wire's own row plus the size a
 /// separate read answers with.

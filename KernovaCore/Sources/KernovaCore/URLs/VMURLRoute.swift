@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One `kernova:` link, read as the verb it names and the VM it addresses.
 ///

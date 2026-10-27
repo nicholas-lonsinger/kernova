@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// What one Tab press is answered against: the connection it may open, how long
 /// it waits, and the shell that asked.

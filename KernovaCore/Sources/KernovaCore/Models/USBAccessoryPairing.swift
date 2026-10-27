@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One USB accessory a VM takes back automatically: the durable key the unit
 /// answers to, and enough of its description to name it in a list while the

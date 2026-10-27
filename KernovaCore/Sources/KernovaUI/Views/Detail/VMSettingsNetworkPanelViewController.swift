@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// The Network category: the Mode picker — every network the VM can join, in
 /// one menu — and the address and MAC rows behind it.

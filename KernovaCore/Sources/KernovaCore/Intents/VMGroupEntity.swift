@@ -1,6 +1,6 @@
 import AppIntents
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One of the library's smart groups or folders, as Shortcuts names it.
 ///

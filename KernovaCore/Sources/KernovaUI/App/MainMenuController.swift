@@ -1,6 +1,6 @@
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The one owner of the menu bar: its construction, the rebuilds an opening menu

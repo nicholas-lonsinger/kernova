@@ -1,4 +1,5 @@
 import AppKit
+import KernovaAppKitShared
 import KernovaCore
 import KernovaKit
 import KernovaLogging

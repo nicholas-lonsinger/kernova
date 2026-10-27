@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// The Sharing category: shared directories, the guest-agent group (macOS) or
 /// the standalone clipboard section (Linux) beside them, and the USB

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 
 @testable import KernovaCore

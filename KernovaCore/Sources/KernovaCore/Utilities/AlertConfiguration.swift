@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// Semantic role for an ``AlertButton``: which key, if any, activates it, and

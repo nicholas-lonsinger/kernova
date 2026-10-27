@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How what a verb refuses without is gathered, whichever door asked.
 ///

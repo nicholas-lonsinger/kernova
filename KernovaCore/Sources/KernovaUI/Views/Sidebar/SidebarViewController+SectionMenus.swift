@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// Each section header's count and menu, what the View menu reads of the

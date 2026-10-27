@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// One VM as `info` prints it: the wire's description plus the storage disks a
 /// separate read answers with.

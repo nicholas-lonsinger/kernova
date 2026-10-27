@@ -94,7 +94,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
 
     /// The same readout as it stands `seconds` later with nothing reported in
     /// between: run that much longer, with that much less of its estimate left.
-    func aged(by seconds: TimeInterval) -> ClipboardProgressSnapshot {
+    package func aged(by seconds: TimeInterval) -> ClipboardProgressSnapshot {
         guard seconds > 0 else { return self }
         return ClipboardProgressSnapshot(
             direction: direction, peerName: peerName, currentItemName: currentItemName,

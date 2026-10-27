@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// The configuration verbs — the dotted keyspace `get` and `set` address, the

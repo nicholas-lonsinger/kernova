@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The flags that narrow a listing to the VMs with given attributes — the
 /// sidebar's filter, flag for attribute.

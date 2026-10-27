@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How a subcommand reaches the app.
 enum CommandConnection {

@@ -1,6 +1,6 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// Step 1 of the creation wizard: choose the guest operating system.
 ///

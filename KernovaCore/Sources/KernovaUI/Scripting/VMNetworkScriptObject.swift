@@ -1,7 +1,7 @@
 import Cocoa
 import CoreServices
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// One named network as the scripting dictionary's `network`.

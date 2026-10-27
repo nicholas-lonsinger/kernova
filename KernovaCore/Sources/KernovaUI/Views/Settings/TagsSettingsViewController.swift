@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
 import KernovaKit
 import KernovaLogging

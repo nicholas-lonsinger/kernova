@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 import KernovaLogging
 
 /// Putting the bundled `kernova` tool somewhere a shell will find it.

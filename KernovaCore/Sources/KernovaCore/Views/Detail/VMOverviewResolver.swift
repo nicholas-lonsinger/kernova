@@ -1,6 +1,6 @@
 import AVFoundation
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// The settings pane's resolved values for one VM: everything its surfaces state
 /// that the configuration alone cannot answer.

@@ -1,5 +1,5 @@
 import AppKit
-import KernovaKit
+import KernovaAppKitShared
 
 /// Leading icon for a storage / removable-media row.
 @MainActor

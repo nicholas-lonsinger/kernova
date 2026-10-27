@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// Where a prepared snapshot's saved state belongs, and the bundle-relative
 /// files copied beside it.

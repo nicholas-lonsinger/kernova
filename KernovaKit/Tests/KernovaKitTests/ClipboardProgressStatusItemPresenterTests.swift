@@ -3,6 +3,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
+@testable import KernovaAppKitShared
 @testable import KernovaKit
 
 /// Unit tests for how the presenter drives the status item's callout slot.

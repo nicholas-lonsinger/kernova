@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Which coarse state a VM is in, as a filter, a group and a Shortcuts query
 /// read it. The app derives it from whether a session is live, not from the

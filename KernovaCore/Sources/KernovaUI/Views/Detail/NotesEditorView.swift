@@ -1,5 +1,5 @@
 import AppKit
-import KernovaKit
+import KernovaAppKitShared
 
 /// The text view inside a ``NotesEditorView``.
 ///

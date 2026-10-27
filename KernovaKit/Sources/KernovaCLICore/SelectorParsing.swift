@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How the tool turns a typed virtual-machine argument into a selector.
 enum SelectorParsing {

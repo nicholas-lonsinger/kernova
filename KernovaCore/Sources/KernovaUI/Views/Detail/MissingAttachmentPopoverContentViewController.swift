@@ -1,5 +1,5 @@
 import AppKit
-import KernovaKit
+import KernovaAppKitShared
 
 /// Popover content shown when the user clicks a missing-attachment warning
 /// icon in a storage, removable-media or shared-directory row.

@@ -1,6 +1,7 @@
 import AppKit
+import KernovaAppKitShared
+import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 
 /// Drives a "choose a disk size" popover (``DiskSizePopoverContentViewController``)
 /// from an AppKit anchor view and forwards the confirmed size to a closure.

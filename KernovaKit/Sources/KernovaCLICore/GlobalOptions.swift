@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import KernovaKit
+import KernovaCommandModel
 
 /// How output is written.
 enum OutputFormat: String, ExpressibleByArgument, Sendable, CaseIterable {

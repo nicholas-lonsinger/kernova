@@ -1,6 +1,6 @@
-import KernovaKit
 import AVFoundation
 import Foundation
+import KernovaCommandModel
 
 /// What the Audio section should show beneath the Audio Input toggle, derived
 /// purely from the system permission status and whether audio input is enabled.

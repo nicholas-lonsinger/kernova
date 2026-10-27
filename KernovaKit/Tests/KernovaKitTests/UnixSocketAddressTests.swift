@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaCommandModel
 
 @Suite("UnixSocketAddress", .caseScoped)
 struct UnixSocketAddressTests {
