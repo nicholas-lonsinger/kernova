@@ -7,101 +7,156 @@ import Foundation
 /// Reads one direction of a connection: the preamble, then frames, from bytes
 /// appended at any split.
 ///
-/// Each header is validated as soon as its 10 bytes are buffered, before any of
-/// its payload is waited for, so a hostile length is refused without buffering
-/// it. Every control and MESSAGE payload, and raw DATA under 64 KiB, is copied
-/// into storage of its own; a larger raw DATA payload lying wholly inside one
-/// appended chunk is a slice of it, and otherwise is assembled with one copy.
-/// The first error is final: `nextFrame()` throws it again on every later call.
+/// `append(_:)` decodes as far as the bytes reach. Each header is validated as
+/// soon as its 10th byte arrives, before any of its payload, so a hostile length
+/// is refused without buffering it. Every control and MESSAGE payload, and raw
+/// DATA under 64 KiB, is copied into storage of its own; a larger raw DATA
+/// payload lying wholly inside one appended chunk is a slice of it. A payload
+/// that spans appends is copied, as each one arrives, into storage sized for it,
+/// so what the decoder holds is that payload, under 10 header bytes, and the
+/// frames not yet returned.
+///
+/// Frames decoded before an error are returned first; then `nextFrame()` throws
+/// the error, on every later call.
 public struct FrameDecoder: Sendable {
     private struct Header: Sendable {
         var streamID: StreamID
         var type: FrameType
         var flags: FrameFlags
         var length: Int
+
+        /// Whether a payload lying wholly inside one chunk is returned as a slice of it.
+        var isSliceable: Bool {
+            type == .data && !flags.contains(.message) && length >= 65_536
+        }
     }
 
-    private enum Phase: Sendable {
-        case preamble
-        case header
-        case payload(Header)
-        case failed(FrameError)
-    }
+    private var preambleRead = false
+    /// The bytes of a preamble or header not yet complete.
+    private var partial: [UInt8] = []
+    /// The validated header whose payload is still arriving, and the payload so far.
+    private var header: Header?
+    private var payload = Data()
+    /// Decoded frames; those before `readyHead` were returned and are released.
+    private var ready: [Frame] = []
+    private var readyHead = 0
+    private var readyPayloadByteCount = 0
+    private var failure: FrameError?
 
-    /// Raw DATA payloads at least this long may be returned as a slice.
-    private static let sliceThreshold = 65_536
-
-    /// Appended chunks; those before `head` are consumed and emptied.
-    private var chunks: [Data] = []
-    private var head = 0
-    /// Bytes consumed from `chunks[head]`.
-    private var offsetInHead = 0
-    private var phase = Phase.preamble
-
-    /// Bytes appended and not yet consumed by a returned frame or a validated header.
-    public private(set) var bufferedByteCount = 0
+    /// The bytes the decoder holds: a partial header, a partial payload, and the
+    /// payloads of frames not yet returned.
+    public var bufferedByteCount: Int { partial.count + payload.count + readyPayloadByteCount }
 
     /// Creates a decoder expecting the preamble first.
     public init() {}
 
-    /// Buffers bytes as the transport delivered them. After an error, ignored.
+    /// Decodes `bytes` as the transport delivered them. After an error, ignored.
     public mutating func append(_ bytes: Data) {
-        guard !bytes.isEmpty else { return }
-        if case .failed = phase { return }
-        chunks.append(bytes)
-        bufferedByteCount += bytes.count
-    }
-
-    /// The next whole frame, or nil when more bytes are needed.
-    ///
-    /// - Throws: The `FrameError` the preamble or a header shows, the first time
-    ///   and on every call after it.
-    public mutating func nextFrame() throws(FrameError) -> Frame? {
-        while true {
-            switch phase {
-            case .failed(let error):
-                throw error
-            case .preamble:
-                guard bufferedByteCount >= WireConstants.preamble.count else { return nil }
-                var received: [UInt8] = []
-                for _ in 0..<WireConstants.preamble.count {
-                    received.append(popByte())
-                }
-                guard received.elementsEqual(WireConstants.preamble) else { try fail(.badPreamble) }
-                phase = .header
-            case .header:
-                guard bufferedByteCount >= WireConstants.headerByteCount else { return nil }
-                let streamID = popUInt32()
-                let typeByte = popByte()
-                let flagsByte = popByte()
-                let length = popUInt32()
-                switch Self.validate(typeByte: typeByte, flagsByte: flagsByte, length: length) {
-                case .success(let type):
-                    phase = .payload(
-                        Header(
-                            streamID: StreamID(rawValue: streamID), type: type,
-                            flags: FrameFlags(rawValue: flagsByte), length: Int(length)))
-                case .failure(let error):
-                    try fail(error)
-                }
-            case .payload(let header):
-                guard bufferedByteCount >= header.length else { return nil }
-                let isRawData = header.type == .data && !header.flags.contains(.message)
-                let payload = popPayload(
-                    count: header.length, sliceable: isRawData && header.length >= Self.sliceThreshold)
-                phase = .header
-                return Frame(streamID: header.streamID, type: header.type, flags: header.flags, payload: payload)
+        var index = bytes.startIndex
+        while index < bytes.endIndex, failure == nil {
+            if let header {
+                index = appendPayload(bytes, from: index, for: header)
+            } else {
+                index = appendHeaderBytes(bytes, from: index)
             }
         }
     }
 
-    private mutating func fail(_ error: FrameError) throws(FrameError) -> Never {
-        phase = .failed(error)
-        chunks = []
-        head = 0
-        offsetInHead = 0
-        bufferedByteCount = 0
-        throw error
+    /// The next decoded frame, or nil when more bytes are needed.
+    ///
+    /// - Throws: The `FrameError` the preamble or a header showed, once every frame
+    ///   decoded before it has been returned, and on every call after that.
+    public mutating func nextFrame() throws(FrameError) -> Frame? {
+        guard readyHead < ready.count else {
+            if let failure { throw failure }
+            return nil
+        }
+        let frame = ready[readyHead]
+        // Released at once, so a returned payload is never pinned here.
+        ready[readyHead] = Frame(streamID: .session, type: .data)
+        readyHead += 1
+        readyPayloadByteCount -= frame.payload.count
+        if readyHead == ready.count {
+            ready.removeAll(keepingCapacity: true)
+            readyHead = 0
+        }
+        return frame
+    }
+
+    private mutating func appendHeaderBytes(_ bytes: Data, from index: Data.Index) -> Data.Index {
+        let target = preambleRead ? WireConstants.headerByteCount : WireConstants.preamble.count
+        let end = min(bytes.endIndex, index + (target - partial.count))
+        partial.append(contentsOf: bytes[index..<end])
+        guard partial.count == target else { return end }
+        defer { partial.removeAll(keepingCapacity: true) }
+
+        guard preambleRead else {
+            if partial.elementsEqual(WireConstants.preamble) {
+                preambleRead = true
+            } else {
+                fail(.badPreamble)
+            }
+            return end
+        }
+        func uint32(at offset: Int) -> UInt32 {
+            partial[offset..<(offset + 4)].reduce(0) { $0 << 8 | UInt32($1) }
+        }
+        let typeByte = partial[4]
+        let flagsByte = partial[5]
+        let length = uint32(at: 6)
+        switch Self.validate(typeByte: typeByte, flagsByte: flagsByte, length: length) {
+        case .success(let type):
+            let header = Header(
+                streamID: StreamID(rawValue: uint32(at: 0)), type: type, flags: FrameFlags(rawValue: flagsByte),
+                length: Int(length))
+            if header.length == 0 {
+                emit(header, payload: Data())
+            } else {
+                self.header = header
+            }
+        case .failure(let error):
+            fail(error)
+        }
+        return end
+    }
+
+    private mutating func appendPayload(_ bytes: Data, from index: Data.Index, for header: Header) -> Data.Index {
+        let available = bytes.endIndex - index
+        if payload.isEmpty, available >= header.length {
+            let end = index + header.length
+            if header.isSliceable {
+                emit(header, payload: bytes[index..<end])
+            } else {
+                var copy = Data(capacity: header.length)
+                copy.append(bytes[index..<end])
+                emit(header, payload: copy)
+            }
+            self.header = nil
+            return end
+        }
+        if payload.isEmpty {
+            payload = Data(capacity: header.length)
+        }
+        let end = index + min(available, header.length - payload.count)
+        payload.append(bytes[index..<end])
+        if payload.count == header.length {
+            emit(header, payload: payload)
+            payload = Data()
+            self.header = nil
+        }
+        return end
+    }
+
+    private mutating func emit(_ header: Header, payload: Data) {
+        ready.append(Frame(streamID: header.streamID, type: header.type, flags: header.flags, payload: payload))
+        readyPayloadByteCount += payload.count
+    }
+
+    private mutating func fail(_ error: FrameError) {
+        failure = error
+        partial = []
+        header = nil
+        payload = Data()
     }
 
     private static func validate(typeByte: UInt8, flagsByte: UInt8, length: UInt32) -> Result<FrameType, FrameError> {
@@ -125,64 +180,5 @@ public struct FrameDecoder: Sendable {
             }
         }
         return .success(type)
-    }
-
-    // MARK: - Consuming buffered bytes
-
-    /// Only called with at least one byte buffered.
-    private mutating func popByte() -> UInt8 {
-        let chunk = chunks[head]
-        let byte = chunk[chunk.startIndex + offsetInHead]
-        consume(1)
-        return byte
-    }
-
-    private mutating func popUInt32() -> UInt32 {
-        var value: UInt32 = 0
-        for _ in 0..<4 {
-            value = value << 8 | UInt32(popByte())
-        }
-        return value
-    }
-
-    /// Only called with at least `count` bytes buffered.
-    private mutating func popPayload(count: Int, sliceable: Bool) -> Data {
-        guard count > 0 else { return Data() }
-        let chunk = chunks[head]
-        let start = chunk.startIndex + offsetInHead
-        if sliceable, chunk.endIndex - start >= count {
-            let slice = chunk[start..<(start + count)]
-            consume(count)
-            return slice
-        }
-        var payload = Data(capacity: count)
-        var remaining = count
-        while remaining > 0 {
-            let current = chunks[head]
-            let from = current.startIndex + offsetInHead
-            let take = min(remaining, current.endIndex - from)
-            payload.append(current[from..<(from + take)])
-            consume(take)
-            remaining -= take
-        }
-        return payload
-    }
-
-    /// Advances past `count` bytes of the head chunk, which holds at least that many.
-    private mutating func consume(_ count: Int) {
-        offsetInHead += count
-        bufferedByteCount -= count
-        guard offsetInHead == chunks[head].count else { return }
-        // Emptied rather than kept, so a consumed chunk is never pinned by the buffer.
-        chunks[head] = Data()
-        head += 1
-        offsetInHead = 0
-        if head == chunks.count {
-            chunks.removeAll(keepingCapacity: true)
-            head = 0
-        } else if head >= 64, head * 2 >= chunks.count {
-            chunks.removeFirst(head)
-            head = 0
-        }
     }
 }

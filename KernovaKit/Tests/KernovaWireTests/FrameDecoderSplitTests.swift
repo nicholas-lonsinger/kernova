@@ -108,6 +108,44 @@ struct FrameDecoderSplitTests {
         #expect(decoder.bufferedByteCount == 0)
     }
 
+    @Test("A 1 MiB frame arriving a byte at a time is held as its payload so far, and nothing more")
+    func byteAtATimeStorageIsThePayload() throws {
+        var generator = SeededGenerator(seed: 4)
+        let frame = Frame(
+            streamID: StreamID(rawValue: 1), type: .data, payload: generator.bytes(WireConstants.maxRawDataPayload))
+        let bytes = wireBytes([frame])
+        let payloadStart = WireConstants.preamble.count + WireConstants.headerByteCount
+        var decoder = FrameDecoder()
+        var violations = 0
+        for offset in 0..<(bytes.count - 1) {
+            decoder.append(bytes[offset...offset])
+            let held = decoder.bufferedByteCount
+            let expected: Int
+            if offset < WireConstants.preamble.count {
+                expected = (offset + 1) % WireConstants.preamble.count
+            } else if offset < payloadStart {
+                expected = (offset + 1 - WireConstants.preamble.count) % WireConstants.headerByteCount
+            } else {
+                expected = offset + 1 - payloadStart
+            }
+            if held != expected { violations += 1 }
+        }
+        #expect(violations == 0)
+        #expect(try decoder.nextFrame() == nil)
+        decoder.append(bytes.suffix(1))
+        #expect(try decoder.nextFrame() == frame)
+        #expect(decoder.bufferedByteCount == 0)
+    }
+
+    @Test("Frames decoded before an error are returned before it is thrown")
+    func framesBeforeAnErrorComeFirst() throws {
+        let ping = Frame(streamID: .session, type: .ping, payload: Data(count: 8))
+        var decoder = FrameDecoder()
+        decoder.append(wireBytes([ping]) + rawHeader(type: 0x07, length: 0))
+        #expect(try decoder.nextFrame() == ping)
+        #expect(throws: FrameError.unknownType(0x07)) { try decoder.nextFrame() }
+    }
+
     /// Whether `payload`'s bytes lie inside `chunk`'s storage.
     private func shares(_ payload: Data, with chunk: Data) -> Bool {
         payload.withUnsafeBytes { payloadBytes in

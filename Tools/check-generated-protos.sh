@@ -9,7 +9,7 @@
 #
 # The tools are built once per revision from a fetch of that exact revision,
 # never taken from Homebrew or the system, and only the two binaries are kept,
-# under ~/Library/Caches/Kernova, so CI can save them.
+# under ~/Library/Caches/kernova-dev, so CI can save them.
 #
 # Usage: Tools/check-generated-protos.sh [--write]
 #   --write   replaces each generated file with the regenerated one
@@ -22,12 +22,16 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-# Each schema; its generated file is `<name>.pb.swift` in the same directory,
-# which is also the import root.
-schemas=(
-    KernovaKit/Sources/KernovaKit/Proto/kernova.proto
-    KernovaKit/Sources/KernovaWire/Proto/kernova_v2.proto
-)
+# Every tracked schema; its generated file is `<name>.pb.swift` in the same
+# directory, which is also the import root.
+schemas=()
+while IFS= read -r schema; do
+    schemas+=("$schema")
+done < <(git ls-files '*.proto')
+if [ "${#schemas[@]}" -eq 0 ]; then
+    echo 'check-generated-protos: git tracks no .proto files — not a git checkout?' >&2
+    exit 1
+fi
 options=(--swift_opt=Visibility=Public --swift_opt=FileNaming=PathToUnderscores)
 
 write=0
@@ -48,10 +52,10 @@ if [ -z "$revision" ]; then
     exit 1
 fi
 
-bin="$HOME/Library/Caches/Kernova/swift-protobuf/$revision"
+bin="$HOME/Library/Caches/kernova-dev/swift-protobuf-$revision"
 if [ ! -x "$bin/protoc" ] || [ ! -x "$bin/protoc-gen-swift" ]; then
     mkdir -p "${bin%/*}" || exit 1
-    staging=$(mktemp -d "${bin%/*}/.build.XXXXXX") || exit 1
+    staging=$(mktemp -d "${bin%/*}/.swift-protobuf-build.XXXXXX") || exit 1
     trap 'rm -rf "$staging"' EXIT
     if ! { git init -q "$staging/source" &&
         git -C "$staging/source" fetch -q --depth 1 https://github.com/apple/swift-protobuf.git "$revision" &&

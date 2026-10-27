@@ -53,8 +53,7 @@ var targets: [Target] = [
         name: "KernovaSynchronization",
         swiftSettings: sharedSwiftSettings
     ),
-    // The guest-agent protocol's wire layer: the generated schema, the frame
-    // codec, CRC32C and LZ4.
+    // The guest-agent protocol's wire layer.
     .target(
         name: "KernovaWire",
         dependencies: [

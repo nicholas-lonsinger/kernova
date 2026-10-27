@@ -37,13 +37,11 @@ endif
 # Release, e.g. `make build CONFIGURATION=Release`.
 CONFIGURATION ?= Debug
 
-# Plugin validation is an interactive trust prompt no terminal build can answer.
 XCODEBUILD_FLAGS = -project $(PROJECT) \
                    -scheme $(SCHEME) \
                    -destination '$(DESTINATION)' \
                    $(DERIVED_DATA_FLAG) \
                    -configuration $(CONFIGURATION) \
-                   -skipPackagePluginValidation \
                    $(CI_FLAGS)
 
 # Every command that runs xcodebuild against this checkout — Periphery's
@@ -299,8 +297,8 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 # Periphery's own build would go to ~/Library/Caches/com.github.peripheryapp
 # under a name hashed from its schemes in a Swift `Set`'s per-process order, a
 # new multi-gigabyte arena most runs; the GUI's arena, indexed while editing,
-# is no single build's index. The flags are Periphery 3.x's own plus
-# `-skipPackagePluginValidation` and the compilation cache off: a compile the
+# is no single build's index. The flags are Periphery 3.x's own plus the
+# compilation cache off: a compile the
 # cache serves writes no index unit, leaving the unit an earlier compile wrote
 # — after a revert, a cached scan reported 27 findings in code that no longer
 # existed (Xcode 27.1). Stdout carries Periphery's report alone —
@@ -321,7 +319,7 @@ locked-dead-code:
 	for scheme in $$schemes; do \
 		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
 			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
-			-skipPackagePluginValidation build-for-testing \
+			build-for-testing \
 			CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf \
 			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
 			COMPILATION_CACHE_ENABLE_CACHING=NO >&2 || exit 1; \
