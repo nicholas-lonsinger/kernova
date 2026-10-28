@@ -13,7 +13,7 @@ import Testing
 struct InstallerTests {
     /// The account the system tests hand the agent's root to: one every Linux system has.
     static let account = "nobody"
-    /// Switching to it needs root, which the CI container runs as.
+    /// Handing files to it needs root, which the CI container runs as.
     static let runsAsRoot = geteuid() == 0
 
     /// A scratch staging root and a stand-in payload, removed at the end.
@@ -147,7 +147,7 @@ struct InstallerTests {
 
     @Test(
         "A system install writes the same, everything in the agent's root as its account",
-        .enabled(if: runsAsRoot, "switching to another account needs root"))
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func systemInstall() throws {
         let scratch = try Scratch()
         let layout = try Self.layout(.system)
@@ -157,13 +157,13 @@ struct InstallerTests {
     }
 
     @Test(
-        "A link the account planted where a slot belongs takes the install nowhere the account cannot write",
-        .enabled(if: runsAsRoot, "switching to another account needs root"))
+        "A link the account planted where a slot belongs is refused, never followed",
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func plantedLink() throws {
         let scratch = try Scratch()
         let layout = try Self.layout(.system)
         try scratch.installer(account: Self.account).run(.install(layout))
-        // A directory only root may write, as /etc is.
+        // A directory the account could never write, as /etc is.
         let outside = scratch.directory.path + "/outside"
         try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: false)
         let slot = scratch.root + layout.installSlot
@@ -175,6 +175,44 @@ struct InstallerTests {
         #expect(throws: Installer.Failure.self) { try scratch.installer(account: Self.account).run(.install(layout)) }
         #expect(try FileManager.default.contentsOfDirectory(atPath: outside) == [])
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: slot) == outside)
+    }
+
+    @Test(
+        "An uninstall removes a link the account planted in its root without following it",
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
+    func uninstallPlantedLink() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.system)
+        try scratch.installer(account: Self.account).run(.install(layout))
+        let outside = scratch.directory.path + "/outside"
+        try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: false)
+        #expect(FileManager.default.createFile(atPath: outside + "/precious", contents: Data("keep".utf8)))
+        try FileManager.default.createSymbolicLink(
+            atPath: scratch.root + layout.root + "/slots/b", withDestinationPath: outside)
+        try FileManager.default.createSymbolicLink(
+            atPath: scratch.root + layout.switchPending, withDestinationPath: outside + "/precious")
+
+        try scratch.installer(account: Self.account).run(.uninstall(layout))
+        #expect(!FileManager.default.fileExists(atPath: scratch.root + layout.root))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outside) == ["precious"])
+    }
+
+    @Test(
+        "A reinstall over a planted switch-pending link removes the link and leaves its target",
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
+    func reinstallPlantedSwitchLink() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.system)
+        try scratch.installer(account: Self.account).run(.install(layout))
+        let precious = scratch.directory.path + "/precious"
+        #expect(FileManager.default.createFile(atPath: precious, contents: Data("keep".utf8)))
+        try FileManager.default.createSymbolicLink(
+            atPath: scratch.root + layout.switchPending, withDestinationPath: precious)
+
+        try scratch.installer(account: Self.account).run(.install(layout))
+        #expect(FileManager.default.contents(atPath: precious) == Data("keep".utf8))
+        #expect(
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: scratch.root + layout.switchPending)) == nil)
     }
 
     @Test("Above the agent's root, a symlinked directory is a directory, as mkdir -p takes it")
@@ -207,7 +245,7 @@ struct InstallerTests {
 
     @Test(
         "A system reinstall over a pending switch leaves the same files and owners, the switch cleared",
-        .enabled(if: runsAsRoot, "switching to another account needs root"))
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func reinstallSystem() throws {
         let scratch = try Scratch()
         let layout = try Self.layout(.system)
@@ -231,7 +269,7 @@ struct InstallerTests {
 
     @Test(
         "A system uninstall empties the root as its account, then removes it",
-        .enabled(if: runsAsRoot, "switching to another account needs root"))
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func uninstallSystem() throws {
         let scratch = try Scratch()
         let layout = try Self.layout(.system)

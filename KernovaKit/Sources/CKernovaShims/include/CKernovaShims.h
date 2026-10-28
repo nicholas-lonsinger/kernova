@@ -24,15 +24,6 @@ uint64_t kernova_monotonic_nanoseconds(void);
 /// and 0 when it completed; returns -1 with `errno` set, holding nothing open,
 /// when creating the socket or starting the connect failed.
 int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress);
-
-/// Makes `uid` and `gid` the calling thread's effective user and group and `gid` its only supplementary
-/// group, keeping its real and saved ids, so ``kernova_restore_ids`` can return; every other thread keeps
-/// its own. Returns 0, or -1 with `errno` set.
-int kernova_assume_ids(uint32_t uid, uint32_t gid);
-
-/// Makes `uid` and `gid` the calling thread's effective ids again and `groups` its supplementary groups:
-/// what ``kernova_assume_ids`` replaced. Returns 0, or -1 with `errno` set.
-int kernova_restore_ids(uint32_t uid, uint32_t gid, const uint32_t *groups, size_t count);
 #endif
 
 #endif

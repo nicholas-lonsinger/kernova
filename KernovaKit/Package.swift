@@ -68,9 +68,8 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The C calls the portable targets make without importing an OS module:
-    // the CRC32C instructions, the monotonic clock that counts sleep, the
-    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
-    // the per-thread effective-id switch, which only the raw system calls make.
+    // the CRC32C instructions, the monotonic clock that counts sleep, and the
+    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports.
     .target(
         name: "CKernovaShims",
         linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
@@ -118,7 +117,7 @@ var targets: [Target] = [
         name: "KernovaLinuxAgent",
         dependencies: [
             "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaDigest",
-            "KernovaLogging", "CKernovaAgentVersion", "CKernovaShims",
+            "KernovaLogging", "CKernovaAgentVersion",
         ],
         swiftSettings: sharedSwiftSettings
     ),
