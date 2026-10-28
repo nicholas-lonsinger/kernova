@@ -91,7 +91,7 @@ var targets: [Target] = [
         dependencies: ["KernovaDBus"],
         swiftSettings: sharedSwiftSettings
     ),
-    // Against a private `dbus-daemon` each suite starts; compiled, like the
+    // Against a private `dbus-daemon` each test starts; compiled, like the
     // target it tests, only for Linux.
     .testTarget(
         name: "KernovaPlatformLinuxTests",
