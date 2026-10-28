@@ -251,9 +251,12 @@ struct Installer {
             ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { (argv + envp).forEach { free($0) } }
         var pid = pid_t()
-        let started = argv.withUnsafeBufferPointer { arguments in
-            envp.withUnsafeBufferPointer { environment in
-                posix_spawnp(&pid, arguments[0], nil, nil, arguments.baseAddress, environment.baseAddress)
+        let started = argv.withUnsafeBufferPointer { argvBuffer in
+            envp.withUnsafeBufferPointer { envpBuffer -> Int32 in
+                guard let argvBase = argvBuffer.baseAddress, let envpBase = envpBuffer.baseAddress else {
+                    return EINVAL
+                }
+                return posix_spawnp(&pid, arguments[0], nil, nil, argvBase, envpBase)
             }
         }
         guard started == 0 else { return -1 }

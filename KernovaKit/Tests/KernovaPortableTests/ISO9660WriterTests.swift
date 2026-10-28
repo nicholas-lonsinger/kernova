@@ -164,7 +164,8 @@ struct ISO9660WriterTests {
             var bytes: [UInt8] = []
             try entry.contents { bytes += $0 }
             #expect(FileManager.default.contents(atPath: path).map(Array.init) == bytes, "\(entry.name)")
-            let permissions = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int
+            let permissions = (try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?
+                .intValue
             #expect(permissions == Int(entry.permissions), "\(entry.name)")
         }
     }
