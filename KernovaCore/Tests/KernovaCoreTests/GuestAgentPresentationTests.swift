@@ -10,13 +10,12 @@ import Testing
 struct GuestAgentPresentationTests {
     private static func peer(
         _ handle: UInt64, role: PeerRole = .sessionPeer, userName: String = "pbear", version: String = "1.0",
-        isCurrent: Bool = true, offered: String? = nil, isResponsive: Bool = true
+        standing: PeerSummary.Standing = .current, isResponsive: Bool = true
     ) -> PeerSummary {
         PeerSummary(
             handle: PeerHandle(rawValue: handle), role: role, scope: role == .systemPeer ? .system : .user,
             os: .linux, sessionID: role == .systemPeer ? "" : "2", userName: role == .systemPeer ? "" : userName,
-            console: .on, versionLabel: version, isCurrent: isCurrent, offeredVersionLabel: offered,
-            isResponsive: isResponsive)
+            console: .on, versionLabel: version, standing: standing, isResponsive: isResponsive)
     }
 
     private static func snapshot(_ peers: [PeerSummary]) -> AgentHubSnapshot {
@@ -59,7 +58,7 @@ struct GuestAgentPresentationTests {
         let presentation = GuestAgentPresentation(
             hub: Self.snapshot([
                 Self.peer(2, role: .systemPeer, version: "1.0"),
-                Self.peer(1, version: "0.9", isCurrent: false, offered: "1.0"),
+                Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0")),
             ]))
         #expect(presentation.status == .outdated(installed: "0.9", bundled: "1.0"))
         #expect(
@@ -67,6 +66,21 @@ struct GuestAgentPresentationTests {
                 .init(title: "System service", state: "Up to date"),
                 .init(title: "Session agent — pbear", state: "Out of date"),
             ])
+    }
+
+    @Test(
+        "An agent the host offers nothing claims no currency: its line names its version, and the status is connected")
+    func hubWithAPeerOfferedNothing() {
+        let alone = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, standing: .notOffered)]))
+        #expect(alone.status == .connected(version: "1.0"))
+        #expect(alone.hub?.peers == [.init(title: "Session agent — pbear", state: "Version 1.0")])
+        let mixed = GuestAgentPresentation(
+            hub: Self.snapshot([
+                Self.peer(2, role: .systemPeer, version: "1.1"), Self.peer(1, standing: .notOffered),
+            ]))
+        #expect(mixed.status == .connected(version: "1.1"))
+        let unlabelled = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, version: "", standing: .notOffered)]))
+        #expect(unlabelled.hub?.peers.first?.state == "Connected")
     }
 
     @Test("Agents all unresponsive read as unresponsive; one responsive agent keeps the presentation current")

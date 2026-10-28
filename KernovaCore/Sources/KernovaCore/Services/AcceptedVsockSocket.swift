@@ -7,22 +7,16 @@ import KernovaLogging
 package enum AcceptedVsockSocket {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AcceptedVsockSocket")
 
-    /// A close-on-exec duplicate of an accepted connection's `descriptor`, and
-    /// the `errno` a failed `dup` left (`fd` is then negative).
+    /// A close-on-exec duplicate of an accepted connection's `descriptor`,
+    /// made in one call so it is never inheritable, and the `errno` a failed
+    /// `F_DUPFD_CLOEXEC` left (`fd` is then negative).
     ///
     /// `VZVirtioSocketConnection` owns its descriptor and closes it once it is
     /// released, so whatever keeps the connection holds a duplicate: an
     /// independent descriptor on the same socket.
     package static func duplicate(_ descriptor: Int32) -> (fd: Int32, errno: Int32) {
-        let fd = dup(descriptor)
-        guard fd >= 0 else { return (fd, errno) }
-        let flags = fcntl(fd, F_GETFD)
-        if flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != 0 {
-            logger.log(
-                .warning,
-                "Could not mark an accepted vsock descriptor close-on-exec: errno=\(errno, privacy: .public)")
-        }
-        return (fd, 0)
+        let fd = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+        return (fd, fd < 0 ? errno : 0)
     }
 
     /// Enlarges `fd`'s send buffer to unlock host→guest streaming throughput,

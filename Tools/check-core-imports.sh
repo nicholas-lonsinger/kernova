@@ -25,18 +25,52 @@
 #
 # The agent hub KernovaCore drives, `KernovaAgentHost`, is held to spec §9.7
 # the same way: its state lives on its own queue and every hop is `async`, so
-# no `.sync(` and no `@MainActor` appears in its code. Line comments are
-# stripped first, so prose may name what it forbids.
+# its code names no blocking form — no `.sync`, `asyncAndWait`, `.wait(`
+# (semaphores, groups, conditions) or `DispatchSemaphore` — and no `MainActor`
+# in any spelling (`@MainActor`, `MainActor.run`, `MainActor.assumeIsolated`).
+# Line comments are stripped first, so prose may name what it forbids. A grep
+# is a backstop: the hub's own API offers drivers only `async` posts.
+#
+# Usage:
+#   Tools/check-core-imports.sh
+#   Tools/check-core-imports.sh --hub-files <file>...
+#     runs only the hub check, over those files; its fixture suite
+#     (Tools/tests/check-core-imports.sh) drives it this way.
 
 set -uo pipefail
-
-cd "$(git rev-parse --show-toplevel)" || exit 1
 
 lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-core_modules='Foundation KernovaAgentCore KernovaAgentHost KernovaCommandModel KernovaKit KernovaLogging KernovaWire AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
+# check_hub <label> <file>... — fails, naming each line, when a file blocks on
+# a queue or reaches the main actor.
+check_hub() {
+    local label=$1 findings
+    shift
+    if ! findings=$(perl -ne 's{//.*}{};
+        print "  $ARGV:$.: $_" if /\.sync\b|\basyncAndWait\b|\.wait\(|\bDispatchSemaphore\b|\bMainActor\b/;
+        close ARGV if eof' "$@"); then
+        echo "check-core-imports: could not read $label" >&2
+        return 1
+    fi
+    if [ -n "$findings" ]; then
+        echo "check-core-imports: $label blocks on a queue or reaches the main actor (spec §9.7):" >&2
+        printf '%s' "$findings" >&2
+        return 1
+    fi
+}
+
+if [ "${1:-}" = --hub-files ]; then
+    shift
+    check_hub "the given files" "$@" || exit 1
+    pass "hub isolation: the given files neither block nor reach the main actor"
+    exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+core_modules='Foundation KernovaAgentCore KernovaAgentHost KernovaAgentRuntime KernovaCommandModel KernovaKit KernovaLogging KernovaWire AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
 test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport KernovaSynchronization SwiftProtobuf CoreGraphics Observation'
 support_modules='Testing KernovaCore KernovaTestSupport KernovaSynchronization CoreGraphics Observation'
 
@@ -110,16 +144,10 @@ while IFS= read -r file; do hub_files+=("$file"); done < <(git ls-files "$hub_ro
 if [ "${#hub_files[@]}" -eq 0 ]; then
     echo "check-core-imports: no tracked Swift files under $hub_root" >&2
     failed=1
-elif ! hub_findings=$(perl -ne 's{//.*}{}; print "  $ARGV:$.: $_" if /\.sync\(|\@MainActor/; close ARGV if eof' \
-    "${hub_files[@]}"); then
-    echo "check-core-imports: could not read $hub_root" >&2
-    failed=1
-elif [ -n "$hub_findings" ]; then
-    echo "check-core-imports: $hub_root waits on a queue or runs on the main actor (spec §9.7):" >&2
-    printf '%s' "$hub_findings" >&2
+elif ! check_hub "$hub_root" "${hub_files[@]}"; then
     failed=1
 fi
 
 [ "$failed" -eq 0 ] || exit 1
 
-pass "core imports: every KernovaCore import is on its allowlist ($core_modules)"
+pass "core imports: every KernovaCore import is on its allowlist ($core_modules), and $hub_root neither blocks nor reaches the main actor"

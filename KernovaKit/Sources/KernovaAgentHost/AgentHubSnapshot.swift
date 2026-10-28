@@ -42,18 +42,25 @@ public struct PeerSummary: Sendable, Equatable {
     public var console: ConsoleState
     /// The version it reports.
     public var versionLabel: String
-    /// Whether its payload hash is the one the host offers it; true when the host offers it nothing.
-    public var isCurrent: Bool
-    /// The version of the payload the host offers it, when it offers one.
-    public var offeredVersionLabel: String?
+    /// How it stands against the payload the host offers it.
+    public var standing: Standing
     /// Whether the host judges it responsive.
     public var isResponsive: Bool
+
+    /// How a peer stands against the payload the host offers it.
+    public enum Standing: Sendable, Equatable {
+        /// The host offers it nothing, so says nothing of its version.
+        case notOffered
+        /// Its payload hash is the offered payload's.
+        case current
+        /// The host offers it the payload `offeredVersionLabel` names, which it does not run.
+        case outdated(offeredVersionLabel: String)
+    }
 
     /// Creates a summary.
     public init(
         handle: PeerHandle, role: PeerRole, scope: InstallScope, os: OSFamily, sessionID: String, userName: String,
-        console: ConsoleState, versionLabel: String, isCurrent: Bool, offeredVersionLabel: String?,
-        isResponsive: Bool
+        console: ConsoleState, versionLabel: String, standing: Standing, isResponsive: Bool
     ) {
         self.handle = handle
         self.role = role
@@ -63,8 +70,7 @@ public struct PeerSummary: Sendable, Equatable {
         self.userName = userName
         self.console = console
         self.versionLabel = versionLabel
-        self.isCurrent = isCurrent
-        self.offeredVersionLabel = offeredVersionLabel
+        self.standing = standing
         self.isResponsive = isResponsive
     }
 }

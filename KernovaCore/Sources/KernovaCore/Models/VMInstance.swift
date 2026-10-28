@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
@@ -228,13 +229,14 @@ package final class VMInstance {
     }
 
     /// What every surface shows of the guest agent in this VM's session, `nil`
-    /// with no session.
+    /// when the session has no channel to one.
     ///
     /// The single read site for the UI and automation. A macOS guest's comes
     /// from its always-on `VsockControlService`, with `.expectedMissing` and
     /// `.connecting` synthesized here because that service has no access to
     /// persisted host state. A Linux guest's comes from ``agentHub``'s
-    /// snapshot: the Kernova agents, never the SPICE clipboard's own agent.
+    /// snapshot, once this session attached the hub a transport: the Kernova
+    /// agents, never the SPICE clipboard's own agent.
     package var agentPresentation: GuestAgentPresentation? {
         guard let context = sessionContext else { return nil }
         switch configuration.guestOS {
@@ -245,7 +247,7 @@ package final class VMInstance {
                     lastSeenAgentVersion: lastSeenAgentVersion,
                     agentExpectedButMissing: context.agentExpectedButMissing))
         case .linux:
-            return GuestAgentPresentation(hub: agentHubSnapshot)
+            return context.hasAgentTransport ? GuestAgentPresentation(hub: agentHubSnapshot) : nil
         }
     }
 
@@ -264,6 +266,13 @@ package final class VMInstance {
 
     /// The hub's latest snapshot, as it publishes it to the main actor.
     package private(set) var agentHubSnapshot = AgentHubSnapshot.empty
+
+    #if DEBUG
+    /// Lands `snapshot` as the hub's publish does; tests only.
+    func publishAgentHubSnapshotForTesting(_ snapshot: AgentHubSnapshot) {
+        agentHubSnapshot = snapshot
+    }
+    #endif
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
     /// forwards guest logs.
@@ -325,7 +334,7 @@ package final class VMInstance {
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
         hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts,
-        logSink: KernovaLogger.ForwardingSink?
+        logSink: KernovaLogger.ForwardingSink?, agentConnector: (any HostConnectionMaking)? = nil
     ) {
         self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
@@ -335,9 +344,15 @@ package final class VMInstance {
         self.hostClipboardPublisher = HostClipboardPublisher(
             pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)
         let snapshots = AgentHubSnapshotRelay()
+        let payloads = NoBundledPayloads()
+        let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         agentHub = AgentHub(
-            claim: PeerClaim(role: .host, versionLabel: bundleProducts.hostVersion),
-            policy: Self.agentHubPolicy(for: bundle.configuration), payloads: NoBundledPayloads()
+            connector: agentConnector
+                ?? HostConnectionRuntime(
+                    claim: PeerClaim(role: .host, versionLabel: bundleProducts.hostVersion),
+                    scheduler: SystemScheduler(), payloadSource: payloads, logger: hubLogger),
+            policy: Self.agentHubPolicy(for: bundle.configuration), payloads: payloads, logger: hubLogger,
+            publishingOn: .main
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.instance?.agentHubSnapshot = snapshot }
         }
@@ -961,11 +976,19 @@ package final class VMInstance {
         guard self.session === session else { return }
 
         if let transport = session.makeAgentTransport() {
-            agentHub.attach(
-                transport, policy: Self.agentHubPolicy(for: configuration),
-                republisher: GuestLogRepublisher(vmLabel: name))
+            attachAgentTransport(transport)
         }
         Self.logger.log(.info, "Vsock services started for '\(self.name, privacy: .public)'")
+    }
+
+    /// Attaches `transport` to the hub for this session, with the policy and
+    /// log label current now.
+    func attachAgentTransport(_ transport: any GuestStreamTransport) {
+        guard let context = sessionContext else { return }
+        agentHub.attach(
+            transport, policy: Self.agentHubPolicy(for: configuration),
+            republisher: GuestLogRepublisher(vmLabel: name))
+        context.hasAgentTransport = true
     }
 
     // MARK: - Agent Policy
@@ -1221,7 +1244,13 @@ package final class VMInstance {
     /// `dropFilesEnabled` are honored at runtime. A Linux guest's clipboard
     /// sharing never changes here: its SPICE port is a device
     /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
+    /// The agent hub takes every log-forwarding change, running or not: it
+    /// builds a later session's connections from the policy it holds.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
+        if oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled {
+            agentHub.setPolicy(Self.agentHubPolicy(for: newConfig))
+        }
+
         guard hasLiveSession else { return }
 
         // Ahead of the live-VM guard: the coordinator exists exactly while the
@@ -1250,9 +1279,6 @@ package final class VMInstance {
             session.hasVirtioSocketDevice
         else { return }
 
-        if oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled {
-            agentHub.setPolicy(Self.agentHubPolicy(for: newConfig))
-        }
         context.vsock.applyLivePolicy(
             oldConfig: oldConfig, newConfig: newConfig, on: session)
     }

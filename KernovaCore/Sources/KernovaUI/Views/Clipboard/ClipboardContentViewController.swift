@@ -975,7 +975,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .connecting(let expected):
             statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Connecting (was \(expected))"
-        case .current(let version):
+        case .current(let version), .connected(let version):
             statusCircle.contentTintColor = StatusColor.running
             statusLabel.stringValue = "Connected (\(version))"
         case .unresponsive(let version):

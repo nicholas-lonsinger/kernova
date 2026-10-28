@@ -8,21 +8,19 @@ import KernovaWire
 import Virtualization
 
 /// The agent hub's transport on one session's socket device: a listener on
-/// `WireConstants.vsockPort`, beside v1's ports, admitting through a
-/// ``GuestStreamAcceptor``.
+/// `WireConstants.vsockPort`, beside v1's ports, offering every connection to
+/// the hub's ``GuestStreamAcceptor``.
 ///
 /// Binding and unbinding run on the session's queue, as every VZ call does.
 final class VZGuestStreamTransport: GuestStreamTransport {
-    private let acceptor = GuestStreamAcceptor()
     private let session: VMSession
 
     init(session: VMSession) {
         self.session = session
     }
 
-    func start(accept: @escaping @Sendable (any ByteStream) -> Void) {
-        acceptor.start(accept: accept)
-        let (session, acceptor) = (session, acceptor)
+    func start(admitting acceptor: GuestStreamAcceptor) {
+        let session = session
         session.queue.async {
             session.assumeIsolated { $0.bindAgentListener(AgentListenerHost(acceptor: acceptor)) }
         }
@@ -33,10 +31,7 @@ final class VZGuestStreamTransport: GuestStreamTransport {
         session.queue.async {
             session.assumeIsolated { $0.detach(ports: [WireConstants.vsockPort]) }
         }
-        acceptor.stop()
     }
-
-    var liveConnectionCount: Int { acceptor.liveConnectionCount }
 }
 
 /// The `VZVirtioSocketListener` delegate on the agent port, which the session
@@ -68,8 +63,9 @@ final class AgentListenerHost: NSObject, VsockPortListening, VZVirtioSocketListe
         Self.logger.log(.notice, "Agent transport stopped listening on vsock port \(self.port, privacy: .public)")
     }
 
-    // On the VM's queue. The cap is checked before the connection is touched,
-    // so a refused one is never read (spec §9.7.1).
+    // On the VM's queue. The acceptor decides before the connection is
+    // touched, so a refused one is never read (spec §9.7.1), and logs its
+    // refusals.
     func listener(
         _ listener: VZVirtioSocketListener,
         shouldAcceptNewConnection connection: VZVirtioSocketConnection,
@@ -77,7 +73,7 @@ final class AgentListenerHost: NSObject, VsockPortListening, VZVirtioSocketListe
     ) -> Bool {
         let descriptor = connection.fileDescriptor
         let port = port
-        let accepted = acceptor.offer { released in
+        return acceptor.offer { released in
             let duplicate = AcceptedVsockSocket.duplicate(descriptor)
             guard duplicate.fd >= 0 else {
                 Self.logger.log(
@@ -98,12 +94,5 @@ final class AgentListenerHost: NSObject, VsockPortListening, VZVirtioSocketListe
                 return nil
             }
         }
-        if !accepted {
-            Self.logger.log(
-                .notice,
-                "Refused an agent connection on vsock port \(port, privacy: .public) with \(self.acceptor.liveConnectionCount, privacy: .public) live"
-            )
-        }
-        return accepted
     }
 }

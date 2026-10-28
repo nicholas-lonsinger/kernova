@@ -1,4 +1,6 @@
 import AppKit
+import KernovaAgentCore
+import KernovaAgentHost
 import Foundation
 import KernovaCommandModel
 import KernovaTestSupport
@@ -91,12 +93,32 @@ struct SidebarViewControllerTests {
 
     // MARK: - Agent indicator gating
 
-    @Test("Agent indicator hidden for a Linux guest with no Kernova agent connected")
+    @Test("Agent indicator hidden for a Linux guest with no channel to an agent, its SPICE agent aside")
     func agentHiddenForLinux() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().clipboardService = SpiceClipboardService(
             inputPipe: Pipe(), outputPipe: Pipe())
+        #expect(instance.agentPresentation == nil)
+        #expect(visibleAgentStatus(for: instance) == nil)
+    }
+
+    @Test("Agent indicator shows for a Linux guest while a Kernova agent is connected, and hides with none")
+    func agentShownForLinuxWithAnAgent() {
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(instance.agentPresentation?.status == .waiting)
+        #expect(visibleAgentStatus(for: instance) == nil)
+
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [
+                    PeerSummary(
+                        handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+                        userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+                ], features: FeatureStatus.merge([])))
+        #expect(visibleAgentStatus(for: instance) == .current(version: "1.0"))
+
+        instance.publishAgentHubSnapshotForTesting(.empty)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 

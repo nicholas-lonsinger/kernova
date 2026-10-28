@@ -1,4 +1,6 @@
 import AppKit
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaTestSupport
 @testable import KernovaCore
 @testable import KernovaUI
@@ -176,7 +178,46 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(doneCount == 0)
     }
 
+    @Test("A hub presentation shows a line per agent and its Status row in place of the body")
+    func hubRows() {
+        let vc = AgentStatusPopoverContentViewController()
+        vc.loadViewIfNeeded()
+        let snapshot = AgentHubSnapshot(
+            peers: [
+                PeerSummary(
+                    handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+                    userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+            ], features: FeatureStatus.merge([]))
+
+        vc.update(
+            presentation: GuestAgentPresentation(hub: snapshot), isInstallerMounted: false,
+            diskControl: Self.withheld, vmName: "TestVM", hasDismissAction: false)
+
+        #expect(titleLabel(in: vc.view)?.stringValue == "Guest agent connected")
+        #expect(bodyLabel(in: vc.view)?.isHidden == true)
+        #expect(
+            visibleTexts(in: vc.view) == [
+                "Guest agent connected", "Session agent — pbear", "Up to date", "Status", "Connected",
+            ])
+
+        vc.update(
+            presentation: GuestAgentPresentation(macOSAgent: .current(version: "0.9.2")), isInstallerMounted: false,
+            diskControl: Self.withheld, vmName: "TestVM", hasDismissAction: false)
+        #expect(bodyLabel(in: vc.view)?.isHidden == false)
+        #expect(!visibleTexts(in: vc.view).contains("Status"))
+    }
+
     // MARK: - Helpers
+
+    /// The text of every label on screen, in document order: none under a hidden view.
+    @MainActor
+    private func visibleTexts(in view: NSView) -> [String] {
+        guard !view.isHidden else { return [] }
+        var texts: [String] = []
+        if let field = view as? NSTextField, !field.isEditable { texts.append(field.stringValue) }
+        for subview in view.subviews { texts += visibleTexts(in: subview) }
+        return texts
+    }
 
     @MainActor
     private func titleLabel(in view: NSView) -> NSTextField? {

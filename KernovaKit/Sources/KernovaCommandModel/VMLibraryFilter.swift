@@ -39,18 +39,15 @@ public enum VMGuestAgentBucket: String, Codable, CaseIterable, Sendable {
     case neverConnected
 
     /// The bucket for an agent last seen reporting `lastSeenVersion` (`nil`
-    /// when none ever connected), against `bundledVersion` — `nil` when the
-    /// build does not know its own, which counts every reported version as up
-    /// to date.
-    public init(lastSeenVersion: String?, bundledVersion: String?) {
+    /// when none ever connected), against `bundledVersion`; `nil` when an agent
+    /// has connected and the build does not know the version it bundles, so
+    /// nothing says how the agent stands.
+    public init?(lastSeenVersion: String?, bundledVersion: String?) {
         guard let lastSeenVersion else {
             self = .neverConnected
             return
         }
-        guard let bundledVersion else {
-            self = .upToDate
-            return
-        }
+        guard let bundledVersion else { return nil }
         self =
             KernovaVersionComparison.isAtLeast(lastSeenVersion, bundledVersion)
             ? .upToDate : .olderVersion

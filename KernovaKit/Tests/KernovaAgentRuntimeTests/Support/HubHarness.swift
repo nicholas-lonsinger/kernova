@@ -34,6 +34,8 @@ final class RecordingConnector: HostConnectionMaking {
     let runtime: HostConnectionRuntime
     let commands = Recorder<(connection: Int, command: HostCommand)>()
     let events = Recorder<(connection: Int, event: HostEvent)>()
+    /// The policy each connection was built with.
+    let policies = Recorder<(connection: Int, policy: PolicySnapshot)>()
     private let count = Locked(0)
 
     init(receiverPolicy: ReceiverPolicy) {
@@ -51,6 +53,7 @@ final class RecordingConnector: HostConnectionMaking {
             return count
         }
         let events = events
+        policies.record((number, policy))
         let connection: HostConnection = runtime.makeConnection(
             stream, policy: policy, bundles: bundles, deliveringOn: queue
         ) { event in
@@ -81,15 +84,44 @@ final class RecordingConnector: HostConnectionMaking {
     }
 }
 
+/// A transport the test opens connections through: it keeps each acceptor the hub starts it with.
+final class TestTransport: GuestStreamTransport {
+    private let acceptors = Locked<[GuestStreamAcceptor]>([])
+    /// How many times the hub stopped it.
+    let stops = Locked(0)
+
+    func start(admitting acceptor: GuestStreamAcceptor) {
+        acceptors.withLock { $0.append(acceptor) }
+    }
+
+    func stop() {
+        stops.withLock { $0 += 1 }
+    }
+
+    /// The acceptor the hub last started it with.
+    var acceptor: GuestStreamAcceptor? { acceptors.withLock(\.last) }
+
+    /// Opens a connection through the acceptor, answering its peer end, or `nil` when refused.
+    func connect() -> MemoryStream? {
+        let (host, peer) = MemoryStream.pair()
+        let accepted =
+            acceptor?.offer { released in
+                host.onRelease(released)
+                return host
+            } ?? false
+        return accepted ? peer : nil
+    }
+}
+
 /// A hub with its transport attached, joined to its peers by in-memory streams, on the platform clock.
 final class HubHarness: Sendable {
     let connector: RecordingConnector
     let hub: AgentHub
-    let transport = GuestStreamAcceptor()
+    let transport = TestTransport()
     let snapshots = Recorder<AgentHubSnapshot>()
     /// What the republisher logged: level, and each segment.
     let guestLogs = Recorder<(level: KernovaLogLevel, segments: [LogSegment])>()
-    /// The hub's own notices.
+    /// The hub's own notices: its acceptor's.
     let hostLogs = Recorder<String>()
     private let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
 
@@ -99,7 +131,7 @@ final class HubHarness: Sendable {
         receiverPolicy: ReceiverPolicy = .production
     ) {
         connector = RecordingConnector(receiverPolicy: receiverPolicy)
-        let (snapshots, guestLogs, hostLogs) = (snapshots, guestLogs, hostLogs)
+        let (snapshots, hostLogs) = (snapshots, hostLogs)
         hub = AgentHub(
             connector: connector, policy: policy, payloads: FixedPayloads(bundles: bundles),
             logger: KernovaLogger(subsystem: "app.kernova", category: "AgentHub") { _, _, _, segments in
@@ -107,17 +139,21 @@ final class HubHarness: Sendable {
             },
             publishingOn: publishQueue
         ) { snapshots.record($0) }
-        hub.attach(
-            transport, policy: policy,
-            republisher: GuestLogRepublisher(
-                logger: KernovaLogger(subsystem: "app.kernova.guest", category: "VM") { level, _, _, segments in
-                    guestLogs.record((level, segments))
-                }))
+        hub.attach(transport, policy: policy, republisher: republisher)
     }
 
     /// Waits until the transport is accepting.
     func attached() async {
         await flush(hub.queue)
+    }
+
+    /// The republisher the harness attaches with, recording into `guestLogs`.
+    var republisher: GuestLogRepublisher {
+        let guestLogs = guestLogs
+        return GuestLogRepublisher(
+            logger: KernovaLogger(subsystem: "app.kernova.guest", category: "VM") { level, _, _, segments in
+                guestLogs.record((level, segments))
+            })
     }
 
     /// The next snapshot `predicate` accepts, from the first.
@@ -128,12 +164,7 @@ final class HubHarness: Sendable {
 
     /// Opens a connection through the transport, answering its peer end, or `nil` when refused.
     func connect() -> MemoryStream? {
-        let (host, peer) = MemoryStream.pair()
-        let accepted = transport.offer { released in
-            host.onRelease(released)
-            return host
-        }
-        return accepted ? peer : nil
+        transport.connect()
     }
 
     /// A `PeerAgentRuntime` dialing this hub's transport.
@@ -164,8 +195,12 @@ final class HubPeer: Sendable {
     let driver: ConnectionDriver<PeerEndpoint>
     let events = Recorder<PeerEvent>()
 
-    init(_ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState) {
-        guard let stream = harness.connect() else { preconditionFailure("the transport refused a connection") }
+    convenience init(_ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState) {
+        self.init(harness.transport, claim: claim, state: state)
+    }
+
+    init(_ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState) {
+        guard let stream = transport.connect() else { preconditionFailure("the transport refused a connection") }
         self.stream = stream
         let events = events
         let scheduler = SystemScheduler()

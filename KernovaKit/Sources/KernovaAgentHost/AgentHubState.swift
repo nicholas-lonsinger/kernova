@@ -10,8 +10,6 @@ import KernovaWire
 /// One connection that has said Hello.
 struct PeerRecord: Sendable {
     var handle: PeerHandle
-    /// Where the hub's commands for it go.
-    var connection: any HostConnectionHandle
     var claim: PeerClaim
     var state: PeerSessionState
     /// Its latest `featuresChanged`; `nil` until the first, which the host endpoint emits with the Hello
@@ -42,7 +40,8 @@ struct AgentHubState: Sendable {
     var connections: [PeerHandle: any HostConnectionHandle] = [:]
     /// The connections that said Hello and won any conflict.
     var peers: [PeerHandle: PeerRecord] = [:]
-    var transport: (any GuestStreamTransport)?
+    /// The attached transport, and the acceptor admitting its connections.
+    var attachment: (transport: any GuestStreamTransport, acceptor: GuestStreamAcceptor)?
     var republisher: GuestLogRepublisher?
     var bundles: [BundledPayload] = []
     var isFrozen = false
@@ -54,10 +53,9 @@ struct AgentHubState: Sendable {
     /// already hold its identity (spec §4.5): every Hello is resolved as it arrives, so no two peers in
     /// the set share a key.
     mutating func helloReceived(_ handle: PeerHandle, claim: PeerClaim, state: PeerSessionState) -> HelloOutcome? {
-        guard let connection = connections[handle] else { return nil }
+        guard connections[handle] != nil else { return nil }
         nextConnectedOrder += 1
-        let incoming = PeerRecord(
-            handle: handle, connection: connection, claim: claim, state: state, connectedOrder: nextConnectedOrder)
+        let incoming = PeerRecord(handle: handle, claim: claim, state: state, connectedOrder: nextConnectedOrder)
         for (existingHandle, existing) in peers {
             switch PeerConflict.resolve(existing: existing.conflictParty, incoming: incoming.conflictParty) {
             case .noConflict:
@@ -87,12 +85,16 @@ struct AgentHubState: Sendable {
     }
 
     private func summary(_ record: PeerRecord) -> PeerSummary {
-        let offered = BundledPayload.offer(from: bundles, for: record.claim)
+        let standing: PeerSummary.Standing =
+            switch BundledPayload.offer(from: bundles, for: record.claim) {
+            case nil: .notOffered
+            case let offered? where offered.payloadHash == record.claim.payloadHash: .current
+            case let offered?: .outdated(offeredVersionLabel: offered.versionLabel)
+            }
         return PeerSummary(
             handle: record.handle, role: record.claim.role, scope: record.claim.scope,
             os: record.claim.os, sessionID: record.state.sessionID, userName: record.state.userName,
             console: record.state.console, versionLabel: record.claim.versionLabel,
-            isCurrent: offered.map { $0.payloadHash == record.claim.payloadHash } ?? true,
-            offeredVersionLabel: offered?.versionLabel, isResponsive: record.isResponsive)
+            standing: standing, isResponsive: record.isResponsive)
     }
 }

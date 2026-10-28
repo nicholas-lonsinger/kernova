@@ -90,6 +90,7 @@ let package = Package(
             dependencies: [
                 "KernovaCore",
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentHost", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
                 .product(name: "KernovaTestSupport", package: "KernovaKit"),

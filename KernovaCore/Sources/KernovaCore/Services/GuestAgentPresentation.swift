@@ -49,9 +49,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
     package init(hub snapshot: AgentHubSnapshot) {
         status = Self.status(of: snapshot.peers)
         hub = Hub(
-            peers: snapshot.peers.map { peer in
-                PeerLine(title: Self.title(of: peer), state: peer.isCurrent ? "Up to date" : "Out of date")
-            },
+            peers: snapshot.peers.map { peer in PeerLine(title: Self.title(of: peer), state: Self.state(of: peer)) },
             capabilities: [
                 snapshot.peers.isEmpty
                     ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))
@@ -77,14 +75,29 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
     }
 
+    /// How `peer` stands, as only what the host knows: its version alone when
+    /// the host offers it nothing to compare against.
+    private static func state(of peer: PeerSummary) -> String {
+        switch peer.standing {
+        case .current: "Up to date"
+        case .outdated: "Out of date"
+        case .notOffered: peer.versionLabel.isEmpty ? "Connected" : "Version \(peer.versionLabel)"
+        }
+    }
+
     /// The agents' state as one value: an outdated agent first, then every
-    /// agent unresponsive, else the newest one current.
+    /// agent unresponsive, else the newest one — current only when every agent
+    /// is, and connected when the host offers any of them nothing to judge it
+    /// against.
     private static func status(of peers: [PeerSummary]) -> AgentStatus {
         guard let newest = peers.first else { return .waiting }
-        if let outdated = peers.first(where: { !$0.isCurrent }) {
-            return .outdated(installed: outdated.versionLabel, bundled: outdated.offeredVersionLabel ?? "")
+        for peer in peers {
+            if case .outdated(let offered) = peer.standing {
+                return .outdated(installed: peer.versionLabel, bundled: offered)
+            }
         }
         if peers.allSatisfy({ !$0.isResponsive }) { return .unresponsive(version: newest.versionLabel) }
-        return .current(version: newest.versionLabel)
+        return peers.allSatisfy { $0.standing == .current }
+            ? .current(version: newest.versionLabel) : .connected(version: newest.versionLabel)
     }
 }

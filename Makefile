@@ -66,6 +66,7 @@ SWIFT_FORMAT := xcrun swift-format
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh \
+                 Tools/tests/check-core-imports.sh \
                  Tools/tests/checkout-lock.sh \
                  Tools/tests/attest.sh \
                  Tools/tests/arena-label.sh \

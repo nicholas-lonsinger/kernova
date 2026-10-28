@@ -820,13 +820,11 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == nil)
     }
 
-    @Test("A Linux session with no agent connected presents the hub's empty snapshot")
-    func agentPresentationLinuxSessionReadsTheHub() {
+    @Test("A Linux session without a socket device has no agent channel, so no presentation")
+    func agentPresentationLinuxSessionWithoutTransportIsNil() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        #expect(instance.agentHubSnapshot == .empty)
-        #expect(instance.agentPresentation == GuestAgentPresentation(hub: .empty))
-        #expect(instance.agentPresentation?.status == .waiting)
+        #expect(instance.agentPresentation == nil)
     }
 
     @Test("agentStatus is nil on a macOS VM with no session, even one that has seen an agent")
@@ -887,7 +885,9 @@ struct VMInstanceTests {
     func agentPresentationLinuxIgnoresSpice() {
         let instance = VMInstanceFixture.make(guestOS: .linux)
         let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
-        instance.beginSessionContextForTesting().clipboardService = spice
+        let context = instance.beginSessionContextForTesting()
+        context.clipboardService = spice
+        context.hasAgentTransport = true
         #expect(instance.agentPresentation?.hub != nil)
         #expect(instance.agentPresentation?.status == .waiting)
         #expect(instance.clipboardChannelStatus == spice.agentStatus)

@@ -45,8 +45,8 @@ struct HostConfigurationTemplate: Sendable {
     var bundles: [BundledPayload] = []
 }
 
-/// Builds the hub's host connections.
-package protocol HostConnectionMaking: Sendable {
+/// Builds the hub's host connections: `HostConnectionRuntime` in a shipping build.
+public protocol HostConnectionMaking: Sendable {
     /// A connection over `stream`, not yet started, whose events reach `handler` on `queue`.
     func makeConnection(
         _ stream: any ByteStream, policy: PolicySnapshot, bundles: [BundledPayload],
@@ -55,7 +55,7 @@ package protocol HostConnectionMaking: Sendable {
 }
 
 /// One host connection, as the hub drives it.
-package protocol HostConnectionHandle: Sendable {
+public protocol HostConnectionHandle: Sendable {
     /// Starts the connection.
     func start()
     /// Sends `command` to the connection's driver with `async`.
@@ -63,7 +63,9 @@ package protocol HostConnectionHandle: Sendable {
 }
 
 extension HostConnectionRuntime: HostConnectionMaking {
-    package func makeConnection(
+    /// A connection over `stream`, as ``HostConnectionRuntime/makeConnection(_:policy:bundles:deliveringOn:_:)``
+    /// builds it.
+    public func makeConnection(
         _ stream: any ByteStream, policy: PolicySnapshot, bundles: [BundledPayload],
         deliveringOn queue: DispatchQueue, _ handler: @escaping @Sendable (HostEvent) -> Void
     ) -> any HostConnectionHandle {
@@ -108,7 +110,7 @@ public final class AgentHub: Sendable {
     }
 
     /// A hub whose connections `connector` builds.
-    package init(
+    public init(
         connector: any HostConnectionMaking, policy: PolicySnapshot, payloads: any BundledPayloadProvider,
         logger: KernovaLogger, publishingOn publishQueue: DispatchQueue,
         _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
@@ -122,36 +124,31 @@ public final class AgentHub: Sendable {
 
     // MARK: Lifecycle
 
-    /// Starts accepting through `transport` with `policy` current, republishing guest logs through
-    /// `republisher`; a transport attached before is detached first.
+    /// Starts accepting through `transport` with `policy` current, admitting at most
+    /// `GuestStreamAcceptor.connectionLimit` connections at once and republishing guest logs through
+    /// `republisher`; a transport attached before is detached first. Once the hub is closed, does nothing.
     public func attach(
         _ transport: any GuestStreamTransport, policy: PolicySnapshot, republisher: GuestLogRepublisher
     ) {
         setPolicy(policy)
         queue.async { [self] in
-            let (attached, previous) = state.withLock { state -> (Bool, (any GuestStreamTransport)?) in
-                guard !state.isClosed else { return (false, nil) }
-                defer {
-                    state.transport = transport
-                    state.republisher = republisher
-                }
-                return (true, state.transport)
+            let acceptor = GuestStreamAcceptor(logger: logger) { [self] stream in accept(stream) }
+            let attached = state.withLock { state -> Bool in
+                guard !state.isClosed else { return false }
+                state.republisher = republisher
+                return true
             }
-            previous?.stop()
             guard attached else { return }
-            transport.start { [self] stream in accept(stream) }
+            detachTransport()
+            state.withLock { $0.attachment = (transport, acceptor) }
+            transport.start(admitting: acceptor)
         }
     }
 
-    /// Stops the attached transport: it accepts nothing more and shuts down every stream, so each
-    /// connection ends as its transport does.
+    /// Stops the attached transport and shuts down every stream it accepted, so each connection ends as
+    /// its transport does.
     public func detach() {
-        queue.async { [self] in
-            state.withLock { state in
-                defer { state.transport = nil }
-                return state.transport
-            }?.stop()
-        }
+        queue.async { [self] in detachTransport() }
     }
 
     /// Tells every connection the guest is frozen (the VM is live-paused) or running again, so its
@@ -173,17 +170,24 @@ public final class AgentHub: Sendable {
         }
     }
 
-    /// Closes every connection `SHUTTING_DOWN` and stops the transport; the hub accepts nothing more.
+    /// Detaches the transport and refuses every later attach.
     public func close() {
         queue.async { [self] in
-            let transport = state.withLock { state in
-                state.isClosed = true
-                defer { state.transport = nil }
-                return state.transport
-            }
-            transport?.stop()
-            broadcast(.close(.shuttingDown, retryAfter: nil)) { _ in }
+            state.withLock { $0.isClosed = true }
+            detachTransport()
         }
+    }
+
+    private func detachTransport() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let attachment = state.withLock { state in
+            defer { state.attachment = nil }
+            return state.attachment
+        }
+        guard let attachment else { return }
+        // The listener first, so nothing more is offered while the acceptor shuts the live streams.
+        attachment.transport.stop()
+        attachment.acceptor.stop()
     }
 
     // MARK: Connections
@@ -218,12 +222,11 @@ public final class AgentHub: Sendable {
     }
 
     private func register(_ handle: PeerHandle, _ connection: any HostConnectionHandle) {
-        let (frozen, closed) = state.withLock { state in
+        let frozen = state.withLock { state in
             state.connections[handle] = connection
-            return (state.isFrozen, state.isClosed)
+            return state.isFrozen
         }
         if frozen { connection.send(.setPeerFrozen(true)) }
-        if closed { connection.send(.close(.shuttingDown, retryAfter: nil)) }
     }
 
     /// Updates the state with `update` and sends `command` to every connection, in one step on the queue.
@@ -248,14 +251,15 @@ public final class AgentHub: Sendable {
             state.withLock { $0.peers[handle]?.features = table }
         case .liveness(let change):
             state.withLock { $0.peers[handle]?.isResponsive = change == .responsive }
-        case .log(let delivery):
-            republish(delivery, from: handle)
         case .closed:
             state.withLock { $0.closed(handle) }
+        case .log(let delivery):
+            // Records change no peer state, so the snapshot is not rebuilt.
+            return republish(delivery, from: handle)
         case .power, .update, .diagnostic:
             // Nothing asks a peer for power or serves its pulls' progress yet, and the driver logs
             // diagnostics itself.
-            break
+            return
         }
         publishIfChanged()
     }
@@ -271,23 +275,23 @@ public final class AgentHub: Sendable {
         state.withLock { $0.connections[handle] }?.send(.close(code, retryAfter: retryAfter))
     }
 
+    /// Republishes `delivery` behind its peer's source, `session <id>` or `system` (spec §7.4), a drop
+    /// report included, so everything a guest's ring sends stays in the guest namespace under its VM.
     private func republish(_ delivery: LogDelivery, from handle: PeerHandle) {
         let (peer, republisher) = state.withLock { ($0.peers[handle], $0.republisher) }
-        guard let peer else { return }
-        let role = peer.claim.role == .systemPeer ? "system" : "session"
+        guard let peer, let republisher else { return }
+        let source = peer.claim.role == .systemPeer ? "system" : "session \(peer.state.sessionID)"
         switch delivery {
         case .records(let records):
-            guard let republisher else { return }
-            let source = peer.claim.role == .systemPeer ? role : "\(role) \(peer.state.sessionID)"
             for record in records {
                 republisher.republish(
                     KernovaLogLevel(record.level), prefix: "[\(source) \(record.subsystem)/\(record.category)] ",
                     record.segments.map { LogSegment(text: $0.text, isPrivate: $0.isPrivate) })
             }
         case .dropped(let count):
-            logger.log(
-                .notice,
-                "Guest \(role, privacy: .public) dropped \(count) log record(s) while the host was behind")
+            republisher.republish(
+                .notice, prefix: "[\(source)] ",
+                [LogSegment(text: "Dropped \(count) log record(s) while the host was behind", isPrivate: false)])
         }
     }
 

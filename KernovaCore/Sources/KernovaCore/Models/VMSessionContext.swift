@@ -75,6 +75,10 @@ package final class VMSessionContext {
     /// The VM's agent hub, whose transport this session's teardown detaches.
     @ObservationIgnored let agentHub: AgentHub
 
+    /// Whether this session attached the hub a transport: a channel to the
+    /// Kernova agents, which a session without a socket device never has.
+    var hasAgentTransport = false
+
     // MARK: - Guest Agent
 
     /// `true` when this session cold-booted into macOS Recovery, which never
