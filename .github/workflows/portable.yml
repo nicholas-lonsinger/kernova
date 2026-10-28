@@ -60,6 +60,33 @@ jobs:
       - name: Build
         run: swift build --package-path KernovaKit
 
+      # DIAGNOSTIC, to be reverted: the runtime tests alone, with every thread's
+      # backtrace dumped if they are still running after three minutes.
+      - name: Runtime tests with a hang dump
+        shell: bash
+        run: |
+          swift build --package-path KernovaKit --build-tests
+          export SWIFT_BACKTRACE=enable=yes,threads=all,interactive=no,color=no
+          swift test --skip-build --package-path KernovaKit --filter KernovaAgentRuntimeTests > runtime.log 2>&1 &
+          runner=$!
+          for _ in $(seq 1 180); do kill -0 "$runner" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$runner" 2>/dev/null; then
+            echo "::warning::the runtime tests hung; dumping every thread"
+            for proc in /proc/[0-9]*; do
+              if tr '\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -q 'KernovaKitPackageTests'; then
+                kill -QUIT "${proc#/proc/}" 2>/dev/null || true
+              fi
+            done
+            sleep 30
+            for proc in /proc/[0-9]*; do
+              if tr '\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -q 'KernovaKitPackageTests'; then
+                kill -9 "${proc#/proc/}" 2>/dev/null || true
+              fi
+            done
+          fi
+          wait "$runner" || true
+          cat runtime.log
+
       - name: Test
         run: swift test --package-path KernovaKit
 
