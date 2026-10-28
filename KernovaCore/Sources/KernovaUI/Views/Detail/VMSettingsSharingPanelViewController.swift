@@ -51,7 +51,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         var sections = [buildSharedDirectoriesSection()]
         let settings = agentSettings
         if !settings.isEmpty { sections.append(buildGuestAgentSection(settings)) }
-        if !settings.contains(.clipboard) { sections.append(buildClipboardSection()) }
+        if instance.configuration.guestOS.sharesClipboardThroughDevice { sections.append(buildClipboardSection()) }
         // Absent, not disabled, in a process that cannot pass accessories
         // through: there is nothing it could ever list.
         pairingSection = nil
@@ -307,18 +307,18 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// include Clipboard sharing, riding the agent's vsock channel.
     private func buildGuestAgentSection(_ settings: [GuestAgentSetting]) -> NSView {
         let guestOS = instance.configuration.guestOS
-        logForwardingSwitch = makeGroupedFormSwitch(target: self, action: #selector(logForwardingToggled))
-        installReminderSwitch = makeGroupedFormSwitch(target: self, action: #selector(installReminderToggled))
-        clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
-        clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
-        dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
-        // Not lockable — every toggle here takes effect live.
+        // Not lockable — every toggle here takes effect live. Each switch is made where its row is placed,
+        // so the section owns only the controls it shows.
         let rows: [NSView] = settings.map { setting in
             switch setting {
             case .forwardLogs:
+                logForwardingSwitch = makeGroupedFormSwitch(target: self, action: #selector(logForwardingToggled))
                 return makeGroupedFormCardRow(
                     "Forward guest logs", control: logForwardingSwitch, info: Self.logForwardingInfo(for: guestOS))
             case .clipboard:
+                clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
+                clipboardPassthroughSwitch = makeGroupedFormSwitch(
+                    target: self, action: #selector(clipboardPassthroughToggled))
                 // Passthrough rides on sharing — it goes inert when sharing is off —
                 // so it nests as a sub-option rather than an equal sibling toggle.
                 return makeGroupedFormSubOptionGroup(
@@ -331,6 +331,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                         info: Self.passthroughInfoParagraphs))
             case .dropFiles:
+                dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
                 return makeGroupedFormCardRow(
                     "Drag and drop files", control: dropFilesSwitch,
                     info: [
@@ -339,6 +340,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         )
                     ])
             case .installReminder:
+                installReminderSwitch = makeGroupedFormSwitch(target: self, action: #selector(installReminderToggled))
                 let overrideCaption = GroupedFormStateNote(
                     Self.installPromptDisabledCaption,
                     shownWhen: { [weak self] in self?.viewModel.agentInstallPromptDisabled ?? false })

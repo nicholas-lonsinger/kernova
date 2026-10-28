@@ -53,6 +53,35 @@ struct VMSettingsSharingPanelTests {
         #expect(findLabel(containing: "needs the Kernova guest agent", in: vc.view) == nil)
     }
 
+    @Test("The Guest Agent header's and Forward guest logs' info read each guest's own copy")
+    func guestAgentInfoCopy() {
+        let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
+        #expect(
+            infoButton(about: "Guest Agent", in: macVC.view)?.paragraphs == [
+                .body(
+                    "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the clipboard window."
+                )
+            ])
+        #expect(
+            infoButton(about: "Forward guest logs", in: macVC.view)?.paragraphs == [
+                .body(
+                    "Streams `os.Logger` records from the macOS guest agent to this Mac, where they appear in Console.app under `app.kernova.guest`."
+                )
+            ])
+
+        let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(
+            infoButton(about: "Guest Agent", in: linuxVC.view)?.paragraphs == [
+                .body("Log forwarding needs the Kernova guest agent in the guest.")
+            ])
+        #expect(
+            infoButton(about: "Forward guest logs", in: linuxVC.view)?.paragraphs == [
+                .body(
+                    "Streams the Linux guest agent's own log records to this Mac, where they appear in Console.app under `app.kernova.guest`. Other records in the guest's journal are not forwarded."
+                )
+            ])
+    }
+
     @Test("Turning Forward guest logs on for a Linux guest writes the setting")
     func linuxLogForwardingWrites() {
         let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
@@ -126,6 +155,16 @@ struct VMSettingsSharingPanelTests {
         let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
         #expect(containsLabel("Automatic clipboard passthrough", in: linuxVC.view))
         #expect(firstSwitch(action: "clipboardPassthroughToggled", in: linuxVC.view) != nil)
+    }
+
+    @Test("The Clipboard sharing switch on screen shows the setting, in the agent group or its own section")
+    func clipboardSwitchShowsSetting() {
+        for guestOS in [VMGuestOS.macOS, .linux] {
+            let (onVC, _) = makeController(guestOS: guestOS, sharingEnabled: true)
+            #expect(firstSwitch(action: "clipboardToggled", in: onVC.view)?.state == .on, "\(guestOS)")
+            let (offVC, _) = makeController(guestOS: guestOS, sharingEnabled: false)
+            #expect(firstSwitch(action: "clipboardToggled", in: offVC.view)?.state == .off, "\(guestOS)")
+        }
     }
 
     @Test("The passthrough toggle is disabled until sharing is on")

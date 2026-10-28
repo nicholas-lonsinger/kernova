@@ -6,8 +6,7 @@ import KernovaCommandModel
 package enum GuestAgentSetting: Sendable, Equatable {
     /// "Forward guest logs": `agentLogForwardingEnabled`.
     case forwardLogs
-    /// "Clipboard sharing", where it rides the agent's channel
-    /// (``VMGuestOS/sharesClipboardThroughDevice`` false); a guest whose
+    /// "Clipboard sharing", where it rides the agent's channel; a guest whose
     /// clipboard rides a device shows it in a Clipboard section of its own.
     case clipboard
     /// "Drag and drop files": `dropFilesEnabled`.
@@ -78,12 +77,15 @@ extension VMGuestOS {
     }
 
     /// The guest-agent settings this guest's agent offers, in the order the
-    /// Guest Agent section shows them; each setting's configuration key
-    /// applies exactly where it is listed.
+    /// Guest Agent section shows them. The keys of `forwardLogs`, `dropFiles`
+    /// and `installReminder` apply exactly where they are listed;
+    /// `clipboard` is listed exactly where clipboard sharing rides the agent,
+    /// so not where ``sharesClipboardThroughDevice``.
     package var guestAgentSettings: [GuestAgentSetting] {
+        let clipboard: [GuestAgentSetting] = sharesClipboardThroughDevice ? [] : [.clipboard]
         switch self {
-        case .macOS: [.forwardLogs, .clipboard, .dropFiles, .installReminder]
-        case .linux: [.forwardLogs]
+        case .macOS: return [.forwardLogs] + clipboard + [.dropFiles, .installReminder]
+        case .linux: return [.forwardLogs] + clipboard
         }
     }
 
