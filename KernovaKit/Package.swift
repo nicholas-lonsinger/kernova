@@ -101,6 +101,12 @@ var targets: [Target] = [
         name: "KernovaISO9660",
         swiftSettings: sharedSwiftSettings
     ),
+    // The scratch directory of the test targets that cannot reach `KernovaTestSupport`
+    // (Tools/check-test-seams.sh).
+    .target(
+        name: "KernovaPortableTestSupport",
+        swiftSettings: sharedSwiftSettings
+    ),
     // The Linux agent's display version. Tools/build-linux-guest-agent.sh
     // writes the label the C file includes; without it the label reads
     // "development".
@@ -178,7 +184,7 @@ var targets: [Target] = [
     ),
     .testTarget(
         name: "KernovaLinuxAgentTests",
-        dependencies: ["KernovaLinuxAgent", "KernovaAgentCore"],
+        dependencies: ["KernovaLinuxAgent", "KernovaAgentCore", "KernovaPortableTestSupport"],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The
@@ -209,7 +215,9 @@ var targets: [Target] = [
     // (Tools/check-test-seams.sh).
     .testTarget(
         name: "KernovaPortableTests",
-        dependencies: ["KernovaLogging", "KernovaSynchronization", "KernovaDigest", "KernovaISO9660"],
+        dependencies: [
+            "KernovaLogging", "KernovaSynchronization", "KernovaDigest", "KernovaISO9660", "KernovaPortableTestSupport",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
 ]

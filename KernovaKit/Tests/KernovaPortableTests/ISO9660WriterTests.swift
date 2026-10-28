@@ -1,4 +1,5 @@
 import KernovaISO9660
+import KernovaPortableTestSupport
 import Testing
 
 #if os(Linux)
@@ -137,9 +138,8 @@ struct ISO9660WriterTests {
     /// xorriso, the reference reader on Linux CI, lists the names and modes, and extracts the bytes.
     @Test("xorriso lists the names and modes, and osirrox extracts the same bytes and modes")
     func xorrisoAgrees() throws {
-        let scratch = URL(filePath: NSTemporaryDirectory()).appending(path: "iso9660-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let directory = try PortableScratchDirectory(prefix: "iso9660")
+        let scratch = directory.url
         let iso = scratch.appending(path: "agent.iso")
         let entries = Self.entries()
         try Data(try Self.write(entries)).write(to: iso)

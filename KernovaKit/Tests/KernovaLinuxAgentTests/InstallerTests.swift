@@ -2,6 +2,7 @@
 import Foundation
 import Glibc
 import KernovaAgentCore
+import KernovaPortableTestSupport
 import Testing
 
 @testable import KernovaLinuxAgent
@@ -12,20 +13,18 @@ import Testing
 struct InstallerTests {
     /// A scratch staging root and a stand-in payload, removed at the end.
     final class Scratch {
+        let directory: PortableScratchDirectory
         let root: String
         let payload: String
         let payloadBytes: [UInt8] = Array("\u{7F}ELF stand-in payload".utf8) + Array(repeating: 0xA5, count: 70_000)
 
         init() throws {
-            var template = Array((NSTemporaryDirectory() + "/kernova-installer-XXXXXX").utf8CString)
-            guard let made = mkdtemp(&template) else { throw CocoaError(.fileWriteUnknown) }
-            root = String(cString: made) + "/stage"
+            directory = try PortableScratchDirectory(prefix: "kernova-installer")
+            root = directory.path + "/stage"
             try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: false)
-            payload = String(cString: made) + "/payload"
+            payload = directory.path + "/payload"
             try Data(payloadBytes).write(to: URL(filePath: payload))
         }
-
-        deinit { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }
 
         func installer() -> Installer {
             Installer(stagingRoot: root, runsSystemd: false, payloadSource: payload, versionLabel: "9.9 (99)")

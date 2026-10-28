@@ -70,8 +70,9 @@
 # is shared by every test, so what a test leaves there outlives it and piles up
 # run after run. A `TestScratchDirectory` is removed when the case that minted it ends,
 # whatever still holds it, so test code reaches the temporary directory only
-# through that owner. Its file and its own test, `scratch_owners`, are the only
-# places the spellings may appear: `temporaryDirectory`,
+# through that owner — or, in `unscoped_test_roots`, which cannot reach it,
+# through `PortableScratchDirectory`. Their files and the first one's own test,
+# `scratch_owners`, are the only places the spellings may appear: `temporaryDirectory`,
 # `NSTemporaryDirectory`, `itemReplacementDirectory` and `TMPDIR`, each as a
 # whole word.
 #
@@ -99,7 +100,7 @@ test_only_calls='placeForTesting bindSessionForTesting beginSessionContextForTes
 
 # The test files that may name the temporary directory, as the fifth gate
 # reads them: the owner and its own test.
-scratch_owners='KernovaKit/Sources/KernovaTestSupport/TestScratchDirectory.swift KernovaKit/Tests/KernovaKitTests/TestScratchDirectoryTests.swift'
+scratch_owners='KernovaKit/Sources/KernovaTestSupport/TestScratchDirectory.swift KernovaKit/Tests/KernovaKitTests/TestScratchDirectoryTests.swift KernovaKit/Sources/KernovaPortableTestSupport/PortableScratchDirectory.swift'
 
 # The test targets the fourth gate skips, as its header paragraph reads them.
 unscoped_test_roots='^KernovaKit/Tests/(KernovaPortableTests|KernovaWireTests|KernovaAgentCoreTests|KernovaAgentRuntimeTests|KernovaDBusTests|KernovaPlatformLinuxTests|KernovaLinuxAgentTests)/'
