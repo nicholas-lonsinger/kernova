@@ -752,10 +752,7 @@ extension VMCommandCore {
         let write: VMLibrary.SettingsWrite
         do {
             write = try instance.activity.edit(.hotPlugMedia) { permit in
-                library.updateConfiguration(permit) { config in
-                    let pruned = (config.removableMedia ?? []).filter { !$0.isInstaller(of: agents) }
-                    config.removableMedia = pruned.isEmpty ? nil : pruned
-                }
+                library.updateConfiguration(permit) { $0.removeInstallerDisks(of: agents) }
             }
         } catch {
             logger.log(

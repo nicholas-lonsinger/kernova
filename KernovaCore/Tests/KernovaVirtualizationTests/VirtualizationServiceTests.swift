@@ -525,6 +525,30 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
+    @Test("A warm snapshot's configuration lists no installer disk, which the capture took off")
+    func warmSnapshotRecordsNoInstallerDisk() async throws {
+        let store = MockVMBundleMachineFiles()
+        let library = makeWiredLibrary(machineFiles: store)
+        let sessionID = UUID()
+        let path = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL).path(percentEncoded: false)
+        let installer = RemovableMediaItem(path: path, readOnly: true)
+        let instance = library.registerFixture(guestOS: .macOS, phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [installer]
+        }
+        instance.beginSessionContextForTesting()
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: installer.id, path: path, readOnly: true), for: sessionID)
+        let session = MockSnapshotSession(guestState: .running)
+
+        let captured = try await captureWarm(
+            instance, snapshot: VMSnapshotCaptureRequest(name: "With the disk"), session: session)
+
+        let recorded = try #require(store.capturedConfiguration(for: captured.id))
+        #expect(recorded.removableMedia == nil)
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(await session.detachedUSBDeviceIDs == [installer.id])
+    }
+
     @Test("A capture of a live-paused guest hands it back live-paused")
     func warmCaptureRestoresTheLivePausedPhase() async throws {
         let sessionID = UUID()

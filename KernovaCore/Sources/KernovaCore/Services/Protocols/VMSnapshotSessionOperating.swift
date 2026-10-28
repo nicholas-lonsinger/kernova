@@ -15,8 +15,8 @@ package protocol VMSnapshotSessionOperating: Sendable {
     func saveMachineState(to url: URL) async throws
     func restoreMachineState(from url: URL) async throws
     func resume(_ execution: borrowing VMGuestExecution) async throws
-    /// Detaches the USB device carrying `uuid`. A save path calls it for every
-    /// passthrough accessory before writing state — see
-    /// ``VMLiveStateCapture/detachUSBAccessories(_:session:)``.
+    /// Detaches the USB device carrying `uuid`. A save calls it for every
+    /// passthrough accessory and installer disk before writing state — see
+    /// ``VMLiveStateCapture/suspendState(_:session:to:)``.
     func detachUSBDevice(uuid: UUID) async throws
 }

@@ -270,9 +270,7 @@ package final class VirtualizationService {
     ) async throws -> VMOperationEnding<Void> {
         guard context.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         do {
-            try await VMLiveStateCapture.detachUSBAccessories(context, session: session)
-            try await session.pauseIfRunning()
-            try await session.saveMachineState(to: context.bundle.saveFileURL)
+            try await VMLiveStateCapture.suspendState(context, session: session, to: context.bundle.saveFileURL)
         } catch {
             logger.log(
                 .error,
@@ -360,7 +358,10 @@ package final class VirtualizationService {
     ) async throws -> VMOperationEnding<VMSnapshot> {
         guard capture.operation.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         let snapshot = request.record(capturedIn: .live)
-        let configuration = instance.configuration
+        // The capture takes the installer disk off before it writes the state,
+        // so the configuration the snapshot keeps lists none either.
+        var configuration = instance.configuration
+        configuration.removeInstallerDisks(of: instance.bundleProducts.guestAgents)
         let snapshotID = snapshot.id
 
         let captured = await VMLiveStateCapture.captureWarm(

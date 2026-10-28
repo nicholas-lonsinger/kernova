@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
 import Testing
@@ -13,19 +14,29 @@ import Testing
 struct VMLiveStateCaptureTests {
     // MARK: - Snapshot capture
 
+    /// Runs ``VMLiveStateCapture/captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)`` in a
+    /// live capture of a running VM.
+    private func capture(
+        _ session: MockSnapshotSession, wasRunning: Bool, captureDisks: @escaping @MainActor () async -> Void = {}
+    ) async throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        try await instance.activity.launchedCapture(.live) { context in
+            try await VMLiveStateCapture.captureLiveState(
+                context, session: session, wasRunning: wasRunning,
+                saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+            ) {
+                await captureDisks()
+            }
+            return .rest(.asStarted, ())
+        }
+    }
+
     @Test("A capture puts a running guest back to running")
     func captureResumesAGuestItPaused() async throws {
         let session = MockSnapshotSession(guestState: .running)
         var stateWhileCapturing: MockSnapshotSession.GuestState?
 
-        try await withLiveGuestExecution { execution in
-            try await VMLiveStateCapture.captureLiveState(
-                session: session, execution: execution, wasRunning: true,
-                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-            ) {
-                stateWhileCapturing = await session.guestState
-            }
-        }
+        try await capture(session, wasRunning: true) { stateWhileCapturing = await session.guestState }
 
         #expect(stateWhileCapturing == .paused)
         let finalState = await session.guestState
@@ -38,12 +49,7 @@ struct VMLiveStateCaptureTests {
         // here restarts the guest while the VM is reported as paused.
         let session = MockSnapshotSession(guestState: .paused)
 
-        try await withLiveGuestExecution { execution in
-            try await VMLiveStateCapture.captureLiveState(
-                session: session, execution: execution, wasRunning: false,
-                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-            ) {}
-        }
+        try await capture(session, wasRunning: false)
 
         let finalState = await session.guestState
         let calls = await session.calls
@@ -58,12 +64,7 @@ struct VMLiveStateCaptureTests {
         var captured = false
 
         await #expect(throws: VMSnapshotError.self) {
-            try await withLiveGuestExecution { execution in
-                try await VMLiveStateCapture.captureLiveState(
-                    session: session, execution: execution, wasRunning: true,
-                    saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-                ) { captured = true }
-            }
+            try await capture(session, wasRunning: true) { captured = true }
         }
 
         #expect(!captured)
@@ -79,14 +80,15 @@ struct VMLiveStateCaptureTests {
         let instance: VMInstance
         let deviceIDs: [UUID]
 
-        /// Runs the sweep inside a save operation holding the VM, as both save
-        /// paths do, leaving the guest live whatever the sweep did so what it
-        /// still holds can be read.
+        /// Writes the guest's state inside a save operation holding the VM, as a
+        /// suspend does, leaving the guest live whatever the sweep did so what
+        /// it still holds can be read.
         @MainActor
         func sweep(_ session: MockSnapshotSession) async throws {
             try await instance.activity.perform(.saving) { context in
                 do {
-                    try await VMLiveStateCapture.detachUSBAccessories(context, session: session)
+                    try await VMLiveStateCapture.suspendState(
+                        context, session: session, to: URL(filePath: "/var/empty/save.vzvmsave"))
                     return .rest(.asStarted, ())
                 } catch {
                     return .failed(.asStarted, error)
@@ -191,8 +193,9 @@ struct VMLiveStateCaptureTests {
 
         await #expect(throws: VMSessionError.self) {
             try await fixture.instance.activity.launchedCapture(.live) { context in
-                try await VMLiveStateCapture.detachUSBAccessories(
-                    owingReturns: context, session: session)
+                try await VMLiveStateCapture.captureLiveState(
+                    context, session: session, wasRunning: false, saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+                ) {}
                 return .rest(.asStarted, ())
             }
         }
@@ -225,7 +228,105 @@ struct VMLiveStateCaptureTests {
         try await fixture.sweep(session)
 
         let calls = await session.calls
-        #expect(calls.isEmpty)
+        #expect(calls == ["pauseIfRunning", "saveMachineState"])
+    }
+
+    // MARK: - Taking the installer disk off before a save
+
+    /// A running macOS VM in a library whose session holds the installer disk live, beside a medium of the
+    /// user's own that stays.
+    private struct InstallerFixture {
+        let library: VMLibrary
+        let instance: VMInstance
+        let installer: RemovableMediaItem
+        let own: RemovableMediaItem
+    }
+
+    private func instanceHoldingInstallerDisk() throws -> InstallerFixture {
+        let library = makeWiredLibrary()
+        let sessionID = UUID()
+        let path = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL).path(percentEncoded: false)
+        let installer = RemovableMediaItem(path: path, readOnly: true, label: BundledGuestAgents.macOSDiskLabel)
+        let own = RemovableMediaItem(path: "/var/empty/Own.iso", readOnly: true)
+        let instance = library.registerFixture(guestOS: .macOS, phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [installer, own]
+        }
+        instance.beginSessionContextForTesting()
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: installer.id, path: installer.path, readOnly: true), for: sessionID)
+        return InstallerFixture(library: library, instance: instance, installer: installer, own: own)
+    }
+
+    private static let saveFile = URL(filePath: "/var/empty/save.vzvmsave")
+
+    private func suspend(_ fixture: InstallerFixture, _ session: MockSnapshotSession) async throws {
+        try await fixture.instance.activity.perform(.saving) { context in
+            do {
+                try await VMLiveStateCapture.suspendState(context, session: session, to: Self.saveFile)
+                return .rest(.asStarted, ())
+            } catch {
+                return .failed(.asStarted, error)
+            }
+        }
+    }
+
+    @Test("A suspend takes the installer disk off the guest and out of the configuration before it writes")
+    func suspendTakesTheInstallerDiskOffFirst() async throws {
+        let fixture = try instanceHoldingInstallerDisk()
+        let session = MockSnapshotSession(guestState: .running)
+
+        try await suspend(fixture, session)
+
+        let calls = await session.calls
+        #expect(calls == ["detachUSBDevice", "pauseIfRunning", "saveMachineState"])
+        #expect(await session.detachedUSBDeviceIDs == [fixture.installer.id])
+        // What the restore builds from lists no installer disk, and the user's own medium stays.
+        #expect(fixture.instance.configuration.removableMedia == [fixture.own])
+        #expect(fixture.instance.liveRemovableMedia.isEmpty)
+        #expect(!fixture.instance.hasGuestAgentInstallerMounted)
+    }
+
+    @Test("A warm capture takes the installer disk off before it writes, and it stays off once the guest resumes")
+    func captureTakesTheInstallerDiskOffForGood() async throws {
+        let fixture = try instanceHoldingInstallerDisk()
+        let session = MockSnapshotSession(guestState: .running)
+
+        try await fixture.instance.activity.launchedCapture(.live) { context in
+            try await VMLiveStateCapture.captureLiveState(
+                context, session: session, wasRunning: true, saveFileURL: Self.saveFile
+            ) {}
+            return .rest(.asStarted, ())
+        }
+
+        let calls = await session.calls
+        #expect(calls == ["detachUSBDevice", "pauseIfRunning", "saveMachineState", "resumeIfPaused"])
+        #expect(fixture.instance.configuration.removableMedia == [fixture.own])
+        #expect(fixture.instance.liveRemovableMedia.isEmpty)
+    }
+
+    @Test("An installer disk the controller no longer holds does not fail the save")
+    func anAlreadyEjectedInstallerDiskIsNotAFailure() async throws {
+        let fixture = try instanceHoldingInstallerDisk()
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDetachError(VMSessionError.usbDeviceNotFound)
+
+        try await suspend(fixture, session)
+
+        #expect(await session.calls.contains("saveMachineState"))
+        #expect(fixture.instance.configuration.removableMedia == [fixture.own])
+    }
+
+    @Test("Any other failure to take the installer disk off fails the save before it writes a state")
+    func aFailedInstallerDetachStopsTheSave() async throws {
+        let fixture = try instanceHoldingInstallerDisk()
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDetachError(VMSessionError.usbControllerUnavailable)
+
+        await #expect(throws: VMSessionError.self) { try await suspend(fixture, session) }
+
+        #expect(!(await session.calls.contains("saveMachineState")))
+        #expect(fixture.instance.configuration.removableMedia == [fixture.installer, fixture.own])
+        #expect(fixture.instance.liveRemovableMedia.map(\.id) == [fixture.installer.id])
     }
 }
 

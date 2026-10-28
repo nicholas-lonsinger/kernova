@@ -85,6 +85,11 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Recorded calls
 
+    /// The configuration `prepareSnapshot` recorded for `snapshotID`.
+    func capturedConfiguration(for snapshotID: UUID) -> VMConfiguration? {
+        state.withLock { $0.capturedConfigurations[snapshotID] }
+    }
+
     /// The revert calls this store answered, in order.
     var events: [Event] { state.withLock { $0.events } }
     /// Bundle-relative paths passed to `captureDisks`, keyed by snapshot id.

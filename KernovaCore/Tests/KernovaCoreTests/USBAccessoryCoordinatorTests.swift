@@ -461,8 +461,10 @@ struct USBAccessoryCoordinatorTests {
         _ instance: VMInstance, service: MockUSBAccessoryService, gate: GatedStep? = nil
     ) async throws {
         try await instance.activity.launchedCapture(.live) { context in
-            try await VMLiveStateCapture.detachUSBAccessories(
-                owingReturns: context, session: MockSnapshotSession(guestState: .running))
+            try await VMLiveStateCapture.captureLiveState(
+                context, session: MockSnapshotSession(guestState: .running), wasRunning: false,
+                saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+            ) {}
             service.accessories.removeAll()
             try await gate?.pass()
             return .rest(.asStarted, ())

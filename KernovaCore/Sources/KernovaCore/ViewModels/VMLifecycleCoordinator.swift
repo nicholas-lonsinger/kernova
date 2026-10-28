@@ -191,10 +191,10 @@ final class VMLifecycleCoordinator {
     ///
     /// A warm capture takes every passthrough accessory off before it writes
     /// the guest's state, for the reason
-    /// ``VMLiveStateCapture/detachUSBAccessories(_:session:)`` gives. Unlike
+    /// ``VMLiveStateCapture/suspendState(_:session:to:)`` gives. Unlike
     /// a suspend the guest is still running afterwards, so each one is owed
     /// back to it as it goes
-    /// (``VMLiveStateCapture/detachUSBAccessories(owingReturns:session:)``):
+    /// (``VMLiveStateCapture/captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)``):
     /// the capture's detach resets the device, macOS assigns it back after a
     /// delay nothing bounds, and that arrival follows the attach to this VM.
     /// `record` that throws leaves nothing behind: unlisted files are files no

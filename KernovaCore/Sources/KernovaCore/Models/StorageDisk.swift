@@ -223,3 +223,13 @@ package struct ExternalAttachment: Sendable, Equatable {
     /// disk.
     package var isSelectable: Bool { !isShared && !isMissing }
 }
+
+extension VMConfiguration {
+    /// Drops every one of `agents`' installer disks from the removable-media list: what Eject Guest Agent
+    /// Media writes, and what every saved state's configuration holds, since a save takes the disk off first
+    /// (``VMLiveStateCapture``).
+    package mutating func removeInstallerDisks(of agents: BundledGuestAgents) {
+        let kept = (removableMedia ?? []).filter { !$0.isInstaller(of: agents) }
+        removableMedia = kept.isEmpty ? nil : kept
+    }
+}

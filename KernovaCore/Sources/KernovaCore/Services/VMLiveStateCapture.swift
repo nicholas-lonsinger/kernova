@@ -12,9 +12,9 @@ package enum VMLiveStateCapture {
 
     /// The one body every capture from a live VM runs: `prepare` lays down
     /// the destination before the guest is touched, then inside one pause the
-    /// guest's memory is written where `savingStateTo` says — every
-    /// passthrough USB accessory taken off first and owed back — and `copy`
-    /// copies the disks beside it.
+    /// guest's memory is written where `savingStateTo` says — through
+    /// ``captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)`` —
+    /// and `copy` copies the disks beside it.
     ///
     /// Answers the guest put back the way it was found, or — on a failure,
     /// which leaves whatever `prepare` laid down for the caller to discard —
@@ -32,10 +32,8 @@ package enum VMLiveStateCapture {
             } ?? false
         do {
             let prepared = try await prepare()
-            try await detachUSBAccessories(owingReturns: capture, session: session)
             try await captureLiveState(
-                session: session, execution: capture.operation.liveExecution(),
-                wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
+                capture, session: session, wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
             ) {
                 try await copy(prepared)
             }
@@ -45,6 +43,105 @@ package enum VMLiveStateCapture {
             return .failed(.live(guest), error)
         }
         return .rest(.live(wasRunning ? .running : .paused), ())
+    }
+
+    // MARK: Writing a live guest's state
+
+    // No saved state holds host hardware or an installer disk. The two entry
+    // points below are the only way to write a live guest's state: each takes
+    // the passthrough accessories off, then reaches the one call to
+    // `saveMachineState`, which takes the installer disk off first.
+
+    /// Writes the guest's state, as a suspend does, into `url`: every
+    /// passthrough USB accessory and every installer disk taken off first,
+    /// then the guest paused.
+    package static func suspendState(
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
+    ) async throws {
+        try await detachUSBAccessories(context, session: session)
+        try await writeState(context, session: session, to: url)
+    }
+
+    /// Writes the guest's live state into `saveFileURL` as a warm capture
+    /// does, copies the disks beside it, and leaves the guest executing only
+    /// if it was found executing. Each passthrough accessory taken off is owed
+    /// back to the guest, which keeps running; the installer disk is not, and
+    /// stays off.
+    ///
+    /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
+    /// which does not record who paused the guest: an unconditional call
+    /// restarts a guest the user paused before asking for the snapshot, while
+    /// the VM is reported as paused.
+    package static func captureLiveState(
+        _ capture: borrowing VMCaptureContext,
+        session: any VMSnapshotSessionOperating,
+        wasRunning: Bool,
+        saveFileURL: URL,
+        captureDisks: () async throws -> Void
+    ) async throws {
+        // Taken before the guest is touched: a session that ends while the
+        // disks copy still leaves a complete capture, which the resume, a no-op
+        // on a guest no longer paused, must not refuse.
+        let execution = try capture.operation.liveExecution()
+        try await detachUSBAccessories(owingReturns: capture, session: session)
+        try await writeState(capture.operation, session: session, to: saveFileURL)
+        try await captureDisks()
+        if wasRunning {
+            try await session.resumeIfPaused(execution)
+        }
+    }
+
+    /// Takes every installer disk off, pauses the guest, and writes its state
+    /// into `url`: the one call to `saveMachineState`.
+    private static func writeState(
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
+    ) async throws {
+        try await detachInstallerDisks(context, session: session)
+        try await session.pauseIfRunning()
+        try await session.saveMachineState(to: url)
+    }
+
+    /// Takes the guest-agent installer disk off the VM `context` holds, as
+    /// Eject Guest Agent Media does, before its state is written.
+    ///
+    /// The disk is the app's: a later copy of Kernova writes the Linux disk
+    /// anew and replaces the bundle the macOS one lives in, so a saved state
+    /// holding it would resume a guest reading changed bytes through its old
+    /// view of the disk. A saved state restores only into the USB mass storage
+    /// devices it was saved with
+    /// (docs/research/2026-09-28-vz-restore-matches-usb-mass-storage-uuids.md),
+    /// so the disk comes off before the write, and out of the configuration
+    /// the restore builds from.
+    ///
+    /// A disk the controller no longer holds is a success; any other failure
+    /// throws, so the save fails rather than writing a state that holds it.
+    private static func detachInstallerDisks(
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
+    ) async throws {
+        let instance = context.instance
+        let agents = instance.bundleProducts.guestAgents
+        if let sessionID = context.sessionID {
+            for info in instance.liveRemovableMedia where agents.isInstallerDisk(path: info.path) {
+                do {
+                    try await session.detachUSBDevice(uuid: info.id)
+                } catch VMSessionError.usbDeviceNotFound {
+                    logger.log(
+                        .notice,
+                        "The guest agent disk was already off '\(instance.name, privacy: .public)' before the save"
+                    )
+                }
+                instance.forgetAttachedMedia(deviceID: info.id, for: sessionID)
+                logger.log(
+                    .notice,
+                    "Took the guest agent disk off '\(instance.name, privacy: .public)' before writing its state")
+            }
+        }
+        guard instance.hasGuestAgentInstallerMounted else { return }
+        switch context.permit.updateConfiguration({ $0.removeInstallerDisks(of: agents) }) {
+        case .saved: return
+        case .refused(let refusal): throw refusal
+        case .notSaved(let failure): throw failure
+        }
     }
 
     /// Takes every passthrough USB accessory off the VM `context` holds before
@@ -58,9 +155,7 @@ package enum VMLiveStateCapture {
     /// cached view of a drive the Mac or another VM may have written since.
     /// Leaving the device out restored on the one host build measured, and no
     /// vendor documents it. Detaching before the write keeps every saved state
-    /// free of host hardware, so a restore rests on neither. Both save paths
-    /// call this — the warm capture through
-    /// ``detachUSBAccessories(owingReturns:session:)`` — and a new one must too.
+    /// free of host hardware, so a restore rests on neither.
     ///
     /// A device the controller no longer holds is a success — an unplug got
     /// there first, and the post-condition already holds. Anything else throws:
@@ -71,7 +166,7 @@ package enum VMLiveStateCapture {
     /// Each accessory is released as its device leaves, and the one that threw
     /// is kept, so what the guest still holds afterwards is exactly what this
     /// never reached.
-    package static func detachUSBAccessories(
+    private static func detachUSBAccessories(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
     ) async throws {
         for item in context.instance.liveUSBAccessories {
@@ -84,7 +179,7 @@ package enum VMLiveStateCapture {
     /// (``VMCaptureContext/oweReturn(of:)``) just before its own detach —
     /// macOS can assign it back before the detach returns — and forgiven if
     /// that detach throws, so what is owed is exactly what the sweep took off.
-    package static func detachUSBAccessories(
+    private static func detachUSBAccessories(
         owingReturns capture: borrowing VMCaptureContext, session: any VMSnapshotSessionOperating
     ) async throws {
         let instance = capture.operation.instance
@@ -127,31 +222,6 @@ package enum VMLiveStateCapture {
             )
         }
         context.releaseAccessory(deviceID: item.deviceID)
-    }
-
-    /// Writes the guest's live state into `saveFileURL`, copies the disks
-    /// beside it, and leaves the guest executing only if it was found
-    /// executing.
-    ///
-    /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
-    /// which does not record who paused the guest: an unconditional call
-    /// restarts a guest the user paused before asking for the snapshot, while
-    /// the VM is reported as paused.
-    ///
-    /// `execution` is the live session's own (``VMOperationContext/liveExecution()``).
-    package static func captureLiveState(
-        session: any VMSnapshotSessionOperating,
-        execution: borrowing VMGuestExecution,
-        wasRunning: Bool,
-        saveFileURL: URL,
-        captureDisks: () async throws -> Void
-    ) async throws {
-        try await session.pauseIfRunning()
-        try await session.saveMachineState(to: saveFileURL)
-        try await captureDisks()
-        if wasRunning {
-            try await session.resumeIfPaused(execution)
-        }
     }
 
     /// Where a live guest is left after a warm capture failed.
