@@ -111,19 +111,23 @@ int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress) {
     return -1;
 }
 
-#include <grp.h>
+#include <sys/syscall.h>
+
+// The system calls themselves, not the libc wrappers: the kernel keeps
+// credentials per thread, and the wrappers apply a change to every thread in
+// the process (credentials(7), NOTES).
 
 int kernova_assume_ids(uint32_t uid, uint32_t gid) {
     gid_t group = gid;
-    if (setgroups(1, &group) != 0) return -1;
-    if (setresgid((gid_t)-1, gid, (gid_t)-1) != 0) return -1;
-    if (setresuid((uid_t)-1, uid, (uid_t)-1) != 0) return -1;
+    if (syscall(SYS_setgroups, 1, &group) != 0) return -1;
+    if (syscall(SYS_setresgid, (gid_t)-1, (gid_t)gid, (gid_t)-1) != 0) return -1;
+    if (syscall(SYS_setresuid, (uid_t)-1, (uid_t)uid, (uid_t)-1) != 0) return -1;
     return 0;
 }
 
 int kernova_restore_ids(uint32_t uid, uint32_t gid, const uint32_t *groups, size_t count) {
-    if (setresuid((uid_t)-1, uid, (uid_t)-1) != 0) return -1;
-    if (setresgid((gid_t)-1, gid, (gid_t)-1) != 0) return -1;
-    return setgroups(count, (const gid_t *)groups);
+    if (syscall(SYS_setresuid, (uid_t)-1, (uid_t)uid, (uid_t)-1) != 0) return -1;
+    if (syscall(SYS_setresgid, (gid_t)-1, (gid_t)gid, (gid_t)-1) != 0) return -1;
+    return (int)syscall(SYS_setgroups, count, (const gid_t *)groups);
 }
 #endif

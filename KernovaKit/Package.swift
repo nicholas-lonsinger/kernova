@@ -70,8 +70,7 @@ var targets: [Target] = [
     // The C calls the portable targets make without importing an OS module:
     // the CRC32C instructions, the monotonic clock that counts sleep, the
     // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
-    // the effective-id switch, whose `setresuid` glibc declares only under
-    // `_GNU_SOURCE`.
+    // the per-thread effective-id switch, which only the raw system calls make.
     .target(
         name: "CKernovaShims",
         linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]

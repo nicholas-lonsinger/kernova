@@ -22,7 +22,7 @@ import KernovaPlatformLinux
 /// In the system scope the agent's own root belongs to its account, which can change anything under it,
 /// so root never acts on a path there: the installer makes the root itself when it is missing and gives it
 /// to the account, and does every write and removal below it as the account, with the account's
-/// effective uid and gid (`kernova_assume_ids`). A link the account planted then leads nowhere the account
+/// effective uid and gid on the installing thread alone (`kernova_assume_ids`). A link the account planted then leads nowhere the account
 /// could not reach already, and what is written belongs to the account, as `StateDirectory=` would make it.
 /// Above the root, and for the unit and autostart directories, any path that `stat`s as a directory will
 /// do, as `mkdir -p` takes it; below the root a link where a directory belongs is refused.
@@ -160,7 +160,8 @@ struct Installer {
         return Owner(uid: entry.pointee.pw_uid, gid: entry.pointee.pw_gid)
     }
 
-    /// Runs `body` with `owner`'s effective ids, then returns to the invoker's; with no owner, as the invoker.
+    /// Runs `body` on this thread with `owner`'s effective ids, then returns to the invoker's; with no owner,
+    /// as the invoker. `body` is synchronous, so nothing else runs on the thread in between.
     private func asOwner(_ owner: Owner?, _ body: () throws(Failure) -> Void) throws(Failure) {
         guard let owner else { return try body() }
         let uid = geteuid()
