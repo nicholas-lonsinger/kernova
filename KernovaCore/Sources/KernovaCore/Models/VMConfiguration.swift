@@ -261,9 +261,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Device shape
 
     /// The devices the last cold boot gave this VM, which a restore of its
-    /// saved state builds; `nil` when no cold boot has recorded one, and a
-    /// build then applies ``VMDeviceShape/current``.
-    package var deviceShape: VMDeviceShape?
+    /// saved state builds.
+    package var deviceShape: VMDeviceShape
 
     // MARK: - Linux kernel boot
 
@@ -415,6 +414,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
+        deviceShape: VMDeviceShape = .current,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = Defaults.kernelCommandLine,
@@ -460,6 +460,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
+        self.deviceShape = deviceShape
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
@@ -538,7 +539,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
-        self.deviceShape = try c.decodeIfPresent(VMDeviceShape.self, forKey: .deviceShape)
+        self.deviceShape = try c.decode(
+            VMDeviceShape.self, forKey: .deviceShape, repairingTo: .current, in: decoder)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(

@@ -645,7 +645,6 @@ package final class VirtualizationService {
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
         instance.beginSessionContext(context)
-        // Built in the recorded shape the saved state was made in.
         let result = try await buildConfiguration(instance.effectiveConfiguration, context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine

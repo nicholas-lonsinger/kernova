@@ -1337,12 +1337,10 @@ struct ConfigurationBuilderTests {
     }
 
     @Test(
-        "A build gives the recorded shape's socket device, and the current policy's when none is recorded",
-        arguments: [
-            (nil, 1), (VMDeviceShape.current, 1), (VMDeviceShape(virtioSocketDevice: false), 0),
-        ] as [(VMDeviceShape?, Int)]
+        "A build gives exactly the recorded shape's socket device",
+        arguments: [(VMDeviceShape.current, 1), (VMDeviceShape(virtioSocketDevice: false), 0)]
     )
-    func socketDeviceFollowsTheRecordedShape(shape: VMDeviceShape?, socketDevices: Int) throws {
+    func socketDeviceFollowsTheRecordedShape(shape: VMDeviceShape, socketDevices: Int) throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         var config = VMConfiguration.testLinux()
         config.deviceShape = shape

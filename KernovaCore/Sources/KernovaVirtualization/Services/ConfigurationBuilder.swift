@@ -102,7 +102,7 @@ struct ConfigurationBuilder: Sendable {
 
         let clipboardPipes = configureClipboardSharing(vzConfig, config: config)
 
-        if (config.deviceShape ?? .current).virtioSocketDevice {
+        if config.deviceShape.virtioSocketDevice {
             configureVsockDevice(vzConfig)
         }
 

@@ -765,8 +765,8 @@ package final class VMInstance {
     /// device policy, which is recorded in the bundle first so a state saved
     /// from the session restores into the devices it was built with.
     ///
-    /// Throws what kept the record from landing, since a session whose shape
-    /// went unrecorded would save a state no restore could match.
+    /// Throws what kept the record from landing, so no session runs in a
+    /// shape the bundle does not record.
     package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
         if configuration.deviceShape != .current {
             try bringUp.operation.permit.updateConfiguration { $0.deviceShape = .current }.get()

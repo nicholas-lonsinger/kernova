@@ -12,9 +12,11 @@ struct VMConfigurationTests {
 
     /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
     ///
-    /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries.
+    /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries,
+    /// and the recorded `deviceShape` object as `deviceShape`.
     private static func makeBaseJSON(
         name: String = "Base VM",
+        deviceShape: String = #"{"virtioSocketDevice": true}"#,
         extraFields: String = ""
     ) -> String {
         let extra = extraFields.isEmpty ? "" : ",\n            \(extraFields)"
@@ -32,6 +34,7 @@ struct VMConfigurationTests {
                 "displayPPI": 144,
                 "networkEnabled": true,
                 "clipboardSharingEnabled": false,
+                "deviceShape": \(deviceShape),
                 "createdAt": "2025-01-01T00:00:00Z"\(extra)
             }
             """
@@ -1284,25 +1287,25 @@ struct VMConfigurationTests {
 
     // MARK: - Device shape
 
-    @Test("A config.json no cold boot recorded a shape in decodes with none")
-    func absentDeviceShapeDecodesAsUnrecorded() throws {
-        let config = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-        #expect(config.deviceShape == nil)
+    @Test("A new configuration records the current device shape")
+    func newConfigurationRecordsTheCurrentShape() {
+        let config = VMConfiguration(
+            name: "New", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        #expect(config.deviceShape == .current)
     }
 
     @Test("A recorded shape round-trips, and a device field it predates decodes as off")
     func recordedDeviceShapeDecodes() throws {
         let recorded = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self,
-            from: Data(Self.makeBaseJSON(extraFields: #""deviceShape": {"virtioSocketDevice": true}"#).utf8))
+            VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
         #expect(recorded.deviceShape == .current)
         let reencoded = try VMConfiguration.makeJSONDecoder().decode(
             VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(recorded))
         #expect(reencoded.deviceShape == .current)
 
         let predating = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self, from: Data(Self.makeBaseJSON(extraFields: #""deviceShape": {}"#).utf8))
+            VMConfiguration.self, from: Data(Self.makeBaseJSON(deviceShape: "{}").utf8))
         #expect(predating.deviceShape == VMDeviceShape(virtioSocketDevice: false))
     }
 

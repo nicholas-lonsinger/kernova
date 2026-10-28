@@ -536,7 +536,7 @@ struct VirtualizationServiceTests {
     private func makeRevertFixture(
         phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm,
         macAddress: String? = nil, capturedMACAddress: String? = nil,
-        deviceShape: VMDeviceShape? = nil, capturedDeviceShape: VMDeviceShape? = nil,
+        deviceShape: VMDeviceShape = .current, capturedDeviceShape: VMDeviceShape? = nil,
         machineFiles: (any VMBundleMachineFileWorking)? = nil
     ) throws -> RevertFixture {
         let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
@@ -704,12 +704,9 @@ struct VirtualizationServiceTests {
         #expect(onDisk.deviceShape == Self.noSocketDevice)
     }
 
-    @Test(
-        "A cold boot builds and records the current device shape over whatever was recorded",
-        arguments: [nil, VirtualizationServiceTests.noSocketDevice]
-    )
-    func coldBootRecordsTheCurrentShape(recorded: VMDeviceShape?) async throws {
-        let fixture = try makeRevertFixture(deviceShape: recorded)
+    @Test("A cold boot builds and records the current device shape over an older one")
+    func coldBootRecordsTheCurrentShape() async throws {
+        let fixture = try makeRevertFixture(deviceShape: Self.noSocketDevice)
         let instance = fixture.instance
 
         try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
@@ -1454,8 +1451,6 @@ struct VirtualizationServiceTests {
             $0.bootMode = .linuxKernel
             $0.kernelPath = picked.path(percentEncoded: false)
             $0.kernelBookmark = bookmark
-            // Already recorded, so the cold boot owes no write of its own.
-            $0.deviceShape = .current
         }
         defer { withExtendedLifetime(library) {} }
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
@@ -1481,14 +1476,16 @@ struct VirtualizationServiceTests {
     func coldBootRefusesAnUnrecordedShape() async throws {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let instance = library.registerFixture(phase: .stopped)
+        let instance = library.registerFixture(phase: .stopped) {
+            $0.deviceShape = Self.noSocketDevice
+        }
         defer { withExtendedLifetime(library) {} }
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
             try await start(instance)
         }
-        #expect(instance.configuration.deviceShape == nil)
+        #expect(instance.configuration.deviceShape == Self.noSocketDevice)
         #expect(instance.session == nil)
     }
 }

@@ -640,6 +640,52 @@ struct VMLibraryConfigCheckTests {
                 == nil)
     }
 
+    @Test("A VM config with no device shape is listed as repairable, and Use Defaults records the current one")
+    func aVMConfigWithoutADeviceShapeIsRepaired() async throws {
+        let harness = makeHarness()
+        let (url, bytes) = try addBundle("Dev", to: harness.storage) { $0["deviceShape"] = nil }
+        await harness.library.loadVMs()
+
+        let files = try await harness.library.checkConfigFiles()
+        #expect(files.map(\.url) == [url.appendingPathComponent("config.json")])
+        #expect(files.first?.isRepairable == true)
+        #expect(files.first?.summary == "$.deviceShape: no value")
+
+        let failures = await harness.library.useDefaults(in: files)
+
+        #expect(failures.isEmpty)
+        let repaired = try #require(harness.library.instances.first { $0.name == "Dev" })
+        #expect(repaired.configuration.deviceShape == .current)
+        #expect(configBytes(at: url, in: harness.storage) != bytes)
+        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["Dev \u{2014} config.json"])
+    }
+
+    @Test("A snapshot config with no device shape is listed as repairable, and Use Defaults records the current one")
+    func aSnapshotConfigWithoutADeviceShapeIsRepaired() async throws {
+        let harness = makeHarness()
+        let (url, snapshotID) = try addBundleWithSnapshot(to: harness.storage) { $0["deviceShape"] = nil }
+        await harness.library.loadVMs()
+
+        let files = try await harness.library.checkConfigFiles()
+        #expect(files.map(\.location) == [.bundle(url, .snapshotConfiguration(snapshotID))])
+        #expect(files.first?.isRepairable == true)
+
+        let failures = await harness.library.useDefaults(in: files)
+
+        #expect(failures.isEmpty)
+        #expect(try await harness.library.checkConfigFiles().isEmpty)
+        let written = try #require(
+            harness.storage.files.data(
+                atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url))
+        #expect(
+            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: written).deviceShape
+                == .current)
+        #expect(
+            fileSystem.trashedURLs.map(\.lastPathComponent) == [
+                "Dev \u{2014} snapshot \u{201C}Snapshot\u{201D} \u{2014} config.json"
+            ])
+    }
+
     @Test("A snapshot error carries its heading onto the failure it becomes; an untitled error keeps the generic one")
     func snapshotErrorsAreTitled() {
         #expect(
