@@ -53,29 +53,36 @@ struct DeliveryTests {
         first.cancel()
     }
 
-    @Test("cancel() returns only once its handler has finished", arguments: [false, true])
+    @Test("cancel() and close() return only once the handler in flight has finished", arguments: [false, true])
     func cancelWaitsForTheHandler(byClosing: Bool) throws {
-        let setup = try Setup()
-        let events = Inbox<String>()
-        let gate = Inbox<String>()
-        let subscription = try setup.client.subscribe(BusConnectionTests.tickRule) { _ in
-            events.put("started")
-            _ = try? gate.next()
-            events.put("finished")
-        }
-        try setup.tick("one")
-        #expect(try events.next() == "started")
-        let client = setup.client
-        Thread {
-            if byClosing {
-                client.close()
-            } else {
-                subscription.cancel()
+        // A caller that did not wait would return while the handler is still
+        // held at the gate, so "returned" would come first. Several rounds,
+        // each on a fresh bus, so a wait that holds only sometimes shows.
+        for _ in 0..<10 {
+            let setup = try Setup()
+            let events = Inbox<String>()
+            let gate = Inbox<String>()
+            let subscription = try setup.client.subscribe(BusConnectionTests.tickRule) { _ in
+                events.put("started")
+                _ = try? gate.next()
+                events.put("finished")
             }
-            events.put("returned")
-        }.start()
-        gate.put("go")
-        #expect(try [events.next(), events.next()] == ["finished", "returned"])
+            try setup.tick("one")
+            #expect(try events.next() == "started")
+            let client = setup.client
+            Thread {
+                events.put("cancelling")
+                if byClosing {
+                    client.close()
+                } else {
+                    subscription.cancel()
+                }
+                events.put("returned")
+            }.start()
+            #expect(try events.next() == "cancelling")
+            gate.put("go")
+            #expect(try [events.next(), events.next()] == ["finished", "returned"])
+        }
     }
 
     @Test("A handler may cancel its own subscription, and close its own connection, without waiting on itself")
