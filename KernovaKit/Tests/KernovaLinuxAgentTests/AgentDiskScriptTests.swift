@@ -27,7 +27,7 @@ struct AgentDiskScriptTests {
             try Data(agent.utf8).write(to: URL(fileURLWithPath: directory.path + "/kernova-agent"))
             // Every account may run it and record a call.
             chmod(directory.path, 0o777)
-            FileManager.default.createFile(atPath: calls, contents: Data())
+            _ = FileManager.default.createFile(atPath: calls, contents: Data())
             chmod(calls, 0o666)
         }
 
