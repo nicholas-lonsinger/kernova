@@ -545,11 +545,16 @@ struct VMCapabilityCatalogTests {
         // stopped VM has.
         #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: mac))
         #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: linux))
-        for guestOS in VMGuestOS.allCases {
-            let running = makeInstance(
-                in: harness, name: "Running \(guestOS)", phase: .running(sessionID: UUID()), guestOS: guestOS)
-            #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
-        }
+        let runningMac = makeInstance(
+            in: harness, name: "Running macOS", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        runningMac.beginSessionContextForTesting()
+        #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: runningMac))
+        // A Linux session reaches its agents only through the hub's transport.
+        let runningLinux = makeInstance(in: harness, name: "Running Linux", phase: .running(sessionID: UUID()))
+        runningLinux.beginSessionContextForTesting()
+        #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: runningLinux))
+        runningLinux.attachAgentTransport(AgentHubProbe())
+        #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: runningLinux))
     }
 
     @Test("A USB accessory edit exists only in a process that can pass one through")

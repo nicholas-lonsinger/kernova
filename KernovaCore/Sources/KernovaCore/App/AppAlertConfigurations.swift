@@ -326,17 +326,21 @@ package struct AppAlertConfigurations {
     }
 
     /// The Linux disk's alert: the commands that install or remove the agent
-    /// from it, each with a button that copies it.
+    /// from it once the guest's desktop has mounted it, each with a button that
+    /// copies it, and the lines that mount it on a guest with no desktop.
     private func linuxInstallerMountedConfig(
         _ vmName: String, purpose: GuestAgentInstallerPurpose, copy: @escaping (String) -> Void
     ) -> AlertConfiguration {
         let lead = "The Kernova guest agent disk has been attached to \(vmName) as a USB disk."
         let install = LinuxAgentDisk.installCommand
+        let headless =
+            "A guest with no desktop does not mount the disk. There, mount it and install the system service:\n\n"
+            + LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")
         switch purpose {
         case .install:
             return AlertConfiguration(
                 title: "Installer Mounted",
-                message: "\(lead) Inside the VM, open a terminal and run:\n\n\(install)",
+                message: "\(lead) \(LinuxAgentDisk.installCommandPrecondition)\n\n\(install)\n\n\(headless)",
                 buttons: [
                     AlertButton("Copy Command", role: .default) { copy(install) },
                     AlertButton("Done", role: .cancel),
@@ -346,7 +350,7 @@ package struct AppAlertConfigurations {
             return AlertConfiguration(
                 title: "Guest Agent Disk Attached",
                 message:
-                    "\(lead) Inside the VM, open a terminal. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)",
+                    "\(lead) Once the guest's desktop has mounted the disk, open a terminal. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)\n\nAdding --system to either also installs or removes the system service.\n\n\(headless)",
                 buttons: [
                     AlertButton("Copy Install Command", role: .default) { copy(install) },
                     AlertButton("Done", role: .cancel),

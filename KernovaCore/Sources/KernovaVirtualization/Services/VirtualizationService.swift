@@ -589,6 +589,7 @@ package final class VirtualizationService {
         for instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> sending ConfigurationBuilder.BuildResult {
         let config = instance.effectiveConfiguration
+        try await instance.prepareGuestAgentDisk()
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }

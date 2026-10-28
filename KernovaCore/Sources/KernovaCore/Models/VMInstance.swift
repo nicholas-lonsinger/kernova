@@ -248,7 +248,18 @@ package final class VMInstance {
                     lastSeenAgentVersion: lastSeenAgentVersion,
                     agentExpectedButMissing: context.agentExpectedButMissing))
         case .linux:
-            return context.hasAgentTransport ? GuestAgentPresentation(hub: agentHubSnapshot) : nil
+            return reachesGuestAgent ? GuestAgentPresentation(hub: agentHubSnapshot) : nil
+        }
+    }
+
+    /// Whether this VM's session has a channel to a guest agent: a macOS
+    /// session always does, through its control service; a Linux one once the
+    /// session attached the agent hub a transport. Admission, and through
+    /// ``agentPresentation`` every surface, decide the installer disk from it.
+    var reachesGuestAgent: Bool {
+        switch configuration.guestOS {
+        case .macOS: true
+        case .linux: sessionContext?.hasAgentTransport ?? false
         }
     }
 
@@ -410,6 +421,15 @@ package final class VMInstance {
     package func isSoleStorageDisk(_ disk: StorageDisk) -> Bool {
         let disks = effectiveStorageDisks
         return disks.count == 1 && disks[0].id == disk.id
+    }
+
+    /// Makes the installer disk this VM's configuration carries this build's,
+    /// before a bring-up builds from it: the Linux disk is written once per
+    /// process, so an entry left from an earlier copy of Kernova attaches the
+    /// agent this one bundles. A write that fails fails the bring-up.
+    package func prepareGuestAgentDisk() async throws {
+        guard hasGuestAgentInstallerMounted else { return }
+        _ = try await bundleProducts.guestAgents.installerDisk(for: configuration.guestOS)
     }
 
     /// `true` when a guest-agent installer disk is in this VM's
@@ -607,6 +627,7 @@ package final class VMInstance {
             networkEnabled: configuration.networkEnabled,
             savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            reachesGuestAgent: reachesGuestAgent,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbPassthroughGap: peers?.usbPassthroughGap,
             writesOutsideBundle: configuration.writesOutsideBundle,

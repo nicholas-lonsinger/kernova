@@ -368,6 +368,38 @@ struct VirtualizationServiceTests {
         }.value()
     }
 
+    @Test("A start whose configuration carries the Linux agent's disk rewrites a stale image before it builds")
+    func startRewritesAStaleAgentDisk() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 4096).write(to: agent)
+        // This bundle carries none of KernovaCore's resources, so the disk's other files are stand-ins.
+        let files = scratch.url.appending(path: "LinuxAgentDisk")
+        try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+        for name in ["agent-disk.sh", "README.txt", "LICENSES.txt"] {
+            try Data(name.utf8).write(to: files.appending(path: name))
+        }
+        let cache = GuestAgentDiskCache(directory: scratch.url.appending(path: "GuestAgentDisks"), files: files)
+        try FileManager.default.createDirectory(
+            at: cache.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("an earlier build's disk".utf8).write(to: cache.url)
+        let products = AppBundleProducts(
+            bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+            guestAgents: .linux(agent: agent, disk: cache))
+        let instance = VMInstanceFixture.make(phase: .stopped, bundleProducts: products) {
+            $0.removableMedia = [RemovableMediaItem(path: cache.url.path(percentEncoded: false), readOnly: true)]
+        }
+
+        // The bundle holds no real disk image, so the boot fails at the
+        // configuration build, after the disk is made current.
+        await #expect(throws: (any Error).self) { try await start(instance) }
+
+        let image = try Data(contentsOf: cache.url)
+        try #require(image.count > 17 * 2048)
+        #expect(image.count % 2048 == 0)
+        #expect(String(decoding: image[16 * 2048 + 1..<16 * 2048 + 6], as: UTF8.self) == "CD001")
+    }
+
     @Test("A cold boot that fails before the guest executes leaves the marker as it was")
     func failedColdBootLeavesTheMarker() async throws {
         let instance = VMInstanceFixture.make(phase: .stopped)

@@ -74,8 +74,9 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
     /// The hub's agent lines and capability rows; hidden for the macOS agent.
     private let rowsStack = NSStackView()
-    /// ``installCommand`` and its Copy button.
+    /// ``installCommand`` under what it needs, and its Copy button.
     private let commandRow = NSStackView()
+    private let commandCaption = NSTextField(wrappingLabelWithString: LinuxAgentDisk.installCommandPrecondition)
     private let commandLabel = NSTextField(wrappingLabelWithString: "")
     private let copyCommandButton = CopyValueButton(name: "Copy Install Command")
     private let actionButton = NSButton()
@@ -193,10 +194,18 @@ final class AgentStatusPopoverContentViewController: NSViewController {
             ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
         commandLabel.isSelectable = true
         commandLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        commandRow.orientation = .horizontal
-        commandRow.alignment = .firstBaseline
+        commandCaption.font = .preferredFont(forTextStyle: .callout)
+        commandCaption.textColor = .secondaryLabelColor
+        commandCaption.isSelectable = false
+        commandCaption.preferredMaxLayoutWidth = Self.bodyWidth
+        let command = NSStackView(views: [commandLabel, copyCommandButton])
+        command.orientation = .horizontal
+        command.alignment = .firstBaseline
+        command.spacing = Spacing.small
+        commandRow.orientation = .vertical
+        commandRow.alignment = .leading
         commandRow.spacing = Spacing.small
-        commandRow.setViews([commandLabel, copyCommandButton], in: .leading)
+        commandRow.setViews([commandCaption, command], in: .leading)
         commandRow.widthAnchor.constraint(equalToConstant: Self.bodyWidth).isActive = true
     }
 

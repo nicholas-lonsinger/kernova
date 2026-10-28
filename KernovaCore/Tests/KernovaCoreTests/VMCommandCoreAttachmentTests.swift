@@ -1394,12 +1394,15 @@ struct VMCommandCoreAttachmentTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         let agent = scratch.url.appending(path: "kernova-agent")
         try Data(repeating: 0x7F, count: 5000).write(to: agent)
-        let cache = GuestAgentDiskCache(directory: scratch.url.appending(path: "GuestAgentDisks"))
+        let cache = GuestAgentDiskCache(
+            directory: scratch.url.appending(path: "GuestAgentDisks"), files: LinuxAgentDisk.bundledFiles)
         let harness = makeHarness(
             bundleProducts: AppBundleProducts(
                 bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
                 guestAgents: .linux(agent: agent, disk: cache)))
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(AgentHubProbe())
 
         #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .attached(.usb))
         let item = try #require(instance.configuration.removableMedia?.first)

@@ -8,7 +8,8 @@ extension GuestAgentDiskCache {
     /// A cache under `/var/empty`, which no write reaches: a test that makes
     /// the Linux disk passes a scratch one instead.
     package static let testing = GuestAgentDiskCache(
-        directory: URL(filePath: "/var/empty/GuestAgentDisks", directoryHint: .isDirectory))
+        directory: URL(filePath: "/var/empty/GuestAgentDisks", directoryHint: .isDirectory),
+        files: URL(filePath: "/var/empty/LinuxAgentDisk", directoryHint: .isDirectory))
 }
 
 extension BundledGuestAgents {

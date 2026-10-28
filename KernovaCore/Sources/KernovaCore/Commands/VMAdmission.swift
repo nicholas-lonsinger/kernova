@@ -112,6 +112,9 @@ package enum VMAdmission {
         /// (``VMConfiguration/savedStateSurvivesMembershipMove``).
         var savedStateSurvivesMembershipMove = false
         var clipboardSharingEnabled: Bool
+        /// The session has a channel to a guest agent (``VMInstance/reachesGuestAgent``): what an installer
+        /// disk is for.
+        var reachesGuestAgent: Bool
         var hasPendingGuestSetup: Bool
         /// What keeps this process from passing a host USB accessory through
         /// to a guest, or `nil` when nothing does.
@@ -596,7 +599,7 @@ package enum VMAdmission {
         case .clipboard:
             admitted = facts.clipboardSharingEnabled && phase.hasLiveSession
         case .guestAgentDisk:
-            guard phase.hasLiveSession else { return .refuse(.invalidState) }
+            guard phase.hasLiveSession, facts.reachesGuestAgent else { return .refuse(.invalidState) }
             return decideOnTheVM(
                 .edit(.hotPlugMedia), posture: posture, phase: phase, facts: facts)
         }

@@ -2,9 +2,10 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 
-/// How the bundled guest-agent installer image reaches a macOS guest.
+/// How the guest-agent installer image reaches a guest: over USB for every
+/// guest, except a macOS guest below ``usbMassStorageFloor``.
 ///
-/// A guest below ``usbMassStorageFloor`` enumerates a
+/// Such a guest enumerates a
 /// `VZUSBMassStorageDeviceConfiguration` but binds no driver to it, so the disk
 /// never appears in the guest and the USB path delivers nothing.
 package enum GuestAgentDiskDelivery: Equatable, Sendable {
@@ -30,8 +31,9 @@ package enum GuestAgentDiskDelivery: Equatable, Sendable {
     /// A guest whose version neither signal answers for gets ``usb``, the
     /// behavior every VM had before this policy existed.
     package static func mode(for config: VMConfiguration) -> GuestAgentDiskDelivery {
-        // `guestOS`, not `bootMode`: a Linux guest has no Kernova agent at all,
-        // and both enums carry a `.macOS` case.
+        // `guestOS`, not `bootMode`, which also carries a `.macOS` case: the
+        // floor is the macOS kernel's, so every other guest takes the disk over
+        // USB.
         guard config.guestOS == .macOS else { return .usb }
         guard let version = config.effectiveGuestMacOSVersion else { return .usb }
         return version.isAtLeast(usbMassStorageFloor) ? .usb : .virtio

@@ -219,6 +219,7 @@ struct AgentStatusPopoverContentViewControllerTests {
             presentation: GuestAgentPresentation(hub: .empty), isInstallerMounted: true, diskControl: eject,
             vmName: "Ubuntu", hasDismissAction: false)
         #expect(visibleTexts(in: vc.view).contains(command))
+        #expect(visibleTexts(in: vc.view).contains(LinuxAgentDisk.installCommandPrecondition))
         let copy = firstSubview(NSButton.self, in: vc.view) { $0.accessibilityLabel() == "Copy Install Command" }
         #expect(copy?.isHidden == false)
         #expect(vc.installCommand == command)

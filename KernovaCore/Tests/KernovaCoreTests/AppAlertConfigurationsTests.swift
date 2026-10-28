@@ -482,6 +482,9 @@ struct AppAlertConfigurationsTests {
             "Ubuntu", guestOS: .linux, purpose: .install, delivery: .usb
         ) { copied.append($0) }
         #expect(install.message.contains(LinuxAgentDisk.installCommand))
+        // The command works once a desktop has mounted the disk; the lines after it mount it where none has.
+        #expect(install.message.contains("Once the guest's desktop has mounted the disk"))
+        #expect(install.message.contains(LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")))
         #expect(install.buttons.map(\.title) == ["Copy Command", "Done"])
         #expect(install.buttons.first?.role == .default)
         install.buttons.first?.action()
@@ -491,6 +494,7 @@ struct AppAlertConfigurationsTests {
             "Ubuntu", guestOS: .linux, purpose: .manage, delivery: .usb
         ) { copied.append($0) }
         #expect(manage.message.contains(LinuxAgentDisk.uninstallCommand))
+        #expect(manage.message.contains("Adding --system to either also installs or removes the system service."))
         manage.buttons.last?.action()
         #expect(copied.last == LinuxAgentDisk.uninstallCommand)
 

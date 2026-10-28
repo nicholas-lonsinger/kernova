@@ -27,7 +27,7 @@ struct LinuxAgentDiskTests {
     @Test("The disk holds the agent and both scripts executable, and its text files readable")
     func entries() throws {
         let payload = (0..<(3 << 20) + 11).map { UInt8(truncatingIfNeeded: $0) }
-        let entries = try LinuxAgentDisk.entries(agent: try agent(payload))
+        let entries = try LinuxAgentDisk.entries(agent: try agent(payload), files: LinuxAgentDisk.bundledFiles)
         #expect(
             Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.permissions) }) == [
                 "install.sh": 0o755, "uninstall.sh": 0o755, "kernova-agent": 0o755, "README.txt": 0o644,
@@ -45,9 +45,11 @@ struct LinuxAgentDiskTests {
 
     @Test("README.txt gives the commands the popover and the alert give")
     func readmeCommands() throws {
-        let readme = String(decoding: try LinuxAgentDisk.resource("README.txt"), as: UTF8.self)
+        let readme = String(
+            decoding: try LinuxAgentDisk.resource("README.txt", in: LinuxAgentDisk.bundledFiles), as: UTF8.self)
         #expect(readme.contains(LinuxAgentDisk.installCommand))
         #expect(readme.contains(LinuxAgentDisk.uninstallCommand))
+        #expect(readme.contains(LinuxAgentDisk.mountAndInstallCommands.map { "    " + $0 }.joined(separator: "\n")))
         #expect(LinuxAgentDisk.installCommand == #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#)
     }
 
@@ -55,14 +57,16 @@ struct LinuxAgentDiskTests {
     func licences() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../..")
         let license = try String(contentsOf: root.appending(path: "LICENSE"), encoding: .utf8)
-        let licenses = String(decoding: try LinuxAgentDisk.resource("LICENSES.txt"), as: UTF8.self)
+        let licenses = String(
+            decoding: try LinuxAgentDisk.resource("LICENSES.txt", in: LinuxAgentDisk.bundledFiles), as: UTF8.self)
         #expect(licenses.contains(license.trimmingCharacters(in: .whitespacesAndNewlines)))
     }
 
     @Test("The cache writes the image once per process, at one path, labelled KERNOVA_AGENT")
     func writesOnce() async throws {
         let agent = try agent([1, 2, 3])
-        let cache = GuestAgentDiskCache(directory: scratch.url.appending(path: "disks"))
+        let cache = GuestAgentDiskCache(
+            directory: scratch.url.appending(path: "disks"), files: LinuxAgentDisk.bundledFiles)
         let url = try await cache.disk(agent: agent)
         #expect(url == cache.url)
         #expect(url.lastPathComponent == "linux-arm64.iso")
@@ -78,7 +82,8 @@ struct LinuxAgentDiskTests {
     @Test("A write that failed is tried again on the next ask")
     func retriesAFailedWrite() async throws {
         let agent = scratch.url.appending(path: "kernova-agent")
-        let cache = GuestAgentDiskCache(directory: scratch.url.appending(path: "disks"))
+        let cache = GuestAgentDiskCache(
+            directory: scratch.url.appending(path: "disks"), files: LinuxAgentDisk.bundledFiles)
         await #expect(throws: (any Error).self) { try await cache.disk(agent: agent) }
         _ = try self.agent([4, 5, 6])
         #expect(try await cache.disk(agent: agent) == cache.url)
