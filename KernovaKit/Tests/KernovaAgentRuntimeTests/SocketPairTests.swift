@@ -47,18 +47,9 @@ final class SocketPair: Sendable {
         peerSendBuffer: Int32? = nil, offersUpdate: Bool = true, handsOff: Bool = true, stallAfter: Int? = nil,
         sourceShortBy: Int = 0
     ) throws {
-        var descriptors: [Int32] = [0, 0]
-        #if canImport(Darwin)
-        let paired = socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors)
-        #else
-        let paired = socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &descriptors)
-        #endif
-        guard paired == 0 else { throw ByteStreamError.system(errno) }
-        if var size = peerSendBuffer {
-            _ = setsockopt(descriptors[1], SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size))
-        }
-        hostStream = GatedStream(try POSIXByteStream(adopting: descriptors[0]))
-        peerStream = GatedStream(try POSIXByteStream(adopting: descriptors[1]))
+        let descriptors = try RawSocket.pair(sendBuffer: peerSendBuffer)
+        hostStream = GatedStream(try POSIXByteStream(adopting: descriptors.far))
+        peerStream = GatedStream(try POSIXByteStream(adopting: descriptors.stream))
         dialer = OneShotDialer(peerStream)
         power = FakePowerAdapter(handsOff: handsOff)
         let content = FakePayloadSource.payload(Self.payloadSize)

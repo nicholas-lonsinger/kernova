@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaLogging
