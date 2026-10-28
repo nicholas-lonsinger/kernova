@@ -237,13 +237,14 @@ package struct VMOperation: Sendable, Equatable {
     init(
         kind: VMOperationKind, startedFrom: VMLifecyclePhase,
         sessionState: VMOperationSessionState, outcome: VMOutcome,
-        restoresEphemeralBaseline: Bool = false
+        restoresEphemeralBaseline: Bool = false, sessionChanges: VMSessionChanges = .untouched
     ) {
         self.kind = kind
         self.startedFrom = startedFrom
         self.sessionState = sessionState
         self.outcome = outcome
         self.restoresEphemeralBaseline = restoresEphemeralBaseline
+        self.sessionChanges = sessionChanges
     }
 
     /// The session the operation holds, or `nil` while it has none — before a
@@ -295,13 +296,28 @@ enum VMSessionChanges: Sendable, Equatable {
     case filesLanded
     /// A complete suspend slot holds the session, which is kept: settled.
     case parked
+    /// The changes of a session that ended, passed unsettled to the bring-up
+    /// continuing it (``VMActivity/follow(_:continuing:)``) for the session it
+    /// brings up to carry forward.
+    case carried
 
     /// The marker the ending writes, `nil` when it leaves it as it stands.
     var markerAtEnding: Bool? {
         switch self {
         case .guestStarting(let prior, let before): before.markerAtEnding ?? prior
         case .filesLanded, .parked: false
-        case .untouched, .guestExecuted, .filesChanging: nil
+        case .untouched, .guestExecuted, .filesChanging, .carried: nil
+        }
+    }
+
+    /// Whether the operation holds an ended session's carried changes that no
+    /// guest has executed on since — which its ending settles, as that
+    /// session's end would have.
+    var holdsCarriedChanges: Bool {
+        switch self {
+        case .carried: true
+        case .guestStarting(_, let before): before.holdsCarriedChanges
+        case .untouched, .guestExecuted, .filesChanging, .filesLanded, .parked: false
         }
     }
 }

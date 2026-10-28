@@ -52,14 +52,14 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Creation wizard** | macOS from the latest IPSW, a version catalog, a URL, or a local file. Linux from a checksum-verified distribution catalog, an image URL with an optional SHA-256, or a local ISO — EFI/UEFI or direct kernel boot; the VM's settings show a downloaded image's **SHA-256** and what it was verified against. On a macOS 27 host installing macOS 27 or later, an optional **Account** step creates the guest's user — with automatic login and Remote Login if you want them — so the first boot lands past Setup Assistant; the password is never stored. |
 | **Lifecycle** | Start, stop, pause, resume, suspend, and restore — or **discard** a suspended VM's saved state. Force Stop for a hung VM; one-shot Start in Recovery Mode for macOS. |
 | **Snapshots** | Named restore points with notes, taken running, suspended, or stopped — the first two capture memory too. Copy-on-write with the VM's own disks, so a snapshot is near-instant and adds little on disk. Revert is repeatable. |
-| **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot, and turning the mode on can take that snapshot for you. A session cut short when Kernova quits unexpectedly reverts at the next launch. Suspend keeps the session; a sidebar badge marks the throwaway VM. |
+| **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot, and turning the mode on can take that snapshot for you. A session cut short when Kernova quits unexpectedly reverts at the next launch. Suspend and Restart keep the session; a sidebar badge marks the throwaway VM. |
 | **Clone & import** | Clone a VM stopped, suspended, paused, or running — as a **New Machine**, with its own machine identity and MAC address, or as an **Exact Copy** that keeps both, plus its saved state, snapshots, Ephemeral Mode, and display preferences. An Exact Copy never runs on the same network as its source at once, and runs beside it only when you start it anyway. A setting picks the default, and the Virtual Machine menu's second Clone item does the other. A guest running macOS 12 or earlier is cloned as an Exact Copy only. Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
 | **Library** | Filter the sidebar by guest OS, state, network, tag, guest agent, Ephemeral Mode, or snapshots; group it by guest OS, state, network, or tag; sort by name, date created, **last run**, or by hand. Save a filter as a **smart group**, gather VMs into **folders**, and mark them with color **tags**; a smart group or folder starts, suspends, or stops all its VMs at once. **Search** by name with ⌘F. |
 | **Headless** | A menu bar item keeps VMs running after the last window closes and lists each one with its status. Quit save-suspends; sleep pauses, wake resumes. |
 | **Auto-start** | Per-VM boot (or resume) whenever Kernova opens — with Open at Login, the Mac comes up with them running. |
 
 > [!TIP]
-> **Ephemeral mode** + a baseline snapshot gives you a clean test machine every boot — install once, break it freely, shut down, repeat.
+> **Ephemeral mode** + a baseline snapshot gives you a clean test machine after every shutdown — install once, break it freely, shut down, repeat.
 
 <p align="center">
   <picture>

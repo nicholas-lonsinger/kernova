@@ -454,26 +454,38 @@ struct VMCommandCoreMACConflictTests {
         #expect(vm.configuration.networkMembership == .isolated)
     }
 
-    @Test("An Ephemeral Mode VM's restart is routed nowhere: its power-off reverts the move")
-    func ephemeralRestartHasNoRoutes() async throws {
+    @Test("An Ephemeral Mode VM's restart is routed to a network of its own, which the restart keeps")
+    func ephemeralRestartKeepsItsOwnNetwork() async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Baseline", kind: .cold, macAddress: Self.sharedMAC)
         let (vm, _) = try makePair(
-            in: harness, phase: .running(sessionID: UUID()), snapshots: [baseline],
+            in: harness, snapshots: [baseline],
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
+        // A readable baseline, which a session the boot begins could return to.
+        vm.fixtureBundleFiles.setSnapshotConfiguration(vm.configuration, id: baseline.id, at: vm.bundleURL)
+        vm.activity.refreshFromBundle()
+        vm.activity.placeForTesting(.running(sessionID: UUID()))
 
         let refused = try #require(
             try await #require(throws: CommandError.self) {
                 try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
             }.stepRequirement)
-
-        #expect(refused.routes.isEmpty)
         #expect(
-            refused.message
-                == Self.shared
-                + " \u{201C}Clone\u{201D} is ephemeral, so a restart returns it to \u{201C}Baseline\u{201D}, "
-                + "network included, before it starts again. Stop \u{201C}Source\u{201D} first.")
-        #expect(harness.virtualization.stopCallCount == 0)
+            refused.routes == [
+                StepRoute(
+                    title: "Move to a Network of Its Own",
+                    steps: [.setConfiguration(vm: harness.core.summary(vm), assignments: [Self.ownNetwork])],
+                    ending: .refusedVerb)
+            ])
+
+        for step in refused.routes[0].steps { try await harness.core.take(step) }
+        try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+
+        // The restart's power-off returned nothing to the baseline, so the
+        // move is the network the boot came up on.
+        #expect(harness.virtualization.revertCallCount == 0)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(vm.configuration.networkMembership == .isolated)
     }
 
     // MARK: - Revert

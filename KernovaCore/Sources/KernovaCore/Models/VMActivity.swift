@@ -118,10 +118,17 @@ package final class VMActivity {
     /// arrival order.
     @ObservationIgnored private var followUps: [VMFollowUp] = []
 
-    /// The follow-ups owed once a session ends, each with the session it
-    /// waits on, in arrival order — queued by the step that settles the VM
-    /// after that session is gone.
-    @ObservationIgnored private var sessionEndFollowUps: [(session: UUID, followUp: VMFollowUp)] = []
+    /// The boots owed as continuations of live sessions
+    /// (``follow(_:continuing:)``), each with the session it continues, in
+    /// arrival order — admitted by the step that settles the VM after that
+    /// session is gone.
+    @ObservationIgnored private var continuations: [(session: UUID, boot: VMFollowUp)] = []
+
+    /// The outcome of the continuation the step settling the VM is admitting
+    /// — set only while that step calls its ``VMFollowUp/admit``, so the one
+    /// admission it can match is that continuation's own, which takes the
+    /// ended session's changes forward unsettled.
+    @ObservationIgnored private var passingTo: VMOutcome?
 
     /// Queues `followUp` and, on a settled VM, drains it at once.
     ///
@@ -134,19 +141,26 @@ package final class VMActivity {
         drain()
     }
 
-    /// Owes `followUp` to the end of the session `sessionID` names: the step
-    /// that settles the VM once that session is gone queues it — behind the
-    /// baseline revert that session's end may owe — and drains it, before any other
-    /// request can be decided against the VM.
+    /// Owes `boot` to the end of the session `sessionID` names as that
+    /// session's continuation: the step that settles the VM once the session
+    /// is gone admits it before anything else, and the session's changes pass
+    /// to the session the boot brings up unsettled
+    /// (``VMSessionChanges/carried``) — so that end owes an Ephemeral Mode VM
+    /// no baseline revert, however the session ended.
+    ///
+    /// Continuations owed to one end are tried in arrival order until one
+    /// holds the VM, and the rest are queued behind it, where the boot they
+    /// request joins it. An end none of them is admitted at settles as every
+    /// other end does.
     ///
     /// Ends refused as ``VMAdmission/Refusal/invalidState`` at once when that
     /// session is not live.
-    func follow(_ followUp: VMFollowUp, whenSessionEnds sessionID: UUID) {
+    func follow(_ boot: VMFollowUp, continuing sessionID: UUID) {
         guard sessionID == liveSessionID else {
-            followUp.outcome.resolve(.failure(followUpRefusal(.invalidState, for: followUp)))
+            boot.outcome.resolve(.failure(followUpRefusal(.invalidState, for: boot)))
             return
         }
-        sessionEndFollowUps.append((sessionID, followUp))
+        continuations.append((sessionID, boot))
     }
 
     /// Takes `followUp` off the queue, or off what a session end owes,
@@ -158,21 +172,35 @@ package final class VMActivity {
             followUps.remove(at: index).outcome.resolve(.failure(CancellationError()))
             return true
         }
-        if let index = sessionEndFollowUps.firstIndex(where: { $0.followUp.outcome === followUp.outcome }) {
-            sessionEndFollowUps.remove(at: index).followUp.outcome.resolve(.failure(CancellationError()))
+        if let index = continuations.firstIndex(where: { $0.boot.outcome === followUp.outcome }) {
+            continuations.remove(at: index).boot.outcome.resolve(.failure(CancellationError()))
             return true
         }
         return false
     }
 
-    /// Takes off what the sessions that are no longer live owe — for the
-    /// step settling the VM to queue.
-    private func takeSessionEndFollowUps() -> [VMFollowUp] {
+    /// Admits the continuations the sessions that are no longer live owe, in
+    /// arrival order, each as the one admission carrying the ended session's
+    /// changes forward, while the VM rests; once one holds the VM, the rest
+    /// are queued behind it.
+    private func passEndedSessions() {
         let live = liveSessionID
-        let due = sessionEndFollowUps.filter { $0.session != live }
-        guard !due.isEmpty else { return [] }
-        sessionEndFollowUps.removeAll { $0.session != live }
-        return due.map(\.followUp)
+        let due = continuations.filter { $0.session != live }.map(\.boot)
+        guard !due.isEmpty else { return }
+        continuations.removeAll { $0.session != live }
+        for boot in due {
+            guard phase.isAtRest else {
+                enqueue([boot])
+                continue
+            }
+            passingTo = boot.outcome
+            defer { passingTo = nil }
+            do {
+                try boot.admit(boot.outcome)
+            } catch {
+                boot.outcome.resolve(.failure(error))
+            }
+        }
     }
 
     /// Queues `items` behind every follow-up of their rank or better, without
@@ -266,6 +294,13 @@ package final class VMActivity {
             "Dropped a follow-up scoped to \(String(describing: followUp.scope), privacy: .public) on '\(self.name, privacy: .public)': \(String(describing: reason), privacy: .public)"
         )
         return VMAdmissionRefusal(refusal: reason)
+    }
+
+    /// Whether a boot is owed as the live session's continuation
+    /// (``follow(_:continuing:)``) — a Restart waiting on that session's end.
+    var liveSessionContinues: Bool {
+        guard let live = liveSessionID else { return false }
+        return continuations.contains { $0.session == live }
     }
 
     #if DEBUG
@@ -662,9 +697,13 @@ package final class VMActivity {
     ) throws -> VMOperationContext {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
+        // The continuation an ended session is passing to carries that
+        // session's changes into the one it brings up rather than settling
+        // them (``follow(_:continuing:)``).
+        let carries = kind.carriesGuestFilesForward && passingTo === outcome
         let tookLock = try takeRunLock(on: owner)
         do {
-            try runSettlement(restoring: kind.carriesGuestFilesForward)
+            try runSettlement(restoring: kind.carriesGuestFilesForward && !carries)
             // The lock attempt just made is read rather than probed again: a
             // hold that ended since would admit a VM this copy does not hold.
             try requireAdmitted(
@@ -674,7 +713,7 @@ package final class VMActivity {
             if tookLock, phase.isAtRest { setHold(.none) }
             throw error
         }
-        commitOperation(kind, outcome: outcome)
+        commitOperation(kind, outcome: outcome, sessionChanges: carries ? .carried : .untouched)
         return VMOperationContext(activity: self, kind: kind, owner: owner)
     }
 
@@ -986,7 +1025,8 @@ package final class VMActivity {
     /// The admission commit: the operation holds the VM from here until
     /// ``finish(_:outcome:whenEnded:)``, and resolves `outcome` there.
     private func commitOperation(
-        _ kind: VMOperationKind, outcome: VMOutcome, stopping stop: VMOutcome? = nil
+        _ kind: VMOperationKind, outcome: VMOutcome, stopping stop: VMOutcome? = nil,
+        sessionChanges: VMSessionChanges = .untouched
     ) {
         let sessionState: VMOperationSessionState =
             switch phase {
@@ -1002,7 +1042,8 @@ package final class VMActivity {
             .operating(
                 VMOperation(
                     kind: kind, startedFrom: phase, sessionState: sessionState, outcome: outcome,
-                    restoresEphemeralBaseline: restoresEphemeralBaseline)))
+                    restoresEphemeralBaseline: restoresEphemeralBaseline,
+                    sessionChanges: sessionChanges)))
     }
 
     /// The operation holding the VM, which ends here, when `outcome` is its
@@ -1075,25 +1116,30 @@ package final class VMActivity {
         // A session a complete slot parked has ended settled. A revert's own
         // end settles nothing more: what it leaves is settled by its landing,
         // or retried at the next request, so a failing one cannot queue itself
-        // again.
+        // again. Changes carried into a bring-up that ends without the guest
+        // executing on them are settled here, as the end they were carried
+        // from would have settled them.
+        let sessionEnded =
+            (operation.sessionEnd != nil || rest == .poweredOff)
+            && operation.sessionChanges != .parked && !operation.kind.isRevert
         settled(
             poweredOff: operation.sessionEnd == .poweredOff || rest == .poweredOff,
-            sessionEnded: (operation.sessionEnd != nil || rest == .poweredOff)
-                && operation.sessionChanges != .parked && !operation.kind.isRevert)
+            sessionEnded: sessionEnded || operation.sessionChanges.holdsCarriedChanges)
         return result
     }
 
     /// The tail of every step that settles the VM — out of an operation or a
-    /// session, or into removal: settles a session that ended
-    /// (``settlement(restoring:)``) when `sessionEnded`, queues what the
-    /// sessions that ended owe (``follow(_:whenSessionEnds:)``) behind the
-    /// revert that may owe, drains the follow-ups, then lets go of the run lock
-    /// unless the VM no longer rests — so an operation the drain admitted, the
-    /// Ephemeral revert among them, runs under the lock the ending held.
+    /// session, or into removal: admits the continuations the sessions that
+    /// ended owe (``follow(_:continuing:)``), then settles a session that
+    /// ended (``settlement(restoring:)``) when `sessionEnded` — which a VM a
+    /// continuation now holds no longer owes — drains the follow-ups, and lets
+    /// go of the run lock unless the VM no longer rests, so an operation the
+    /// step admitted, the Ephemeral revert among them, runs under the lock the
+    /// ending held.
     private func settled(poweredOff: Bool, sessionEnded: Bool) {
         if poweredOff { owner?.guestDidPowerOff() }
+        passEndedSessions()
         if sessionEnded { enqueue(settlement(restoring: true)) }
-        enqueue(takeSessionEndFollowUps())
         drain()
         releaseRunLockIfAtRest()
     }

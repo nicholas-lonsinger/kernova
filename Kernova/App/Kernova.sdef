@@ -99,7 +99,7 @@
 			<property name="has saved state" code="KvSs" type="boolean" access="r" description="Whether the bundle holds a suspended session.">
 				<cocoa key="hasSavedState"/>
 			</property>
-			<property name="ephemeral" code="KvEp" type="boolean" access="r" description="Whether it returns to a baseline snapshot on every power-off.">
+			<property name="ephemeral" code="KvEp" type="boolean" access="r" description="Whether it returns to a baseline snapshot every time it shuts down. A restart keeps its session.">
 				<cocoa key="ephemeral"/>
 			</property>
 			<property name="snapshot count" code="KvSc" type="integer" access="r" description="How many named restore points the bundle holds.">

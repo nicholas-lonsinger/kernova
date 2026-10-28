@@ -875,10 +875,11 @@ extension VMCommandCore {
     /// The refusal a force stop raises, worded for what it actually discards.
     package static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
-        // of here ends the session, whose settling runs the baseline
-        // revert for a termination exactly as it does for a guest that shut
-        // itself down (``ephemeralBaselineRevert(for:)``).
-        let ephemeralBaseline = instance.ephemeralBaselineSnapshot
+        // of here ends the session, whose settling runs the baseline revert
+        // for a termination exactly as it does for a guest that shut itself
+        // down (``ephemeralBaselineRevert(for:)``) — unless a Restart's boot
+        // continues it.
+        let ephemeralBaseline = instance.baselineAtSessionEnd
         // A VM resting on a slot is not terminated at all — this deletes the
         // suspended session, which an Ephemeral VM performs as the revert, so
         // the button names that outcome rather than the deletion it isn't.
@@ -1051,15 +1052,17 @@ extension VMCommandCore {
     /// Composed rather than a VZ operation of its own, so it inherits every
     /// gate and refusal the two verbs already state.
     ///
-    /// The boot is a start owed to the end of the session being shut down
-    /// (``VMActivity/follow(_:whenSessionEnds:)``): the step that rests the VM
-    /// queues it, behind the baseline revert an Ephemeral VM's session end owes,
-    /// so nothing else can be decided against the VM in between and nothing
-    /// here waits for the VM to come free. Where the VM lands decides what the
-    /// start performs: a power-off normally lands it stopped, but an Ephemeral
-    /// VM's baseline revert can hand it back suspended on the baseline's memory
-    /// image, and that is the state the mode promises — so the start restores
-    /// it rather than booting.
+    /// The boot is the continuation of the session being shut down
+    /// (``VMActivity/follow(_:continuing:)``): the step that rests the VM
+    /// admits it before anything else, so nothing can be decided against the
+    /// VM in between and nothing here waits for the VM to come free. The
+    /// session's changes pass to the session the boot brings up, so a restart
+    /// is one action that keeps the guest as it was, as a reboot inside the
+    /// guest does — an Ephemeral Mode VM's end owes no baseline revert,
+    /// however the session ends once the boot is owed: the shutdown asked for,
+    /// a Force Stop, or the guest stopping on its own. A boot refused there,
+    /// or one that fails before the guest executes, leaves the VM at rest, and
+    /// the session settles as any other end does.
     ///
     /// The power-off is the one wait, and what a `timeout` bounds; without
     /// one it is unbounded, matching what a graceful shutdown means. A guest
@@ -1108,7 +1111,7 @@ extension VMCommandCore {
             // call that asked has moved on.
             try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
-        instance.activity.follow(boot, whenSessionEnds: sessionID)
+        instance.activity.follow(boot, continuing: sessionID)
         do {
             try await shutDown(instance)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)

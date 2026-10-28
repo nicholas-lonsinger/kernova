@@ -647,6 +647,14 @@ package final class VMInstance {
         ephemeralBaselineSnapshot != nil && hasLiveVirtualMachine
     }
 
+    /// The snapshot ending this VM's session returns it to: the Ephemeral
+    /// baseline, except while a Restart's boot continues the live session
+    /// (``VMActivity/follow(_:continuing:)``), whose end then returns it to
+    /// none.
+    var baselineAtSessionEnd: VMSnapshot? {
+        activity.liveSessionContinues ? nil : ephemeralBaselineSnapshot
+    }
+
     /// `true` when this VM is resting on its Ephemeral baseline's own saved
     /// state — the state a revert produces, so reverting again changes nothing.
     ///

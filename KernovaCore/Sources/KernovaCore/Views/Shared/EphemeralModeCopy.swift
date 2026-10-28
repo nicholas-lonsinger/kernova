@@ -34,7 +34,7 @@ package enum EphemeralModeCopy {
             "Returns this virtual machine to its baseline snapshot every time it shuts down. The guest and the machine's settings go back to what the baseline captured, discarding every change made since. Its name and how Kernova handles it, like when it starts and where its display opens, stay as you left them."
         ),
         .body(
-            "Suspending keeps the session — including when Kernova quits and suspends running VMs. The session still reverts at its next shutdown."
+            "Suspending or restarting keeps the session — including when Kernova quits and suspends running VMs. The session still reverts at its next shutdown."
         ),
         .body(
             "Discarding a suspended ephemeral session returns the virtual machine to its baseline. Turning the mode off clears the baseline choice."
