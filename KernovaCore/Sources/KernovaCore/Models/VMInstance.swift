@@ -647,10 +647,10 @@ package final class VMInstance {
         ephemeralBaselineSnapshot != nil && hasLiveVirtualMachine
     }
 
-    /// The snapshot ending this VM's session returns it to: the Ephemeral
-    /// baseline, except while a Restart's boot continues the live session
-    /// (``VMActivity/follow(_:continuing:)``), whose end then returns it to
-    /// none.
+    /// The snapshot every end of this VM's session returns it to: the
+    /// Ephemeral baseline, except while a Restart's boot is owed to the live
+    /// session (``VMActivity/follow(_:continuing:)``) — its shutdown then
+    /// continues into that boot, while a Force Stop still reverts.
     var baselineAtSessionEnd: VMSnapshot? {
         activity.liveSessionContinues ? nil : ephemeralBaselineSnapshot
     }

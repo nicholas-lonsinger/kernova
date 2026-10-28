@@ -118,17 +118,15 @@ package final class VMActivity {
     /// arrival order.
     @ObservationIgnored private var followUps: [VMFollowUp] = []
 
-    /// The boots owed as continuations of live sessions
-    /// (``follow(_:continuing:)``), each with the session it continues, in
-    /// arrival order — admitted by the step that settles the VM after that
-    /// session is gone.
+    /// The boots owed as continuations of sessions (``follow(_:continuing:)``),
+    /// each with the session it continues, in arrival order — admitted by the
+    /// step that settles the VM after that session is gone, which drops them
+    /// all.
+    ///
+    /// An admission resolving one of these outcomes for a session that has
+    /// ended is that continuation's own, and the only one that carries the
+    /// session's changes forward (``continuesEndedSession(_:)``).
     @ObservationIgnored private var continuations: [(session: UUID, boot: VMFollowUp)] = []
-
-    /// The outcome of the continuation the step settling the VM is admitting
-    /// — set only while that step calls its ``VMFollowUp/admit``, so the one
-    /// admission it can match is that continuation's own, which takes the
-    /// ended session's changes forward unsettled.
-    @ObservationIgnored private var passingTo: VMOutcome?
 
     /// Queues `followUp` and, on a settled VM, drains it at once.
     ///
@@ -146,7 +144,8 @@ package final class VMActivity {
     /// is gone admits it before anything else, and the session's changes pass
     /// to the session the boot brings up unsettled
     /// (``VMSessionChanges/carried``) — so that end owes an Ephemeral Mode VM
-    /// no baseline revert, however the session ended.
+    /// no baseline revert, however the session ends. A Force Stop admitted on
+    /// the session first withdraws it (``forceStop(_:)``).
     ///
     /// Continuations owed to one end are tried in arrival order until one
     /// holds the VM, and the rest are queued behind it, where the boot they
@@ -179,6 +178,19 @@ package final class VMActivity {
         return false
     }
 
+    /// Withdraws every continuation owed to the session `sessionID` names,
+    /// ending each with ``VMContinuationForceStopped``.
+    private func withdrawContinuations(of sessionID: UUID) {
+        let withdrawn = continuations.filter { $0.session == sessionID }.map(\.boot)
+        guard !withdrawn.isEmpty else { return }
+        continuations.removeAll { $0.session == sessionID }
+        for boot in withdrawn { boot.outcome.resolve(.failure(VMContinuationForceStopped())) }
+        logger.log(
+            .notice,
+            "A Force Stop of '\(self.name, privacy: .public)' cancelled the restart waiting on its session"
+        )
+    }
+
     /// Admits the continuations the sessions that are no longer live owe, in
     /// arrival order, each as the one admission carrying the ended session's
     /// changes forward, while the VM rests; once one holds the VM, the rest
@@ -186,21 +198,26 @@ package final class VMActivity {
     private func passEndedSessions() {
         let live = liveSessionID
         let due = continuations.filter { $0.session != live }.map(\.boot)
-        guard !due.isEmpty else { return }
-        continuations.removeAll { $0.session != live }
         for boot in due {
-            guard phase.isAtRest else {
+            if phase.isAtRest {
+                do {
+                    try boot.admit(boot.outcome)
+                } catch {
+                    boot.outcome.resolve(.failure(error))
+                }
+            } else {
                 enqueue([boot])
-                continue
             }
-            passingTo = boot.outcome
-            defer { passingTo = nil }
-            do {
-                try boot.admit(boot.outcome)
-            } catch {
-                boot.outcome.resolve(.failure(error))
-            }
+            continuations.removeAll { $0.boot.outcome === boot.outcome }
         }
+    }
+
+    /// Whether `outcome` is the one a continuation owed to a session that has
+    /// ended resolves — so the admission resolving it carries that session's
+    /// changes forward rather than settling them.
+    private func continuesEndedSession(_ outcome: VMOutcome) -> Bool {
+        let live = liveSessionID
+        return continuations.contains { $0.session != live && $0.boot.outcome === outcome }
     }
 
     /// Queues `items` behind every follow-up of their rank or better, without
@@ -697,10 +714,10 @@ package final class VMActivity {
     ) throws -> VMOperationContext {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
-        // The continuation an ended session is passing to carries that
-        // session's changes into the one it brings up rather than settling
-        // them (``follow(_:continuing:)``).
-        let carries = kind.carriesGuestFilesForward && passingTo === outcome
+        // A continuation of a session that ended carries that session's
+        // changes into the one it brings up rather than settling them
+        // (``follow(_:continuing:)``).
+        let carries = kind.carriesGuestFilesForward && continuesEndedSession(outcome)
         let tookLock = try takeRunLock(on: owner)
         do {
             try runSettlement(restoring: kind.carriesGuestFilesForward && !carries)
@@ -714,6 +731,7 @@ package final class VMActivity {
             throw error
         }
         commitOperation(kind, outcome: outcome, sessionChanges: carries ? .carried : .untouched)
+        if carries { continuations.removeAll { $0.boot.outcome === outcome } }
         return VMOperationContext(activity: self, kind: kind, owner: owner)
     }
 
@@ -1194,6 +1212,10 @@ package final class VMActivity {
     /// delivers `terminate`'s completion as the session's end, to whichever
     /// phase holds the session by then. A second Force Stop joins the first.
     ///
+    /// The admission withdraws the continuations owed to the session
+    /// (``follow(_:continuing:)``), so the session's end settles as an end no
+    /// Restart is owed does.
+    ///
     /// `terminate` is what stops the `VZVirtualMachine`. Returns once the
     /// session has ended; an operation that tolerated the stop keeps holding
     /// the VM until its body ends.
@@ -1226,6 +1248,7 @@ package final class VMActivity {
             case .stopped, .initialBoot, .failed, .suspended, .removed:
                 throw VMAdmissionRefusal(refusal: .invalidState)
             }
+            withdrawContinuations(of: sessionID)
         }
         do {
             try await terminate()
@@ -2021,3 +2044,7 @@ extension VMOperationKind {
         }
     }
 }
+
+/// What ends a boot owed as a session's continuation when a Force Stop is
+/// admitted on that session (``VMActivity/forceStop(_:)``).
+struct VMContinuationForceStopped: Error {}

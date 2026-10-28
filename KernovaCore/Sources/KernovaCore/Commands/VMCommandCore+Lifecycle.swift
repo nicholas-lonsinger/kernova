@@ -875,11 +875,11 @@ extension VMCommandCore {
     /// The refusal a force stop raises, worded for what it actually discards.
     package static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
-        // of here ends the session, whose settling runs the baseline revert
-        // for a termination exactly as it does for a guest that shut itself
-        // down (``ephemeralBaselineRevert(for:)``) — unless a Restart's boot
-        // continues it.
-        let ephemeralBaseline = instance.baselineAtSessionEnd
+        // of here ends the session, whose settling runs the baseline
+        // revert for a termination exactly as it does for a guest that shut
+        // itself down (``ephemeralBaselineRevert(for:)``) — a Restart waiting
+        // on it is cancelled first.
+        let ephemeralBaseline = instance.ephemeralBaselineSnapshot
         // A VM resting on a slot is not terminated at all — this deletes the
         // suspended session, which an Ephemeral VM performs as the revert, so
         // the button names that outcome rather than the deletion it isn't.
@@ -1060,9 +1060,13 @@ extension VMCommandCore {
     /// is one action that keeps the guest as it was, as a reboot inside the
     /// guest does — an Ephemeral Mode VM's end owes no baseline revert,
     /// however the session ends once the boot is owed: the shutdown asked for,
-    /// a Force Stop, or the guest stopping on its own. A boot refused there,
-    /// or one that fails before the guest executes, leaves the VM at rest, and
+    /// or the guest stopping or failing on its own. A boot refused there, or
+    /// one that fails before the guest executes, leaves the VM at rest, and
     /// the session settles as any other end does.
+    ///
+    /// A Force Stop of the session cancels the restart: it withdraws the boot
+    /// (``VMActivity/forceStop(_:)``), the session's end settles as a stop's
+    /// does, and this refuses, saying so.
     ///
     /// The power-off is the one wait, and what a `timeout` bounds; without
     /// one it is unbounded, matching what a graceful shutdown means. A guest
@@ -1125,6 +1129,12 @@ extension VMCommandCore {
         }
         do {
             try await boot.outcome.value()
+        } catch is VMContinuationForceStopped {
+            throw CommandError.operationFailed(
+                verb: .restart,
+                message:
+                    "\u{201C}\(instance.name)\u{201D} was force stopped while it restarted, which cancelled the restart."
+            )
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }

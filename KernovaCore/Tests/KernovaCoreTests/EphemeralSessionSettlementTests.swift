@@ -292,7 +292,7 @@ struct EphemeralSessionSettlementTests {
 
     /// How the session a Restart waits on ends.
     enum RestartedSessionEnd: CaseIterable, Sendable {
-        case shutdownAsked, guestShutsItselfDown, guestFails, forceStop
+        case shutdownAsked, guestShutsItselfDown, guestFails
     }
 
     @Test(
@@ -316,8 +316,6 @@ struct EphemeralSessionSettlementTests {
             instance.activity.deliverSessionEvent(.guestDidStop, from: session)
         case .guestFails:
             instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
-        case .forceStop:
-            try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
         }
         try await restart.value
 
@@ -330,23 +328,56 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.hostState.hasUnsettledSession)
     }
 
-    @Test("A Force Stop asked while a Restart waits names no return to the baseline")
-    func forceStopDuringARestartNamesNoRevert() async throws {
+    @Test("A Force Stop while a Restart waits cancels it: nothing boots, and the VM reverts")
+    func forceStopCancelsAWaitingRestart() async throws {
         let virtualization = MockVirtualizationService()
         virtualization.guestIgnoresShutdownRequest = true
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
         let session = UUID()
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
-        #expect(VMCommandCore.forceStopPrompt(instance).message.contains(baseline.name))
 
         let restart = Task { @MainActor in
             try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
-        #expect(!VMCommandCore.forceStopPrompt(instance).message.contains(baseline.name))
+        // The prompt the Force Stop asks with names the baseline it returns to.
+        #expect(VMCommandCore.forceStopPrompt(instance).message.contains(baseline.name))
+        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+
+        let error = try await #require(throws: CommandError.self) { try await restart.value }
+        guard case .operationFailed(.restart, _, let message, _) = error else {
+            Issue.record("Expected the restart to report its cancellation, got \(error)")
+            return
+        }
+        #expect(message.contains("force stopped"))
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("Only a continuation's own admission carries the ended session: another start in its step reverts first")
+    func onlyTheContinuationCarriesTheSession() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+        // Admitted in the step the continuation is, but resolving an outcome
+        // of its own rather than the one owed to the session's end.
+        let other = VMOutcome()
+        let continuation = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
+            _ in try harness.core.startNow(instance, policy: .command(.unavailable), resolving: other)
+        }
+        instance.activity.follow(continuation, continuing: session)
 
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        try await restart.value
+        try await other.value()
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        // The baseline's saved state the revert installed, not the session's disks.
+        #expect(virtualization.lastStartRoute == .restoredSavedState)
+        #expect(instance.status == .running)
     }
 
     @Test("A Stop after a Restart reverts the Ephemeral VM to its baseline")
