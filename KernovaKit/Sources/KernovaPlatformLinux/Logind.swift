@@ -33,8 +33,13 @@ public struct Logind: Sendable {
     }
 
     /// `PowerOff(false)`: powers the machine off, with no interactive polkit
-    /// authorization. logind refuses with an ERROR while an inhibitor blocks
-    /// it.
+    /// authorization.
+    ///
+    /// Since systemd 257 a `block` inhibitor on `shutdown` refuses every
+    /// caller with `org.freedesktop.login1.BlockedByInhibitorLock`; earlier
+    /// releases skip it for the lock's own user and for privileged callers
+    /// (org.freedesktop.login1(5)). A caller that must honour inhibitors checks
+    /// `shutdownBlockers(forCallerUID:)` first.
     public func powerOff() throws(LogindError) {
         _ = try call(Self.managerPath, Self.managerInterface, "PowerOff", [.boolean(false)], expecting: .empty)
     }
@@ -100,20 +105,23 @@ public struct Logind: Sendable {
             session, Self.propertiesInterface, "GetAll", [.string(Self.sessionInterface)], expecting: "a{sv}")
         let properties = try Self.read { () throws(DBusValueMismatch) in try body[0].stringKeyedEntries() }
         let change = try LogindSessionChange(changed: properties, invalidated: [])
-        guard let id = properties["Id"] else { throw .missingProperty("Id") }
         guard let active = change.active else { throw .missingProperty(LogindSessionProperty.active.name) }
-        guard let state = change.state else { throw .missingProperty(LogindSessionProperty.state.name) }
         guard let sessionClass = change.sessionClass else {
             throw .missingProperty(LogindSessionProperty.sessionClass.name)
         }
+        func string(_ name: String) throws(LogindError) -> String {
+            guard let value = properties[name] else { throw .missingProperty(name) }
+            return try Self.read { () throws(DBusValueMismatch) in try value.variantContent().string() }
+        }
         return LogindSessionProperties(
-            id: try Self.read { () throws(DBusValueMismatch) in try id.variantContent().string() },
-            active: active, state: state, sessionClass: sessionClass)
+            id: try string("Id"), active: active, state: LogindSessionState(rawValue: try string("State")),
+            sessionClass: sessionClass)
     }
 
     /// Calls `onChange` for each `PropertiesChanged` logind emits for the
-    /// session that touches `Active`, `State` or `Class`, until the
-    /// subscription is cancelled.
+    /// session that touches `Active` or `Class`, until the subscription is
+    /// cancelled. logind emits none for `State`, so a session's end shows as
+    /// its user's `Display` or its seat's `ActiveSession` moving.
     ///
     /// Subscribe before reading `sessionProperties(_:)`, so no change falls
     /// between the read and the first notification. `onChange` runs on the
@@ -331,12 +339,11 @@ public struct LogindSessionClass: RawRepresentable, Sendable, Hashable {
     public static let lockScreen = LogindSessionClass(rawValue: "lock-screen")
 }
 
-/// The session properties the agent reads.
+/// The session properties a `LogindSessionChange` carries: those logind
+/// emits `PropertiesChanged` for that the agent reads.
 public enum LogindSessionProperty: Sendable, Hashable, CaseIterable {
     /// `Active`.
     case active
-    /// `State`.
-    case state
     /// `Class`.
     case sessionClass
 
@@ -344,7 +351,6 @@ public enum LogindSessionProperty: Sendable, Hashable, CaseIterable {
     public var name: String {
         switch self {
         case .active: "Active"
-        case .state: "State"
         case .sessionClass: "Class"
         }
     }
@@ -370,20 +376,18 @@ public struct LogindSessionProperties: Sendable, Hashable {
     }
 }
 
-/// What one `PropertiesChanged` says of `Active`, `State` and `Class`: the
+/// What one `PropertiesChanged` says of `Active` and `Class`: the
 /// new values it carries, and those it invalidated without a value, which a
 /// reader rereads with `Logind.sessionProperties(_:)`.
 public struct LogindSessionChange: Sendable, Hashable {
     /// The new `Active`, if it carries one.
     public var active: Bool?
-    /// The new `State`, if it carries one.
-    public var state: LogindSessionState?
     /// The new `Class`, if it carries one.
     public var sessionClass: LogindSessionClass?
     /// The properties changed without a value.
     public var invalidated: Set<LogindSessionProperty>
 
-    var isEmpty: Bool { active == nil && state == nil && sessionClass == nil && invalidated.isEmpty }
+    var isEmpty: Bool { active == nil && sessionClass == nil && invalidated.isEmpty }
 
     /// The change in properties, each value a variant, and a list of
     /// invalidated names.
@@ -394,9 +398,6 @@ public struct LogindSessionChange: Sendable, Hashable {
         }
         active = try content(.active).map { value throws(LogindError) in
             try Logind.read { () throws(DBusValueMismatch) in try value.boolean() }
-        }
-        state = try content(.state).map { value throws(LogindError) in
-            LogindSessionState(rawValue: try Logind.read { () throws(DBusValueMismatch) in try value.string() })
         }
         sessionClass = try content(.sessionClass).map { value throws(LogindError) in
             LogindSessionClass(rawValue: try Logind.read { () throws(DBusValueMismatch) in try value.string() })

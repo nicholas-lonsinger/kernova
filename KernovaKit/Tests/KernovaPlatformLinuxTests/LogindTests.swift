@@ -168,7 +168,7 @@ struct LogindTests {
         let logind = Logind(connection: try bus.connect())
         let error = DBusRemoteError(
             name: "org.freedesktop.login1.BlockedByInhibitorLock",
-            message: "Operation inhibited by \"GNOME Session\", reason is \"user session inhibited\".")
+            message: "Operation denied due to active block inhibitor")
         fake.recorder.refusal.withLock { $0 = error }
         #expect(throws: LogindError.call(.remote(error))) { try logind.powerOff() }
     }
@@ -269,7 +269,7 @@ struct LogindTests {
         subscription.cancel()
     }
 
-    @Test("Observing a session delivers its PropertiesChanged, and nothing for another interface")
+    @Test("Observing a session delivers changes to Active and Class, and nothing for State or another interface")
     func observeSession() throws {
         let bus = try PrivateBus()
         let fake = try FakeLogind(on: bus)
@@ -280,16 +280,20 @@ struct LogindTests {
 
         let interface = Logind.sessionInterface
         try fake.emitChange(
-            on: path, interface: Logind.userInterface, changed: [("State", .string("x"))], invalidated: [])
+            on: path, interface: Logind.userInterface, changed: [("Active", .boolean(true))], invalidated: [])
         try fake.emitChange(on: path, interface: interface, changed: [("IdleHint", .boolean(true))], invalidated: [])
+        // State is not observed: logind emits no PropertiesChanged for it.
+        try fake.emitChange(on: path, interface: interface, changed: [("State", .string("closing"))], invalidated: [])
         try fake.emitChange(
             on: path, interface: interface, changed: [("Active", .boolean(true)), ("State", .string("active"))],
-            invalidated: ["Class", "IdleHint"])
+            invalidated: ["Class", "IdleHint", "State"])
         let change = try inbox.next().get()
         #expect(change.active == true)
-        #expect(change.state == .active)
         #expect(change.sessionClass == nil)
         #expect(change.invalidated == [.sessionClass])
+
+        try fake.emitChange(on: path, interface: interface, changed: [("Class", .string("user"))], invalidated: [])
+        #expect(try inbox.next().get().sessionClass == .user)
 
         try fake.emitChange(on: path, interface: interface, changed: [("Active", .string("yes"))], invalidated: [])
         #expect(throws: LogindError.valueMismatch(DBusValueMismatch(expected: .boolean, actual: .string))) {
