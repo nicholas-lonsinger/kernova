@@ -848,15 +848,23 @@ extension VMCommandCore {
             routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))], ending: .refusedVerb)])
     }
 
-    /// Requests a graceful shutdown of a live guest, resuming it first when it
-    /// is paused: restart's own stop, which the caller asked of a running VM
-    /// whatever its pause.
-    private func shutDown(_ instance: VMInstance) async throws {
+    /// Resumes a paused guest, which takes the shutdown request only awake:
+    /// restart's first step, which the caller asked of a running VM whatever
+    /// its pause.
+    private func resumeForShutdown(_ instance: VMInstance) async throws {
+        guard instance.isLivePaused else { return }
         do {
-            if instance.isLivePaused {
-                try await lifecycle.launchResume(instance).value()
-            }
-            try await lifecycle.requestStop(instance)
+            try await lifecycle.launchResume(instance).value()
+        } catch {
+            throw failure(error, verb: .stop, on: instance)
+        }
+    }
+
+    /// Requests restart's graceful shutdown, owing `boot` to the end of the
+    /// session it asks to go down.
+    private func shutDown(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
+        do {
+            try await lifecycle.requestRestartStop(instance, continuingWith: boot)
         } catch {
             throw failure(error, verb: .stop, on: instance)
         }
@@ -875,10 +883,12 @@ extension VMCommandCore {
     /// The refusal a force stop raises, worded for what it actually discards.
     package static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
-        // of here ends the session, whose settling runs the baseline
-        // revert for a termination exactly as it does for a guest that shut
-        // itself down (``ephemeralBaselineRevert(for:)``) — a Restart waiting
-        // on it is cancelled first.
+        // of here — the termination, the discard of a suspended session, and
+        // the Shut Down alternative — ends the session with the baseline
+        // revert, as a guest that shut itself down does
+        // (``ephemeralBaselineRevert(for:)``). The termination and the
+        // shutdown each cancel a Restart waiting on the session at their
+        // admission, so none continues into its boot.
         let ephemeralBaseline = instance.ephemeralBaselineSnapshot
         // A VM resting on a slot is not terminated at all — this deletes the
         // suspended session, which an Ephemeral VM performs as the revert, so
@@ -1059,13 +1069,14 @@ extension VMCommandCore {
     /// session's changes pass to the session the boot brings up, so a restart
     /// is one action that keeps the guest as it was, as a reboot inside the
     /// guest does — an Ephemeral Mode VM's end owes no baseline revert,
-    /// however the session ends once the boot is owed: the shutdown asked for,
-    /// or the guest stopping or failing on its own. A boot refused there, or
-    /// one that fails before the guest executes, leaves the VM at rest, and
-    /// the session settles as any other end does.
+    /// however the session ends once the boot is owed: the guest honouring
+    /// the shutdown this asked for, or stopping or failing on its own. A boot
+    /// refused there, or one that fails before the guest executes, leaves the
+    /// VM at rest, and the session settles as any other end does.
     ///
-    /// A Force Stop of the session cancels the restart: it withdraws the boot
-    /// (``VMActivity/forceStop(_:)``), the session's end settles as a stop's
+    /// A Stop or Force Stop of the session from any door cancels the restart:
+    /// its admission withdraws the boot (``VMActivity/requestStop(_:)``,
+    /// ``VMActivity/forceStop(_:)``), the session's end settles as a stop's
     /// does, and this refuses, saying so.
     ///
     /// The power-off is the one wait, and what a `timeout` bounds; without
@@ -1103,6 +1114,7 @@ extension VMCommandCore {
         if let conflict {
             throw admissionRefusal(.identityConflict(conflict), on: instance, verb: .restart)
         }
+        try await resumeForShutdown(instance)
         guard let sessionID = instance.activity.liveSessionID else {
             throw admissionRefusal(.invalidState, on: instance, verb: .restart)
         }
@@ -1115,9 +1127,8 @@ extension VMCommandCore {
             // call that asked has moved on.
             try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
-        instance.activity.follow(boot, continuing: sessionID)
         do {
-            try await shutDown(instance)
+            try await shutDown(instance, continuingWith: boot)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has
@@ -1129,11 +1140,11 @@ extension VMCommandCore {
         }
         do {
             try await boot.outcome.value()
-        } catch is VMContinuationForceStopped {
+        } catch is VMContinuationStopped {
             throw CommandError.operationFailed(
                 verb: .restart,
                 message:
-                    "\u{201C}\(instance.name)\u{201D} was force stopped while it restarted, which cancelled the restart."
+                    "\u{201C}\(instance.name)\u{201D} was stopped while it restarted, which cancelled the restart."
             )
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)

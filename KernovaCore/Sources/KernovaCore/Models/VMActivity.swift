@@ -144,8 +144,9 @@ package final class VMActivity {
     /// is gone admits it before anything else, and the session's changes pass
     /// to the session the boot brings up unsettled
     /// (``VMSessionChanges/carried``) — so that end owes an Ephemeral Mode VM
-    /// no baseline revert, however the session ends. A Force Stop admitted on
-    /// the session first withdraws it (``forceStop(_:)``).
+    /// no baseline revert, however the session ends. A stop someone asks for,
+    /// admitted on the session, first withdraws it (``requestStop(_:)``,
+    /// ``forceStop(_:)``).
     ///
     /// Continuations owed to one end are tried in arrival order until one
     /// holds the VM, and the rest are queued behind it, where the boot they
@@ -179,15 +180,16 @@ package final class VMActivity {
     }
 
     /// Withdraws every continuation owed to the session `sessionID` names,
-    /// ending each with ``VMContinuationForceStopped``.
+    /// ending each with ``VMContinuationStopped`` — the admission of a stop
+    /// someone asked for, which cancels a Restart waiting on the session.
     private func withdrawContinuations(of sessionID: UUID) {
         let withdrawn = continuations.filter { $0.session == sessionID }.map(\.boot)
         guard !withdrawn.isEmpty else { return }
         continuations.removeAll { $0.session == sessionID }
-        for boot in withdrawn { boot.outcome.resolve(.failure(VMContinuationForceStopped())) }
+        for boot in withdrawn { boot.outcome.resolve(.failure(VMContinuationStopped())) }
         logger.log(
             .notice,
-            "A Force Stop of '\(self.name, privacy: .public)' cancelled the restart waiting on its session"
+            "A stop of '\(self.name, privacy: .public)' cancelled the restart waiting on its session"
         )
     }
 
@@ -1200,9 +1202,26 @@ package final class VMActivity {
     /// live VM, or an operation that tolerates it.
     ///
     /// Takes no admission and moves no phase — a guest may take minutes to go
-    /// down, or never, and the session-ended event is what rests the VM.
+    /// down, or never, and the session-ended event is what rests the VM. The
+    /// admitted request withdraws the continuations owed to the live session
+    /// (``follow(_:continuing:)``): a stop someone asks for cancels a Restart
+    /// waiting on it.
     func requestStop(_ send: () async throws -> Void) async throws {
         try requireAdmitted(.sessionAction(.requestStop))
+        if let live = liveSessionID { withdrawContinuations(of: live) }
+        try await send()
+    }
+
+    /// A Restart's own graceful stop: admitted as ``requestStop(_:)`` is, but
+    /// owing `boot` to the end of the live session as its continuation
+    /// (``follow(_:continuing:)``) rather than withdrawing any — so a second
+    /// Restart's request joins the first's end instead of cancelling it.
+    func requestStop(
+        continuingWith boot: VMFollowUp, _ send: () async throws -> Void
+    ) async throws {
+        try requireAdmitted(.sessionAction(.requestStop))
+        guard let live = liveSessionID else { throw VMAdmissionRefusal(refusal: .invalidState) }
+        follow(boot, continuing: live)
         try await send()
     }
 
@@ -2045,6 +2064,7 @@ extension VMOperationKind {
     }
 }
 
-/// What ends a boot owed as a session's continuation when a Force Stop is
-/// admitted on that session (``VMActivity/forceStop(_:)``).
-struct VMContinuationForceStopped: Error {}
+/// What ends a boot owed as a session's continuation when a stop someone
+/// asked for is admitted on that session (``VMActivity/requestStop(_:)``,
+/// ``VMActivity/forceStop(_:)``).
+struct VMContinuationStopped: Error {}

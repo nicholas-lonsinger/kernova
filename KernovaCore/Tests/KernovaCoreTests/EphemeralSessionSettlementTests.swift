@@ -328,8 +328,13 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.hostState.hasUnsettledSession)
     }
 
-    @Test("A Force Stop while a Restart waits cancels it: nothing boots, and the VM reverts")
-    func forceStopCancelsAWaitingRestart() async throws {
+    /// A stop someone asks for while a Restart waits.
+    enum StopDuringRestart: CaseIterable, Sendable { case graceful, force }
+
+    @Test(
+        "A Stop or Force Stop while a Restart waits cancels it: nothing boots, and the VM reverts",
+        arguments: StopDuringRestart.allCases)
+    func stopCancelsAWaitingRestart(stop: StopDuringRestart) async throws {
         let virtualization = MockVirtualizationService()
         virtualization.guestIgnoresShutdownRequest = true
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
@@ -340,16 +345,25 @@ struct EphemeralSessionSettlementTests {
             try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
-        // The prompt the Force Stop asks with names the baseline it returns to.
+        // The prompt a Force Stop asks with names the baseline it returns to.
         #expect(VMCommandCore.forceStopPrompt(instance).message.contains(baseline.name))
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        switch stop {
+        case .graceful:
+            try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
+            #expect(!instance.activity.liveSessionContinues)
+            // The guest honours the request: the end of a session no restart
+            // waits on any more.
+            instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        case .force:
+            try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        }
 
         let error = try await #require(throws: CommandError.self) { try await restart.value }
         guard case .operationFailed(.restart, _, let message, _) = error else {
             Issue.record("Expected the restart to report its cancellation, got \(error)")
             return
         }
-        #expect(message.contains("force stopped"))
+        #expect(message.contains("was stopped while it restarted"))
         await harness.library.waitForRevertsToSettle()
 
         #expect(virtualization.startCallCount == 0)
@@ -400,13 +414,26 @@ struct EphemeralSessionSettlementTests {
     func timedOutRestartLeavesTheEndToRevert() async throws {
         let virtualization = MockVirtualizationService()
         virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
         let harness = WiredCommandCore(
-            virtualization: virtualization, preferences: preferences, clock: TestEngineClock())
+            virtualization: virtualization, preferences: preferences, clock: clock)
         let session = UUID()
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
 
-        await #expect(throws: CommandError.self) {
+        let restart = Task { @MainActor in
             try await harness.core.restart(.id(instance.id), timeout: 30, consent: .none)
+        }
+        // The parked sleep is the power-off deadline: the restart is waiting,
+        // its boot owed to the session's end.
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+        #expect(virtualization.stopCallCount == 1)
+        #expect(instance.activity.liveSessionContinues)
+
+        clock.release(try #require(clock.parked.first))
+        let error = try await #require(throws: CommandError.self) { try await restart.value }
+        guard case .timedOut(_, .restart, _) = error else {
+            Issue.record("Expected the restart's timeout, got \(error)")
+            return
         }
         #expect(!instance.activity.liveSessionContinues)
 

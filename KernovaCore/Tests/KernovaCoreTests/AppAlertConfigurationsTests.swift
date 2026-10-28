@@ -426,6 +426,25 @@ struct AppAlertConfigurationsTests {
         #expect(alert.message.hasSuffix("Either way it is ephemeral, so it returns to \u{201C}Clean install\u{201D}."))
     }
 
+    @Test("A paused Ephemeral VM's Stop while a Restart waits still names the baseline both actions end at")
+    func pausedStopAlertWhileARestartWaitsNamesTheBaseline() {
+        let (configurations, viewModel) = makeConfigurations()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        var hostState = VMHostState()
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let vm = makeInstance(in: viewModel, hostState: hostState)
+        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        let session = UUID()
+        vm.activity.placeForTesting(.livePaused(sessionID: session))
+        vm.activity.follow(VMFollowUp(scope: .vm, rank: .ordinary) { _ in }, continuing: session)
+
+        let alert = configurations.pausedStopConfig(vm)
+
+        // Each action cancels the waiting restart, so each powers the VM off,
+        // and a power-off is the revert.
+        #expect(alert.message.hasSuffix("Either way it is ephemeral, so it returns to \u{201C}Clean install\u{201D}."))
+    }
+
     @Test("Reverting a live VM to a snapshot taken while stopped says the session ends, powered off")
     func revertAlertOnAColdTargetNamesThePowerOff() {
         let (configurations, viewModel) = makeConfigurations()
