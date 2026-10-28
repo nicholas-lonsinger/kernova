@@ -1,5 +1,5 @@
 /// Why a dial failed.
-public enum DialFailure: Sendable, Equatable {
+public enum DialFailure: Error, Sendable, Equatable {
     /// Try again later.
     case transient
     /// This guest has no transport to the host; never retry.

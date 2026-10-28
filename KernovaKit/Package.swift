@@ -37,6 +37,13 @@ var dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")
 ]
 
+// Darwin and Linux: the non-blocking `ByteStream` over a socket.
+#if os(Windows)
+let posixTargets: [String] = []
+#else
+let posixTargets = ["KernovaPlatformPOSIX"]
+#endif
+
 var targets: [Target] = [
     // The one logging spelling: `KernovaLogger` and the `LogMessage` its
     // `log(_:_:)` takes. Its own target so the relaunch helper can link it
@@ -64,8 +71,12 @@ var targets: [Target] = [
         exclude: ["Proto/kernova_v2.proto"],
         swiftSettings: sharedSwiftSettings
     ),
-    // The C intrinsics Swift cannot spell: the CRC32C instructions.
-    .target(name: "CKernovaShims"),
+    // The C calls the portable targets make without importing an OS module:
+    // the CRC32C instructions, and the monotonic clock that counts sleep.
+    .target(
+        name: "CKernovaShims",
+        linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
+    ),
     // The guest-agent protocol's sans-I/O state machines: streams, credit,
     // Hello, liveness and close, and every feature's machines per role.
     .target(
@@ -79,6 +90,15 @@ var targets: [Target] = [
         name: "KernovaAgentSimulation",
         dependencies: [
             "KernovaAgentCore", "KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Drives the core: one serial queue and one `ByteStream` per connection,
+    // the platform clock, the dial schedule, and the adapter registry.
+    .target(
+        name: "KernovaAgentRuntime",
+        dependencies: [
+            "KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization", "CKernovaShims",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -99,6 +119,16 @@ var targets: [Target] = [
         exclude: ["Transcripts"],
         swiftSettings: sharedSwiftSettings
     ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its
+    // socket suites run where `KernovaPlatformPOSIX` builds.
+    .testTarget(
+        name: "KernovaAgentRuntimeTests",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ] + posixTargets.map { .target(name: $0) },
+        swiftSettings: sharedSwiftSettings
+    ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
     // is Apple-only, so its suites carry no `.caseScoped` and mint no scratch
     // (Tools/check-test-seams.sh).
@@ -108,6 +138,16 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
 ]
+
+#if !os(Windows)
+targets += [
+    .target(
+        name: "KernovaPlatformPOSIX",
+        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    )
+]
+#endif
 
 #if os(macOS)
 products += [

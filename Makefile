@@ -236,7 +236,7 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # names them; the Linux and Windows CI jobs build the manifest's own set. Its
 # own scratch path keeps the swift.org toolchain's build state apart from the
 # Xcode toolchain's, which `test-unhosted` uses.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaPlatformPOSIX
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \

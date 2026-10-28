@@ -1,6 +1,17 @@
+#if defined(__linux__)
+#define _GNU_SOURCE
+#endif
+
 #include "CKernovaShims.h"
 
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <realtimeapiset.h>
+#else
+#include <time.h>
+#endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_acle.h>
@@ -42,6 +53,30 @@ uint32_t kernova_crc32c_hardware_update(uint32_t crc, const uint8_t *bytes, size
         count -= 1;
     }
     return crc;
+}
+
+#endif
+
+#if defined(__APPLE__)
+
+uint64_t kernova_monotonic_nanoseconds(void) {
+    return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+}
+
+#elif defined(_WIN32)
+
+uint64_t kernova_monotonic_nanoseconds(void) {
+    ULONGLONG hundreds;
+    QueryInterruptTime(&hundreds);
+    return (uint64_t)hundreds * 100;
+}
+
+#else
+
+uint64_t kernova_monotonic_nanoseconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_BOOTTIME, &now);
+    return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
 }
 
 #endif
