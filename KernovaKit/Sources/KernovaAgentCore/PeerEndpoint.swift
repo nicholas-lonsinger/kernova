@@ -215,6 +215,9 @@ public struct PeerEndpoint: Sendable {
         events.poll()
     }
 
+    /// Events not yet polled.
+    package var pendingEventCount: Int { events.count }
+
     package mutating func takeTrace() -> [ConnectionTrace] {
         connection.takeTrace()
     }

@@ -7,8 +7,16 @@ import Foundation
 import KernovaAgentCore
 import KernovaWire
 
-/// The host's hub model (§9.7): one VM, its connections, identity conflicts,
-/// power routing and the update payload source.
+/// What the hub's power routing saw, in order: each output, and each result
+/// from a peer it asked.
+package enum RoutingLogEntry: Sendable, Equatable {
+    case output(RoutingOutput)
+    case result(PeerHandle, PowerRequestResult)
+}
+
+/// The host's hub model: one VM, its connections, identity conflicts, power
+/// routing and the update payload source. It reaches each connection only
+/// through its endpoint's events and asynchronous commands, as the runtime's hub does.
 package final class SimHub {
     package struct Peer {
         package var link: SimLink
@@ -32,6 +40,7 @@ package final class SimHub {
     package var policy: PolicySnapshot
     package var routing = PowerRouting()
     package private(set) var routingOutputs: [(time: SimTime, output: RoutingOutput)] = []
+    package private(set) var routingLog: [RoutingLogEntry] = []
     package private(set) var asks: [Ask] = []
     package private(set) var powerResults: [(time: SimTime, peer: PeerHandle, result: PowerRequestResult)] = []
     package private(set) var logRecords: [LogRecordValue] = []
@@ -109,6 +118,7 @@ package final class SimHub {
     private func drainRouting(_ world: SimWorld) {
         while let output = routing.pollOutput() {
             routingOutputs.append((world.now, output))
+            routingLog.append(.output(output))
             world.log("routing: \(output)")
             guard case .ask(let handle, let action) = output,
                 let peer = connected.first(where: { $0.link.hubHandle == handle })
@@ -122,7 +132,10 @@ package final class SimHub {
         }
     }
 
-    /// §6.4's candidate order, restated independently of `PowerRouting` for the checker.
+    /// The order the hub asks power providers in, restated independently of
+    /// `PowerRouting` for the checker: with a system peer that knows the console,
+    /// the session peers on its console session (newest first) when the console
+    /// is on; without one, every session peer on a console; then the system peer.
     static func expectedCandidates(_ action: PowerAction, peers: [RoutingPeer], asked: [PeerHandle]) -> [PeerHandle] {
         var ordered: [RoutingPeer] = []
         let system = peers.first { $0.role == .systemPeer }
@@ -162,6 +175,7 @@ package final class SimHub {
         case .power(let id, let result):
             powerResults.append((world.now, link.hubHandle, result))
             guard let handle = pending[id] else { return }
+            routingLog.append(.result(handle, result))
             switch result {
             case .accepted, .progress: break
             default: pending[id] = nil
@@ -198,7 +212,8 @@ package final class SimHub {
         }
     }
 
-    /// §4.5 as the hub applies it: the incoming connection against each existing one with its key.
+    /// Identity conflicts as the hub applies them: the incoming connection
+    /// against each existing one with its key.
     private func resolveConflicts(_ link: SimLink, world: SimWorld) {
         guard let incoming = connected.last, incoming.link === link else { return }
         let incomingParty = ConflictParty(claim: incoming.claim, state: incoming.state)

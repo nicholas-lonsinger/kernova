@@ -35,10 +35,23 @@ package final class SimLink {
     func pipe(writtenBy side: SimSide) -> SimPipe { side == .host ? toPeer : toHost }
     func pipe(readBy side: SimSide) -> SimPipe { side == .host ? toHost : toPeer }
 
+    /// The bytes `side` has written into the transport.
+    package func bytesWritten(by side: SimSide) -> Int { pipe(writtenBy: side).accepted }
+
+    /// Every frame either side wrote, in write order.
+    package var wire: [WireRecord] { observer.frames }
+
     package func footprint(_ side: SimSide) -> MemoryFootprint? {
         switch side {
         case .host: host?.connection.footprint
         case .peer: peer?.connection.footprint
+        }
+    }
+
+    func pendingEventCount(_ side: SimSide) -> Int {
+        switch side {
+        case .host: host?.pendingEventCount ?? 0
+        case .peer: peer?.pendingEventCount ?? 0
         }
     }
 
@@ -50,8 +63,20 @@ package final class SimLink {
     }
 }
 
-/// The deterministic world (§10.1): one host, N peers, links, faults, and the
-/// property checker watching every step.
+/// One injected fault: what the world drew for it, and when it took effect.
+package struct ScheduledFault: Sendable {
+    package let fault: Fault
+    /// The instant drawn from the fault's window.
+    package let start: SimTime
+    /// A cut's byte count, drawn from its range.
+    package let cutAfter: Int?
+    /// When the fault first changed what the run did; nil if it never did.
+    package internal(set) var tookEffectAt: SimTime?
+}
+
+/// The deterministic world: one host, N peers, links, faults, and the property
+/// checker watching every step. A seed fixes every draw — read sizes, instance
+/// ids, tokens, fault instants and script delays — so a run replays exactly.
 package final class SimWorld {
     package let seed: UInt64
     package let options: SimOptions
@@ -80,6 +105,9 @@ package final class SimWorld {
         return content
     }
     package var recordsEvents = false
+    package private(set) var faults: [ScheduledFault] = []
+    /// Bulk test consumers held by a consumer-stall fault: the fault, the side, the kind, the peer.
+    private var stalledTestConsumers: [(fault: Int, side: SimSide, kind: StreamKind, peer: Int)] = []
 
     package init(seed: UInt64, options: SimOptions) {
         self.seed = seed
@@ -87,7 +115,17 @@ package final class SimWorld {
         rng = SplitMix64(seed: seed)
         hub = SimHub(options: options)
         checker = PropertyChecker(options: options)
-        for fault in options.faults { schedule(fault) }
+        for fault in options.faults {
+            var cutAfter: Int?
+            if case .cut(_, let range) = fault { cutAfter = rng.int(in: range) }
+            faults.append(ScheduledFault(fault: fault, start: rng.time(in: Self.window(of: fault)), cutAfter: cutAfter))
+        }
+        for index in faults.indices { schedule(index) }
+    }
+
+    /// Marks fault `index` as having changed the run, the first time it does.
+    package func faultTookEffect(_ index: Int) {
+        if faults[index].tookEffectAt == nil { faults[index].tookEffectAt = now }
     }
 
     // MARK: Building a scenario
@@ -104,6 +142,11 @@ package final class SimWorld {
     /// Runs `action` at world time `time`.
     package func at(_ time: SimTime, _ action: @escaping (SimWorld) -> Void) {
         agenda.push(max(time, now), action)
+    }
+
+    /// Runs `action` at an instant drawn from `window`.
+    package func at(in window: SimWindow, _ action: @escaping (SimWorld) -> Void) {
+        at(rng.time(in: window), action)
     }
 
     package func log(_ text: @autoclosure () -> String) {
@@ -227,14 +270,16 @@ package final class SimWorld {
         process.agent = agent
         let link = SimLink(id: links.count, peerIndex: index, generation: generation, options: options)
         links.append(link)
-        for fault in options.faults {
-            if case .cut(let direction, let after) = fault {
-                switch direction {
-                case .hostToPeer(let id) where id == link.id: link.toPeer.cutAfter = after
-                case .peerToHost(let id) where id == link.id: link.toHost.cutAfter = after
-                default: break
-                }
+        for (index, scheduled) in faults.enumerated() {
+            guard case .cut(let direction, _) = scheduled.fault else { continue }
+            let pipe: SimPipe
+            switch direction {
+            case .hostToPeer(let id) where id == link.id: pipe = link.toPeer
+            case .peerToHost(let id) where id == link.id: pipe = link.toHost
+            default: continue
             }
+            pipe.cutAfter = scheduled.cutAfter
+            pipe.cutFault = index
         }
         process.link = link
         link.peer = process.makeEndpoint(generation: generation, world: self)
@@ -274,6 +319,9 @@ package final class SimWorld {
             if let trace = link.peer?.takeTrace() { checker.trace(trace, link: link, side: .peer, world: self) }
         }
         checker.footprint(link, side, world: self)
+        for stall in stalledTestConsumers where stall.side == side && stall.peer == link.peerIndex {
+            if testFlows(link, side, stall.kind).contains(where: { $0.held > 0 }) { faultTookEffect(stall.fault) }
+        }
         tryWrite(link, side)
         rearm(link, side, process)
         if link.state(side) == .finished { shutDown(link, side) }
@@ -325,6 +373,7 @@ package final class SimWorld {
         // A write after the far side shut down goes nowhere; this side ends when its
         // own reader reaches EOF, after reading whatever the far side sent last.
         let write = pipe.write(bytes, now: now)
+        if pipe.isCut, let fault = pipe.cutFault { faultTookEffect(fault) }
         pipe.writePending = true
         let process = process(of: link, side)
         let isFinal = transmit.isFinal
@@ -382,12 +431,15 @@ package final class SimWorld {
         if let next = pipe.nextReadable, next <= now {
             let size = rng.int(in: 1...pipe.parameters.maxRead)
             let bytes = pipe.read(upTo: size, now: now)
-            link.observer.delivered(bytes, to: reader, world: self)
+            let streamFrames = link.observer.delivered(bytes, to: reader, world: self)
+            let before = (events: link.pendingEventCount(reader), streams: link.footprint(reader)?.streamRecords ?? 0)
             let local = localNow(process(of: link, reader))
             switch reader {
             case .host: link.host?.receive(bytes, now: local)
             case .peer: link.peer?.receive(bytes, now: local)
             }
+            checker.pendingEvents(
+                link, reader, before: before.events, streamFrames: streamFrames, streams: before.streams, world: self)
             drain(link, reader)
             tryWrite(link, reader == .host ? .peer : .host)
             scheduleRead(link, reader)
@@ -466,7 +518,8 @@ package final class SimWorld {
         }
     }
 
-    /// Sends a hub command to a host endpoint (async, §9.7).
+    /// Sends a hub command to a host endpoint after `delay`, as the hub's commands
+    /// arrive: asynchronously, to an endpoint that may have closed meanwhile.
     package func hostCommand(_ command: HostCommand, link: SimLink, after delay: SimTime = 0) {
         at(now + delay) { world in
             world.perform(.host) { world in
@@ -479,34 +532,51 @@ package final class SimWorld {
 
     // MARK: Faults
 
-    private func schedule(_ fault: Fault) {
+    static func window(of fault: Fault) -> SimWindow {
         switch fault {
+        case .cut: .at(0)
+        case .peerDeath(_, let window), .peerHang(_, let window, _), .readerStall(_, _, let window, _),
+            .consumerStall(_, _, _, let window, _), .vmFreeze(let window, _, _), .hostSleep(let window, _),
+            .clockStep(_, let window, _):
+            window
+        }
+    }
+
+    private func schedule(_ index: Int) {
+        let time = faults[index].start
+        switch faults[index].fault {
         case .cut:
             break
-        case .peerDeath(let index, let time):
-            at(time) { world in world.killPeer(index) }
-        case .peerHang(let index, let time, let duration):
+        case .peerDeath(let peer, _):
             at(time) { world in
-                world.peers[index].suspendedUntil = time + duration
-                world.log("peer \(index) hangs")
+                world.faultTookEffect(index)
+                world.killPeer(peer)
             }
-            at(time + duration) { world in world.resume(.peer(index)) }
-        case .readerStall(let side, let linkID, let time, let duration):
+        case .peerHang(let peer, _, let duration):
+            at(time) { world in
+                world.faultTookEffect(index)
+                world.peers[peer].suspendedUntil = time + duration
+                world.log("peer \(peer) hangs")
+            }
+            at(time + duration) { world in world.resume(.peer(peer)) }
+        case .readerStall(let side, let linkID, _, let duration):
             at(time) { world in
                 guard linkID < world.links.count else { return }
+                world.faultTookEffect(index)
                 world.links[linkID].pipe(readBy: side).stalledUntil = time + duration
             }
             at(time + duration) { world in
                 guard linkID < world.links.count else { return }
                 world.scheduleRead(world.links[linkID], side)
             }
-        case .consumerStall(let index, let time, let duration):
-            at(time) { world in world.peers[index].consumerStalled = true }
-            at(time + duration) { world in world.peers[index].releaseConsumer(world: world) }
-        case .vmFreeze(let time, let duration, let jumps):
+        case .consumerStall(let side, let kind, let peer, _, let duration):
+            at(time) { world in world.stallConsumer(index, side, kind, peer: peer) }
+            at(time + duration) { world in world.releaseConsumer(index, side, kind, peer: peer) }
+        case .vmFreeze(_, let duration, let jumps):
             at(time) { world in
-                for index in world.peers.indices {
-                    world.peers[index].suspendedUntil = time + duration
+                world.faultTookEffect(index)
+                for peer in world.peers.indices {
+                    world.peers[peer].suspendedUntil = time + duration
                 }
                 for link in world.links where !link.shutDown.contains(.host) {
                     world.hostCommand(.setPeerFrozen(true), link: link)
@@ -521,10 +591,11 @@ package final class SimWorld {
                 for link in world.links where !link.shutDown.contains(.host) {
                     world.hostCommand(.setPeerFrozen(false), link: link)
                 }
-                for index in world.peers.indices { world.resume(.peer(index)) }
+                for peer in world.peers.indices { world.resume(.peer(peer)) }
             }
-        case .hostSleep(let time, let duration):
+        case .hostSleep(_, let duration):
             at(time) { world in
+                world.faultTookEffect(index)
                 // The VMs auto-pause before the host sleeps.
                 for link in world.links where !link.shutDown.contains(.host) {
                     link.host?.handle(.setPeerFrozen(true), now: world.localNow(.host))
@@ -543,16 +614,59 @@ package final class SimWorld {
                 for link in world.links where !link.shutDown.contains(.host) {
                     world.hostCommand(.setPeerFrozen(false), link: link)
                 }
-                for index in world.peers.indices { world.resume(.peer(index)) }
+                for peer in world.peers.indices { world.resume(.peer(peer)) }
             }
-        case .clockStep(let process, let time, let step):
+        case .clockStep(let process, _, let step):
             at(time) { world in
+                world.faultTookEffect(index)
                 switch process {
                 case .host: world.hostOffset += step
-                case .peer(let index): world.peers[index].clockOffset += step
+                case .peer(let peer): world.peers[peer].clockOffset += step
                 }
             }
         }
+    }
+
+    /// The bulk test flows `side` consumes on `link`: the streams it opened of `kind`.
+    private func testFlows(_ link: SimLink, _ side: SimSide, _ kind: StreamKind) -> [TestBulkSink.Flow] {
+        let flows = (side == .host ? link.host?.testSink.flows : link.peer?.testSink.flows) ?? []
+        return flows.filter { !$0.isSender && $0.kind == kind }
+    }
+
+    private func setTestConsumes(_ consumes: Bool, _ side: SimSide, _ kind: StreamKind, peer: Int) {
+        guard let link = peers[peer].link else { return }
+        perform(process(of: link, side)) { world in
+            let local = world.localNow(world.process(of: link, side))
+            for flow in world.testFlows(link, side, kind) {
+                switch side {
+                case .host: link.host?.setTestConsumes(consumes, on: flow.stream, now: local)
+                case .peer: link.peer?.setTestConsumes(consumes, on: flow.stream, now: local)
+                }
+            }
+            world.drain(link, side)
+        }
+    }
+
+    private func stallConsumer(_ fault: Int, _ side: SimSide, _ kind: StreamKind, peer: Int) {
+        switch (side, kind) {
+        case (.peer, .updatePull):
+            peers[peer].consumerStall = fault
+        case (_, .UNRECOGNIZED(9000)), (_, .UNRECOGNIZED(9001)):
+            stalledTestConsumers.append((fault, side, kind, peer))
+            setTestConsumes(false, side, kind, peer: peer)
+        default:
+            checker.fail("no \(side) consumer of \(kind) is modeled")
+        }
+    }
+
+    private func releaseConsumer(_ fault: Int, _ side: SimSide, _ kind: StreamKind, peer: Int) {
+        if peers[peer].consumerStall == fault { peers[peer].releaseConsumer(world: self) }
+        guard stalledTestConsumers.contains(where: { $0.fault == fault }) else { return }
+        if let link = peers[peer].link, testFlows(link, side, kind).contains(where: { $0.held > 0 }) {
+            faultTookEffect(fault)
+        }
+        stalledTestConsumers.removeAll { $0.fault == fault }
+        setTestConsumes(true, side, kind, peer: peer)
     }
 
     package func killPeer(_ index: Int) {

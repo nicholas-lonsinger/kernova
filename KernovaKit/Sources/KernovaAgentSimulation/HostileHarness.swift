@@ -104,8 +104,8 @@ package enum WireFrames {
     }
 }
 
-/// One real endpoint against raw bytes (§10.2 `.hostile`): the script's bytes are
-/// fed in seeded random splits, and what the endpoint writes is decoded.
+/// One real endpoint against a hostile far side's raw bytes: the script's bytes
+/// are fed in seeded random splits, and what the endpoint writes is decoded.
 package final class HostileRun {
     package var host: HostEndpoint?
     package var peer: PeerEndpoint?
@@ -258,28 +258,6 @@ package final class HostileRun {
         trace += peer?.takeTrace() ?? []
     }
 
-    /// Property 1 and 3 over the trace: each stream closes once, nothing follows `.closed`.
-    package var traceViolations: [String] {
-        var open: Set<UInt32> = []
-        var closed: Set<UInt32> = []
-        var connectionClosed = false
-        var violations: [String] = []
-        for entry in trace {
-            if connectionClosed { violations.append("event after .closed: \(entry)") }
-            switch entry {
-            case .localOpened(let id, _): open.insert(id.rawValue)
-            case .event(.opened(let id, _, _)): open.insert(id.rawValue)
-            case .event(.streamClosed(let id, _)):
-                if !open.contains(id.rawValue) || closed.contains(id.rawValue) {
-                    violations.append("stream \(id.rawValue) closed without being open")
-                }
-                open.remove(id.rawValue)
-                closed.insert(id.rawValue)
-            case .event(.closed): connectionClosed = true
-            default: break
-            }
-        }
-        if state != .established, !open.isEmpty, connectionClosed { violations.append("streams \(open) left open") }
-        return violations
-    }
+    /// Properties 1 and 3 over the endpoint's trace.
+    package var traceViolations: [String] { TraceChecker.violations(trace) }
 }
