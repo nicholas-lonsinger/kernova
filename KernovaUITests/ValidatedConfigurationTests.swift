@@ -82,13 +82,18 @@ struct ValidatedConfigurationTests {
     }
 
     @Test(
-        "A session restored into a recorded shape without a socket device attaches no hub transport",
+        "A Linux session restored from a config with no device record has no socket device or hub transport",
         .enabled(if: VZVirtualMachine.isSupported)
     )
     @MainActor
-    func shapeWithoutSocketAttachesNoHub() async throws {
-        let (instance, context) = try await startVsockServices(
-            deviceShape: VMDeviceShape(virtioSocketDevice: false))
+    func unrecordedLinuxShapeAttachesNoHub() async throws {
+        let encoded = try VMConfiguration.makeJSONEncoder().encode(VMConfiguration.testLinux())
+        var object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["deviceShape"] = nil
+        let unrecorded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: JSONSerialization.data(withJSONObject: object))
+
+        let (instance, context) = try await startVsockServices(deviceShape: unrecorded.deviceShape)
 
         #expect(context.session?.hasVirtioSocketDevice == false)
         #expect(!context.hasAgentTransport)

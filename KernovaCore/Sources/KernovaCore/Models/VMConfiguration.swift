@@ -540,7 +540,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
         self.deviceShape = try c.decode(
-            VMDeviceShape.self, forKey: .deviceShape, repairingTo: .current, in: decoder)
+            VMDeviceShape.self, forKey: .deviceShape, absentMeans: .unrecorded(bootMode: bootMode),
+            in: decoder)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(

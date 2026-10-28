@@ -13,19 +13,23 @@ struct VMConfigurationTests {
     /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
     ///
     /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries,
-    /// and the recorded `deviceShape` object as `deviceShape`.
+    /// the recorded `deviceShape` object as `deviceShape` (`nil` records none), and the
+    /// guest's `guestOS` and `bootMode`.
     private static func makeBaseJSON(
         name: String = "Base VM",
-        deviceShape: String = #"{"virtioSocketDevice": true}"#,
+        guestOS: String = "linux",
+        bootMode: String = "efi",
+        deviceShape: String? = #"{"virtioSocketDevice": true}"#,
         extraFields: String = ""
     ) -> String {
+        let shape = deviceShape.map { "\n                \"deviceShape\": \($0)," } ?? ""
         let extra = extraFields.isEmpty ? "" : ",\n            \(extraFields)"
         return """
             {
                 "id": "12345678-1234-1234-1234-123456789012",
                 "name": "\(name)",
-                "guestOS": "linux",
-                "bootMode": "efi",
+                "guestOS": "\(guestOS)",
+                "bootMode": "\(bootMode)",
                 "cpuCount": 4,
                 "memorySizeInGB": 8,
                 "diskSizeInGB": 64,
@@ -33,8 +37,7 @@ struct VMConfigurationTests {
                 "displayHeight": 1200,
                 "displayPPI": 144,
                 "networkEnabled": true,
-                "clipboardSharingEnabled": false,
-                "deviceShape": \(deviceShape),
+                "clipboardSharingEnabled": false,\(shape)
                 "createdAt": "2025-01-01T00:00:00Z"\(extra)
             }
             """
@@ -1286,6 +1289,18 @@ struct VMConfigurationTests {
     }
 
     // MARK: - Device shape
+
+    @Test(
+        "A config with no device shape reads as the devices its boot mode always got",
+        arguments: [("macOS", "macOS", true), ("linux", "efi", false), ("linux", "linuxKernel", false)]
+    )
+    func absentDeviceShapeStatesThePriorDevices(guestOS: String, bootMode: String, socket: Bool) throws {
+        let config = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self,
+            from: Data(Self.makeBaseJSON(guestOS: guestOS, bootMode: bootMode, deviceShape: nil).utf8))
+        #expect(config.deviceShape == VMDeviceShape(virtioSocketDevice: socket))
+        #expect(config.deviceShape == .unrecorded(bootMode: config.bootMode))
+    }
 
     @Test("A new configuration records the current device shape")
     func newConfigurationRecordsTheCurrentShape() {

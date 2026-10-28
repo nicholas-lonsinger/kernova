@@ -704,9 +704,9 @@ struct VirtualizationServiceTests {
         #expect(onDisk.deviceShape == Self.noSocketDevice)
     }
 
-    @Test("A cold boot builds and records the current device shape over an older one")
+    @Test("A cold boot of a Linux VM whose config had no record builds and records the current shape")
     func coldBootRecordsTheCurrentShape() async throws {
-        let fixture = try makeRevertFixture(deviceShape: Self.noSocketDevice)
+        let fixture = try makeRevertFixture(deviceShape: .unrecorded(bootMode: .efi))
         let instance = fixture.instance
 
         try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {

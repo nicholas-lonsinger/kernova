@@ -640,50 +640,25 @@ struct VMLibraryConfigCheckTests {
                 == nil)
     }
 
-    @Test("A VM config with no device shape is listed as repairable, and Use Defaults records the current one")
-    func aVMConfigWithoutADeviceShapeIsRepaired() async throws {
+    @Test("The check lists nothing for a VM config with no device shape, which loads as the shape it always had")
+    func aVMConfigWithoutADeviceShapeIsReadable() async throws {
         let harness = makeHarness()
-        let (url, bytes) = try addBundle("Dev", to: harness.storage) { $0["deviceShape"] = nil }
+        try addBundle("Dev", to: harness.storage) { $0["deviceShape"] = nil }
         await harness.library.loadVMs()
 
-        let files = try await harness.library.checkConfigFiles()
-        #expect(files.map(\.url) == [url.appendingPathComponent("config.json")])
-        #expect(files.first?.isRepairable == true)
-        #expect(files.first?.summary == "$.deviceShape: no value")
-
-        let failures = await harness.library.useDefaults(in: files)
-
-        #expect(failures.isEmpty)
-        let repaired = try #require(harness.library.instances.first { $0.name == "Dev" })
-        #expect(repaired.configuration.deviceShape == .current)
-        #expect(configBytes(at: url, in: harness.storage) != bytes)
-        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["Dev \u{2014} config.json"])
+        #expect(try await harness.library.checkConfigFiles().isEmpty)
+        let instance = try #require(harness.library.instances.first { $0.name == "Dev" })
+        #expect(instance.configuration.deviceShape == .unrecorded(bootMode: .efi))
     }
 
-    @Test("A snapshot config with no device shape is listed as repairable, and Use Defaults records the current one")
-    func aSnapshotConfigWithoutADeviceShapeIsRepaired() async throws {
+    @Test("The check lists nothing for a snapshot config with no device shape")
+    func aSnapshotConfigWithoutADeviceShapeIsReadable() async throws {
         let harness = makeHarness()
-        let (url, snapshotID) = try addBundleWithSnapshot(to: harness.storage) { $0["deviceShape"] = nil }
+        _ = try addBundleWithSnapshot(to: harness.storage) { $0["deviceShape"] = nil }
         await harness.library.loadVMs()
 
-        let files = try await harness.library.checkConfigFiles()
-        #expect(files.map(\.location) == [.bundle(url, .snapshotConfiguration(snapshotID))])
-        #expect(files.first?.isRepairable == true)
-
-        let failures = await harness.library.useDefaults(in: files)
-
-        #expect(failures.isEmpty)
         #expect(try await harness.library.checkConfigFiles().isEmpty)
-        let written = try #require(
-            harness.storage.files.data(
-                atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url))
-        #expect(
-            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: written).deviceShape
-                == .current)
-        #expect(
-            fileSystem.trashedURLs.map(\.lastPathComponent) == [
-                "Dev \u{2014} snapshot \u{201C}Snapshot\u{201D} \u{2014} config.json"
-            ])
+        #expect(harness.library.instances.first?.unreadableFiles.isEmpty == true)
     }
 
     @Test("A snapshot error carries its heading onto the failure it becomes; an untitled error keeps the generic one")

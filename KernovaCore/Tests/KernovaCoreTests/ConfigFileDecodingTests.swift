@@ -341,26 +341,27 @@ struct ConfigFileDecodingTests {
         #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }
 
-    @Test("A config with no device shape is refused strictly, and repaired to the current shape")
-    func aMissingDeviceShapeIsRepairable() throws {
+    @Test("A config with no device shape reads strictly, as no problem")
+    func aMissingDeviceShapeIsNoProblem() throws {
         let data = try configJSON { $0["deviceShape"] = nil }
+        let strict = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        #expect(strict.deviceShape == .unrecorded(bootMode: .efi))
+        #expect(diagnose(data).problems.isEmpty)
+    }
+
+    @Test("An unrecognized device shape is refused strictly, and recorded with no repair")
+    func anUnrecognizedDeviceShapeHasNoRepair() throws {
+        let data = try configJSON { $0["deviceShape"] = Self.unrecognized }
         #expect(throws: DecodingError.self) {
             try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
         }
         let diagnosis = diagnose(data)
-        let problem = try #require(diagnosis.problems.first)
-        #expect(diagnosis.problems.count == 1)
         #expect(
-            problem
-                == ConfigProblem(
-                    path: ConfigValuePath([.key("deviceShape")]), issue: .missing,
-                    repair: .useDefault(#"{"virtioSocketDevice":true}"#)))
-        #expect(
-            problem.reportLine(fileName: "config.json")
-                == #"$.deviceShape: no value. Default: {"virtioSocketDevice":true}."#)
-        let repaired = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self, from: try #require(diagnosis.repaired))
-        #expect(repaired.deviceShape == .current)
+            diagnosis.problems == [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("deviceShape")]), issue: .unrecognized(found: Self.unrecognized))
+            ])
+        #expect(diagnosis.repaired == nil)
     }
 
     // MARK: - The snapshot's captured network

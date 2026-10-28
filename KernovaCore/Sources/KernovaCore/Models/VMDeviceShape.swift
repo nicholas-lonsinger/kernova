@@ -15,6 +15,13 @@ package struct VMDeviceShape: Codable, Sendable, Equatable {
     /// The shape a cold boot gives every VM.
     package static let current = VMDeviceShape(virtioSocketDevice: true)
 
+    /// The shape a configuration with no record states: the devices every
+    /// build before the record gave a VM booting through `bootMode`, which
+    /// put a socket device on a macOS guest alone.
+    package static func unrecorded(bootMode: VMBootMode) -> VMDeviceShape {
+        VMDeviceShape(virtioSocketDevice: bootMode == .macOS)
+    }
+
     package init(virtioSocketDevice: Bool) {
         self.virtioSocketDevice = virtioSocketDevice
     }
