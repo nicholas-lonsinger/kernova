@@ -320,8 +320,26 @@ extension CoreUnits {
         @Test("host RESET → the next policy change reopens")
         func resetWaitsForPolicyChange() {
             let run = Self.peer(logs: true)
-            run.feed([WireFrames.reset(1, code: ErrorCode.disabledByPolicy.rawValue)])
+            run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
             run.feed([Unit.policy(logs: false)])
+            #expect(Self.opens(run.written) == [1])
+            run.feed([Unit.policy(logs: true)])
+            #expect(Self.opens(run.written) == [1, 3])
+        }
+
+        @Test("host RESET DISABLED_BY_POLICY under a policy that enables LOGS → reopens at once")
+        func disabledResetUnderEnabledPolicyReopens() {
+            // The host coalesced LOGS off-then-on into one enabling PolicyUpdate, already
+            // read here, while the RESET its off-policy caused still follows (§3.5).
+            let run = Self.peer(logs: true)
+            run.feed([WireFrames.reset(1, code: ErrorCode.disabledByPolicy.rawValue)])
+            #expect(Self.opens(run.written) == [1, 3])
+        }
+
+        @Test("host RESET DISABLED_BY_POLICY under a policy that disables LOGS → no reopen until it enables")
+        func disabledResetUnderDisabledPolicyWaits() {
+            let run = Self.peer(logs: true)
+            run.feed([Unit.policy(logs: false), WireFrames.reset(1, code: ErrorCode.disabledByPolicy.rawValue)])
             #expect(Self.opens(run.written) == [1])
             run.feed([Unit.policy(logs: true)])
             #expect(Self.opens(run.written) == [1, 3])

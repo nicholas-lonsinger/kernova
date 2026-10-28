@@ -17,9 +17,11 @@ public struct ConnectionConfiguration: Sendable {
     public var adverts: [(FeatureID, LocalAdvert)]
     /// Host only: the 16 random bytes the runtime drew for this connection.
     public var sessionToken: Data
-    /// Host only: the VM's policy, sent right after the peer's Hello.
+    /// Host only: the VM's policy at accept; it seeds `Connection.currentPolicy`,
+    /// which `setPolicy` replaces and the Hello-time `PolicyUpdate` carries.
     public var hostPolicy: PolicySnapshot
-    /// Host only: the bundles whose offer for the peer goes right after the policy.
+    /// Host only: the bundles at accept; they seed the connection's bundles,
+    /// which `setBundles` replaces and the Hello-time offer comes from.
     public var hostBundles: [BundledPayload]
     /// The receiver policy the far side is judged by.
     public var policy: ReceiverPolicy
@@ -84,13 +86,13 @@ public struct FeatureAdvertValue: Sendable, Equatable {
 public enum ConnectionEvent: Sendable, Equatable {
     /// The far side's Hello was read; the connection is established.
     case helloReceived(RemoteHello)
-    /// The far side's adverts changed (coalesced).
+    /// The far side's adverts changed.
     case remoteAdvertsChanged
-    /// Host: the peer's state changed (coalesced).
+    /// Host: the peer's state changed.
     case peerStateChanged(PeerSessionState)
-    /// Peer: a `PolicyUpdate` arrived (coalesced).
+    /// Peer: a `PolicyUpdate` arrived.
     case policyChanged(PolicySnapshot)
-    /// Peer: an `UpdateAvailable` arrived (coalesced).
+    /// Peer: an `UpdateAvailable` arrived.
     case updateAvailable(UpdateManifestValue?)
     /// A liveness verdict.
     case liveness(LivenessChange)

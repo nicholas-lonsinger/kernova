@@ -51,11 +51,10 @@ extension Connection {
         else { return misuse("send \(data.count) raw bytes past writableData on stream \(id.rawValue)") }
         streams[index].sendWindow -= data.count
         streams[index].queuedRaw += data.count
+        streams[index].enqueue(.data(data))
         connectionSendCredit -= data.count
         queuedRawTotal += data.count
-        streams[index].enqueue(.data(data))
         if configuration.recordsTrace { trace.append(.sent(id, isMessage: false, data)) }
-        refreshAllWritable()
     }
 
     /// Queues this side's END on `id` with the kind's END body.
@@ -112,11 +111,10 @@ extension Connection {
 
     /// Queues RESET (or, before the OPEN left, drops the stream unsent) and closes it.
     mutating func resetStream(at index: Int, _ error: WireError) {
-        discardQueue(at: index)
         if streams[index].openHandedOut {
             streams[index].pendingReset = error
         }
-        closeStream(at: index, .resetLocally(error))
+        closeStream(at: index, .resetLocally(error), discardingQueue: true)
     }
 
     /// Drops the stream's FIFO, refunding the connection credit of its raw DATA (§3.4 S3).
@@ -133,11 +131,21 @@ extension Connection {
         streams[index] = record
     }
 
+    /// Closes the stream (see `markClosed`), dropping its FIFO when
+    /// `discardingQueue`, and retires the record once nothing is left to send.
+    /// The FIFO goes only after the stream is closed, so the refund never wakes it.
+    mutating func closeStream(at index: Int, _ closure: StreamClosure, discardingQueue: Bool = false) {
+        guard streams[index].phase != .closed else { return }
+        markClosed(at: index, closure)
+        if discardingQueue { discardQueue(at: index) }
+        if isAcceptingInput { returnConnectionCredit() }
+        if streams[index].isRetired { streams.remove(at: index) }
+    }
+
     /// Marks the stream closed, emits its one `streamClosed`, and credits its held
     /// raw bytes back to the connection (§3.4 R5).
-    mutating func closeStream(at index: Int, _ closure: StreamClosure) {
+    private mutating func markClosed(at index: Int, _ closure: StreamClosure) {
         let record = streams[index]
-        guard record.phase != .closed else { return }
         streams[index].phase = .closed
         streams[index].pendingWindow = 0
         streams[index].returnBucket = nil
@@ -149,27 +157,21 @@ extension Connection {
         if record.isAccepted {
             emit(.streamClosed(record.id, closure), owner: record.owner)
         }
-        if isAcceptingInput { returnConnectionCredit() }
-        if streams[index].isRetired { streams.remove(at: index) }
     }
 
-    /// Closes every open stream with `closure`. Pending RESETs survive a local close
-    /// for streams whose OPEN left; everything else is dropped.
+    /// Closes every open stream with `closure`, then drops every FIFO. Pending
+    /// RESETs survive a local close for streams whose OPEN left; everything else
+    /// is dropped.
     mutating func closeAllStreams(_ closure: StreamClosure, keepPendingResets: Bool) {
-        var index = 0
-        while index < streams.count {
-            discardQueue(at: index)
+        for index in streams.indices {
             if !keepPendingResets { streams[index].pendingReset = nil }
-            let id = streams[index].id
-            closeStream(at: index, closure)
-            if index < streams.count, streams[index].id == id {
-                if streams[index].isRetired {
-                    streams.remove(at: index)
-                } else {
-                    index += 1
-                }
-            }
+            if streams[index].phase != .closed { markClosed(at: index, closure) }
         }
+        for index in streams.indices {
+            discardQueue(at: index)
+        }
+        if isAcceptingInput { returnConnectionCredit() }
+        streams.removeAll { $0.isRetired }
     }
 
     // MARK: - Credit return (§3.4 R2–R6)

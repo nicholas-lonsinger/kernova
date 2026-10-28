@@ -157,8 +157,6 @@ package struct SimOptions: Sendable {
     /// Bytes each accepted test-kind stream sends.
     package var testBulkBytes = 0
     package var payloadSourceDelay: SimTime = .us(20)
-    /// The payload source returns this many bytes more (positive) or fewer than the manifest says.
-    package var payloadSizeSkew = 0
 
     package init() {}
 }

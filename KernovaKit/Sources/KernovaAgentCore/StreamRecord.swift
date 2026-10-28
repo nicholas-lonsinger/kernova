@@ -49,7 +49,8 @@ struct StreamRecord: Sendable {
     var returnBucket: TokenBucket?
 
     var kind: StreamKind { descriptor.kind }
-    var owner: KindOwner { descriptor.owner }
+    /// The machine its events go to; none for a refused OPEN, which no machine hears of.
+    var owner: KindOwner? { isAccepted ? descriptor.owner : nil }
     var sending: StreamDirection { descriptor.sending(asOpener: isLocal) }
     var receiving: StreamDirection { descriptor.receiving(asOpener: isLocal) }
 
@@ -104,4 +105,10 @@ struct StreamRecord: Sendable {
     }
 
     var frontFrame: QueuedFrame? { hasQueuedFrames ? queue[queueHead] : nil }
+
+    /// The FIFO's front is this side's unsent OPEN.
+    var frontIsOpen: Bool {
+        if case .open = frontFrame { return true }
+        return false
+    }
 }

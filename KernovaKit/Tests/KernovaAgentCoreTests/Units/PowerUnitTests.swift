@@ -298,9 +298,21 @@ extension CoreUnits {
             let run = Self.peer()
             Self.request(run)
             run.input(.power(.askingApps(Self.id)))
-            run.input(.power(.cancelled(Self.id)))
             #expect(run.written.on(2).isEmpty)
-            #expect(Self.localFaults(run) == 2)
+            #expect(Self.localFaults(run) == 1)
+        }
+
+        @Test("An out-of-order terminal report still releases the request: RESET INTERNAL, the next OPEN performs")
+        func outOfOrderTerminalReport() {
+            let run = Self.peer()
+            Self.request(run)
+            run.input(.power(.cancelled(Self.id)))
+            #expect(Self.localFaults(run) == 1)
+            #expect(run.streamResets.map(\.code) == [.internal])
+            Self.request(run, stream: 4)
+            #expect(
+                Self.powerEffects(run).last
+                    == .perform(PowerRequestID(generation: Self.id.generation, rawValue: 4), .shutdown))
         }
 
         @Test("A report naming another generation is dropped silently")

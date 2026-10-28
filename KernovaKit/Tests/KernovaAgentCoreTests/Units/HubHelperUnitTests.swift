@@ -61,6 +61,14 @@ extension CoreUnits {
             #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([2, 9]))
         }
 
+        @Test("A system peer reporting console UNSPECIFIED has no authority: the session peers' own reports decide")
+        func systemPeerConsoleUnknown() {
+            let peers = [
+                Self.session(1, "a"), Self.session(2, "b", console: .off), Self.system(9, console: .unknown),
+            ]
+            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([1, 9]))
+        }
+
         @Test("A system peer reporting CONSOLE_OFF makes no session peer a console candidate")
         func systemPeerConsoleOff() {
             let peers = [Self.session(1, "a"), Self.system(9, console: .off, consoleSessionID: "a")]
@@ -351,15 +359,36 @@ extension CoreUnits {
             #expect(merged[.logs] == .available(Data([1])))
         }
 
-        @Test("With no peer offering it, a feature takes the first peer's absence (unlisted: NOT_IMPLEMENTED)")
-        func firstAbsence() {
-            let first = Self.table([(.power, .absent(.notOnConsole, debugDetail: "x"))])
-            let second = Self.table([
-                (.power, .absent(.notPermitted, debugDetail: "")), (.update, .absent(.notPermitted, debugDetail: "")),
+        @Test("With no peer offering it, the absence ranked first wins, in any table order (unlisted: NOT_IMPLEMENTED)")
+        func absenceByPrecedence() {
+            let system = Self.table([
+                (.power, .absent(.notServedByRole, debugDetail: "")),
+                (.update, .absent(.notPermitted, debugDetail: "")),
+                (.logs, .absent(.notOnConsole, debugDetail: "b")),
             ])
-            let merged = FeatureStatus.merge([first, second])
-            #expect(merged[.power] == .absent(.notOnConsole, debugDetail: "x"))
-            #expect(merged[.update] == .absent(.notImplemented, debugDetail: ""))
+            let session = Self.table([
+                (.power, .absent(.versionMismatch, debugDetail: "")), (.logs, .absent(.notOnConsole, debugDetail: "a")),
+            ])
+            let other = Self.table([(.power, .absent(.disabledByPolicy, debugDetail: ""))])
+            let orders = [
+                [system, session, other], [system, other, session], [session, system, other],
+                [session, other, system], [other, system, session], [other, session, system],
+            ]
+            for order in orders {
+                let merged = FeatureStatus.merge(order)
+                #expect(merged[.power] == .absent(.versionMismatch, debugDetail: ""))
+                #expect(merged[.update] == .absent(.notPermitted, debugDetail: ""))
+                #expect(merged[.logs] == .absent(.notOnConsole, debugDetail: "a"))
+            }
+        }
+
+        @Test("The precedence puts update-remediable reasons first and every assigned reason in it once")
+        func precedenceCovers() {
+            #expect(FeatureStatus.absencePrecedence.prefix(2) == [.protocolMismatch, .versionMismatch])
+            #expect(Set(FeatureStatus.absencePrecedence.map(\.rawValue)).count == FeatureStatus.absencePrecedence.count)
+            for reason in AbsenceReason.allCases {
+                #expect(FeatureStatus.absencePrecedence.contains(reason))
+            }
         }
 
         @Test("The merged table is ordered by feature")

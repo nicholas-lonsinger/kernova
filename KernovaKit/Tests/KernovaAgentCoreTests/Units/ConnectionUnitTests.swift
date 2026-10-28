@@ -344,46 +344,6 @@ extension CoreUnits {
 
         // MARK: §4.4 coalescing
 
-        @Test("Snapshots received in one drain coalesce into one event each, the newest kept (host)")
-        func coalescedHostEvents() {
-            var wire = Wire.host()
-            wire.establish()
-            let states = ["a", "b", "c"].map { name in
-                WireFrames.session { message in
-                    message.peerState.sessionID = "c1"
-                    message.peerState.console = .on
-                    message.peerState.userName = name
-                }
-            }
-            wire.feed(states + [Unit.capabilities(), Unit.capabilities(withdrawing: .power), Unit.capabilities()])
-            #expect(
-                wire.takeEvents() == [
-                    .peerStateChanged(PeerSessionState(console: .on, sessionID: "c1", userName: "c")),
-                    .remoteAdvertsChanged,
-                ])
-            wire.feed([states[0]])
-            #expect(
-                wire.takeEvents() == [.peerStateChanged(PeerSessionState(console: .on, sessionID: "c1", userName: "a"))]
-            )
-        }
-
-        @Test("Policy and update offers received in one drain coalesce, the newest kept (peer)")
-        func coalescedPeerEvents() {
-            var wire = Wire.peer()
-            wire.establish()
-            let first = Unit.manifest(tag: 1)
-            let last = Unit.manifest(tag: 2)
-            wire.feed([
-                Unit.policy(logs: true), Unit.updateAvailable(first), Unit.policy(logs: false),
-                Unit.updateAvailable(nil), Unit.updateAvailable(last),
-            ])
-            #expect(
-                wire.takeEvents() == [
-                    .policyChanged(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: false)])),
-                    .updateAvailable(last),
-                ])
-        }
-
         @Test("Unsent snapshots coalesce in the transmit queue, the newest replacing the older")
         func coalescedTransmit() {
             var peer = Wire.peer()

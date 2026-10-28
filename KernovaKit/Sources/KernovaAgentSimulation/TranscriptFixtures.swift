@@ -256,11 +256,9 @@ package enum FrozenFields {
     }
 }
 
-/// The fixtures' payload source: serves each pull the content of the manifest it
-/// pulls, a read at a time, then finishes.
+/// The fixtures' payload source: serves each read from the content of the
+/// manifest its pull named; the server ends the pull at the manifest's size.
 package struct FixturePayloadSource: Sendable {
-    private var sent: [UpdatePullID: Int] = [:]
-    private var manifests: [UpdatePullID: UpdateManifestValue] = [:]
     private var contents: [UpdatePullID: Data] = [:]
 
     package init() {}
@@ -269,24 +267,22 @@ package struct FixturePayloadSource: Sendable {
     package mutating func answer(_ event: HostEvent) -> [HostCommand] {
         switch event {
         case .update(.pullRequested(let id, let manifest)):
-            manifests[id] = manifest
             contents[id] = SimHub.expectedContent(manifest)
-            sent[id] = 0
             return []
-        case .update(.writable(let id, let maxBytes)):
-            guard manifests[id] != nil, let content = contents[id], let offset = sent[id] else { return [] }
-            let count = min(maxBytes, content.count - offset)
-            sent[id] = offset + count
-            var commands: [HostCommand] = []
-            if count > 0 { commands.append(.updateBytes(id, content.subdata(in: offset..<(offset + count)))) }
-            if offset + count == content.count {
-                commands.append(.updateFinished(id))
-                manifests[id] = nil
-                contents[id] = nil
-            }
-            return commands
+        case .update(.read(let id, let offset, let maxBytes)):
+            guard let content = contents[id] else { return [] }
+            return [.updateBytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))]
+        case .update(.result(let id, _)), .update(.closed(let id, _)):
+            contents[id] = nil
+            return []
         default:
             return []
         }
+    }
+
+    /// Up to `maxBytes` of `content` from `offset`: empty past its end.
+    package static func read(_ content: Data, offset: UInt64, maxBytes: Int) -> Data {
+        let start = content.startIndex + Int(clamping: min(offset, UInt64(content.count)))
+        return content.subdata(in: start..<min(start + maxBytes, content.endIndex))
     }
 }

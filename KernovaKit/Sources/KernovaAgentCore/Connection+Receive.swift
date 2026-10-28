@@ -15,6 +15,12 @@ extension Connection {
         evaluate()
     }
 
+    /// Ends a receive turn: its frames are processed, so any of them has already
+    /// replaced the deadlines it ends (§5.2 rule 4) before they are evaluated.
+    package mutating func finishReceive() {
+        evaluate()
+    }
+
     mutating func evaluate() {
         switch state {
         case .finished:
@@ -28,7 +34,11 @@ extension Connection {
         rollDiagnosticWindow()
         if !clock.isFrozen, clock.raw >= nextPingAt {
             pingPending = true
-            nextPingAt = clock.raw.advanced(by: policy.pingInterval)
+            // Anchored to the due instant, so lateness never accumulates; a turn
+            // a whole interval late skips the PINGs it missed rather than bursting.
+            let interval = max(policy.pingInterval.nanoseconds, 1)
+            let late = nextPingAt.duration(to: clock.raw).nanoseconds
+            nextPingAt = nextPingAt.advanced(by: CoreDuration(nanoseconds: (late / interval + 1) * interval))
         }
         if state == .handshaking, var deadline = helloDeadline {
             let fires = deadline.evaluate(clock)
@@ -67,8 +77,8 @@ extension Connection {
             if let code = error.closeCode {
                 fatal(code, "\(error)")
             } else {
-                dropAllQueues()
                 closeAllStreams(.connectionLost, keepPendingResets: false)
+                dropAllQueues()
                 finish()
                 emit(.closed(.notThisProtocol))
             }
@@ -134,28 +144,28 @@ extension Connection {
         remoteAdverts = adverts
         remoteState = state
         remoteHello = RemoteHello(
-            protocolVersion: hello.protocolVersion, claim: claim, state: state, adverts: adverts,
+            protocolVersion: hello.protocolVersion, claim: claim, state: state, adverts: adverts.map(\.value),
             sessionToken: Normalize.clip(hello.sessionToken, maxBytes: Normalize.hashBytes))
         self.state = .established
         helloDeadline = nil
         noteHeard()
         if let remoteHello { emit(.helloReceived(remoteHello)) }
         if role == .host {
-            offeredUpdate = BundledPayload.offer(from: configuration.hostBundles, for: claim)
-            queueSession(.policy, payload: policyMessage(configuration.hostPolicy).encoded)
+            queueSession(.policy, payload: policyMessage(currentPolicy ?? PolicySnapshot()).encoded)
             queueSession(.updateAvailable, payload: updateAvailableMessage(offeredUpdate).encoded)
         }
     }
 
-    /// The far side's adverts, normalized (§4.1 step 4), params checked where
-    /// §4.3's conditions 1–4 let them be decoded.
+    /// The far side's adverts, normalized (§4.1 step 4), each one's params
+    /// decoded once; where §4.3's conditions 1–4 hold, params that do not decode
+    /// make the advert absent.
     mutating func receivedAdverts(_ features: [Kernova_V2_FeatureAdvert], remoteVersion: UInt32)
-        -> [FeatureAdvertValue]
+        -> [ReceivedAdvert]
     {
-        var adverts: [FeatureAdvertValue] = []
+        var adverts: [ReceivedAdvert] = []
         for advert in features {
             guard let descriptor = FeatureDescriptor.lookup(advert.feature),
-                !adverts.contains(where: { $0.feature == advert.feature })
+                !adverts.contains(where: { $0.value.feature == advert.feature })
             else { continue }
             var availability: Availability<Data>
             switch advert.availability {
@@ -169,19 +179,24 @@ extension Connection {
             case nil:
                 availability = .absent(.unspecified, debugDetail: "")
             }
-            if case .available(let params) = availability,
-                descriptor.frozen || remoteVersion == configuration.protocolVersion,
-                localAdverts.first(where: { $0.feature == advert.feature })?.advert.version == advert.version,
-                !descriptor.paramsDecode(params)
-            {
-                availability = .absent(.unspecified, debugDetail: "params do not decode")
-                diagnose(.remoteViolation("\(advert.feature) params do not decode"))
+            var paramsDecode = true
+            if case .available(let params) = availability {
+                paramsDecode = descriptor.paramsDecode(params)
+                if !paramsDecode, descriptor.frozen || remoteVersion == configuration.protocolVersion,
+                    localAdverts.first(where: { $0.feature == advert.feature })?.advert.version == advert.version
+                {
+                    availability = .absent(.unspecified, debugDetail: "params do not decode")
+                    diagnose(.remoteViolation("\(advert.feature) params do not decode"))
+                }
             }
             adverts.append(
-                FeatureAdvertValue(
-                    feature: advert.feature, advert: LocalAdvert(version: advert.version, availability: availability)))
+                ReceivedAdvert(
+                    value: FeatureAdvertValue(
+                        feature: advert.feature,
+                        advert: LocalAdvert(version: advert.version, availability: availability)),
+                    paramsDecode: paramsDecode))
         }
-        return adverts.sorted { $0.feature.rawValue < $1.feature.rawValue }
+        return adverts.sorted { $0.value.feature.rawValue < $1.value.feature.rawValue }
     }
 
     // MARK: - Stream 0
@@ -205,7 +220,6 @@ extension Connection {
                 return fatal(.flowControlError, "a connection WINDOW past 2^31-1")
             }
             connectionSendCredit += increment
-            refreshAllWritable()
         case .ping:
             break
         }
@@ -223,10 +237,10 @@ extension Connection {
                 return fatal(.protocolError, "a session peer's session_id changed")
             }
             remoteState = state
-            emit(.peerStateChanged(state), coalescing: .peerState)
+            emit(.peerStateChanged(state))
         case .capabilities(let update):
             remoteAdverts = receivedAdverts(update.features, remoteVersion: remoteHello.protocolVersion)
-            emit(.remoteAdvertsChanged, coalescing: .remoteAdverts)
+            emit(.remoteAdvertsChanged)
         case .policy(let update):
             guard role != .host else { return fatal(.protocolError, "PolicyUpdate sent by a peer") }
             let snapshot = PolicySnapshot(
@@ -236,11 +250,11 @@ extension Connection {
                         feature: entry.feature, version: entry.version, enabled: entry.enabled, params: entry.params)
                 })
             currentPolicy = snapshot
-            emit(.policyChanged(snapshot), coalescing: .policy)
+            emit(.policyChanged(snapshot))
         case .updateAvailable(let available):
             guard role != .host else { return fatal(.protocolError, "UpdateAvailable sent by a peer") }
             let manifest = available.hasManifest ? UpdateManifestValue(received: available.manifest) : nil
-            emit(.updateAvailable(manifest), coalescing: .updateAvailable)
+            emit(.updateAvailable(manifest))
         case .extension(let bytes):
             if remoteHello.protocolVersion == configuration.protocolVersion,
                 (try? Kernova_V2_SessionExtension(serializedBytes: bytes)) == nil
@@ -254,11 +268,10 @@ extension Connection {
 
     mutating func receiveConnectionReset(_ payload: Data) {
         var error = WireError(receivedPayload: payload)
-        if !(1...49).contains(error.code.rawValue) || ErrorCode(rawValue: error.code.rawValue) == nil {
+        if !(1...49).contains(error.code.rawValue) || !error.code.isAssigned {
             error.debugDetail = "code \(error.code.rawValue): \(error.debugDetail)"
             error.code = .internal
         }
-        if case .UNRECOGNIZED = error.code { error.code = .internal }
         closeAllStreams(.connectionClosedByPeer(error), keepPendingResets: false)
         dropAllQueues()
         finish()
@@ -283,7 +296,9 @@ extension Connection {
         }
         let everOpened = isLocalParity(rawID) ? rawID <= highestLocalHandedOut : rawID <= highestRemoteOpened
         guard everOpened else { return fatal(.protocolError, "\(frame.type) on never-opened stream \(rawID)") }
-        guard let index = index(of: frame.streamID), streams[index].phase != .closed else {
+        guard let index = index(of: frame.streamID) else { return handleLateFrame(frame) }
+        guard streams[index].phase != .closed else {
+            if frame.type == .reset { return receiveResetOnClosed(at: index) }
             return handleLateFrame(frame)
         }
         switch frame.type {
@@ -293,6 +308,15 @@ extension Connection {
         case .window: receiveStreamWindow(frame, at: index)
         case .open, .ping: break
         }
+    }
+
+    /// A RESET for a stream this side closed while its last frame, or its own
+    /// RESET, waits to leave: §3.2's discard applies all the same, so the record
+    /// retires and frees its slot just as the far side's does.
+    mutating func receiveResetOnClosed(at index: Int) {
+        discardQueue(at: index)
+        streams[index].pendingReset = nil
+        if streams[index].isRetired { streams.remove(at: index) }
     }
 
     /// A frame for a stream this side has closed: ignored, its raw bytes credited back (§3.1).
@@ -363,7 +387,7 @@ extension Connection {
     }
 
     static let refusedDescriptor = StreamKindDescriptor(
-        kind: .unspecified, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
+        kind: .unspecified, feature: nil, owner: nil, openerRole: .host, openerToAcceptor: .nothing,
         acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: { _ in false })
 
     /// §3.4 R3: a raw-DATA receive direction is raised to the bulk target by one WINDOW.
@@ -440,12 +464,11 @@ extension Connection {
         var error = WireError(receivedPayload: frame.payload)
         let raw = error.code.rawValue
         let keeps = (50...99).contains(raw) || streams[index].descriptor.featureCodeRange?.contains(raw) == true
-        if !keeps || ErrorCode(rawValue: raw) == nil {
+        if !keeps || !error.code.isAssigned {
             error.debugDetail = "code \(raw): \(error.debugDetail)"
             error.code = .streamProtocolError
         }
-        discardQueue(at: index)
-        closeStream(at: index, .resetByPeer(error))
+        closeStream(at: index, .resetByPeer(error), discardingQueue: true)
     }
 
     mutating func receiveStreamWindow(_ frame: Frame, at index: Int) {

@@ -459,6 +459,17 @@ public enum ConnectionClosure: Sendable, Equatable {
     case notThisProtocol
 }
 
+extension ConnectionClosure {
+    /// The RESET(0)'s error, or what ended the connection without one.
+    var error: WireError {
+        switch self {
+        case .closedLocally(let error), .closedByPeer(let error): error
+        case .transportLost: WireError(.unspecified, debugDetail: "the transport ended")
+        case .notThisProtocol: WireError(.unspecified, debugDetail: "the far side does not speak this protocol")
+        }
+    }
+}
+
 /// A connection's phase.
 public enum ConnectionState: Sendable, Equatable {
     /// The far side's Hello has not been read.

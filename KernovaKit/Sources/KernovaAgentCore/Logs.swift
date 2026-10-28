@@ -40,7 +40,8 @@ public struct LogForwarder: FeatureMachine {
     private var availability: Availability<NoParams>
     private var stream: StreamID?
     private var ending = false
-    /// After a RESET, no reopening until the next policy or usability change.
+    /// After a RESET other than the host's DISABLED_BY_POLICY, no reopening
+    /// until the next policy or usability change.
     private var blocked = false
     private var recordsMayWait = true
     private var modeSent: LogRingMode?
@@ -59,7 +60,7 @@ public struct LogForwarder: FeatureMachine {
     }
 
     /// The forwarder sets no deadlines.
-    public var nextDeadline: CoreInstant? { nil }
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
@@ -94,6 +95,10 @@ public struct LogForwarder: FeatureMachine {
             ending = false
             switch closure {
             case .completed: reconcile(&connection)
+            // The host's session messages leave before its stream RESETs (§3.5), so
+            // this side already holds a policy at least as new as the one that
+            // disabled the stream: reconcile reopens only if that policy enables LOGS.
+            case .resetByPeer(let error) where error.code == .disabledByPolicy: reconcile(&connection)
             case .resetByPeer, .resetLocally: blocked = true
             case .connectionClosedLocally, .connectionClosedByPeer, .connectionLost: break
             }
@@ -172,7 +177,7 @@ public struct LogReceiver: FeatureMachine {
     }
 
     /// The receiver sets no deadlines; the connection meters the credit return.
-    public var nextDeadline: CoreInstant? { nil }
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
         defer {

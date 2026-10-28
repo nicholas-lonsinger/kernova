@@ -48,11 +48,13 @@ public struct StreamKindDescriptor: Sendable {
     public var maxPerConnection: Int?
     /// The RESET code for an OPEN past `maxPerConnection`.
     public var duplicateCode: ErrorCode
-    package var owner: KindOwner
+    /// The machine serving accepted streams of the kind; nil only for the
+    /// placeholder row a refused OPEN of an unknown kind carries.
+    package var owner: KindOwner?
     let isValidOpenBody: @Sendable (Data) -> Bool
 
     package init(
-        kind: StreamKind, feature: FeatureID?, owner: KindOwner, openerRole: OpenerRole,
+        kind: StreamKind, feature: FeatureID?, owner: KindOwner?, openerRole: OpenerRole,
         openerToAcceptor: StreamDirection, acceptorToOpener: StreamDirection, maxPerConnection: Int?,
         duplicateCode: ErrorCode = .streamProtocolError, isValidOpenBody: @escaping @Sendable (Data) -> Bool
     ) {
@@ -127,7 +129,7 @@ struct FeatureDescriptor: Sendable {
     static let all: [FeatureDescriptor] = [
         FeatureDescriptor(
             feature: .power, frozen: true, policyGoverned: false, version: 1,
-            paramsDecode: { (try? Kernova_V2_PowerCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { PowerOffer(params: $0) != nil }),
         FeatureDescriptor(
             feature: .update, frozen: true, policyGoverned: false, version: 1,
             paramsDecode: { (try? Kernova_V2_UpdateCapability(serializedBytes: $0)) != nil }),
@@ -150,7 +152,8 @@ public struct ReceiverPolicy: Sendable, Equatable {
     public var closeAfter: CoreDuration
     /// How long the far side's Hello may take.
     public var helloTimeout: CoreDuration
-    /// How often this side sends a PING; never above the frozen 5 s floor.
+    /// How often this side sends a PING, each due one interval after the last was
+    /// due; below the frozen 5 s maximum so timer and write latency stay inside it.
     public var pingInterval: CoreDuration
     /// A judged deadline found passed fires only this much raw time later (§5.2 rule 4).
     public var expiryConfirmation: CoreDuration
@@ -174,7 +177,7 @@ public struct ReceiverPolicy: Sendable, Equatable {
     /// The values §3–§5 give.
     public static let production = ReceiverPolicy(
         unresponsiveAfter: .seconds(15), closeAfter: .seconds(30), helloTimeout: .seconds(10),
-        pingInterval: CoreDuration(nanoseconds: WireConstants.maxPingIntervalNanoseconds),
+        pingInterval: .seconds(4),
         expiryConfirmation: .seconds(1), suspendedStep: .seconds(10), bulkReceiveTarget: 8_388_608,
         connectionReplenishThreshold: 4_194_304, senderRawBudget: 2_097_152, openBucketCapacity: 64,
         openBucketRefillPerSecond: 32, closingDeadline: .seconds(1), diagnosticsPerMinute: 20)

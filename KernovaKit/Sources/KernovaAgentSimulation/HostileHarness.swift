@@ -120,9 +120,11 @@ package final class HostileRun {
     /// While set, nothing is taken from `pollTransmit`: the far side reads nothing.
     package var writerStalled = false
 
-    /// A real host endpoint (`local == .host`) or a real session peer.
+    /// A real host endpoint (`local == .host`) holding `bundles`, or a real
+    /// session peer whose process's power ledger is `powerLedger`.
     package init(
         local: SimSide, seed: UInt64, testKinds: Bool = false,
+        bundles: [BundledPayload] = [SimHub.bundle(size: 100_000, tag: 1)], powerLedger: PowerLedger = PowerLedger(),
         tweak: @escaping @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     ) {
         rng = SplitMix64(seed: seed)
@@ -136,8 +138,7 @@ package final class HostileRun {
         case .host:
             var configuration = HostConfiguration(
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
-                policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]),
-                bundles: [SimHub.bundle(size: 100_000, tag: 1)])
+                policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
             configuration.tweak = configure
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         case .peer:
@@ -146,6 +147,7 @@ package final class HostileRun {
             var configuration = PeerConfiguration(
                 claim: spec.claim, state: spec.state, power: spec.power.offer, logs: .available(NoParams()),
                 update: .available(UpdateOffer(formats: [.executable])))
+            configuration.powerLedger = powerLedger
             configuration.tweak = configure
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         }

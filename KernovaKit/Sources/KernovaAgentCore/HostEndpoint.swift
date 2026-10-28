@@ -41,10 +41,8 @@ public enum HostCommand: Sendable, Equatable {
     case setPolicy(PolicySnapshot)
     /// The bundled payloads changed; re-sends `UpdateAvailable` and resets a pull it makes stale.
     case setBundles([BundledPayload])
-    /// Payload bytes for the outstanding read.
+    /// Payload bytes for the outstanding read: 1 … `maxBytes` of them, from its offset.
     case updateBytes(UpdatePullID, Data)
-    /// The payload source has no more bytes.
-    case updateFinished(UpdatePullID)
     /// The payload source failed.
     case updateFailed(UpdatePullID, WireError)
     /// Close the connection (`SUPERSEDED`, `DUPLICATE_PEER`, `SHUTTING_DOWN`).
@@ -55,9 +53,9 @@ public enum HostCommand: Sendable, Equatable {
 public enum HostEvent: Sendable, Equatable {
     /// The peer's Hello was read.
     case helloReceived(PeerClaim, PeerSessionState)
-    /// The peer's state changed (coalesced).
+    /// The peer's state changed (coalesced, §4.4).
     case peerStateChanged(PeerSessionState)
-    /// Some feature's usability changed (coalesced, §4.3).
+    /// Some feature's usability changed (§4.3; coalesced, §4.4).
     case featuresChanged(FeatureStatusTable)
     /// A liveness verdict about the peer.
     case liveness(LivenessChange)
@@ -80,12 +78,9 @@ public struct HostEndpoint: Sendable {
     private var logs = LogReceiver()
     private var update: UpdateServer
     package var testSink = TestBulkSink()
-    private var bundles: [BundledPayload]
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
-    private var events: [HostEvent] = []
-    private var eventHead = 0
-    private var coalescedAt: (peerState: Int?, features: Int?) = (nil, nil)
+    private var events = OutputQueue<HostEvent, HostEventSlot>()
     private var lastStatus: FeatureStatusTable?
 
     /// Creates the endpoint of a connection just accepted.
@@ -93,7 +88,6 @@ public struct HostEndpoint: Sendable {
         self.generation = generation
         power = PowerRequester(generation: generation)
         update = UpdateServer(generation: generation)
-        bundles = configuration.bundles
         var connectionConfiguration = ConnectionConfiguration(
             claim: configuration.claim, adverts: [], sessionToken: configuration.sessionToken,
             hostPolicy: configuration.policy, hostBundles: configuration.bundles, policy: configuration.receiverPolicy)
@@ -107,13 +101,13 @@ public struct HostEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
-    /// Whether the peer is currently judged unresponsive (§4.5 row 3).
-    public var isPeerUnresponsive: Bool { connection.isUnresponsive }
-
-    /// When the driver must next call `handleTimeout`.
+    /// When the driver must next call `handleTimeout`: the soonest of the
+    /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
-        return [connection.nextDeadline, connection.clock.external(power.nextDeadline)].compactMap { $0 }.min()
+        let clock = connection.clock
+        let machines = [power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock)]
+        return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
     }
 
     // MARK: Inputs
@@ -125,6 +119,8 @@ public struct HostEndpoint: Sendable {
         while connection.processNextFrame() {
             route(now)
         }
+        connection.finishReceive()
+        route(now)
     }
 
     /// The transport ended.
@@ -137,7 +133,7 @@ public struct HostEndpoint: Sendable {
     public mutating func handleTimeout(now: CoreInstant) {
         connection.handleTimeout(now: now)
         route(now)
-        power.handle(.deadline, connection: &connection, now: now)
+        notifyAll(.deadline, now)
         route(now)
     }
 
@@ -158,12 +154,10 @@ public struct HostEndpoint: Sendable {
             notifyAll(.usabilityChanged, now)
             refreshStatus()
         case .setBundles(let bundles):
-            self.bundles = bundles
-            offerForPeer()
+            connection.setBundles(bundles)
+            update.offerChanged(connection.offeredUpdate, connection: &connection)
         case .updateBytes(let id, let data):
             if id.generation == generation { update.bytes(id, data, connection: &connection) }
-        case .updateFinished(let id):
-            if id.generation == generation { update.finished(id, connection: &connection) }
         case .updateFailed(let id, let error):
             if id.generation == generation { update.failed(id, error, connection: &connection) }
         case .close(let code, let retryAfter):
@@ -198,17 +192,7 @@ public struct HostEndpoint: Sendable {
 
     /// The next event for the hub.
     public mutating func pollEvent() -> HostEvent? {
-        guard eventHead < events.count else { return nil }
-        if coalescedAt.peerState == eventHead { coalescedAt.peerState = nil }
-        if coalescedAt.features == eventHead { coalescedAt.features = nil }
-        defer {
-            eventHead += 1
-            if eventHead == events.count {
-                events.removeAll(keepingCapacity: true)
-                eventHead = 0
-            }
-        }
-        return events[eventHead]
+        events.poll()
     }
 
     package mutating func takeTrace() -> [ConnectionTrace] {
@@ -216,13 +200,6 @@ public struct HostEndpoint: Sendable {
     }
 
     // MARK: Routing
-
-    private mutating func offerForPeer() {
-        guard let claim = connection.remoteHello?.claim else { return }
-        let offer = BundledPayload.offer(from: bundles, for: claim)
-        connection.setUpdateAvailable(offer)
-        update.offerChanged(offer, connection: &connection)
-    }
 
     private mutating func route(_ now: CoreInstant) {
         while true {
@@ -243,31 +220,20 @@ public struct HostEndpoint: Sendable {
         let status = connection.featureStatus
         guard status != lastStatus else { return }
         lastStatus = status
-        if let at = coalescedAt.features {
-            events[at] = .featuresChanged(status)
-        } else {
-            coalescedAt.features = events.count
-            events.append(.featuresChanged(status))
-        }
+        events.append(.featuresChanged(status), coalescing: .features)
     }
 
     private mutating func dispatch(_ routed: RoutedEvent, _ now: CoreInstant) {
         switch routed.event {
         case .helloReceived(let hello):
             events.append(.helloReceived(hello.claim, hello.state ?? PeerSessionState()))
-            offerForPeer()
             notifyAll(.sessionEstablished, now)
             refreshStatus()
         case .remoteAdvertsChanged:
             notifyAll(.usabilityChanged, now)
             refreshStatus()
         case .peerStateChanged(let state):
-            if let at = coalescedAt.peerState {
-                events[at] = .peerStateChanged(state)
-            } else {
-                coalescedAt.peerState = events.count
-                events.append(.peerStateChanged(state))
-            }
+            events.append(.peerStateChanged(state), coalescing: .peerState)
         case .policyChanged, .updateAvailable:
             break
         case .liveness(let change):
@@ -303,10 +269,15 @@ public struct HostEndpoint: Sendable {
 
     private mutating func collect() {
         for output in [power.takeOutputs(), logs.takeOutputs(), update.takeOutputs()] {
-            events += output.events
+            for event in output.events { events.append(event) }
             for diagnostic in output.diagnostics {
                 connection.diagnose(diagnostic)
             }
         }
     }
+}
+
+/// The host's events that coalesce (§4.4).
+enum HostEventSlot: Hashable, Sendable {
+    case peerState, features
 }

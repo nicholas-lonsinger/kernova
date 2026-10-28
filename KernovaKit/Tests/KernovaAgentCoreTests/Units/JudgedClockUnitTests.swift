@@ -167,13 +167,13 @@ extension CoreUnits {
         func backwardStepKeepsPinging() {
             var wire = Wire.host()
             wire.establish()
-            wire.advance(to: Unit.at(4_000))
-            #expect(wire.flush().isEmpty)
             wire.advance(to: Unit.at(3_000))
-            #expect(wire.connection.nextDeadline == Unit.at(4_000))
-            wire.advance(to: Unit.at(4_000))
+            #expect(wire.flush().isEmpty)
+            wire.advance(to: Unit.at(2_000))
+            #expect(wire.connection.nextDeadline == Unit.at(3_000))
+            wire.advance(to: Unit.at(3_000))
             #expect(wire.flush().shape == ["0:ping"])
-            #expect(wire.connection.clock.judged == Unit.at(5_000))
+            #expect(wire.connection.clock.judged == Unit.at(4_000))
         }
 
         @Test("Freezing the far side queues no PING and judges nothing; unfreezing queues a PING at once")

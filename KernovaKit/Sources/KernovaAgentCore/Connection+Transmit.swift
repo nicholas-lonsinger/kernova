@@ -84,7 +84,11 @@ extension Connection {
         if state == .closing {
             return takeConnectionReset(fits)
         }
-        // 7. Each stream's FIFO, round-robin by id, one frame per stream per turn.
+        // 7. The lowest-id unsent OPEN: ids are allocated in increasing order, so OPENs leave in id order.
+        if let index = streams.firstIndex(where: \.frontIsOpen) {
+            return takeFront(at: index, fits)
+        }
+        // 8. Each stream's FIFO whose OPEN has left, round-robin by id, one frame per stream per turn.
         return takeStreamFrame(fits)
     }
 
@@ -100,40 +104,47 @@ extension Connection {
         let start = streams.firstIndex { $0.id.rawValue > roundRobinAfter } ?? 0
         for step in 0..<streams.count {
             let index = (start + step) % streams.count
-            guard let front = streams[index].frontFrame else { continue }
+            guard streams[index].openHandedOut, streams[index].hasQueuedFrames else { continue }
             let id = streams[index].id
-            let frame: Frame
-            switch front {
-            case .open(let payload): frame = Frame(streamID: id, type: .open, payload: payload)
-            case .window(let increment): frame = Frame(streamID: id, type: .window, payload: Self.bigEndian(increment))
-            case .message(let payload): frame = Frame(streamID: id, type: .data, flags: .message, payload: payload)
-            case .data(let payload): frame = Frame(streamID: id, type: .data, payload: payload)
-            case .end(let payload): frame = Frame(streamID: id, type: .end, payload: payload)
-            }
-            guard fits(frame.payload.count) else { return nil }
-            _ = streams[index].popFrame()
+            guard let frame = takeFront(at: index, fits) else { return nil }
             roundRobinAfter = id.rawValue
-            switch front {
-            case .open:
-                streams[index].openHandedOut = true
-                highestLocalHandedOut = max(highestLocalHandedOut, id.rawValue)
-            case .data(let payload):
-                streams[index].queuedRaw -= payload.count
-                queuedRawTotal -= payload.count
-            case .message:
-                streams[index].unsentMessages -= 1
-            case .window, .end:
-                break
-            }
-            if streams[index].isRetired {
-                streams.remove(at: index)
-            } else if case .message = front {
-                refreshWritable(at: index)
-            }
-            if case .data = front { refreshAllWritable() }
             return frame
         }
         return nil
+    }
+
+    /// Hands out the front of `index`'s FIFO when it fits; nil when it does not.
+    mutating func takeFront(at index: Int, _ fits: (Int) -> Bool) -> Frame? {
+        guard let front = streams[index].frontFrame else { return nil }
+        let id = streams[index].id
+        let frame: Frame
+        switch front {
+        case .open(let payload): frame = Frame(streamID: id, type: .open, payload: payload)
+        case .window(let increment): frame = Frame(streamID: id, type: .window, payload: Self.bigEndian(increment))
+        case .message(let payload): frame = Frame(streamID: id, type: .data, flags: .message, payload: payload)
+        case .data(let payload): frame = Frame(streamID: id, type: .data, payload: payload)
+        case .end(let payload): frame = Frame(streamID: id, type: .end, payload: payload)
+        }
+        guard fits(frame.payload.count) else { return nil }
+        _ = streams[index].popFrame()
+        switch front {
+        case .open:
+            streams[index].openHandedOut = true
+            highestLocalHandedOut = id.rawValue
+        case .data(let payload):
+            streams[index].queuedRaw -= payload.count
+            queuedRawTotal -= payload.count
+        case .message:
+            streams[index].unsentMessages -= 1
+        case .window, .end:
+            break
+        }
+        if streams[index].isRetired {
+            streams.remove(at: index)
+        } else if case .message = front {
+            refreshWritable(at: index)
+        }
+        return frame
     }
 
     static func bigEndian(_ value: UInt32) -> Data {
@@ -233,13 +244,14 @@ extension Connection {
         queueSession(.policy, payload: policyMessage(policy).encoded)
     }
 
-    /// Host only: replaces what is offered and, once the peer's Hello is read,
-    /// queues an `UpdateAvailable`.
-    public mutating func setUpdateAvailable(_ manifest: UpdateManifestValue?) {
-        guard role == .host else { return misuse("setUpdateAvailable on a peer") }
-        guard state == .established, manifest != offeredUpdate else { return }
-        offeredUpdate = manifest
-        queueSession(.updateAvailable, payload: updateAvailableMessage(manifest).encoded)
+    /// Host only: replaces the bundles and, once the peer's Hello is read, queues
+    /// an `UpdateAvailable` when the offer for this peer changed.
+    public mutating func setBundles(_ bundles: [BundledPayload]) {
+        guard role == .host else { return misuse("setBundles on a peer") }
+        let before = offeredUpdate
+        hostBundles = bundles
+        guard state == .established, offeredUpdate != before else { return }
+        queueSession(.updateAvailable, payload: updateAvailableMessage(offeredUpdate).encoded)
     }
 }
 

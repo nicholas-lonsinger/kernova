@@ -76,7 +76,34 @@ public enum PowerRequestResult: Sendable, Equatable {
 
 // MARK: - Peer
 
-/// The peer's power machine (§6.2): one request at a time.
+/// The peer process's record of the one power request its adapter holds
+/// (§6.2): from the `.perform` effect until the adapter's terminal report, in
+/// whatever order the reports come. It outlives connections, so the runtime
+/// keeps one per process, as it keeps the `LogRing`: it records every power
+/// effect it carries out and every report the adapter makes, and hands the
+/// ledger to each new endpoint in `PeerConfiguration`. `PowerResponder` keeps
+/// its own copy by the same two calls, so one request at a time holds at
+/// process scope whatever the adapter does.
+public struct PowerLedger: Sendable, Equatable {
+    /// The request the adapter holds; nil when it holds none.
+    public private(set) var held: PowerRequestID?
+
+    /// A ledger for a process whose adapter holds nothing.
+    public init() {}
+
+    /// Records an effect the runtime carries out.
+    public mutating func record(_ effect: PowerEffect) {
+        if case .perform(let id, _) = effect { held = id }
+    }
+
+    /// Records the adapter's report: a terminal one for the held request releases it.
+    public mutating func record(_ input: PowerInput) {
+        guard let id = input.requestID, id == held, input.isTerminal else { return }
+        held = nil
+    }
+}
+
+/// The peer's power machine (§6.2): one request at a time on this peer.
 public struct PowerResponder: FeatureMachine {
     /// POWER.
     public static let feature = FeatureID.power
@@ -85,6 +112,8 @@ public struct PowerResponder: FeatureMachine {
         case asked, cancelling, accepted
     }
 
+    /// The request this connection opened, kept until the adapter's terminal
+    /// report even after its stream closes.
     private struct Request: Sendable {
         var stream: StreamID
         var id: PowerRequestID
@@ -96,22 +125,28 @@ public struct PowerResponder: FeatureMachine {
     }
 
     private var availability: Availability<PowerOffer>
+    private var ledger: PowerLedger
     private var request: Request?
     private let generation: ConnectionGeneration
     private(set) var outbox: [PeerEffect] = []
     private(set) var diagnostics: [Diagnostic] = []
-    /// When the acceptance deadline next needs evaluating.
-    public private(set) var nextDeadline: CoreInstant?
 
-    /// A responder over the adapter's last reported availability.
-    public init(availability: Availability<PowerOffer>, generation: ConnectionGeneration) {
+    /// A responder over the adapter's last reported availability and the
+    /// process's ledger, which may hold a request from an earlier connection.
+    public init(availability: Availability<PowerOffer>, ledger: PowerLedger, generation: ConnectionGeneration) {
         self.availability = availability
+        self.ledger = ledger
         self.generation = generation
     }
 
     /// The `PowerCapability` advert, or the adapter's absence.
     public var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encoded })
+    }
+
+    /// The acceptance deadline of a request still asked.
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
+        request?.deadline?.wake(clock)
     }
 
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
@@ -144,19 +179,22 @@ public struct PowerResponder: FeatureMachine {
         case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .remoteEnded:
             break
         }
-        nextDeadline = request?.deadline?.wake(connection.clock)
     }
 
     /// Handles the adapter's report.
     public mutating func handle(input: PowerInput, connection: inout Connection, now: CoreInstant) {
-        defer { nextDeadline = request?.deadline?.wake(connection.clock) }
         if case .availability(let availability) = input {
             self.availability = availability
             return
         }
-        guard let id = input.requestID, id.generation == generation else { return }
+        guard let id = input.requestID else { return }
+        let held = ledger.held
+        ledger.record(input)
         guard var current = request, current.id == id else {
-            diagnostics.append(.localFault("power adapter report for an unknown request: \(input)"))
+            // An earlier connection's request ends in the ledger alone; nothing else here knows of it.
+            if id != held, id.generation == generation {
+                diagnostics.append(.localFault("power adapter report for an unknown request: \(input)"))
+            }
             return
         }
         switch (current.phase, input) {
@@ -167,7 +205,6 @@ public struct PowerResponder: FeatureMachine {
             var progress = Kernova_V2_PowerProgress()
             progress.stage = .accepted
             sendProgress(progress.encoded, connection: &connection)
-            if !current.streamOpen { request = nil }
         case (.asked, .refused(_, let error)), (.cancelling, .refused(_, let error)):
             finish(.refused, error: error, connection: &connection)
         case (.cancelling, .cancelled):
@@ -179,7 +216,7 @@ public struct PowerResponder: FeatureMachine {
         case (.accepted, .waitingOnApps(_, let apps)):
             var progress = Kernova_V2_PowerProgress()
             progress.stage = .waitingOnApps
-            progress.apps = apps.prefix(AppValue.maxCount).map(\.proto)
+            progress.apps = AppValue.wire(apps)
             sendProgress(progress.encoded, connection: &connection)
         case (.accepted, .handedOff):
             finish(.handedOff, connection: &connection)
@@ -191,6 +228,14 @@ public struct PowerResponder: FeatureMachine {
             finish(.failed, error: error, connection: &connection)
         default:
             diagnostics.append(.localFault("power adapter reported \(input) out of order"))
+            guard ledger.held == nil else { return }
+            // The adapter no longer holds the request, so neither does this
+            // machine, and the host cannot know what happened.
+            request = nil
+            if current.streamOpen, connection.canReset(current.stream) {
+                connection.reset(
+                    current.stream, WireError(.internal, debugDetail: "the power adapter reported out of order"))
+            }
         }
     }
 
@@ -200,7 +245,7 @@ public struct PowerResponder: FeatureMachine {
         guard offered.contains(powerRequest.action), powerRequest.action != .unspecified else {
             return refuse(stream, .powerActionUnsupported, connection: &connection)
         }
-        guard request == nil else { return refuse(stream, .powerInProgress, connection: &connection) }
+        guard ledger.held == nil else { return refuse(stream, .powerInProgress, connection: &connection) }
         let id = PowerRequestID(generation: generation, rawValue: UInt64(stream.rawValue))
         var current = Request(stream: stream, id: id, phase: .asked)
         if powerRequest.acceptanceDeadlineMs > 0 {
@@ -208,7 +253,9 @@ public struct PowerResponder: FeatureMachine {
                 after: .milliseconds(Int64(powerRequest.acceptanceDeadlineMs)))
         }
         request = current
-        outbox.append(.power(.perform(id, powerRequest.action)))
+        let effect = PowerEffect.perform(id, powerRequest.action)
+        ledger.record(effect)
+        outbox.append(.power(effect))
     }
 
     private func refuse(_ stream: StreamID, _ code: ErrorCode, connection: inout Connection) {
@@ -219,21 +266,18 @@ public struct PowerResponder: FeatureMachine {
         connection.end(stream, body: outcome.encoded)
     }
 
+    /// The stream closed: the request stays until the adapter's terminal report,
+    /// sending nothing more; an asked one is cancelled.
     private mutating func streamClosed(_ stream: StreamID) {
         guard var current = request, current.stream == stream else { return }
         current.streamOpen = false
         current.pending = nil
-        switch current.phase {
-        case .asked:
+        if current.phase == .asked {
             current.phase = .cancelling
             current.deadline = nil
             outbox.append(.power(.cancel(current.id)))
-            request = current
-        case .cancelling:
-            request = current
-        case .accepted:
-            request = nil
         }
+        request = current
     }
 
     private mutating func sendProgress(_ message: Data, connection: inout Connection) {
@@ -265,7 +309,7 @@ public struct PowerResponder: FeatureMachine {
         var outcome = Kernova_V2_PowerOutcome()
         outcome.kind = kind
         if let error { outcome.error = error.proto }
-        outcome.apps = apps.prefix(AppValue.maxCount).map(\.proto)
+        outcome.apps = AppValue.wire(apps)
         connection.end(current.stream, body: outcome.encoded)
     }
 }
@@ -278,6 +322,14 @@ extension PowerInput {
             .waitingOnApps(let id, _), .handedOff(let id), .blocked(let id, _), .cancelledInGuest(let id),
             .failed(let id, _):
             id
+        }
+    }
+
+    /// The adapter no longer holds the request after this report.
+    var isTerminal: Bool {
+        switch self {
+        case .refused, .cancelled, .handedOff, .blocked, .cancelledInGuest, .failed: true
+        case .availability, .accepted, .askingApps, .waitingOnApps: false
         }
     }
 }
@@ -308,8 +360,6 @@ public struct PowerRequester: FeatureMachine {
     private let generation: ConnectionGeneration
     private(set) var outbox: [HostEvent] = []
     private(set) var diagnostics: [Diagnostic] = []
-    /// When a host deadline next needs evaluating.
-    public private(set) var nextDeadline: CoreInstant?
 
     /// A requester for one connection.
     public init(generation: ConnectionGeneration) {
@@ -319,6 +369,11 @@ public struct PowerRequester: FeatureMachine {
     /// The host advertises POWER available with empty params.
     public var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Data()))
+    }
+
+    /// The soonest acceptance wait of a request still waiting.
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
+        entries.compactMap { $0.deadline?.wake(clock) }.min()
     }
 
     mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
@@ -331,18 +386,13 @@ public struct PowerRequester: FeatureMachine {
 
     /// Starts a request: opens POWER_REQUEST and ends it at once.
     public mutating func request(_ id: PowerRequestID, _ action: PowerAction, connection: inout Connection) {
-        defer { refreshDeadline(connection.clock) }
         guard id.generation == generation else { return }
         guard !entries.contains(where: { $0.id == id }) else {
             diagnostics.append(.localFault("a second power request with one id"))
             return
         }
-        guard connection.canOpen(.powerRequest) else {
-            if case .absent(let reason, _) = connection.usability(.power) {
-                outbox.append(.power(id, .refused(WireError(.featureUnavailable, absence: reason))))
-            } else {
-                outbox.append(.power(id, .refused(WireError(.tooManyStreams))))
-            }
+        if let refusal = connection.openRefusal(.powerRequest) {
+            outbox.append(.power(id, .refused(refusal)))
             return
         }
         var body = Kernova_V2_PowerRequest()
@@ -357,7 +407,6 @@ public struct PowerRequester: FeatureMachine {
 
     /// The hub cancels a request; only a waiting one can be (§6.3).
     public mutating func cancel(_ id: PowerRequestID, connection: inout Connection) {
-        defer { refreshDeadline(connection.clock) }
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         guard entries[index].phase == .waiting else {
             diagnostics.append(.localFault("cancel of an accepted power request"))
@@ -368,7 +417,6 @@ public struct PowerRequester: FeatureMachine {
 
     /// Handles a stream event for POWER_REQUEST.
     public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
-        defer { refreshDeadline(connection.clock) }
         switch event {
         case .message(let stream, let payload):
             guard let index = entries.firstIndex(where: { $0.stream == stream }) else { return }
@@ -458,9 +506,5 @@ public struct PowerRequester: FeatureMachine {
         if connection.canReset(entry.stream) {
             connection.reset(entry.stream, WireError(code))
         }
-    }
-
-    private mutating func refreshDeadline(_ clock: JudgedClock) {
-        nextDeadline = entries.compactMap { $0.deadline?.wake(clock) }.min()
     }
 }

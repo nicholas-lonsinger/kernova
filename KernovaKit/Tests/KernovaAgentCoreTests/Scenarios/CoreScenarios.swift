@@ -322,35 +322,6 @@ enum UpdateScenarios {
                         "the new offer installed: \(world.peers[0].installed)")
             }),
         Scenario(
-            name: "update: payload short → REJECTED UPDATE_SIZE_MISMATCH, not pulled again",
-            options: { options, _ in
-                options.bundles = [SimHub.bundle(size: 20_000, tag: 16)]
-                options.payloadSizeSkew = -1000
-            },
-            script: { world in world.addPeer(peerWithInstaller()) },
-            expect: { world in
-                expectThat(
-                    world.hub.updateResults.first?.result
-                        == UpdateResultValue(kind: .rejected, error: WireError(.updateSizeMismatch)),
-                    "\(world.hub.updateResults)")
-                    + expectThat(world.peers[0].rejectedHash == SimHub.tagHash(16), "rejected hash recorded")
-                    + expectThat(world.hub.updateResults.count == 1, "pulled once")
-            }),
-        Scenario(
-            name: "update: payload long → RESET UPDATE_SIZE_MISMATCH",
-            options: { options, _ in
-                options.bundles = [SimHub.bundle(size: 20_000, tag: 17)]
-                options.payloadSizeSkew = 1000
-            },
-            script: { world in world.addPeer(peerWithInstaller()) },
-            expect: { world in
-                let reset = world.hub.updateClosures.contains {
-                    $0.closure == .resetByPeer(WireError(.updateSizeMismatch))
-                }
-                return expectThat(reset, "reset SIZE_MISMATCH: \(world.hub.updateClosures)")
-                    + expectThat(world.peers[0].rejectedHash == SimHub.tagHash(17), "rejected hash recorded")
-            }),
-        Scenario(
             name: "update: new version hangs before Hello → rolled back; offered again only when it changes",
             seeds: 20,
             end: .sec(400),

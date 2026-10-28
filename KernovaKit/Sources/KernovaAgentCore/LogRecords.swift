@@ -48,17 +48,17 @@ public struct LogRecordValue: Sendable, Equatable {
     public static let maxTextBytes = 16_384
 
     /// Wall clock at emission, milliseconds since the Unix epoch.
-    public var timestampMilliseconds: Int64
+    public private(set) var timestampMilliseconds: Int64
     /// The record's level.
-    public var level: LogLevelValue
+    public private(set) var level: LogLevelValue
     /// An opaque subsystem label.
-    public var subsystem: String
+    public private(set) var subsystem: String
     /// An opaque category label.
-    public var category: String
+    public private(set) var category: String
     /// The message's runs, in emission order.
-    public var segments: [LogSegmentValue]
+    public private(set) var segments: [LogSegmentValue]
     /// A bound cut the record.
-    public var truncated: Bool
+    public private(set) var truncated: Bool
 
     /// Creates a record, applying §7.1's bounds.
     public init(

@@ -37,6 +37,15 @@ struct HostileRow: Sendable, CustomTestStringConvertible {
 
     static let hostHello = WireFrames.hello(role: .host)
     static let peerHello = WireFrames.hello(role: .sessionPeer)
+    /// The offer the §8.2 rows' peer pulls on stream 1.
+    static let pulled = Unit.manifest(tag: 16, size: 20_000)
+
+    /// The peer aborted the pull and recorded its hash rejected, once each.
+    static func rejectedRecorded(_ run: HostileRun) -> [String] {
+        let effects = run.peerEffects.compactMap { if case .update(let effect) = $0 { effect } else { nil } }
+        let id = UpdatePullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 1))
+        return effects.suffix(2) == [.abort(id), .recordRejected(pulled.payloadHash)] ? [] : ["effects: \(effects)"]
+    }
 
     func run(seed: UInt64) -> [String] {
         let run = HostileRun(local: local, seed: seed, testKinds: testKinds, tweak: tweak)
@@ -433,6 +442,46 @@ enum HostileRows {
                             .resetByPeer(WireError(.streamProtocolError, debugDetail: "code 125: "))))
             }
             return closed ? [] : ["UPDATE_INSTALL_FAILED on a power stream did not read STREAM_PROTOCOL_ERROR"]
+        },
+        HostileRow(
+            name: "§3.7 an unassigned code inside 50–99 reads STREAM_PROTOCOL_ERROR", local: .host, outcome: .staysUp
+        ) { run in
+            run.feed(WireFrames.bytes([HostileRow.peerHello]))
+            let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1)
+            run.command(.requestPower(id, .shutdown))
+            run.feed(WireFrames.bytes([WireFrames.reset(2, code: 77)], preamble: false))
+        } expect: { run in
+            let closed = run.trace.contains {
+                $0
+                    == .event(
+                        .streamClosed(
+                            StreamID(rawValue: 2),
+                            .resetByPeer(WireError(.streamProtocolError, debugDetail: "code 77: "))))
+            }
+            return closed ? [] : ["code 77 did not read STREAM_PROTOCOL_ERROR: \(run.trace)"]
+        },
+        HostileRow(
+            name: "§8.2 the host's payload short of payload_size → END REJECTED UPDATE_SIZE_MISMATCH", local: .peer,
+            outcome: .staysUp
+        ) { run in
+            run.feed([HostileRow.hostHello, Unit.updateAvailable(HostileRow.pulled)], preamble: true)
+            run.feed([Unit.raw(1, Data(repeating: 1, count: 19_000)), Unit.end(1)])
+        } expect: { run in
+            let ends = run.written.on(1).filter { $0.type == .end }.compactMap {
+                try? Kernova_V2_UpdateResult(serializedBytes: $0.payload)
+            }
+            return
+                (ends.map(\.kind) == [.rejected] && ends.first?.error.code == .updateSizeMismatch
+                ? [] : ["the peer's END: \(ends)"]) + HostileRow.rejectedRecorded(run)
+        },
+        HostileRow(
+            name: "§8.2 the host's payload past payload_size → RESET UPDATE_SIZE_MISMATCH", local: .peer,
+            outcome: .streamReset(.updateSizeMismatch)
+        ) { run in
+            run.feed([HostileRow.hostHello, Unit.updateAvailable(HostileRow.pulled)], preamble: true)
+            run.feed([Unit.raw(1, Data(repeating: 1, count: 20_000)), Unit.raw(1, Data(repeating: 2, count: 1_000))])
+        } expect: { run in
+            HostileRow.rejectedRecorded(run)
         },
         HostileRow(name: "§4.4 a snapshot flood costs one event per drain", local: .host, outcome: .staysUp) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))

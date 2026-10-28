@@ -15,6 +15,9 @@ public struct PeerConfiguration: Sendable {
     public var state: PeerSessionState
     /// The power adapter's availability; absent `NOT_IMPLEMENTED` without one.
     public var power: Availability<PowerOffer>
+    /// The process's power ledger: the request the adapter still holds from an
+    /// earlier connection, which a new request waits behind (§6.2).
+    public var powerLedger = PowerLedger()
     /// Whether this build forwards logs.
     public var logs: Availability<NoParams>
     /// The installer's formats and rejected hash; absent `NOT_IMPLEMENTED` without one.
@@ -62,11 +65,11 @@ public enum PeerEffect: Sendable, Equatable {
 public enum PeerEvent: Sendable, Equatable {
     /// The host's Hello was read.
     case established(host: PeerClaim)
-    /// A `PolicyUpdate` arrived.
+    /// A `PolicyUpdate` arrived (coalesced, §4.4).
     case policyReceived
     /// A liveness verdict about the host.
     case hostLiveness(LivenessChange)
-    /// What the host offers (coalesced).
+    /// What the host offers (coalesced, §4.4).
     case updateAvailable(UpdateManifestValue?)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
@@ -83,16 +86,14 @@ public struct PeerEndpoint: Sendable {
     package var testSink = TestBulkSink()
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
-    private var effects: [PeerEffect] = []
-    private var effectHead = 0
-    private var events: [PeerEvent] = []
-    private var eventHead = 0
-    private var pendingUpdateEventAt: Int?
+    private var effects = OutputQueue<PeerEffect, NoSlot>()
+    private var events = OutputQueue<PeerEvent, PeerEventSlot>()
 
     /// Creates the endpoint of a connection that just connected.
     public init(_ configuration: PeerConfiguration, generation: ConnectionGeneration, now: CoreInstant) {
         self.generation = generation
-        power = PowerResponder(availability: configuration.power, generation: generation)
+        power = PowerResponder(
+            availability: configuration.power, ledger: configuration.powerLedger, generation: generation)
         logs = LogForwarder(availability: configuration.logs)
         update = UpdateClient(
             availability: configuration.update, ownHash: configuration.claim.payloadHash, generation: generation)
@@ -109,10 +110,13 @@ public struct PeerEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
-    /// When the driver must next call `handleTimeout`.
+    /// When the driver must next call `handleTimeout`: the soonest of the
+    /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
-        return [connection.nextDeadline, connection.clock.external(power.nextDeadline)].compactMap { $0 }.min()
+        let clock = connection.clock
+        let machines = [power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock)]
+        return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
     }
 
     // MARK: Inputs
@@ -124,6 +128,8 @@ public struct PeerEndpoint: Sendable {
         while connection.processNextFrame() {
             route(now)
         }
+        connection.finishReceive()
+        route(now)
     }
 
     /// The transport ended.
@@ -136,7 +142,7 @@ public struct PeerEndpoint: Sendable {
     public mutating func handleTimeout(now: CoreInstant) {
         connection.handleTimeout(now: now)
         route(now)
-        power.handle(.deadline, connection: &connection, now: now)
+        notifyAll(.deadline, now)
         route(now)
     }
 
@@ -195,29 +201,12 @@ public struct PeerEndpoint: Sendable {
 
     /// The next effect for an adapter.
     public mutating func pollEffect() -> PeerEffect? {
-        guard effectHead < effects.count else { return nil }
-        defer {
-            effectHead += 1
-            if effectHead == effects.count {
-                effects.removeAll(keepingCapacity: true)
-                effectHead = 0
-            }
-        }
-        return effects[effectHead]
+        effects.poll()
     }
 
     /// The next event for the shell.
     public mutating func pollEvent() -> PeerEvent? {
-        guard eventHead < events.count else { return nil }
-        if pendingUpdateEventAt == eventHead { pendingUpdateEventAt = nil }
-        defer {
-            eventHead += 1
-            if eventHead == events.count {
-                events.removeAll(keepingCapacity: true)
-                eventHead = 0
-            }
-        }
-        return events[eventHead]
+        events.poll()
     }
 
     package mutating func takeTrace() -> [ConnectionTrace] {
@@ -265,16 +254,11 @@ public struct PeerEndpoint: Sendable {
         case .peerStateChanged:
             break
         case .policyChanged:
-            events.append(.policyReceived)
+            events.append(.policyReceived, coalescing: .policy)
             notifyAll(.policyChanged, now)
             notifyAll(.usabilityChanged, now)
         case .updateAvailable(let manifest):
-            if let at = pendingUpdateEventAt {
-                events[at] = .updateAvailable(manifest)
-            } else {
-                pendingUpdateEventAt = events.count
-                events.append(.updateAvailable(manifest))
-            }
+            events.append(.updateAvailable(manifest), coalescing: .updateAvailable)
             update.offerChanged(manifest, connection: &connection)
         case .liveness(let change):
             events.append(.hostLiveness(change))
@@ -309,10 +293,15 @@ public struct PeerEndpoint: Sendable {
 
     private mutating func collect() {
         for output in [power.takeOutputs(), logs.takeOutputs(), update.takeOutputs()] {
-            effects += output.effects
+            for effect in output.effects { effects.append(effect) }
             for diagnostic in output.diagnostics {
                 connection.diagnose(diagnostic)
             }
         }
     }
+}
+
+/// The peer's events that coalesce (§4.4).
+enum PeerEventSlot: Hashable, Sendable {
+    case policy, updateAvailable
 }

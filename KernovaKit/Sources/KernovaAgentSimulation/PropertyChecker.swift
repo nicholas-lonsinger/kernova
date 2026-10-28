@@ -8,7 +8,8 @@ import KernovaAgentCore
 import KernovaWire
 
 /// Decodes one link's bytes as written and as delivered, for the wire-level
-/// properties: no frame before its OPEN (2) and credit (4).
+/// properties: no frame before its OPEN and OPENs in increasing id order (2),
+/// and credit (4).
 final class LinkObserver {
     let link: Int
     private var written: [SimSide: FrameDecoder] = [.host: FrameDecoder(), .peer: FrameDecoder()]
@@ -66,6 +67,9 @@ final class LinkObserver {
         let openerIsHost = id % 2 == 0
         let writerIsOpener = (side == .host) == openerIsHost
         if frame.type == .open {
+            if let highest = opened[side]?.max(), id <= highest, !world.options.hostile {
+                world.checker.fail("property 2: link \(link) \(side) sent OPEN \(id) after OPEN \(highest)")
+            }
             opened[side, default: []].insert(id)
             return
         }

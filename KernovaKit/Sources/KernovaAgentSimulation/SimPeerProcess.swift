@@ -15,6 +15,8 @@ package final class SimPeerProcess {
     package var agent: PeerAgent?
     package var link: SimLink?
     package var ring = LogRing()
+    /// The process's power ledger, kept as the runtime keeps it (§6.2).
+    package private(set) var powerLedger = PowerLedger()
     package var clockOffset: Int64 = 86_400_000_000_000
     package var suspendedUntil: SimTime?
     var deferred: [(Bool, (SimWorld) -> Void)] = []
@@ -49,6 +51,7 @@ package final class SimPeerProcess {
         starts += 1
         instanceID = spec.instanceID ?? world.rng.bytes(16)
         ring = LogRing()
+        powerLedger = PowerLedger()
         agent = PeerAgent(now: world.localNow(.peer(index)))
     }
 
@@ -65,6 +68,7 @@ package final class SimPeerProcess {
             claim: claim, state: spec.state, power: spec.power.offer,
             logs: spec.logs ? .available(NoParams()) : .absent(.notImplemented, debugDetail: ""),
             update: updateAvailability)
+        configuration.powerLedger = powerLedger
         configuration.receiverPolicy = world.options.receiverPolicy
         let version = spec.protocolVersion
         let testKinds = world.options.testKinds
@@ -146,6 +150,8 @@ package final class SimPeerProcess {
     // MARK: Power
 
     private func handlePower(_ effect: PowerEffect, link: SimLink, world: SimWorld) {
+        powerLedger.record(effect)
+        let starts = self.starts
         switch effect {
         case .perform(let id, let action):
             performed.append((world.now, id, action))
@@ -155,20 +161,30 @@ package final class SimPeerProcess {
                 let input = Self.input(step.report, id)
                 world.at(world.now + delay) { world in
                     guard !self.cancelled.contains(id) else { return }
-                    world.peerInput(self.index, .power(input), after: 0, link: link)
+                    self.report(input, process: starts, world: world)
                 }
             }
         case .cancel(let id):
             switch spec.power.onCancel {
             case .confirm(let after):
                 cancelled.insert(id)
-                world.peerInput(index, .power(.cancelled(id)), after: after, link: link)
+                world.at(world.now + after) { world in self.report(.cancelled(id), process: starts, world: world) }
             case .silent:
                 cancelled.insert(id)
             case .acceptFirst:
                 break
             }
         }
+    }
+
+    /// The adapter's report, as the runtime's reporter takes it: into the
+    /// process's ledger, then to whichever endpoint is current. A report from an
+    /// earlier run of the process went with that process.
+    private func report(_ input: PowerInput, process: Int, world: SimWorld) {
+        guard process == starts, !isDead else { return }
+        powerLedger.record(input)
+        guard let link else { return }
+        world.peerInput(index, .power(input), after: 0, link: link)
     }
 
     static func input(_ report: PowerReport, _ id: PowerRequestID) -> PowerInput {

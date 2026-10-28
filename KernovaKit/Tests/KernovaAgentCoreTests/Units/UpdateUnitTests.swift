@@ -243,15 +243,18 @@ extension CoreUnits {
 
     @Suite("UpdateServer: §8.1's offer and §8.2's host rows")
     struct UpdateServerUnitTests {
-        static let offered = SimHub.bundle(size: 100_000, tag: 1).manifest
+        static let bundle = SimHub.bundle(size: 4_000_000, tag: 1)
+        static let offered = bundle.manifest
 
         static func id(_ stream: UInt32 = 1) -> UpdatePullID {
             UpdatePullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: stream))
         }
 
-        /// A real host whose session peer's Hello claims `scope`.
-        static func host(scope: Kernova_V2_PeerIdentity.InstallScope = .user) -> HostileRun {
-            let run = HostileRun(local: .host, seed: 19)
+        /// A real host offering `bundle` to a session peer whose Hello claims `scope`.
+        static func host(
+            scope: Kernova_V2_PeerIdentity.InstallScope = .user, bundle: BundledPayload = bundle
+        ) -> HostileRun {
+            let run = HostileRun(local: .host, seed: 19, bundles: [bundle])
             run.feed([WireFrames.hello(role: .sessionPeer, scope: scope)], preamble: true)
             return run
         }
@@ -262,19 +265,22 @@ extension CoreUnits {
             run.feed([WireFrames.open(stream, .updatePull, body: body)])
         }
 
-        /// A host serving a matching pull on stream 1.
-        static func serving() -> HostileRun {
-            let run = host()
-            pull(run)
+        /// A host serving a matching pull of `bundle` on stream 1.
+        static func serving(_ bundle: BundledPayload = bundle) -> HostileRun {
+            let run = host(bundle: bundle)
+            pull(run, hash: bundle.manifest.payloadHash)
             return run
         }
+
+        /// A 1,000-byte payload, inside one grant.
+        static let small = SimHub.bundle(size: 1_000, tag: 5)
 
         static func served(_ run: HostileRun) -> [UpdateServeEvent] {
             run.hostEvents.compactMap { if case .update(let event) = $0 { event } else { nil } }
         }
 
         static func grants(_ run: HostileRun) -> [Int] {
-            served(run).compactMap { if case .writable(_, let maxBytes) = $0 { maxBytes } else { nil } }
+            served(run).compactMap { if case .read(_, _, let maxBytes) = $0 { maxBytes } else { nil } }
         }
 
         static func result(_ kind: Kernova_V2_UpdateResult.Kind, _ code: ErrorCode? = nil) -> Frame {
@@ -344,7 +350,7 @@ extension CoreUnits {
             let run = Self.serving()
             #expect(
                 Self.served(run) == [
-                    .pullRequested(Self.id(), Self.offered), .writable(Self.id(), maxBytes: 262_144),
+                    .pullRequested(Self.id(), Self.offered), .read(Self.id(), offset: 0, maxBytes: 262_144),
                 ])
         }
 
@@ -383,14 +389,61 @@ extension CoreUnits {
             #expect(run.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
         }
 
-        @Test("The payload source finishing → END (empty)")
-        func finished() {
-            let run = Self.serving()
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 1_000)))
-            run.command(.updateFinished(Self.id()))
-            let last = run.written.on(1).last
-            #expect(last?.type == .end)
-            #expect(last?.payload.isEmpty == true)
+        @Test("Each read is capped at payload_size − sent, from the offset served so far")
+        func grantsCappedAtSize() {
+            let run = Self.serving(Self.small)
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
+            #expect(
+                Self.served(run).dropFirst() == [
+                    .read(Self.id(), offset: 0, maxBytes: 1_000), .read(Self.id(), offset: 400, maxBytes: 600),
+                ])
+        }
+
+        @Test("payload_size bytes served → the server ENDs (empty) by itself and asks for no more")
+        func endsAtSize() {
+            let run = Self.serving(Self.small)
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 600)))
+            let frames = run.written.on(1)
+            #expect(frames.filter { $0.type == .data }.map(\.payload.count) == [400, 600])
+            #expect(frames.last?.type == .end)
+            #expect(frames.last?.payload.isEmpty == true)
+            #expect(Self.grants(run) == [1_000, 600])
+        }
+
+        @Test("The source returning no bytes short of payload_size → RESET READ_FAILED and a local fault")
+        func emptyReadIsSourceFault() {
+            let run = Self.serving(Self.small)
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.command(.updateBytes(Self.id(), Data()))
+            #expect(run.streamResets.map(\.code) == [.readFailed])
+            #expect(!run.written.on(1).contains { $0.type == .end })
+            #expect(run.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
+            #expect(Self.served(run).last == .closed(Self.id(), .resetLocally(Self.readFailed(run))))
+        }
+
+        @Test("Bytes no read asked for, on a live pull → RESET READ_FAILED and a local fault, nothing sent")
+        func unsolicitedBytesAreSourceFault() {
+            let run = Self.serving(Self.small)
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 600)))
+            let ended = run.written.on(1).count
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 10)))
+            #expect(run.written.on(1).count == ended)
+
+            let live = Self.serving()
+            live.command(.updateBytes(Self.id(), Data(repeating: 4, count: 100_000)))
+            live.command(.updateBytes(Self.id(), Data(repeating: 4, count: 100_000)))
+            live.command(.updateBytes(Self.id(), Data(repeating: 4, count: 10)))
+            #expect(live.streamResets.map(\.code) == [.readFailed])
+            #expect(live.written.on(1).filter { $0.type == .data }.map(\.payload.count) == [100_000, 100_000])
+            #expect(live.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
+        }
+
+        /// The READ_FAILED this run's server reset its pull with.
+        static func readFailed(_ run: HostileRun) -> WireError {
+            for case .update(.closed(_, .resetLocally(let error))) in run.hostEvents { return error }
+            return WireError(.unspecified)
         }
 
         @Test("The payload source failing → RESET READ_FAILED, and .closed without a result")
@@ -419,7 +472,7 @@ extension CoreUnits {
         @Test("Bundles re-sent unchanged leave the pull alone")
         func offerUnchanged() {
             let run = Self.serving()
-            run.command(.setBundles([SimHub.bundle(size: 100_000, tag: 1)]))
+            run.command(.setBundles([Self.bundle]))
             #expect(run.streamResets.isEmpty)
         }
 
@@ -430,8 +483,8 @@ extension CoreUnits {
                 (.rejected, ErrorCode.updateHashMismatch),
             ])
         func result(_ kind: Kernova_V2_UpdateResult.Kind, _ code: ErrorCode?) {
-            let run = Self.serving()
-            run.command(.updateFinished(Self.id()))
+            let run = Self.serving(Self.small)
+            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 1_000)))
             run.feed([Self.result(kind, code)])
             let expected = UpdateResultValue(
                 kind: kind == .staged ? .staged : .rejected, error: code.map { WireError($0) })

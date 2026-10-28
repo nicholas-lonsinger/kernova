@@ -67,8 +67,8 @@ public struct UpdateResultValue: Sendable, Equatable {
 public enum UpdateServeEvent: Sendable, Equatable {
     /// The peer pulls the offered payload.
     case pullRequested(UpdatePullID, UpdateManifestValue)
-    /// Read at most `maxBytes` more payload bytes and send them as `.updateBytes`.
-    case writable(UpdatePullID, maxBytes: Int)
+    /// Read 1 … `maxBytes` payload bytes from `offset` and send them as `.updateBytes`.
+    case read(UpdatePullID, offset: UInt64, maxBytes: Int)
     /// The peer's verdict.
     case result(UpdatePullID, UpdateResultValue)
     /// The pull ended without a verdict.
@@ -116,7 +116,7 @@ public struct UpdateClient: FeatureMachine {
     }
 
     /// The client sets no deadlines.
-    public var nextDeadline: CoreInstant? { nil }
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
@@ -237,8 +237,12 @@ public struct UpdateClient: FeatureMachine {
 
 // MARK: - Host
 
-/// The host's update server (§8.2): serves the offered payload, relaying what
-/// the hub's payload source reads; the peer checks the byte count.
+/// The host's update server (§8.2): serves exactly the offered manifest's
+/// `payload_size` bytes, a read of the hub's payload source at a time, then
+/// ends the stream itself. A source that returns nothing short of the size,
+/// more than a read asked for, or bytes no read asked for has failed: the pull
+/// is RESET `READ_FAILED`, which the next connection retries, rather than
+/// reaching the peer as a payload of the wrong size.
 public struct UpdateServer: FeatureMachine {
     /// UPDATE.
     public static let feature = FeatureID.update
@@ -246,6 +250,8 @@ public struct UpdateServer: FeatureMachine {
     private struct Pull: Sendable {
         var id: UpdatePullID
         var manifest: UpdateManifestValue
+        /// Payload bytes queued so far.
+        var sent: UInt64 = 0
         /// The most bytes the outstanding read may return; nil when none is outstanding.
         var granted: Int?
         var ended = false
@@ -268,7 +274,7 @@ public struct UpdateServer: FeatureMachine {
     }
 
     /// The server sets no deadlines.
-    public var nextDeadline: CoreInstant? { nil }
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
         defer {
@@ -292,9 +298,9 @@ public struct UpdateServer: FeatureMachine {
             let id = UpdatePullID(generation: generation, stream: stream)
             pull = Pull(id: id, manifest: offer)
             outbox.append(.update(.pullRequested(id, offer)))
-            requestRead(connection)
+            serve(&connection)
         case .writable(let stream) where pull?.id.stream == stream:
-            requestRead(connection)
+            serve(&connection)
         case .remoteEnded(let stream, let body):
             guard var current = pull, current.id.stream == stream else { return }
             guard current.ended else {
@@ -325,26 +331,24 @@ public struct UpdateServer: FeatureMachine {
 
     /// The hub's payload source returned bytes for the outstanding read.
     mutating func bytes(_ id: UpdatePullID, _ data: Data, connection: inout Connection) {
-        guard var current = pull, current.id == id, !current.ended, let granted = current.granted else { return }
-        current.granted = nil
-        pull = current
-        guard connection.canQueue(on: id.stream) else { return }
-        guard data.count <= granted, data.count <= connection.writableData(id.stream) else {
-            diagnostics.append(
-                .localFault("the payload source returned \(data.count) bytes for a \(granted)-byte read"))
-            return connection.reset(id.stream, WireError(.readFailed))
-        }
-        if !data.isEmpty { connection.send(data: data, on: id.stream) }
-        requestRead(connection)
-    }
-
-    /// The payload source has no more bytes.
-    mutating func finished(_ id: UpdatePullID, connection: inout Connection) {
         guard var current = pull, current.id == id, !current.ended, connection.canQueue(on: id.stream) else { return }
-        current.ended = true
+        guard let granted = current.granted else {
+            return sourceFailed(id, "the payload source sent \(data.count) bytes no read asked for", &connection)
+        }
         current.granted = nil
         pull = current
-        connection.end(id.stream, body: Data())
+        guard !data.isEmpty else {
+            let short = current.manifest.payloadSize - current.sent
+            return sourceFailed(id, "the payload source returned no bytes \(short) short of payload_size", &connection)
+        }
+        guard data.count <= granted, data.count <= connection.writableData(id.stream) else {
+            return sourceFailed(
+                id, "the payload source returned \(data.count) bytes for a \(granted)-byte read", &connection)
+        }
+        connection.send(data: data, on: id.stream)
+        current.sent += UInt64(data.count)
+        pull = current
+        serve(&connection)
     }
 
     /// The payload source failed.
@@ -353,13 +357,27 @@ public struct UpdateServer: FeatureMachine {
         connection.reset(id.stream, error)
     }
 
-    private mutating func requestRead(_ connection: Connection) {
-        guard var current = pull, !current.ended, current.granted == nil else { return }
+    /// Ends the pull once `payload_size` bytes are queued; otherwise asks the
+    /// source for the next read once the stream is writable, never past the size.
+    private mutating func serve(_ connection: inout Connection) {
+        guard var current = pull, !current.ended, current.granted == nil, connection.canQueue(on: current.id.stream)
+        else { return }
+        let remaining = current.manifest.payloadSize - current.sent
+        guard remaining > 0 else {
+            current.ended = true
+            pull = current
+            return connection.end(current.id.stream, body: Data())
+        }
         let writable = connection.writableData(current.id.stream)
         guard writable >= Limits.writableLowWater else { return }
-        let grant = min(writable, WireConstants.maxRawDataPayload)
+        let grant = min(writable, WireConstants.maxRawDataPayload, Int(clamping: remaining))
         current.granted = grant
         pull = current
-        outbox.append(.update(.writable(current.id, maxBytes: grant)))
+        outbox.append(.update(.read(current.id, offset: current.sent, maxBytes: grant)))
+    }
+
+    private mutating func sourceFailed(_ id: UpdatePullID, _ detail: String, _ connection: inout Connection) {
+        diagnostics.append(.localFault(detail))
+        if connection.canReset(id.stream) { connection.reset(id.stream, WireError(.readFailed, debugDetail: detail)) }
     }
 }
