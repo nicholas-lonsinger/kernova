@@ -44,8 +44,8 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
 
     /// Builds the picker over `entries`, preselecting `selectedID`.
     ///
-    /// `downloadsFilenames` lists the user's Downloads folder and defaults to a
-    /// `FileManager` enumeration of it. It is called once, here, and the Status
+    /// `downloadsFilenames` lists the Downloads folder — see
+    /// ``filenames(in:)``. It is called once, here, and the Status
     /// column matches the names it returned: the exact ISO filename is a
     /// mirror's to decide, so there is no single path to probe the way the macOS
     /// picker has.
@@ -53,7 +53,7 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
         entries: [LinuxImageCatalogEntry],
         selectedID: String? = nil,
         generatedAt: String? = nil,
-        downloadsFilenames: (@MainActor () -> [String])? = nil
+        downloadsFilenames: @MainActor () -> [String]
     ) {
         // Sorted here so the rows read in catalog order whatever order they
         // arrive in.
@@ -62,7 +62,7 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
         self.visibleEntries = ordered
         self.generatedAt = generatedAt
         self.downloadedIDs = Self.downloadedEntryIDs(
-            among: ordered, in: downloadsFilenames?() ?? Self.downloadsFolderFilenames())
+            among: ordered, in: downloadsFilenames())
         self.pendingSelectedID = selectedID
         super.init(nibName: nil, bundle: nil)
     }
@@ -320,11 +320,10 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
 
     // MARK: - Helpers
 
-    /// The names of everything directly inside the user's Downloads folder, or
-    /// none when it cannot be read.
-    private static func downloadsFolderFilenames() -> [String] {
-        let downloads = VMCreationViewModel.downloadsDirectory.path(percentEncoded: false)
-        return (try? FileManager.default.contentsOfDirectory(atPath: downloads)) ?? []
+    /// The names of everything directly inside `directory`, or none when it
+    /// cannot be read.
+    static func filenames(in directory: URL) -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false))) ?? []
     }
 
     /// IDs of the entries `filenames` holds an image for.

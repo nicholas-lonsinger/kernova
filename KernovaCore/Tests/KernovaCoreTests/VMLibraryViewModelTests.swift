@@ -28,7 +28,7 @@ struct VMLibraryViewModelTests {
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
-        downloadsDirectory: URL? = nil
+        downloadsDirectory: URL = makeTestDownloadsDirectory()
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any RemovableMediaAttaching
@@ -79,7 +79,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             fileSystem: fileSystem,
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),
@@ -2957,7 +2957,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             fileSystem: fileSystem,
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),
@@ -3670,19 +3670,20 @@ struct VMLibraryViewModelTests {
         // install context on the new VM carries requestedFreshDownload=true,
         // which is what tells the lifecycle coordinator to trash the stale
         // file at first Start.
-        let temp = scratch.url
+        let downloads = scratch.url
             .appendingPathComponent("createVMOverwrite", isDirectory: true)
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        try Data(repeating: 0x12, count: 256).write(to: destination)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel.overFakeEngine()
+        let wizard = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), downloadsDirectory: downloads)
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "Overwrite VM"
         wizard.startAfterCreate = false
-        wizard.ipswDownloadPath = destination.path(percentEncoded: false)
+        await wizard.loadLatestImageDetails()?.value
+        let destination = try #require(wizard.ipswDownloadPath)
+        try Data(repeating: 0x12, count: 256).write(to: URL(fileURLWithPath: destination))
         wizard.confirmOverwrite()
 
         try viewModel.createVM(from: wizard)
@@ -3699,18 +3700,18 @@ struct VMLibraryViewModelTests {
         // Same wizard shape but without `confirmOverwrite()` — the persisted
         // context must have requestedFreshDownload=false so the coordinator
         // doesn't trash an unrelated file at first Start.
-        let temp = scratch.url
+        let downloads = scratch.url
             .appendingPathComponent("createVMNoOverwrite", isDirectory: true)
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel.overFakeEngine()
+        let wizard = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), downloadsDirectory: downloads)
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "No-overwrite VM"
         wizard.startAfterCreate = false
-        wizard.ipswDownloadPath = destination.path(percentEncoded: false)
+        await wizard.loadLatestImageDetails()?.value
 
         try viewModel.createVM(from: wizard)
         await viewModel.awaitArrivals()
@@ -3776,7 +3777,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),
@@ -5835,7 +5836,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: RemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),
@@ -5958,7 +5959,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: RemovableMediaDeviceService(),
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             fileSystem: MockFileSystem(),
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),
@@ -6361,7 +6362,7 @@ struct VMLibraryViewModelTests {
             bridgedInterfaces: MockBridgedInterfaceProvider(),
             usbAccessoryPassthrough: .available(MockUSBAccessoryService()),
             fileSystem: fileSystem,
-            downloadsDirectory: nil,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             preferences: preferences,
             vmnetNetworks: VmnetNetworkService.scripted(),
             arpTable: ScriptedARPTable(),

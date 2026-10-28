@@ -34,9 +34,7 @@ final class VMLifecycleCoordinator {
 
     /// The directory downloads must land in — the one location the sandbox's
     /// downloads entitlement covers.
-    ///
-    /// `nil` disables normalization.
-    private let downloadsDirectory: URL?
+    let downloadsDirectory: URL
 
     init(
         virtualizationService: any VirtualizationProviding,
@@ -47,9 +45,7 @@ final class VMLifecycleCoordinator {
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
-        downloadsDirectory: URL? = FileManager.default.urls(
-            for: .downloadsDirectory, in: .userDomainMask
-        ).first
+        downloadsDirectory: URL = UserDownloads.url
     ) {
         self.virtualizationService = virtualizationService
         self.installService = installService
@@ -296,8 +292,7 @@ final class VMLifecycleCoordinator {
 
     /// The effective IPSW download destination for a persisted path: the path
     /// itself when it names a file directly inside `downloadsDirectory`,
-    /// otherwise the destination `remoteURL` derives inside Downloads (the
-    /// wizard default when there is no pinned URL).
+    /// otherwise the destination `remoteURL` derives inside Downloads.
     ///
     /// Downloads is the only destination the app supports — the sandbox
     /// entitlement covers it, resume sidecar included, with no per-pick grant.
@@ -306,40 +301,30 @@ final class VMLifecycleCoordinator {
     /// ``RestoreImageFilename`` rather than from the persisted path, because
     /// both the path and the URL come out of a `config.json` a user can edit:
     /// only a filename this app derived is safe to append to Downloads.
-    func normalizedDownloadDestination(
-        for persisted: URL, remoteURL: URL? = nil
-    ) -> URL {
-        guard let downloads = downloadsDirectory else { return persisted }
+    func normalizedDownloadDestination(for persisted: URL, remoteURL: URL) -> URL {
         guard !isInsideDownloads(persisted) else { return persisted }
-        let filename =
-            remoteURL.map(RestoreImageFilename.destination(for:))
-            ?? RestoreImageFilename.fallback
-        return downloads.appendingPathComponent(filename)
+        return downloadsDirectory.appendingPathComponent(
+            RestoreImageFilename.destination(for: remoteURL))
     }
 
     /// The destination a "Download Latest" install writes to, named by the URL
     /// the install just resolved.
     ///
-    /// The persisted path is only the wizard's preview of that answer: the
+    /// Any persisted path is only the wizard's preview of that answer: the
     /// newest build can move between wizard and Start, and only a name derived
     /// from the URL actually fetched keeps ``RestoreImageFilename``'s per-build
-    /// identity honest for the file the bytes land in. Falls back to the
-    /// persisted path when normalization is disabled.
-    func latestDownloadDestination(persisted: URL, resolvedURL: URL) -> URL {
-        guard let downloads = downloadsDirectory else { return persisted }
-        return downloads.appendingPathComponent(
-            RestoreImageFilename.destination(for: resolvedURL))
+    /// identity honest for the file the bytes land in.
+    func latestDownloadDestination(resolvedURL: URL) -> URL {
+        downloadsDirectory.appendingPathComponent(RestoreImageFilename.destination(for: resolvedURL))
     }
 
     /// Whether `candidate` names a file sitting directly in the Downloads
     /// directory, which the directory itself does not.
     ///
     /// Symlink-resolved because the sandbox container's `Downloads` and the real
-    /// `~/Downloads` are the same directory spelled two ways. Always `true` when
-    /// normalization is disabled.
+    /// `~/Downloads` are the same directory spelled two ways.
     private func isInsideDownloads(_ candidate: URL) -> Bool {
-        guard let downloads = downloadsDirectory else { return true }
-        let downloadsPath = Self.canonicalPath(downloads)
+        let downloadsPath = Self.canonicalPath(downloadsDirectory)
         guard Self.canonicalPath(candidate) != downloadsPath else { return false }
         return Self.canonicalPath(candidate.deletingLastPathComponent()) == downloadsPath
     }
@@ -423,10 +408,6 @@ final class VMLifecycleCoordinator {
 
             switch context.source {
             case .downloadLatest, .catalogVersion, .customURL:
-                guard let persistedDestination = context.downloadDestinationURL else {
-                    throw IPSWError.noDownloadURL
-                }
-
                 instance.setupState = .macOSInstall(hasDownloadStep: true)
 
                 // Local because a moved latest destination lapses it below.
@@ -440,7 +421,9 @@ final class VMLifecycleCoordinator {
                 let remoteURL: URL
                 let downloadDestination: URL
                 if context.source.usesPinnedURL {
-                    guard let pinnedURL = context.remoteURL else {
+                    guard let pinnedURL = context.remoteURL,
+                        let persistedDestination = context.downloadDestinationURL
+                    else {
                         throw IPSWError.noDownloadURL
                     }
                     remoteURL = pinnedURL
@@ -459,26 +442,28 @@ final class VMLifecycleCoordinator {
                     }
                 } else {
                     remoteURL = try await ipswService.fetchLatestRestoreImage().url
-                    downloadDestination = latestDownloadDestination(
-                        persisted: persistedDestination, resolvedURL: remoteURL)
-                    if DownloadService.destinationKey(for: downloadDestination)
-                        != DownloadService.destinationKey(for: persistedDestination)
+                    downloadDestination = latestDownloadDestination(resolvedURL: remoteURL)
+                    let persistedDestination = context.downloadDestinationURL
+                    if persistedDestination.map(DownloadService.destinationKey(for:))
+                        != DownloadService.destinationKey(for: downloadDestination)
                     {
                         Self.logger.log(
                             .notice,
                             "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
                         )
                         // "Download & Replace" was confirmed against the
-                        // wizard's destination; a destination that moved
-                        // names a file the user never saw, so the intent
-                        // lapses rather than retargets.
+                        // wizard's destination, if it named one; a destination
+                        // it did not name is a file the user never saw, so the
+                        // intent lapses rather than retargets.
                         requestedFreshDownload = false
                         // A moved destination also means the fetch changed
                         // builds, so this VM can never resume the old path's
                         // partial download — discard it before this VM's only
                         // pointer to it moves.
-                        discardSetupResumeData(
-                            at: persistedDestination, leftBy: instance, permanently: false)
+                        if let persistedDestination {
+                            discardSetupResumeData(
+                                at: persistedDestination, leftBy: instance, permanently: false)
+                        }
                         // Keep the persisted path on the file the download
                         // actually writes, so resume across relaunches and
                         // delete-time cleanup stay keyed to it — a step the
@@ -612,17 +597,8 @@ final class VMLifecycleCoordinator {
     /// a user can edit, and never from a name the source chose: only a name
     /// this app derived is safe to append to a directory holding everything the
     /// user has ever downloaded.
-    ///
-    /// Falls back to the persisted path when normalization is disabled, and
-    /// only while it still names an ISO — the download writes over this path,
-    /// and a digest failure trashes it, so an edit pointing it at an arbitrary
-    /// file names no destination at all.
-    func linuxDownloadDestination(persisted: URL?, filename: String) -> URL? {
-        guard let downloads = downloadsDirectory else {
-            guard persisted?.pathExtension.lowercased() == "iso" else { return nil }
-            return persisted
-        }
-        return downloads.appendingPathComponent(filename)
+    func linuxDownloadDestination(filename: String) -> URL {
+        downloadsDirectory.appendingPathComponent(filename)
     }
 
     /// Adopts a file already in Downloads under the name the source published,
@@ -642,7 +618,6 @@ final class VMLifecycleCoordinator {
     private func adoptLocalImage(
         _ image: ResolvedLinuxImage, matching expected: ExpectedDigest, as destination: URL
     ) async throws -> InstallerImageDigest? {
-        guard let downloads = downloadsDirectory else { return nil }
         // A file already at the destination belongs to the download: it skips
         // over it and the verify step below holds it to this same digest. An
         // adoption is refused there in any case — asked before the hash rather
@@ -657,7 +632,7 @@ final class VMLifecycleCoordinator {
         guard let candidateName = SafeFilename.sanitized(image.filename, requiring: "iso") else {
             return nil
         }
-        let candidate = downloads.appendingPathComponent(candidateName)
+        let candidate = downloadsDirectory.appendingPathComponent(candidateName)
         // A source is free to publish a name already shaped like a
         // discriminated one; a file may not be linked onto itself.
         guard
@@ -760,15 +735,7 @@ final class VMLifecycleCoordinator {
             // fetched, and a file already sitting under the source's name
             // is one the download would adopt in place of fetching, or
             // trash for failing a digest that was never its own.
-            guard
-                let downloadDestination = linuxDownloadDestination(
-                    persisted: context.downloadDestinationURL,
-                    filename: image.destinationFilename)
-            else {
-                throw DownloadError.invalidDownloadDestination(
-                    path: context.downloadDestinationURL?.path(percentEncoded: false)
-                        ?? image.destinationFilename)
-            }
+            let downloadDestination = linuxDownloadDestination(filename: image.destinationFilename)
 
             if let persisted = context.downloadDestinationURL,
                 DownloadService.destinationKey(for: persisted)

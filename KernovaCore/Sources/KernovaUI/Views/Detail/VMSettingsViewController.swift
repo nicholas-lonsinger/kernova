@@ -194,8 +194,7 @@ final class VMSettingsViewController: NSViewController {
         overviewVC.onAction = { [weak self] action in self?.run(action) }
         addChild(overviewVC)
         addPanelContent(overviewVC.view)
-        headerContent.addArrangedSubview(identityHeader)
-        identityHeader.widthAnchor.constraint(equalTo: headerContent.widthAnchor).isActive = true
+        addGroupedFormFullWidth(identityHeader, to: headerContent)
         identityHeader.setBackAction(target: self, action: #selector(backToOverview))
         installPanels()
 
@@ -345,8 +344,7 @@ extension VMSettingsViewController {
     #endif
 
     private func addPanelContent(_ content: NSView) {
-        formStack.addArrangedSubview(content)
-        content.widthAnchor.constraint(equalTo: formStack.widthAnchor).isActive = true
+        addGroupedFormFullWidth(content, to: formStack)
     }
 
     // MARK: - Navigation

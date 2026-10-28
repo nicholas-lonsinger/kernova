@@ -38,7 +38,7 @@ func makeSettingsViewModel(
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         bridgedInterfaces: HostBridgedInterfaceProvider(),
         fileSystem: MockFileSystem(),
-        downloadsDirectory: nil,
+        downloadsDirectory: makeTestDownloadsDirectory(),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,

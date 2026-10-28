@@ -17,6 +17,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
     ) -> RestoreImageURLSheetContentViewController {
         let vc = RestoreImageURLSheetContentViewController(
             probeService: probe,
+            downloadsDirectory: makeTestDownloadsDirectory(),
             initialURL: initialURL,
             hostVersion: OperatingSystemVersion(
                 majorVersion: hostMajor, minorVersion: 0, patchVersion: 0)

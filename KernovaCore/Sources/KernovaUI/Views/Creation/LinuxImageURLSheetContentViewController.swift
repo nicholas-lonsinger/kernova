@@ -18,6 +18,8 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     var onCancel: (() -> Void)?
 
     private let resolveService: any LinuxImageResolving
+    /// Where a checked image would download to, for the destination line.
+    private let downloadsDirectory: URL
 
     /// The last successful check, and what **Use** hands to `onChoose`.
     private(set) var checkedImage: CustomLinuxImage?
@@ -48,10 +50,12 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
 
     init(
         resolveService: any LinuxImageResolving,
+        downloadsDirectory: URL,
         initialURL: String? = nil,
         initialChecksum: String? = nil
     ) {
         self.resolveService = resolveService
+        self.downloadsDirectory = downloadsDirectory
         self.initialURL = initialURL
         self.initialChecksum = initialChecksum
         super.init(nibName: nil, bundle: nil)
@@ -260,8 +264,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
             view.removeFromSuperview()
         }
         for view in views {
-            resultContainer.addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: resultContainer.widthAnchor).isActive = true
+            addGroupedFormFullWidth(view, to: resultContainer)
         }
     }
 
@@ -308,7 +311,8 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
                 // The destination, which carries a suffix unique to this link so
                 // it can never land on a file the user already has.
                 secondaryText: wizardAbbreviateWithTilde(
-                    VMCreationViewModel.downloadPath(forFilename: image.destinationFilename))
+                    VMCreationViewModel.downloadPath(
+                        forFilename: image.destinationFilename, in: downloadsDirectory))
             )
         ]
         if digestSource == nil {

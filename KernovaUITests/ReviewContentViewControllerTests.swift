@@ -37,7 +37,7 @@ struct ReviewContentViewControllerTests {
     }
 
     @Test("macOS + download names the looked-up version, build and size")
-    func macOSDownloadShowsLookedUpImage() async {
+    func macOSDownloadShowsLookedUpImage() async throws {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
         let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
@@ -51,58 +51,39 @@ struct ReviewContentViewControllerTests {
         #expect(
             findLabel(
                 withText: DataFormatters.formatBytes(19_772_077_142), in: vc.view) != nil)
+        let destination = try #require(vm.ipswDownloadPath)
+        #expect(findLabel(withText: wizardAbbreviateWithTilde(destination), in: vc.view) != nil)
     }
 
-    @Test("A lookup landing after this step appears fills the version and size in")
-    func macOSDownloadFillsInLateLookup() async {
-        let probeService = MockRestoreImageProbeService()
-        probeService.sizeResult = 19_772_077_142
-        let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
-
-        let vc = ReviewContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-        // Reaching the step ahead of the answer, as a slow or offline lookup does.
-        #expect(findLabel(withText: "26.5.2 (25F84)", in: vc.view) == nil)
-
-        vc.viewDidAppear()
-        await vc.latestImageTaskForTesting?.value
-
-        #expect(findLabel(withText: "26.5.2 (25F84)", in: vc.view) != nil)
-        #expect(
-            findLabel(
-                withText: DataFormatters.formatBytes(19_772_077_142), in: vc.view) != nil)
-        // The rows that were already there survive the redraw.
-        #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
-    }
-
-    @Test("A lookup that fails leaves the step showing the destination alone")
-    func macOSDownloadSurvivesFailedLookup() async {
+    @Test("A lookup that failed leaves the step saving to the Downloads folder, with no file named")
+    func macOSDownloadSurvivesFailedLookup() async throws {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
         let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        await vm.loadLatestImageDetails()?.value
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-        await vc.latestImageTaskForTesting?.value
 
         #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
         #expect(findLabel(withText: "macOS version", in: vc.view) == nil)
+        #expect(vm.ipswDownloadPath == nil)
+        #expect(findLabel(withText: "Save to", in: vc.view) != nil)
         #expect(
-            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+            findLabel(
+                withText: wizardAbbreviateWithTilde(vm.downloadsDirectory.path(percentEncoded: false)),
+                in: vc.view) != nil)
     }
 
-    @Test("A Linux review never reaches for a restore image")
-    func linuxSkipsLatestImageLookup() {
+    @Test("Review asks for no restore image: the destination is settled before it")
+    func reviewStartsNoLookup() {
         let ipswService = MockIPSWService()
         let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
-        vm.selectedOS = .linux
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
 
-        #expect(vc.latestImageTaskForTesting == nil)
         #expect(ipswService.fetchCallCount == 0)
     }
 
@@ -172,7 +153,7 @@ struct ReviewContentViewControllerTests {
         #expect(
             findLabel(
                 withText: wizardAbbreviateWithTilde(
-                    VMCreationViewModel.downloadsDirectory.path(percentEncoded: false)),
+                    vm.downloadsDirectory.path(percentEncoded: false)),
                 in: vc.view) != nil)
     }
 
@@ -198,8 +179,7 @@ struct ReviewContentViewControllerTests {
         #expect(destination != "alpine-3.22-aarch64.iso")
         #expect(
             findLabel(
-                withText: wizardAbbreviateWithTilde(
-                    VMCreationViewModel.downloadPath(forFilename: destination)),
+                withText: wizardAbbreviateWithTilde(vm.downloadPath(forFilename: destination)),
                 in: vc.view) != nil)
     }
 

@@ -17,6 +17,8 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
 
     private let probeService: any RestoreImageProbing
     private let hostVersion: OperatingSystemVersion
+    /// Where a checked image would download to, for the destination line.
+    private let downloadsDirectory: URL
 
     /// The last successful probe, and what **Use** hands to `onChoose`.
     private(set) var checkedImage: ProbedRestoreImage?
@@ -43,10 +45,12 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
 
     init(
         probeService: any RestoreImageProbing,
+        downloadsDirectory: URL,
         initialURL: String? = nil,
         hostVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
     ) {
         self.probeService = probeService
+        self.downloadsDirectory = downloadsDirectory
         self.hostVersion = hostVersion
         self.initialURL = initialURL
         super.init(nibName: nil, bundle: nil)
@@ -234,8 +238,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
             view.removeFromSuperview()
         }
         for view in views {
-            resultContainer.addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: resultContainer.widthAnchor).isActive = true
+            addGroupedFormFullWidth(view, to: resultContainer)
         }
     }
 
@@ -278,7 +281,8 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
                 symbolName: "checkmark.seal.fill",
                 text: Self.badgeText(for: image),
                 secondaryText: wizardAbbreviateWithTilde(
-                    VMCreationViewModel.downloadPath(forFilename: image.suggestedFilename))
+                    VMCreationViewModel.downloadPath(
+                        forFilename: image.suggestedFilename, in: downloadsDirectory))
             )
         ]
 
