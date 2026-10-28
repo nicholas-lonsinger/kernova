@@ -7,9 +7,9 @@ import Foundation
 import KernovaAgentCore
 import KernovaWire
 
-/// The named configurations a transcript's header refers to (§10.5). A fixture
-/// fixes every identity string, instance id, hash and advert; once a frozen
-/// transcript names one, it never changes.
+/// The named configurations a transcript's header refers to. A fixture fixes
+/// every identity string, instance id, hash and advert; once a frozen transcript
+/// names one, it never changes.
 package enum TranscriptFixture {
     package static let token = Data(0..<16)
 
@@ -101,10 +101,32 @@ package enum TranscriptFixture {
     }
 }
 
-/// The frozen fields of a frame, as an `expect` line states them (§10.5). Nil for
-/// frames of non-frozen kinds and non-frozen session content, which the matcher skips.
+/// One frozen frame as an `expect` line states it, and how the replay matches it.
+package struct FrozenLine: Sendable, Equatable {
+    /// How a replay may treat a produced frame the transcript does not expect next.
+    package enum Match: Sendable, Equatable {
+        /// Never skipped: the frame must be the next one expected, and none may be left over.
+        case strict
+        /// A stream-0 snapshot a non-frozen change may legitimately repeat; skipped when not expected.
+        case tolerant
+    }
+
+    package var text: String
+    package var match: Match
+
+    package init(_ text: String, _ match: Match = .strict) {
+        self.text = text
+        self.match = match
+    }
+}
+
+/// The frozen fields of a frame, as an `expect` line states them. Nil for frames
+/// of non-frozen kinds and non-frozen session content, which the matcher never
+/// sees. Frames on POWER_REQUEST and UPDATE_PULL streams, RESET(0) and the Hello
+/// are strict; the stream-0 snapshots (capabilities, peer state, policy, the
+/// update offer) are tolerant.
 package enum FrozenFields {
-    package static func describe(_ frame: Frame, kinds: [UInt32: StreamKind]) -> String? {
+    package static func describe(_ frame: Frame, kinds: [UInt32: StreamKind]) -> FrozenLine? {
         let id = frame.streamID.rawValue
         let prefix = "s=\(id)"
         switch frame.type {
@@ -112,34 +134,39 @@ package enum FrozenFields {
             return nil
         case .reset:
             let error = (try? Kernova_V2_Error(serializedBytes: frame.payload)) ?? Kernova_V2_Error()
-            if id == 0 { return "\(prefix) RESET code=\(error.code.rawValue) retry_after_ms=\(error.retryAfterMs)" }
+            if id == 0 {
+                return FrozenLine("\(prefix) RESET code=\(error.code.rawValue) retry_after_ms=\(error.retryAfterMs)")
+            }
             guard isFrozen(kinds[id]) else { return nil }
-            return "\(prefix) RESET code=\(error.code.rawValue)"
+            return FrozenLine("\(prefix) RESET code=\(error.code.rawValue)")
         case .open:
             let open = (try? Kernova_V2_Open(serializedBytes: frame.payload)) ?? Kernova_V2_Open()
             switch open.kind {
             case .powerRequest:
                 let body = (try? Kernova_V2_PowerRequest(serializedBytes: open.body)) ?? Kernova_V2_PowerRequest()
-                return
+                return FrozenLine(
                     "\(prefix) OPEN kind=POWER_REQUEST body.action=\(body.action.rawValue) body.acceptance_deadline_ms=\(body.acceptanceDeadlineMs)"
+                )
             case .updatePull:
                 let body = (try? Kernova_V2_UpdatePull(serializedBytes: open.body)) ?? Kernova_V2_UpdatePull()
-                return "\(prefix) OPEN kind=UPDATE_PULL body.payload_hash=\(hex(body.payloadHash))"
+                return FrozenLine("\(prefix) OPEN kind=UPDATE_PULL body.payload_hash=\(hex(body.payloadHash))")
             default:
                 return nil
             }
         case .end:
             switch kinds[id] {
             case .powerRequest:
-                guard !frame.payload.isEmpty else { return "\(prefix) END empty" }
+                guard !frame.payload.isEmpty else { return FrozenLine("\(prefix) END empty") }
                 let outcome =
                     (try? Kernova_V2_PowerOutcome(serializedBytes: frame.payload)) ?? Kernova_V2_PowerOutcome()
-                return
+                return FrozenLine(
                     "\(prefix) END outcome.kind=\(outcome.kind.rawValue) outcome.code=\(outcome.error.code.rawValue) outcome.apps=\(apps(outcome.apps))"
+                )
             case .updatePull:
-                guard !frame.payload.isEmpty else { return "\(prefix) END empty" }
+                guard !frame.payload.isEmpty else { return FrozenLine("\(prefix) END empty") }
                 let result = (try? Kernova_V2_UpdateResult(serializedBytes: frame.payload)) ?? Kernova_V2_UpdateResult()
-                return "\(prefix) END result.kind=\(result.kind.rawValue) result.code=\(result.error.code.rawValue)"
+                return FrozenLine(
+                    "\(prefix) END result.kind=\(result.kind.rawValue) result.code=\(result.error.code.rawValue)")
             default:
                 return nil
             }
@@ -148,7 +175,8 @@ package enum FrozenFields {
             if id == 0 { return session(frame.payload) }
             guard kinds[id] == .powerRequest else { return nil }
             let progress = (try? Kernova_V2_PowerProgress(serializedBytes: frame.payload)) ?? Kernova_V2_PowerProgress()
-            return "\(prefix) MSG progress.stage=\(progress.stage.rawValue) progress.apps=\(apps(progress.apps))"
+            return FrozenLine(
+                "\(prefix) MSG progress.stage=\(progress.stage.rawValue) progress.apps=\(apps(progress.apps))")
         }
     }
 
@@ -156,9 +184,9 @@ package enum FrozenFields {
         kind == .powerRequest || kind == .updatePull
     }
 
-    static func session(_ payload: Data) -> String? {
+    static func session(_ payload: Data) -> FrozenLine? {
         guard let message = try? Kernova_V2_SessionMessage(serializedBytes: payload) else {
-            return "s=0 MSG undecodable"
+            return FrozenLine("s=0 MSG undecodable")
         }
         switch message.message {
         case .hello(let hello):
@@ -171,18 +199,19 @@ package enum FrozenFields {
             } else {
                 text += " token=\(hex(hello.sessionToken))"
             }
-            return text + " " + adverts(hello.features)
+            return FrozenLine(text + " " + adverts(hello.features))
         case .peerState(let peerState):
-            return "s=0 MSG peer_state \(state(peerState))"
+            return FrozenLine("s=0 MSG peer_state \(state(peerState))", .tolerant)
         case .capabilities(let update):
-            return "s=0 MSG capabilities " + adverts(update.features)
+            return FrozenLine("s=0 MSG capabilities " + adverts(update.features), .tolerant)
         case .policy:
-            return "s=0 MSG policy"
+            return FrozenLine("s=0 MSG policy", .tolerant)
         case .updateAvailable(let available):
-            guard available.hasManifest else { return "s=0 MSG update_available none" }
+            guard available.hasManifest else { return FrozenLine("s=0 MSG update_available none", .tolerant) }
             let manifest = available.manifest
-            return
-                "s=0 MSG update_available hash=\(hex(manifest.payloadHash)) size=\(manifest.payloadSize) format=\(manifest.format.rawValue) label=\(manifest.versionLabel)"
+            return FrozenLine(
+                "s=0 MSG update_available hash=\(hex(manifest.payloadHash)) size=\(manifest.payloadSize) format=\(manifest.format.rawValue) label=\(manifest.versionLabel)",
+                .tolerant)
         case .extension, nil:
             return nil
         }

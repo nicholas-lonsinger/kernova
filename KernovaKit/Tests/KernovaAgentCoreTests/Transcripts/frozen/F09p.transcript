@@ -14,3 +14,5 @@ t=2      p>h     00000003 04 00 00000004 007c0000
 t=3      expect  h>p s=3 DATA-TOTAL bytes=2621440 crc32c=4617aa1f
 t=3      expect  h>p s=3 END empty
 t=4      p>h     00000003 04 00 00000004 00200000
+t=1000   p>h     00000003 02 00 00000002 0801
+t=1001   ev      host update result kind=1 code=0

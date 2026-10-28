@@ -16,4 +16,5 @@ t=3      h>p     00000003 00 00 00040000 @gen(seed=8414737292313886502,size=2621
 t=3      h>p     00000003 00 00 00040000 @gen(seed=8414737292313886502,size=2621440,offset=2359296,count=262144)
 t=3      h>p     00000003 02 00 00000000
 t=4      ev      peer update complete id=3 size=2621440
-t=1000   in      peer update installed id=1
+t=1000   in      peer update installed
+t=1000   expect  p>h s=3 END result.kind=1 result.code=0

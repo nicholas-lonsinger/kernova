@@ -11,8 +11,25 @@ import KernovaWire
 package enum TranscriptInput: Sendable, Equatable {
     case host(HostCommand)
     case peer(PeerInput)
+    /// The peer's installer reports on the pull the peer has open. The runner
+    /// addresses it to the stream of the UPDATE_PULL OPEN it saw, so a script
+    /// never names a stream id the current side chooses.
+    case pull(PullReport)
     /// The peer's logger emits `count` records into the ring.
     case peerLogs(Int)
+
+    /// An installer's report on a pull.
+    package enum PullReport: Sendable, Equatable {
+        case installed
+        case rejected(ErrorCode)
+
+        func input(_ id: UpdatePullID) -> PeerInput {
+            switch self {
+            case .installed: .update(.installed(id))
+            case .rejected(let code): .update(.rejected(id, WireError(code)))
+            }
+        }
+    }
 
     static let generation = ConnectionGeneration(rawValue: 1)
 
@@ -54,13 +71,14 @@ package enum TranscriptInput: Sendable, Equatable {
                 case .availability(.available(let offer)):
                     return "peer power offer actions=\(offer.actions.map { "\($0.rawValue)" }.joined(separator: ","))"
                 }
-            case .update(.installed(let id)): return "peer update installed id=\(id.stream.rawValue)"
-            case .update(.rejected(let id, let error)):
-                return "peer update rejected id=\(id.stream.rawValue) code=\(error.code.rawValue)"
             case .peerState(let state):
                 return "peer state console=\(state.console.rawValue) session=\(state.sessionID) user=\(state.userName)"
             default: return "peer unsupported"
             }
+        case .pull(.installed):
+            return "peer update installed"
+        case .pull(.rejected(let code)):
+            return "peer update rejected code=\(code.rawValue)"
         case .peerLogs(let count):
             return "peer logs records=\(count)"
         }
@@ -82,7 +100,6 @@ package enum TranscriptInput: Sendable, Equatable {
         func number(_ key: String) -> Int { fields[key].flatMap(Int.init) ?? 0 }
         func code(_ key: String) -> ErrorCode { ErrorCode(rawValue: number(key)) ?? .UNRECOGNIZED(number(key)) }
         let powerID = PowerRequestID(generation: Self.generation, rawValue: UInt64(number("id")))
-        let pullID = UpdatePullID(generation: Self.generation, stream: StreamID(rawValue: UInt32(number("id"))))
         let apps = (fields["apps"] ?? "").split(separator: ",").map { AppValue(displayName: String($0)) }
         switch (words[0], words[1]) {
         case ("host", "requestPower"):
@@ -121,8 +138,8 @@ package enum TranscriptInput: Sendable, Equatable {
         case ("peer", "update"):
             guard words.count >= 3 else { return nil }
             switch words[2] {
-            case "installed": self = .peer(.update(.installed(pullID)))
-            case "rejected": self = .peer(.update(.rejected(pullID, WireError(code("code")))))
+            case "installed": self = .pull(.installed)
+            case "rejected": self = .pull(.rejected(code("code")))
             default: return nil
             }
         case ("peer", "state"):
@@ -140,7 +157,7 @@ package enum TranscriptInput: Sendable, Equatable {
     }
 }
 
-/// One frozen or current exchange (§10.5's table).
+/// One frozen or current exchange.
 package struct Exchange: Sendable {
     package var id: String
     package var title: String
@@ -210,15 +227,7 @@ package struct Exchange: Sendable {
         Exchange(
             id: "F09", title: "update pull, 2.5 MiB EXECUTABLE payload → STAGED", hostFixture: "host-exec-2.5m",
             peerFixture: "linux-session-v1",
-            script: [
-                (
-                    1000,
-                    .peer(
-                        .update(
-                            .installed(
-                                UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: 1)))))
-                )
-            ], end: 1500),
+            script: [(1000, .pull(.installed))], end: 1500),
         Exchange(
             id: "F10", title: "update pull of a stale hash → RESET UPDATE_STALE", hostFixture: "host-stale",
             peerFixture: "linux-session-v1",
@@ -255,7 +264,7 @@ package struct Exchange: Sendable {
 
 /// One recorded item of a duet, from which both pinned views are rendered.
 package enum DuetItem: Sendable {
-    case wire(time: UInt64, from: SimSide, line: String, describe: String?)
+    case wire(time: UInt64, from: SimSide, line: String, describe: FrozenLine?)
     case dataTotal(time: UInt64, from: SimSide, stream: UInt32, bytes: Int, checksum: UInt32)
     case input(time: UInt64, TranscriptInput)
     case event(time: UInt64, side: SimSide, text: String)
@@ -267,6 +276,9 @@ package final class Duet {
     package private(set) var host: HostEndpoint
     package private(set) var peer: PeerEndpoint
     package private(set) var items: [DuetItem] = []
+    /// Harness misuse the run met: a scripted input the current side faulted on, or one with nothing to address.
+    package private(set) var failures: [String] = []
+    private var localFaults: [String] = []
     private var now: UInt64 = 0
     private var inflight: [(arrive: UInt64, to: SimSide, bytes: Data)] = []
     private var decoders: [SimSide: FrameDecoder] = [.host: FrameDecoder(), .peer: FrameDecoder()]
@@ -330,9 +342,23 @@ package final class Duet {
 
     private func apply(_ input: TranscriptInput) {
         items.append(.input(time: now, input))
+        let faultsBefore = localFaults.count
+        defer {
+            for fault in localFaults[faultsBefore...] {
+                failures.append("t=\(now): `\(input.text)` raised a local fault: \(fault)")
+            }
+        }
         switch input {
         case .host(let command): host.handle(command, now: instant)
         case .peer(let input): peer.handle(input, now: instant)
+        case .pull(let report):
+            guard let stream = kinds.filter({ $0.value == .updatePull && $0.key % 2 == 1 }).keys.max() else {
+                failures.append("t=\(now): `\(input.text)` with no UPDATE_PULL opened")
+                return
+            }
+            peer.handle(
+                report.input(UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: stream))),
+                now: instant)
         case .peerLogs(let count):
             var post = false
             for number in 0..<count {
@@ -353,6 +379,7 @@ package final class Duet {
             progressed = false
             while let event = host.pollEvent() {
                 progressed = true
+                if case .diagnostic(.localFault(let text)) = event { localFaults.append("host: \(text)") }
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .host, text: text))
                 }
@@ -374,6 +401,7 @@ package final class Duet {
             }
             while let event = peer.pollEvent() {
                 progressed = true
+                if case .diagnostic(.localFault(let text)) = event { localFaults.append("peer: \(text)") }
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .peer, text: text))
                 }
@@ -399,7 +427,8 @@ package final class Duet {
         var out = Data()
         if !preambleSeen.contains(side) {
             preambleSeen.insert(side)
-            items.append(.wire(time: now, from: side, line: FrozenFields.hex(bytes.prefix(4)), describe: "preamble"))
+            items.append(
+                .wire(time: now, from: side, line: FrozenFields.hex(bytes.prefix(4)), describe: FrozenLine("preamble")))
             out.append(WireConstants.preamble)
         }
         var frames: [Frame] = []
@@ -516,7 +545,7 @@ package final class Duet {
                 if from == pinned {
                     lines.append(Self.row(time, pinnedArrow, line))
                 } else if let describe {
-                    lines.append(Self.row(time, "expect", "\(currentArrow) \(describe)"))
+                    lines.append(Self.row(time, "expect", "\(currentArrow) \(describe.text)"))
                 }
             case .dataTotal(let time, let from, let stream, let bytes, let checksum):
                 if from == current {
