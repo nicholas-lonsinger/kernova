@@ -116,7 +116,7 @@ else
     detail "It ships with Xcode 26+. Confirm your Xcode is selected: xcode-select -p"
 fi
 
-# The app's "Build Linux Guest Agent" phase cross-builds with the swift.org
+# The "Build Linux Guest Agent" phase cross-builds with the swift.org
 # toolchain and Static Linux SDK, and fails on the same check when either is
 # missing.
 # shellcheck source=lib/static-linux-sdk.sh

@@ -9,9 +9,9 @@
 #
 # Usage:
 #   Tools/build-linux-guest-agent.sh
-#     as the app target's "Build Linux Guest Agent" phase: labels the agent
-#     "<MARKETING_VERSION> (<build number>)" and writes
-#     $TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/GuestAgents/linux-arm64/kernova-agent
+#     as the KernovaLinuxGuestAgent target's "Build Linux Guest Agent" phase:
+#     labels the agent "<MARKETING_VERSION> (<build number>)" and writes the
+#     phase's one declared output
 #   Tools/build-linux-guest-agent.sh --output <file> [--label <label>]
 #     anywhere else, as the Linux CI job runs it; the label defaults to
 #     "development"
@@ -51,8 +51,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$output" ]; then
-    : "${TARGET_BUILD_DIR:?run from Xcode, or pass --output}"
-    output="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/GuestAgents/linux-arm64/kernova-agent"
+    output="${SCRIPT_OUTPUT_FILE_0:?run from Xcode, or pass --output}"
     build_number="$(awk '/KERNOVA_BUILD_NUMBER/ { print $3 }' "$DERIVED_FILE_DIR/KernovaBuildNumber.h")"
     label="$MARKETING_VERSION ($build_number)"
 fi

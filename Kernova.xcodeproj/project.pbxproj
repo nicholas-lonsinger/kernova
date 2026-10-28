@@ -6,7 +6,23 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXAggregateTarget section */
+		A1000900 /* KernovaLinuxGuestAgent */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = A1000907 /* Build configuration list for PBXAggregateTarget "KernovaLinuxGuestAgent" */;
+			buildPhases = (
+				A1000901 /* Set Build Number from Git */,
+				A100020E /* Build Linux Guest Agent */,
+			);
+			dependencies = (
+			);
+			name = KernovaLinuxGuestAgent;
+			productName = KernovaLinuxGuestAgent;
+		};
+/* End PBXAggregateTarget section */
+
 /* Begin PBXBuildFile section */
+		A1000904 /* kernova-agent in Embed Linux Guest Agent */ = {isa = PBXBuildFile; fileRef = A1000902 /* kernova-agent */; };
 		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A100040A /* kernova in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = A1000400 /* kernova */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -77,6 +93,13 @@
 			remoteGlobalIDString = A1000702;
 			remoteInfo = KernovaTestHost;
 		};
+		A1000905 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000900;
+			remoteInfo = KernovaLinuxGuestAgent;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -102,6 +125,17 @@
 			name = "Embed Command Line Tool";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000903 /* Embed Linux Guest Agent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = GuestAgents/linux-arm64;
+			dstSubfolderSpec = 7;
+			files = (
+				A1000904 /* kernova-agent in Embed Linux Guest Agent */,
+			);
+			name = "Embed Linux Guest Agent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -125,6 +159,8 @@
 		A1000700 /* KernovaTestHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KernovaTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000800 /* KernovaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
+		A1000902 /* kernova-agent */ = {isa = PBXFileReference; explicitFileType = file; includeInIndex = 0; path = "kernova-agent"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A100090A /* KernovaLinuxGuestAgent.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = KernovaLinuxGuestAgent.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -348,6 +384,7 @@
 				A1000300 /* KernovaMacOSAgentTests.xctest */,
 				A1000700 /* KernovaTestHost.app */,
 				A1000800 /* KernovaUITests.xctest */,
+				A1000902 /* kernova-agent */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -363,6 +400,7 @@
 				A1000506 /* KernovaCLI.xcconfig */,
 				A1000507 /* KernovaTestHost.xcconfig */,
 				A1000508 /* KernovaUITests.xcconfig */,
+				A100090A /* KernovaLinuxGuestAgent.xcconfig */,
 			);
 			path = Targets;
 			sourceTree = "<group>";
@@ -377,7 +415,7 @@
 				A10000D0 /* Set Build Number from Git */,
 				A1000040 /* Sources */,
 				A1000010 /* Frameworks */,
-				A100020E /* Build Linux Guest Agent */,
+				A1000903 /* Embed Linux Guest Agent */,
 				A1000050 /* Resources */,
 				A100010A /* Embed Helpers */,
 				A100040B /* Embed Command Line Tool */,
@@ -389,6 +427,7 @@
 				A1000109 /* PBXTargetDependency */,
 				A1000409 /* PBXTargetDependency */,
 				A1000206 /* PBXTargetDependency */,
+				A1000906 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A1000006 /* Kernova */,
@@ -614,6 +653,9 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = A1000702;
 					};
+					A1000900 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 				};
 			};
 			buildConfigurationList = A1000032 /* Build configuration list for PBXProject "Kernova" */;
@@ -640,6 +682,7 @@
 				A1000303 /* KernovaMacOSAgentTests */,
 				A1000702 /* KernovaTestHost */,
 				A1000802 /* KernovaUITests */,
+				A1000900 /* KernovaLinuxGuestAgent */,
 			);
 		};
 /* End PBXProject section */
@@ -752,6 +795,26 @@
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" agent\n";
 		};
+		A1000901 /* Set Build Number from Git */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Set Build Number from Git";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/KernovaBuildNumber.h",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" app\n";
+		};
 		A100020E /* Build Linux Guest Agent */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -766,7 +829,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GuestAgents/linux-arm64/kernova-agent",
+				"$(BUILT_PRODUCTS_DIR)/kernova-agent",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -863,6 +926,11 @@
 			isa = PBXTargetDependency;
 			target = A1000702 /* KernovaTestHost */;
 			targetProxy = A1000805 /* PBXContainerItemProxy */;
+		};
+		A1000906 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000900 /* KernovaLinuxGuestAgent */;
+			targetProxy = A1000905 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -993,6 +1061,20 @@
 			};
 			name = Release;
 		};
+		A1000908 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A100090A /* KernovaLinuxGuestAgent.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		A1000909 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A100090A /* KernovaLinuxGuestAgent.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1073,6 +1155,15 @@
 			buildConfigurations = (
 				A1000808 /* Debug */,
 				A1000809 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000907 /* Build configuration list for PBXAggregateTarget "KernovaLinuxGuestAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000908 /* Debug */,
+				A1000909 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

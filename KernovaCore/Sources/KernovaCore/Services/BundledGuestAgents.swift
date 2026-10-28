@@ -45,8 +45,8 @@ package struct BundledGuestAgentEntry: Sendable, Equatable {
 
 /// The guest agents a host bundles, one per (OS family, architecture, install scope): the macOS agent's
 /// installer DMG, which the "Package Guest Agent DMG" build phase writes, and the Linux `kernova-agent`,
-/// which "Build Linux Guest Agent" writes, serving both the user and the system scope from one file. A file
-/// the bundle lacks has no entry, so what it would deliver is not offered.
+/// which the "Embed Linux Guest Agent" build phase copies in, serving both the user and the system scope
+/// from one file. A file the bundle lacks has no entry, so what it would deliver is not offered.
 ///
 /// One of the ``AppBundleProducts``, which reads the app's.
 package struct BundledGuestAgents: Sendable {
