@@ -30,7 +30,10 @@ var products: [Product] = [
     // `KernovaSynchronization` ships inside this product, so every image
     // linking `KernovaLogging` can import it without a project edit.
     .library(
-        name: "KernovaLogging", type: .static, targets: ["KernovaLogging", "KernovaSynchronization"])
+        name: "KernovaLogging", type: .static, targets: ["KernovaLogging", "KernovaSynchronization"]),
+    // The Linux guest agent, one static binary for the session and system
+    // peers. Tools/build-linux-guest-agent.sh builds it for the app bundle.
+    .executable(name: "kernova-agent", targets: ["KernovaLinuxAgent"]),
 ]
 
 var dependencies: [Package.Dependency] = [
@@ -65,7 +68,8 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The C calls the portable targets make without importing an OS module:
-    // the CRC32C instructions, and the monotonic clock that counts sleep.
+    // the CRC32C instructions, the monotonic clock that counts sleep, and the
+    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports.
     .target(
         name: "CKernovaShims",
         linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
@@ -81,7 +85,29 @@ var targets: [Target] = [
     // from a Mac evaluates this manifest for macOS.
     .target(
         name: "KernovaPlatformLinux",
-        dependencies: ["KernovaDBus"],
+        dependencies: [
+            "KernovaDBus", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
+            "KernovaDigest", "KernovaSynchronization", "CKernovaShims",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // SHA-256, for the agents' payload hash.
+    .target(
+        name: "KernovaDigest",
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The Linux agent's display version. Tools/build-linux-guest-agent.sh
+    // writes the label the C file includes; without it the label reads
+    // "development".
+    .target(name: "CKernovaAgentVersion"),
+    // `kernova-agent`. Declared on every platform, like
+    // `KernovaPlatformLinux`, with its body compiled only for Linux.
+    .executableTarget(
+        name: "KernovaLinuxAgent",
+        dependencies: [
+            "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaLogging",
+            "CKernovaAgentVersion",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // The non-blocking `ByteStream` over a socket. Declared on every platform,
@@ -132,7 +158,12 @@ var targets: [Target] = [
     // target it tests, only for Linux.
     .testTarget(
         name: "KernovaPlatformLinuxTests",
-        dependencies: ["KernovaPlatformLinux", "KernovaDBus"],
+        dependencies: ["KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    .testTarget(
+        name: "KernovaLinuxAgentTests",
+        dependencies: ["KernovaLinuxAgent", "KernovaAgentCore"],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The
@@ -140,7 +171,7 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaAgentCoreTests",
         dependencies: [
-            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire",
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaDigest",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         exclude: ["Transcripts"],
@@ -163,7 +194,7 @@ var targets: [Target] = [
     // (Tools/check-test-seams.sh).
     .testTarget(
         name: "KernovaPortableTests",
-        dependencies: ["KernovaLogging", "KernovaSynchronization"],
+        dependencies: ["KernovaLogging", "KernovaSynchronization", "KernovaDigest"],
         swiftSettings: sharedSwiftSettings
     ),
 ]
@@ -185,6 +216,9 @@ products += [
     .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
     .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
     .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
+    // The protocol's vocabulary — the bundled-payload catalog's keys and
+    // manifests — for KernovaCore.
+    .library(name: "KernovaAgentCore", targets: ["KernovaAgentCore", "KernovaWire"]),
 ]
 
 dependencies += [

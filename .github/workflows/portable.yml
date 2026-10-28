@@ -9,11 +9,17 @@ on:
       - 'KernovaKit/**'
       - '.github/workflows/**'
       - '.swift-version'
+      - 'Tools/build-linux-guest-agent.sh'
+      - 'Tools/check-linux-guest-agent.sh'
+      - 'Tools/lib/static-linux-sdk.sh'
   pull_request:
     paths:
       - 'KernovaKit/**'
       - '.github/workflows/**'
       - '.swift-version'
+      - 'Tools/build-linux-guest-agent.sh'
+      - 'Tools/check-linux-guest-agent.sh'
+      - 'Tools/lib/static-linux-sdk.sh'
   workflow_dispatch:
 
 permissions:
@@ -46,22 +52,48 @@ jobs:
     needs: swift-version
     runs-on: ubuntu-24.04-arm
     container: swift:${{ needs.swift-version.outputs.version }}-noble
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      # KernovaPlatformLinuxTests start their own dbus-daemon.
-      - name: Install dbus-daemon
-        run: apt-get update && apt-get install --yes --no-install-recommends dbus
+      # KernovaPlatformLinuxTests start their own dbus-daemon; the agent's
+      # check reads `file`.
+      - name: Install dbus-daemon and file
+        run: apt-get update && apt-get install --yes --no-install-recommends dbus file
 
       - name: Build
         run: swift build --package-path KernovaKit
 
+      # The static SDK has no Testing module, so the tests run on the
+      # container's glibc toolchain.
       - name: Test
         run: swift test --package-path KernovaKit
+
+      - name: Install the Static Linux SDK
+        shell: bash
+        run: |
+          . Tools/lib/static-linux-sdk.sh
+          version='${{ needs.swift-version.outputs.version }}'
+          sdk="swift-${version}-RELEASE_static-linux-${STATIC_SDK_VERSION}"
+          swift sdk install \
+            "https://download.swift.org/swift-${version}-release/static-sdk/swift-${version}-RELEASE/${sdk}.artifactbundle.tar.gz" \
+            --checksum "$STATIC_SDK_CHECKSUM"
+
+      # A second checkout path, so the comparison proves no path reaches the
+      # binary.
+      - name: Build kernova-agent from two checkout paths
+        shell: bash
+        run: |
+          Tools/build-linux-guest-agent.sh --output "$RUNNER_TEMP/a/kernova-agent"
+          mkdir "$RUNNER_TEMP/elsewhere"
+          tar --exclude=./KernovaKit/.build -cf - . | tar -xf - -C "$RUNNER_TEMP/elsewhere"
+          "$RUNNER_TEMP/elsewhere/Tools/build-linux-guest-agent.sh" --output "$RUNNER_TEMP/b/kernova-agent"
+
+      - name: Check kernova-agent
+        run: Tools/check-linux-guest-agent.sh "$RUNNER_TEMP/a/kernova-agent" "$RUNNER_TEMP/b/kernova-agent"
 
   windows:
     name: Windows (arm64)

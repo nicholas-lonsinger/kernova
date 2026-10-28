@@ -47,7 +47,7 @@ struct GuestAgentDiskControlTests {
             preferences: makeTestPreferences(),
             bundleProducts: AppBundleProducts(
                 bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
-                guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: nil)))
+                guestAgents: BundledGuestAgents(entries: [])))
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()

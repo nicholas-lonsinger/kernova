@@ -593,7 +593,7 @@ struct ClipboardAgentDiskControlTests {
 
     @Test("The footer's button tracks the installer's attached state through observation")
     func footerTracksInstallerAttachment() async throws {
-        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        _ = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let viewModel = makeClipboardViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()),

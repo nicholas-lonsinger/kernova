@@ -86,6 +86,43 @@ public struct Logind: Sendable {
         try LogindSessionReference(try property("Display", of: user, Self.userInterface))
     }
 
+    /// The user's `Name`: their login name, as logind holds it. A static
+    /// binary has no NSS to look a uid up with, so this is how the agent
+    /// learns it.
+    public func userName(_ user: DBusObjectPath) throws(LogindError) -> String {
+        let value = try property("Name", of: user, Self.userInterface)
+        return try Self.read { () throws(DBusValueMismatch) in try value.string() }
+    }
+
+    /// Calls `onNew` for each `SessionNew` the manager emits, with the new
+    /// session, until the subscription is cancelled. A user's `Display` is
+    /// elected from their sessions, so a new one is when it can appear.
+    /// `onNew` runs on the connection's reader thread.
+    public func observeNewSessions(
+        onNew: @escaping @Sendable (Result<LogindSessionReference, LogindError>) -> Void
+    ) throws(LogindError) -> DBusSubscription {
+        let rule = DBusMatchRule(
+            sender: Self.busName, path: Self.managerPath, interface: Self.managerInterface, member: "SessionNew")
+        do throws(DBusCallError) {
+            return try connection.subscribe(rule) { signal in
+                let result = Result { () throws(LogindError) -> LogindSessionReference in
+                    let body: [DBusValue]
+                    do throws(DBusProtocolError) {
+                        body = try signal.decodeBody(expecting: "so")
+                    } catch {
+                        throw .unexpectedReply(error)
+                    }
+                    return try Self.read { () throws(DBusValueMismatch) in
+                        LogindSessionReference(id: try body[0].string(), path: try body[1].objectPath())
+                    }
+                }
+                onNew(result)
+            }
+        } catch {
+            throw .call(error)
+        }
+    }
+
     /// `GetSeat(id)`: the seat's object, as `seat0` for the console. logind
     /// answers with an ERROR for a seat that does not exist.
     public func seat(_ id: String) throws(LogindError) -> DBusObjectPath {

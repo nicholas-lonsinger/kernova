@@ -349,7 +349,7 @@ package final class VMInstance {
     /// `true` when the bundled Guest Agent installer DMG is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        guard let path = bundleProducts.guestAgent.installerPath else { return false }
+        guard let path = bundleProducts.guestAgents.macOSInstallerPath else { return false }
         return (configuration.removableMedia ?? []).contains { $0.path == path }
     }
 
@@ -984,7 +984,7 @@ package final class VMInstance {
             channel: channel,
             label: name,
             hostVersion: bundleProducts.hostVersion,
-            bundledAgentVersion: bundleProducts.guestAgent.version,
+            bundledAgentVersion: bundleProducts.guestAgents.macOSVersion,
             policyProvider: { [weak self] in
                 self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
             },
@@ -1128,7 +1128,7 @@ package final class VMInstance {
         // the disk is mounted to run uninstall.command) must not yank the
         // installer disk out from under the user.
         guard agentVersionChanged else { return }
-        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: bundleProducts.guestAgent.version) {
+        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: bundleProducts.guestAgents.macOSVersion) {
             onAgentBecameCurrent?()
         }
     }

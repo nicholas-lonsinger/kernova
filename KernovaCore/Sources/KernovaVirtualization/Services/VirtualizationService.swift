@@ -24,11 +24,11 @@ package final class VirtualizationService {
     package init(
         vmnetNetworks: VmnetNetworkService, vmnetAttachments: VmnetAttachmentMaker,
         bridgedInterfaces: any BridgedInterfaceProviding, entitlements: EntitlementService,
-        guestAgent: BundledGuestAgent, isProtectedDataAvailable: @escaping @MainActor () -> Bool
+        guestAgents: BundledGuestAgents, isProtectedDataAvailable: @escaping @MainActor () -> Bool
     ) {
         configBuilder = ConfigurationBuilder(
             bridgedInterfaces: bridgedInterfaces, vmnetNetworks: vmnetNetworks,
-            vmnetAttachments: vmnetAttachments, entitlements: entitlements, guestAgent: guestAgent)
+            vmnetAttachments: vmnetAttachments, entitlements: entitlements, guestAgents: guestAgents)
         self.isProtectedDataAvailable = isProtectedDataAvailable
     }
 

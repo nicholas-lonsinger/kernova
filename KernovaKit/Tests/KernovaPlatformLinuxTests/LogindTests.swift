@@ -29,6 +29,10 @@ final class FakeLogind: Sendable {
         let refusal = Mutex<DBusRemoteError?>(nil)
         /// seat0's foreground session.
         let activeSession = Mutex<LogindSessionReference?>(FakeLogind.greeterSession)
+        /// The display user's `Display`.
+        let display = Mutex<LogindSessionReference?>(FakeLogind.userSession)
+        /// The user session's `Active`.
+        let userSessionActive = Mutex(false)
     }
 
     static let inhibitors: [DBusValue] = [
@@ -85,14 +89,15 @@ final class FakeLogind: Sendable {
     ) -> [String: DBusValue]? {
         switch (path, interface) {
         case (displayUserPath, .string(Logind.userInterface)?):
-            ["Display": reference(userSession), "Name": .string("user")]
+            ["Display": reference(recorder.display.withLock { $0 }), "Name": .string("user")]
         case (sessionlessUserPath, .string(Logind.userInterface)?):
             ["Display": reference(nil), "Name": .string("lingering")]
         case (seatPath, .string(Logind.seatInterface)?):
             ["ActiveSession": reference(recorder.activeSession.withLock { $0 }), "Id": .string("seat0")]
         case (userSession.path, .string(Logind.sessionInterface)?):
             [
-                "Id": .string("2"), "Active": .boolean(false), "State": .string("online"), "Class": .string("user"),
+                "Id": .string("2"), "Active": .boolean(recorder.userSessionActive.withLock { $0 }),
+                "State": .string("online"), "Class": .string("user"),
                 "Type": .string("wayland"),
             ]
         case (greeterSession.path, .string(Logind.sessionInterface)?):
@@ -130,6 +135,14 @@ final class FakeLogind: Sendable {
         default:
             return nil
         }
+    }
+
+    /// Emits the manager's `SessionNew` for `session`.
+    func emitSessionNew(_ session: LogindSessionReference) throws {
+        try connection.send(
+            .signal(
+                path: Logind.managerPath, interface: Logind.managerInterface, member: "SessionNew",
+                body: [.string(session.id), .objectPath(session.path)]))
     }
 
     /// Emits `PropertiesChanged` for `interface` on `path`.

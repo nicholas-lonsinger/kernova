@@ -889,7 +889,7 @@ extension VMCommandCore {
     /// The DMG's path points *inside the app bundle*, so trashing it would
     /// corrupt the app for every VM.
     private func offeredExternalReferences(for instance: VMInstance) -> [ExternalFileReference] {
-        let agentPath = instance.bundleProducts.guestAgent.installerPath
+        let agentPath = instance.bundleProducts.guestAgents.macOSInstallerPath
         return instance.configuration.externalFileReferences
             .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
     }

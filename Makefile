@@ -103,8 +103,9 @@ help:
 # targets below so each piece is also runnable on its own. Every step is
 # idempotent, so rerun it whenever the environment drifts. It ends with
 # `doctor`, which reports the state the run produced.
-setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Periphery, then doctor
+setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org toolchain, LSP config, Periphery, then doctor
 	@Tools/brew-install.sh shellcheck gh xcode-build-server
+	@Tools/install-swift-toolchain.sh >/dev/null
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 	@Tools/install-periphery.sh >/dev/null
 	@Tools/doctor.sh
@@ -238,7 +239,7 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # own scratch path keeps the swift.org toolchain's build state apart from the
 # Xcode toolchain's, which `test-unhosted` uses. `swift build` keeps only the
 # last of several `--target` options, so each target is a build of its own.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaPlatformPOSIX KernovaDBus KernovaPlatformLinux
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaPlatformPOSIX KernovaDBus KernovaDigest KernovaPlatformLinux CKernovaAgentVersion KernovaLinuxAgent
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
@@ -293,6 +294,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-self-activation.sh
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
+	@bash Tools/check-linux-agent-fault.sh
 	@bash Tools/check-package-reference.sh
 	@bash Tools/check-core-imports.sh
 	@bash Tools/check-portable-imports.sh $(PORTABLE_TARGETS)

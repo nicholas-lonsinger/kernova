@@ -377,6 +377,7 @@
 				A10000D0 /* Set Build Number from Git */,
 				A1000040 /* Sources */,
 				A1000010 /* Frameworks */,
+				A100020E /* Build Linux Guest Agent */,
 				A1000050 /* Resources */,
 				A100010A /* Embed Helpers */,
 				A100040B /* Embed Command Line Tool */,
@@ -750,6 +751,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" agent\n";
+		};
+		A100020E /* Build Linux Guest Agent */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Linux Guest Agent";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GuestAgents/linux-arm64/kernova-agent",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Tools/build-linux-guest-agent.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

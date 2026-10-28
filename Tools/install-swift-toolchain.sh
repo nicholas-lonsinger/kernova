@@ -23,11 +23,8 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-# The Static Linux SDK release for the pinned toolchain, and its checksum from
-# https://www.swift.org/api/v1/install/releases.json. Moving `.swift-version`
-# moves these with it; a stale pair fails the checksum rather than installing.
-STATIC_SDK_VERSION='0.1.0'
-STATIC_SDK_CHECKSUM='cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c'
+# shellcheck source=lib/static-linux-sdk.sh
+. "$lib_dir/lib/static-linux-sdk.sh"
 
 swift_version="$(tr -d '[:space:]' <.swift-version)"
 swiftly="${SWIFTLY_HOME_DIR:-$HOME/.swiftly}/bin/swiftly"

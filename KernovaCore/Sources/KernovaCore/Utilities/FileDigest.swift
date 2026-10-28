@@ -15,16 +15,28 @@ enum FileDigest {
 
     /// The SHA-256 of the file at `url`, as 64 lowercase hex characters.
     ///
-    /// Reads on a detached task, so a multi-gigabyte file does not block the
-    /// main actor, and checks for cancellation between chunks.
     /// `progressHandler` reports the fraction read, `0...1`, on the main actor.
     static func sha256(
         of url: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> String {
+        try await digest(of: url, progressHandler: progressHandler).sha256
+            .map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The SHA-256 of the file at `url`, and its size in bytes.
+    ///
+    /// Reads on a detached task at `priority`, so a multi-gigabyte file does
+    /// not block the main actor, and checks for cancellation between chunks.
+    /// `progressHandler`, when there is one, reports the fraction read,
+    /// `0...1`, on the main actor.
+    static func digest(
+        of url: URL, priority: TaskPriority = .userInitiated,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?
+    ) async throws -> (sha256: Data, byteCount: UInt64) {
         let totalBytes =
             (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-        let work = Task.detached(priority: .userInitiated) {
+        let work = Task.detached(priority: priority) {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
 
@@ -39,6 +51,7 @@ enum FileDigest {
                 hasher.update(data: chunk)
                 readBytes += Int64(chunk.count)
 
+                guard let progressHandler else { continue }
                 let now = ProcessInfo.processInfo.systemUptime
                 guard totalBytes > 0, now - lastReport >= progressInterval else { continue }
                 lastReport = now
@@ -49,8 +62,8 @@ enum FileDigest {
             }
             // Unthrottled, so a file read inside a single throttle window still
             // leaves the caller showing a finished step.
-            await MainActor.run { progressHandler(1) }
-            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            if let progressHandler { await MainActor.run { progressHandler(1) } }
+            return (Data(hasher.finalize()), UInt64(readBytes))
         }
         return try await withTaskCancellationHandler {
             try await work.value

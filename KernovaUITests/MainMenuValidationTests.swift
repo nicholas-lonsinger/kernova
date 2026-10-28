@@ -113,7 +113,7 @@ struct MainMenuValidationTests {
         let fixture = makeFixture(
             bundleProducts: AppBundleProducts(
                 bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
-                guestAgent: BundledGuestAgent(version: "2.0", installerDiskImageURL: nil)))
+                guestAgents: BundledGuestAgents(entries: [])))
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
 

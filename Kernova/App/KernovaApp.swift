@@ -55,7 +55,7 @@ enum KernovaApp {
         let vmnetNetworks = VmnetNetworkService(operations: vmnetOperator)
         let bridgedInterfaces = HostBridgedInterfaceProvider()
         let hostNotifications = HostNotifications.appKit()
-        let guestAgent = products.guestAgent
+        let guestAgents = products.guestAgents
         return VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
             diskImageService: DiskImageService(products: products),
@@ -64,11 +64,11 @@ enum KernovaApp {
             virtualizationHost: VirtualizationHost(),
             virtualizationService: VirtualizationService(
                 vmnetNetworks: vmnetNetworks, vmnetAttachments: .host,
-                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent,
+                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgents: guestAgents,
                 isProtectedDataAvailable: { NSApplication.shared.isProtectedDataAvailable }),
             installService: MacOSInstallService(
                 vmnetNetworks: vmnetNetworks, vmnetAttachments: .host,
-                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgent: guestAgent),
+                bridgedInterfaces: bridgedInterfaces, entitlements: entitlements, guestAgents: guestAgents),
             ipswService: IPSWService(),
             localImageInspector: LocalRestoreImageInspector(),
             removableMediaDeviceService: RemovableMediaDeviceService(),

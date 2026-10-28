@@ -47,7 +47,7 @@ package enum GuestAgentDiskControl {
         for instance: VMInstance, in capabilities: VMCapabilityCatalog
     ) -> Model {
         guard capabilities.isAvailable(.toggleGuestAgentDisk, on: instance),
-            instance.bundleProducts.guestAgent.installerDiskImageURL != nil
+            instance.bundleProducts.guestAgents.macOSInstallerDiskImageURL != nil
         else {
             return withheld
         }

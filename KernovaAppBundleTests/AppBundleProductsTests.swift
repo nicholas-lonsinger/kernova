@@ -20,16 +20,26 @@ struct AppBundleProductsTests {
     func guestAgentVersionNamesTheAgentBuilt() throws {
         let agent = try BuiltProducts.bundle(named: "Kernova Guest Agent.app")
         let built = try #require(agent.infoDictionary?["CFBundleShortVersionString"] as? String)
-        #expect(products.guestAgent.version == built)
+        #expect(products.guestAgents.macOSVersion == built)
     }
 
     @Test("isInstaller(of:) matches the app's bundled installer image path only")
     func installerImageMatchesThePathOnly() throws {
-        let agent = products.guestAgent
-        let path = try #require(agent.installerDiskImageURL).path(percentEncoded: false)
+        let agents = products.guestAgents
+        let path = try #require(agents.macOSInstallerDiskImageURL).path(percentEncoded: false)
         #expect(FileManager.default.fileExists(atPath: path))
-        #expect(RemovableMediaItem(path: path, readOnly: true).isInstaller(of: agent))
-        #expect(!RemovableMediaItem(path: "/tmp/other.iso", readOnly: true).isInstaller(of: agent))
+        #expect(RemovableMediaItem(path: path, readOnly: true).isInstaller(of: agents))
+        #expect(!RemovableMediaItem(path: "/tmp/other.iso", readOnly: true).isInstaller(of: agents))
+    }
+
+    @Test("The built app carries the Linux agent for both scopes, readable and not executable")
+    func builtAppCarriesTheLinuxAgent() throws {
+        let entries = products.guestAgents.entries.filter { $0.fileURL.lastPathComponent == "kernova-agent" }
+        #expect(entries.count == 2)
+        let url = try #require(entries.first?.fileURL)
+        #expect(url.path(percentEncoded: false).hasSuffix("Contents/Resources/GuestAgents/linux-arm64/kernova-agent"))
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o644)
     }
 
     @Test("The built app carries the tool the installer links to")

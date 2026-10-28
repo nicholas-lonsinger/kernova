@@ -42,6 +42,7 @@ let package = Package(
                 .product(name: "KernovaKit", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
+                .product(name: "KernovaAgentCore", package: "KernovaKit"),
             ],
             resources: [
                 .copy("Resources/LinuxImageCatalog.json"),
@@ -87,6 +88,7 @@ let package = Package(
             dependencies: [
                 "KernovaCore",
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentCore", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
                 .product(name: "KernovaTestSupport", package: "KernovaKit"),
@@ -113,6 +115,7 @@ let package = Package(
                 "KernovaCore",
                 "KernovaCoreTestSupport",
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentCore", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
                 .product(name: "KernovaTestSupport", package: "KernovaKit"),

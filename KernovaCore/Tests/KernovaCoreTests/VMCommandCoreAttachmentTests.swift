@@ -766,11 +766,11 @@ struct VMCommandCoreAttachmentTests {
 
     @Test("The bundled Guest Agent installer is detached but never trashed")
     func removeGuestAgentInstallerKeepsTheFile() async throws {
-        let agentPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let agentPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
         let item = RemovableMediaItem(
-            path: agentPath, readOnly: true, label: BundledGuestAgent.diskLabel)
+            path: agentPath, readOnly: true, label: BundledGuestAgents.macOSDiskLabel)
         let instance = makeInstance(in: harness) { $0.removableMedia = [item] }
 
         let refusal = try await #require(throws: CommandError.self) {
@@ -1374,7 +1374,7 @@ struct VMCommandCoreAttachmentTests {
 
     @Test("Mounting attaches the installer once and reports it present on a second call")
     func mountGuestAgentDiskIsIdempotent() throws {
-        let installerPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
         let instance = makeInstance(
@@ -1403,7 +1403,7 @@ struct VMCommandCoreAttachmentTests {
 
     @Test("Unmounting drops the installer entry, and an agent handshake does it unasked")
     func unmountGuestAgentDisk() throws {
-        let installerPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
         let instance = makeInstance(
@@ -1424,7 +1424,7 @@ struct VMCommandCoreAttachmentTests {
 
     @Test("An agent handshake during a live snapshot leaves the installer mounted for a later eject")
     func autoEjectWaitsOutAnUnattachableSession() throws {
-        let installerPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
         let sessionID = UUID()
@@ -1450,7 +1450,7 @@ struct VMCommandCoreAttachmentTests {
 
     @Test("An agent handshake during a USB attach ejects the installer once the attach ends")
     func autoEjectDuringAnAttachLandsAfterIt() async throws {
-        let installerPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let installer = RemovableMediaItem(path: installerPath, readOnly: true)
         let harness = makeHarness(usbAccessoryPassthrough: .available(MockUSBAccessoryService()))

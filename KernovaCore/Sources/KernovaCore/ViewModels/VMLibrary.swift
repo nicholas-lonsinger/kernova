@@ -322,7 +322,7 @@ package final class VMLibrary: VMAdmissionPeers {
         let entitlements = entitlements
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
-            bundledAgentVersion: bundleProducts.guestAgent.version, networks: named,
+            bundledAgentVersion: bundleProducts.guestAgents.macOSVersion, networks: named,
             tags: organization.tags,
             networkTitle: { config in
                 NetworkModeChoice.label(

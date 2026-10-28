@@ -442,7 +442,7 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments excludes the bundled Guest Agent DMG")
     func externalAttachmentsExcludesGuestAgentDMG() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let agentPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let instance = viewModel.library.admitFixture {
             $0.removableMedia = [
@@ -464,7 +464,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM never trashes the Guest Agent DMG even if its id is selected")
     func deleteVMNeverTrashesGuestAgentDMG() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let agentPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let agentPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let agentID = UUID()
         let instance = viewModel.library.admitFixture {
@@ -5980,7 +5980,7 @@ struct VMLibraryViewModelTests {
 
     @Test("toggleGuestAgentDisk mounts with the control's purpose and shows the alert")
     func toggleGuestAgentDiskMountsAndShowsAlert() async throws {
-        let installerURL = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerURL = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = viewModel.library.admitFixture(guestOS: .macOS)
@@ -6009,7 +6009,7 @@ struct VMLibraryViewModelTests {
     /// ejected rather than mounted a second time.
     @Test("toggleGuestAgentDisk ejects an attached installer without an alert")
     func toggleGuestAgentDiskEjectsAttachedInstaller() throws {
-        let installerURL = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerURL = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = viewModel.library.admitFixture(guestOS: .macOS) {
@@ -6030,7 +6030,7 @@ struct VMLibraryViewModelTests {
 
     @Test("toggleGuestAgentDisk attaches nothing for a guest that takes the disk on virtio")
     func toggleGuestAgentDiskVirtioAttachesNothing() async throws {
-        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        _ = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = viewModel.library.admitFixture(guestOS: .macOS) {
@@ -6053,7 +6053,7 @@ struct VMLibraryViewModelTests {
 
     @Test("onAgentBecameCurrent (wired by loadVMs) auto-ejects the installer disk")
     func onAgentBecameCurrentAutoEjectsInstaller() async throws {
-        let installerURL = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerURL = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let storage = MockVMStorageService()
         var config = VMConfiguration(
             name: "Wired VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
