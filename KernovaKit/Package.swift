@@ -66,10 +66,36 @@ var targets: [Target] = [
     ),
     // The C intrinsics Swift cannot spell: the CRC32C instructions.
     .target(name: "CKernovaShims"),
+    // The D-Bus protocol with no I/O: types, marshalling, messages, SASL
+    // EXTERNAL, and a connection driven by the bytes a transport moves.
+    .target(
+        name: "KernovaDBus",
+        swiftSettings: sharedSwiftSettings
+    ),
+    // What the Linux guest agent calls into Linux for. It is declared on every
+    // platform, its sources compiled only for Linux, because a cross build
+    // from a Mac evaluates this manifest for macOS.
+    .target(
+        name: "KernovaPlatformLinux",
+        dependencies: ["KernovaDBus"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // Like `KernovaPortableTests` below, it cannot reach `KernovaTestSupport`.
     .testTarget(
         name: "KernovaWireTests",
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
+        swiftSettings: sharedSwiftSettings
+    ),
+    .testTarget(
+        name: "KernovaDBusTests",
+        dependencies: ["KernovaDBus"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Against a private `dbus-daemon` each suite starts; compiled, like the
+    // target it tests, only for Linux.
+    .testTarget(
+        name: "KernovaPlatformLinuxTests",
+        dependencies: ["KernovaPlatformLinux", "KernovaDBus"],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
