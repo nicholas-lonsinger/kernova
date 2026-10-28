@@ -60,31 +60,6 @@ jobs:
       - name: Build
         run: swift build --package-path KernovaKit
 
-      # DIAGNOSTIC, to be reverted: each POSIX stream test alone, then the whole
-      # runtime target, under a 90 s watchdog with output kept through a pty.
-      - name: Runtime tests with a watchdog
-        shell: bash
-        run: |
-          swift build --package-path KernovaKit --build-tests
-          matching() {
-            for proc in /proc/[0-9]*; do
-              if tr '\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -qE "$1"; then echo "${proc#/proc/}"; fi
-            done
-          }
-          for filter in manyChunksArriveIntact shutdownFailsPendingWrite shutdownAfterEOF shutdownBeforeStart writeAfterShutdown emptyWrite readMoreGates KernovaAgentRuntimeTests; do
-            script -qfc "swift test --skip-build --package-path KernovaKit --filter $filter" "$filter.log" > /dev/null 2>&1 &
-            runner=$!
-            for _ in $(seq 1 90); do kill -0 "$runner" 2>/dev/null || break; sleep 1; done
-            if kill -0 "$runner" 2>/dev/null; then
-              echo "::warning::$filter hung"
-              echo "----- $filter: hung -----"
-              tail -40 "$filter.log"
-              for pid in $(matching 'KernovaKitPackageTests|swift-test |script -qfc'); do kill -9 "$pid" 2>/dev/null || true; done
-            else
-              echo "----- $filter: $(grep -aE 'Test run with' "$filter.log" | tail -1)"
-            fi
-          done
-
       - name: Test
         run: swift test --package-path KernovaKit
 
