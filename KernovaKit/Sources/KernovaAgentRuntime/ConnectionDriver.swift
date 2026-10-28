@@ -71,26 +71,30 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
     /// The most one transmit carries: one maximum raw DATA frame and its header.
     static var maxTransmitBytes: Int { WireConstants.maxRawDataPayload + WireConstants.headerByteCount }
 
-    /// A driver for `endpoint` over `stream`; nothing happens until `start()`.
+    /// A driver for `endpoint` over `stream`; nothing runs until `start()`, and what `handle(_:)` and
+    /// `close(_:)` are sent before it runs after the stream starts. A driver never started is never released.
     public init(
         endpoint: Endpoint, stream: any ByteStream, scheduler: any RuntimeScheduler, logger: KernovaLogger,
         handlers: Handlers
     ) {
         generation = endpoint.generation
-        queue = DispatchQueue(label: "app.kernova.connection.\(endpoint.generation.rawValue)")
+        queue = DispatchQueue(
+            label: "app.kernova.connection.\(endpoint.generation.rawValue)", attributes: .initiallyInactive)
         self.stream = stream
         self.scheduler = scheduler
         self.logger = logger
         self.handlers = handlers
         state = Locked(State(endpoint: endpoint))
-    }
-
-    /// Starts the stream's events and runs the first turn, which writes the preamble and Hello.
-    public func start() {
+        // The queue's first block: every turn is queued behind it, so none writes into an unstarted stream.
         queue.async { [self] in
             stream.start(on: queue) { [self] event in streamEvent(event) }
             turn(.none)
         }
+    }
+
+    /// Starts the stream's events and runs the first turn, which writes the preamble and Hello.
+    public func start() {
+        queue.activate()
     }
 
     /// Feeds `input` to the endpoint in a turn of its own.
