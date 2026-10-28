@@ -83,10 +83,10 @@ struct AppRegistryWaitTests {
     @Test("A pid-keyed wait ends once that instance reports terminated")
     func processWaitEndsWhenTheInstanceTerminates() async throws {
         let instance = FakeRegisteredInstance()
-        let registry = FakeAppRegistry(registered: [], byProcessIdentifier: [42: instance])
+        let registry = FakeAppRegistry(registered: [instance])
 
         async let outcome = self.awaitDeregistration(
-            ofProcess: 42, from: registry, within: testWaitBackstop)
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: testWaitBackstop)
         try await instance.observed.wait { instance.isObserved }
         instance.terminate()
         let released = await outcome
@@ -100,22 +100,53 @@ struct AppRegistryWaitTests {
     func processWaitEndsWhenThePidIsUnknown() async throws {
         let registry = FakeAppRegistry(registered: [])
 
-        let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0)
+        let released = await awaitDeregistration(
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 0)
 
         #expect(released)
     }
 
     @Test("A pid-keyed wait on an instance macOS never lets go fails at its deadline")
     func processWaitFailsAtItsDeadline() async throws {
-        let registry = FakeAppRegistry(
-            registered: [], byProcessIdentifier: [42: FakeRegisteredInstance()])
+        let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()])
 
         // The deadline is the assertion here, so it is small — the
         // exception `testWaitBackstop` names.
-        let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0.2)
+        let released = await awaitDeregistration(
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 0.2)
 
         #expect(!released)
     }
+
+    // MARK: - A notice that never arrives
+
+    /// Launch Services can let an instance go before AppKit's channel to this
+    /// process connects, and then the instance's own notice never arrives.
+    @Test("A pid-keyed wait ends on a fresh read alone when the instance never announces")
+    func processWaitEndsOnAFreshRead() async throws {
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: Self.unannouncedRelease)
+
+        let released = await awaitDeregistration(
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: testWaitBackstop)
+
+        #expect(released)
+    }
+
+    @Test("A bundle wait ends on a fresh read alone when the instance never announces")
+    func bundleWaitEndsOnAFreshRead() async throws {
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: Self.unannouncedRelease)
+
+        let released = await awaitDeregistration(
+            from: registry, scope: .all, within: testWaitBackstop)
+
+        #expect(released)
+    }
+
+    /// The pid lookup from which the registry has let go: past the reads a
+    /// wait makes on its way in, so only a later re-read can see it.
+    private static let unannouncedRelease = 4
 
     // MARK: - Process liveness
 
@@ -165,15 +196,29 @@ struct AppRegistryWaitTests {
 // MARK: - Doubles
 
 /// A registry answering with whatever instances a test hands it, for any bundle.
-private struct FakeAppRegistry: AppRegistry {
+private final class FakeAppRegistry: AppRegistry, Sendable {
     let registered: [FakeRegisteredInstance]
-    /// The instance answering a pid lookup, when the test drives that path.
-    var byProcessIdentifier: [pid_t: FakeRegisteredInstance] = [:]
+
+    /// The pid lookup, counted from one, from which the registry holds nothing —
+    /// Launch Services letting go with no notice to the instance.
+    private let releasedFromLookup: Int?
+
+    private let lookups = Locked(0)
+
+    init(registered: [FakeRegisteredInstance], releasedFromLookup: Int? = nil) {
+        self.registered = registered
+        self.releasedFromLookup = releasedFromLookup
+    }
 
     func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance] { registered }
 
     func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)? {
-        byProcessIdentifier[identifier]
+        let lookup = lookups.withLock { count in
+            count += 1
+            return count
+        }
+        if let releasedFromLookup, lookup >= releasedFromLookup { return nil }
+        return registered.first { $0.processIdentifier == identifier }
     }
 }
 
@@ -183,6 +228,11 @@ private final class FakeRegisteredInstance: RegisteredAppInstance, Sendable {
     /// Fires once the wait has registered its observer, so a test can terminate
     /// the instance without racing the registration.
     let observed = AsyncGate()
+
+    /// The pid every fake instance runs as.
+    static let identifier: pid_t = 42
+
+    let processIdentifier = FakeRegisteredInstance.identifier
 
     let processHasExited: Bool
 

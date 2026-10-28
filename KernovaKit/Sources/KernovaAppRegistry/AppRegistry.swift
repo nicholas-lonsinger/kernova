@@ -47,7 +47,11 @@ public enum RegisteredInstanceScope: Sendable {
 
 /// One instance of an app as Launch Services still holds it.
 protocol RegisteredAppInstance: Sendable {
-    /// Whether Launch Services has recorded the instance as exited.
+    /// The process the instance runs as; zero or below while it has none.
+    var processIdentifier: pid_t { get }
+
+    /// Whether Launch Services had recorded the instance as exited, as of the
+    /// last notice this process received about it.
     var hasTerminated: Bool { get }
 
     /// Whether the kernel has no process under this instance's identifier.
@@ -78,7 +82,10 @@ protocol AppRegistry: Sendable {
     func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance]
 
     /// The instance the registry holds for `identifier`, or `nil` when it holds
-    /// none — an app it never registered, or one it has already let go.
+    /// none — an app it never registered, one it has already let go, or an
+    /// `identifier` of zero or below, which names no process.
+    ///
+    /// Asks the registry afresh on every call, without waiting on any notice.
     func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)?
 }
 
@@ -88,7 +95,13 @@ protocol AppRegistry: Sendable {
 /// run loop.** `NSRunningApplication`'s time-varying properties "persist until
 /// the next turn of the main run loop in a common mode" (AppKit's
 /// `NSRunningApplication` class documentation), so an instance read here reports
-/// the same `hasTerminated` forever unless that loop turns.
+/// the same `hasTerminated` unless that loop turns — and not even then for a
+/// notice Launch Services sent before this process's channel to it connected.
+/// A new `NSRunningApplication(processIdentifier:)` is the fresh read: it
+/// answers `nil` once Launch Services lets the process go, with the main run
+/// loop never turning, while an instance taken before the exit still reports
+/// `isTerminated == false` (observed 2026-10-27 on macOS 27 against a
+/// background-only app).
 struct LaunchServicesRegistry: AppRegistry {
     /// The registered instances of that exact copy of the app.
     ///
@@ -106,9 +119,9 @@ struct LaunchServicesRegistry: AppRegistry {
 
     func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)? {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let application = NSRunningApplication(processIdentifier: identifier) else {
-            return nil
-        }
+        guard identifier > 0,
+            let application = NSRunningApplication(processIdentifier: identifier)
+        else { return nil }
         return RunningAppInstance(application: application)
     }
 }
@@ -116,6 +129,8 @@ struct LaunchServicesRegistry: AppRegistry {
 /// One `NSRunningApplication` seen as a registry entry.
 private struct RunningAppInstance: RegisteredAppInstance {
     let application: NSRunningApplication
+
+    var processIdentifier: pid_t { application.processIdentifier }
 
     var hasTerminated: Bool { application.isTerminated }
 
@@ -158,13 +173,18 @@ public enum AppRegistryWait {
     /// not one a longer wait would collect.
     public static let defaultDeadline: TimeInterval = 20
 
-    /// Blocks until the registry holds no instance of the bundle at
-    /// `bundleURL` that `scope` admits, or `expiry` passes.
+    /// How often a wait re-reads the registry when no termination notice has
+    /// woken it, in seconds: how late a notice that never arrives is noticed.
+    static let rereadInterval: TimeInterval = 0.1
+
+    /// Blocks until the registry has let go of every instance of the bundle at
+    /// `bundleURL` that `scope` admits when the wait begins, or `expiry`
+    /// passes; an instance registered later does not extend the wait.
     ///
-    /// Services the calling thread's run loop rather than parking it, so a
-    /// registry whose readings only advance on a turn of that loop — every one
-    /// backed by `NSRunningApplication`, see ``LaunchServicesRegistry`` — can
-    /// report the change this is waiting for. Reach it from the run loop's base
+    /// Services the calling thread's run loop rather than parking it: its
+    /// re-read tick runs there, and so does every termination notice from a
+    /// registry backed by `NSRunningApplication` (see
+    /// ``LaunchServicesRegistry``). Reach it from the run loop's base
     /// or a `RunLoop.main.perform` callout: nested inside a main-queue job the
     /// loop cannot drain that queue.
     ///
@@ -189,7 +209,8 @@ public enum AppRegistryWait {
         registry: any AppRegistry
     ) -> Bool {
         awaitDeregistration(
-            of: registry.instances(ofBundleAt: bundleURL).filter { scope.admits($0) }, by: expiry)
+            of: registry.instances(ofBundleAt: bundleURL).filter { scope.admits($0) },
+            in: registry, by: expiry)
     }
 
     /// Blocks until Launch Services has let the process `identifier` names go,
@@ -224,45 +245,49 @@ public enum AppRegistryWait {
         guard let instance = registry.instance(withProcessIdentifier: identifier) else {
             return true
         }
-        return awaitDeregistration(of: [instance], by: expiry)
+        return awaitDeregistration(of: [instance], in: registry, by: expiry)
     }
 
-    /// The one wait: park on the run loop until every instance reports
-    /// terminated, waking on each instance's own notification.
+    /// The one wait: park on the run loop until a fresh read of `registry` has
+    /// let go of every one of `instances`, by process identifier.
+    ///
+    /// Only that read decides, because a notice Launch Services sends before
+    /// this process's channel to it connects never arrives, leaving an
+    /// instance's own ``RegisteredAppInstance/hasTerminated`` unchanged. Each
+    /// instance's notification wakes the wait for the read at once; a tick
+    /// every ``rereadInterval`` reads again in case none does. An instance
+    /// without a process identifier is not a process to wait out.
     private static func awaitDeregistration(
-        of instances: [any RegisteredAppInstance], by expiry: Date
+        of instances: [any RegisteredAppInstance], in registry: any AppRegistry, by expiry: Date
     ) -> Bool {
-        let settled = { instances.allSatisfy { $0.hasTerminated } }
-        guard !settled() else { return true }
+        let identifiers = instances.map(\.processIdentifier)
+        let settled = {
+            identifiers.allSatisfy {
+                registry.instance(withProcessIdentifier: $0)?.hasTerminated ?? true
+            }
+        }
 
         let waker = RunLoopWaker(CFRunLoopGetCurrent())
         let observations = instances.map { $0.observeTermination { waker.wake() } }
+        // The tick also keeps the mode occupied: a run loop with nothing in it
+        // finishes the instant it is asked to run, which would make the loop
+        // below a spin.
+        let tick = Timer(timeInterval: rereadInterval, repeats: true) { _ in waker.wake() }
+        RunLoop.current.add(tick, forMode: .default)
+        defer { tick.invalidate() }
         return withExtendedLifetime(observations) { () -> Bool in
-            runCurrentLoop(until: expiry, while: { !settled() })
-            return settled()
-        }
-    }
-
-    /// Runs the calling thread's run loop until `keepWaiting` stops holding or
-    /// `expiry` passes.
-    ///
-    /// The timer is what keeps the mode occupied: a run loop with nothing in it
-    /// finishes the instant it is asked to run, which would turn each turn of
-    /// this loop into a spin.
-    private static func runCurrentLoop(until expiry: Date, while keepWaiting: () -> Bool) {
-        let timer = Timer(fire: expiry, interval: 0, repeats: false) { _ in }
-        RunLoop.current.add(timer, forMode: .default)
-        defer { timer.invalidate() }
-        while keepWaiting() {
-            let remaining = expiry.timeIntervalSinceNow
-            guard remaining > 0 else { return }
-            CFRunLoopRunInMode(.defaultMode, remaining, false)
+            while !settled() {
+                let remaining = expiry.timeIntervalSinceNow
+                guard remaining > 0 else { return false }
+                CFRunLoopRunInMode(.defaultMode, remaining, false)
+            }
+            return true
         }
     }
 }
 
 /// Wakes the run loop a wait is parked on, from whichever thread the registry's
-/// notification lands on.
+/// notification lands on, or from the wait's own tick.
 ///
 /// `@unchecked` because the SDK does not mark `CFRunLoop` `Sendable`, while
 /// Core Foundation's run-loop functions "are generally thread-safe and can be
@@ -274,7 +299,7 @@ private final class RunLoopWaker: @unchecked Sendable {
     init(_ loop: CFRunLoop) { self.loop = loop }
 
     /// Schedules the stop on the loop before waking it, so a notification that
-    /// arrives before the loop starts running still ends the wait.
+    /// arrives before the loop starts running still reaches the wait.
     func wake() {
         let loop = self.loop
         CFRunLoopPerformBlock(loop, CFRunLoopMode.defaultMode.rawValue) { CFRunLoopStop(loop) }
