@@ -1,4 +1,6 @@
 import AppKit
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaTestSupport
 @testable import KernovaCore
 @testable import KernovaUI
@@ -18,7 +20,8 @@ struct AgentStatusPopoverContentViewControllerTests {
     func defaultState() {
         let vc = AgentStatusPopoverContentViewController()
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: true)
         vc.loadViewIfNeeded()
 
@@ -43,7 +46,8 @@ struct AgentStatusPopoverContentViewControllerTests {
 
         for testCase in cases {
             vc.update(
-                status: testCase.status, isInstallerMounted: false, diskControl: Self.install,
+                presentation: GuestAgentPresentation(macOSAgent: testCase.status), isInstallerMounted: false,
+                diskControl: Self.install,
                 vmName: "TestVM", hasDismissAction: false)
             #expect(titleLabel(in: vc.view)?.stringValue == testCase.title)
             #expect(bodyLabel(in: vc.view)?.stringValue.contains(testCase.bodyContains) == true)
@@ -62,7 +66,8 @@ struct AgentStatusPopoverContentViewControllerTests {
         ]
         for (control, title) in cases {
             vc.update(
-                status: .waiting, isInstallerMounted: false, diskControl: control, vmName: "TestVM",
+                presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+                diskControl: control, vmName: "TestVM",
                 hasDismissAction: false)
             #expect(actionButton(in: vc.view)?.title == title)
         }
@@ -89,12 +94,14 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: true)
         #expect(dismissButton(in: vc.view)?.isHidden == false)
 
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: false)
         #expect(dismissButton(in: vc.view)?.isHidden == true)
     }
@@ -110,7 +117,8 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.onDiskControl = { diskControlCount += 1 }
         vc.onDone = { doneCount += 1 }
         vc.update(
-            status: .waiting, isInstallerMounted: diskControl.action == .eject,
+            presentation: GuestAgentPresentation(macOSAgent: .waiting),
+            isInstallerMounted: diskControl.action == .eject,
             diskControl: diskControl, vmName: "TestVM", hasDismissAction: false)
         vc.loadViewIfNeeded()
         let button = actionButton(in: vc.view)
@@ -159,7 +167,8 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.onDone = { doneCount += 1 }
         vc.onDismiss = { dismissCount += 1 }
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: true)
         vc.loadViewIfNeeded()
 
@@ -169,7 +178,46 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(doneCount == 0)
     }
 
+    @Test("A hub presentation shows a line per agent and its Status row in place of the body")
+    func hubRows() {
+        let vc = AgentStatusPopoverContentViewController()
+        vc.loadViewIfNeeded()
+        let snapshot = AgentHubSnapshot(
+            peers: [
+                PeerSummary(
+                    handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+                    userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+            ], features: FeatureStatus.merge([]))
+
+        vc.update(
+            presentation: GuestAgentPresentation(hub: snapshot), isInstallerMounted: false,
+            diskControl: Self.withheld, vmName: "TestVM", hasDismissAction: false)
+
+        #expect(titleLabel(in: vc.view)?.stringValue == "Guest agent connected")
+        #expect(bodyLabel(in: vc.view)?.isHidden == true)
+        #expect(
+            visibleTexts(in: vc.view) == [
+                "Guest agent connected", "Session agent — pbear", "Up to date", "Status", "Connected",
+            ])
+
+        vc.update(
+            presentation: GuestAgentPresentation(macOSAgent: .current(version: "0.9.2")), isInstallerMounted: false,
+            diskControl: Self.withheld, vmName: "TestVM", hasDismissAction: false)
+        #expect(bodyLabel(in: vc.view)?.isHidden == false)
+        #expect(!visibleTexts(in: vc.view).contains("Status"))
+    }
+
     // MARK: - Helpers
+
+    /// The text of every label on screen, in document order: none under a hidden view.
+    @MainActor
+    private func visibleTexts(in view: NSView) -> [String] {
+        guard !view.isHidden else { return [] }
+        var texts: [String] = []
+        if let field = view as? NSTextField, !field.isEditable { texts.append(field.stringValue) }
+        for subview in view.subviews { texts += visibleTexts(in: subview) }
+        return texts
+    }
 
     @MainActor
     private func titleLabel(in view: NSView) -> NSTextField? {

@@ -595,8 +595,9 @@ struct CLIArgumentParsingTests {
         #expect(WaitCondition.stopped.isSatisfied(byAgentStatus: "current") == nil)
         #expect(WaitCondition.agent.isSatisfied(byStatus: "running") == nil)
         #expect(WaitCondition.agent.isSatisfied(byAgentStatus: "current") == true)
-        // Connected but out of date is not what a script waited for.
-        for other in ["waiting", "connecting", "outdated", "unresponsive", "expectedMissing"] {
+        // Connected but out of date, or of unknown standing, is not what a
+        // script waited for.
+        for other in ["waiting", "connecting", "connected", "outdated", "unresponsive", "expectedMissing"] {
             #expect(WaitCondition.agent.isSatisfied(byAgentStatus: other) == false, "\(other)")
         }
         // No session, so no agent to have arrived.

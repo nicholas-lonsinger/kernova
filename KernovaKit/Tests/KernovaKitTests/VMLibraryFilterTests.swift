@@ -243,8 +243,9 @@ struct VMLibraryFilterTests {
         #expect(VMGuestAgentBucket(lastSeenVersion: "1.1.9", bundledVersion: "1.2.0") == .olderVersion)
         #expect(VMGuestAgentBucket(lastSeenVersion: "1.2.0", bundledVersion: "1.2.0") == .upToDate)
         #expect(VMGuestAgentBucket(lastSeenVersion: "1.10.0", bundledVersion: "1.2.0") == .upToDate)
-        // A build that does not know its own version calls no agent old.
-        #expect(VMGuestAgentBucket(lastSeenVersion: "0.1", bundledVersion: nil) == .upToDate)
+        // A build that does not know its own version puts a connected agent in no bucket.
+        #expect(VMGuestAgentBucket(lastSeenVersion: "0.1", bundledVersion: nil) == nil)
+        #expect(VMGuestAgentBucket(lastSeenVersion: nil, bundledVersion: nil) == .neverConnected)
     }
 
     // MARK: - Spelling

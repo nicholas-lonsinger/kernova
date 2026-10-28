@@ -28,9 +28,9 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Bumped once per inbound guest clipboard text.
     private(set) var inboundOfferSeq: UInt64 = 0
 
-    /// SPICE agents are user-installed and version-tracked by the guest's package
-    /// manager — Kernova does not bundle or update them, so reporting `.current`
-    /// once connected is enough to suppress the host-side install/update flow.
+    /// The SPICE agent's state as the Clipboard window's status line shows it.
+    /// SPICE agents are user-installed and version-tracked by the guest's
+    /// package manager, so `.current` once connected is all there is to say.
     var agentStatus: AgentStatus {
         isConnected ? .current(version: "spice-vdagent") : .waiting
     }

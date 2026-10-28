@@ -242,7 +242,7 @@ struct VsockControlServiceTests {
         #expect(service.agentStatus == .current(version: "1.0.0"))
     }
 
-    @Test("agentStatus falls back to .current when bundled version is unavailable")
+    @Test("agentStatus is .connected, claiming no currency, when the bundled version is unavailable")
     func agentStatusCurrentWhenBundledMissing() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -257,9 +257,9 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.5.0"))
         try await waitForChange { service.isConnected }
 
-        // Without a bundled version to compare against, accept the guest's
-        // report rather than prompting the user to "update" against missing data.
-        #expect(service.agentStatus == .current(version: "0.5.0"))
+        // Without a bundled version to compare against, the status neither
+        // prompts an update nor claims the agent is current.
+        #expect(service.agentStatus == .connected(version: "0.5.0"))
     }
 
     @Test("agentStatus resets to .waiting on stop()")

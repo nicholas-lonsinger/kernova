@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaKit
 import KernovaLogging
 
@@ -184,30 +185,25 @@ protocol GuestLogEmitter: Sendable {
     func emit(_ record: Kernova_V1_LogRecord)
 }
 
-/// Republishes guest log records via `KernovaLogger`.
-///
-/// Each record is emitted at the closest matching host log level, behind a
-/// public `[subsystem/category] ` label, with each guest segment keeping the
-/// privacy the guest gave it.
+/// Republishes guest log records through a `GuestLogRepublisher`, behind a
+/// public `[subsystem/category] ` label.
 struct OSLogGuestLogEmitter: GuestLogEmitter {
-    private let logger: KernovaLogger
+    private let republisher: GuestLogRepublisher
 
-    /// Emits through a logger with its own subsystem, so guest logs are
-    /// filterable separately from host logs, and `label` as its category.
+    /// Emits under subsystem `app.kernova.guest`, so guest logs are filterable
+    /// separately from host logs, with `label` as the category.
     init(label: String) {
-        self.init(logger: KernovaLogger(subsystem: "app.kernova.guest", category: label))
+        republisher = GuestLogRepublisher(vmLabel: label)
     }
 
     init(logger: KernovaLogger) {
-        self.logger = logger
+        republisher = GuestLogRepublisher(logger: logger)
     }
 
     func emit(_ record: Kernova_V1_LogRecord) {
-        logger.log(
-            Self.level(record.level),
-            LogMessage(
-                segments: [LogSegment(text: "[\(record.subsystem)/\(record.category)] ", isPrivate: false)]
-                    + record.segments.map { LogSegment(text: $0.text, isPrivate: $0.private) }))
+        republisher.republish(
+            Self.level(record.level), prefix: "[\(record.subsystem)/\(record.category)] ",
+            record.segments.map { LogSegment(text: $0.text, isPrivate: $0.private) })
     }
 
     private static func level(_ level: Kernova_V1_LogRecord.Level) -> KernovaLogLevel {

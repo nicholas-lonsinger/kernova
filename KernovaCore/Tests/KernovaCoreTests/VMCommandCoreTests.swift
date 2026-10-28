@@ -2394,11 +2394,11 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Watched", phase: .running(sessionID: UUID()), guestOS: .macOS)
         instance.beginSessionContextForTesting()
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.status == .waiting)
 
         var events = VMLibraryEventReader(harness.core.events())
         instance.handleSessionEvent(.guestDidStop)
-        #expect(instance.agentStatus == nil)
+        #expect(instance.agentPresentation?.status == nil)
 
         while let event = await events.next() {
             guard case .agentStatusChanged(let id, _, let status) = event else { continue }

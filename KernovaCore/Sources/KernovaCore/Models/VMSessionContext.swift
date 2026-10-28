@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaLogging
 
 /// Everything scoped to the lifetime of one `VZVirtualMachine`, so a session's
@@ -70,6 +71,13 @@ package final class VMSessionContext {
     /// This session's vsock feature channels — the listeners, the services
     /// behind them, and the accept and teardown paths that move both.
     @ObservationIgnored let vsock: VsockFeatureCoordinator
+
+    /// The VM's agent hub, whose transport this session's teardown detaches.
+    @ObservationIgnored let agentHub: AgentHub
+
+    /// Whether this session attached the hub a transport: a channel to the
+    /// Kernova agents, which a session without a socket device never has.
+    var hasAgentTransport = false
 
     // MARK: - Guest Agent
 
@@ -152,11 +160,13 @@ package final class VMSessionContext {
     init(
         label: String,
         bootedIntoRecovery: Bool,
-        vsock: VsockFeatureCoordinator
+        vsock: VsockFeatureCoordinator,
+        agentHub: AgentHub
     ) {
         self.label = label
         self.bootedIntoRecovery = bootedIntoRecovery
         self.vsock = vsock
+        self.agentHub = agentHub
     }
 
     // MARK: - Teardown
@@ -254,7 +264,8 @@ package final class VMSessionContext {
 
     // MARK: - Vsock Service Lifecycle
 
-    /// Stops every vsock service and unbinds the listeners that fed them.
+    /// Stops every vsock service and unbinds the listeners that fed them, the
+    /// agent hub's transport included.
     ///
     /// The unbind is ordered fire-and-forget on the session's queue, which is
     /// what keeps this synchronous: the session retains each host until its
@@ -265,6 +276,7 @@ package final class VMSessionContext {
     /// untouched here.
     func stopVsockServices() {
         session?.detachRemainingListeners()
+        agentHub.detach()
         vsock.stopAll()
     }
 

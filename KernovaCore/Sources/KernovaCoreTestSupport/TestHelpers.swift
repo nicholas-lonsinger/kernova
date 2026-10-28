@@ -157,7 +157,7 @@ extension VMLibrary {
     /// store of its own — a test's stand-in for a VM a load would have
     /// adopted.
     ///
-    /// The parameters are ``VMInstanceFixture/make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``'s.
+    /// The parameters are ``VMInstanceFixture/make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:agentConnector:mutate:)``'s.
     @discardableResult
     func admitFixture(
         name: String = "Test VM",

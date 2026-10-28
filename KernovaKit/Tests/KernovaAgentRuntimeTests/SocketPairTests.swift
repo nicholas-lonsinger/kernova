@@ -62,12 +62,13 @@ final class SocketPair: Sendable {
         let stops = stops
         let runtime = HostConnectionRuntime(
             claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: source, logger: Fixture.logger)
-        host = runtime.accept(
+        host = runtime.makeConnection(
             hostStream, policy: Fixture.logsEnabled,
             bundles: offersUpdate
                 ? [BundledPayload(os: .linux, architecture: .arm64, scope: .user, manifest: Self.manifest)] : [],
             deliveringOn: hub
         ) { event in hostEvents.record(event) }
+        host.start()
         peer = PeerAgentRuntime(
             claim: Fixture.peerClaim, state: Fixture.peerState,
             registry: PeerFeatureRegistry(power: power, logs: logs, update: installer), dialer: dialer,

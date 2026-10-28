@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 
 // MARK: - Session Events
 
@@ -66,6 +67,10 @@ package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, Vsoc
     /// Unbinds every vsock listener this session still has bound, ordered
     /// fire-and-forget on the session's queue.
     func detachRemainingListeners()
+
+    /// The agent hub's transport on this session's socket device, `nil` when
+    /// the VM has none.
+    func makeAgentTransport() -> (any GuestStreamTransport)?
 
     /// Sets the share the VM's macOS automount device carries to `share`, then
     /// runs `installed` on the session's queue, once the device no longer

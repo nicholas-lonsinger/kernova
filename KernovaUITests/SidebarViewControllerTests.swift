@@ -1,4 +1,6 @@
 import AppKit
+import KernovaAgentCore
+import KernovaAgentHost
 import Foundation
 import KernovaCommandModel
 import KernovaTestSupport
@@ -58,7 +60,7 @@ struct SidebarViewControllerTests {
     /// The sidebar badge gate with the app-wide install prompt left on, which is
     /// every case but the ones exercising that preference.
     private func visibleAgentStatus(for instance: VMInstance) -> AgentStatus? {
-        SidebarVMRowCellView.visibleAgentStatus(for: instance, installPromptDisabled: false)
+        SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: false)?.status
     }
 
     private func titles(of menu: NSMenu) -> [String] {
@@ -91,12 +93,32 @@ struct SidebarViewControllerTests {
 
     // MARK: - Agent indicator gating
 
-    @Test("Agent indicator hidden for Linux guests")
+    @Test("Agent indicator hidden for a Linux guest with no channel to an agent, its SPICE agent aside")
     func agentHiddenForLinux() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().clipboardService = SpiceClipboardService(
             inputPipe: Pipe(), outputPipe: Pipe())
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation == nil)
+        #expect(visibleAgentStatus(for: instance) == nil)
+    }
+
+    @Test("Agent indicator shows for a Linux guest while a Kernova agent is connected, and hides with none")
+    func agentShownForLinuxWithAnAgent() {
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(instance.agentPresentation?.status == .waiting)
+        #expect(visibleAgentStatus(for: instance) == nil)
+
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [
+                    PeerSummary(
+                        handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+                        userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+                ], features: FeatureStatus.merge([])))
+        #expect(visibleAgentStatus(for: instance) == .current(version: "1.0"))
+
+        instance.publishAgentHubSnapshotForTesting(.empty)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -182,7 +204,7 @@ struct SidebarViewControllerTests {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
         #expect(
-            SidebarVMRowCellView.visibleAgentStatus(for: instance, installPromptDisabled: true)
+            SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: true)?.status
                 == nil)
         // The per-VM flag is overridden, never written: turning the preference
         // back on must restore what this VM was set to.
@@ -202,7 +224,7 @@ struct SidebarViewControllerTests {
         }
         missing.beginSessionContextForTesting().agentExpectedButMissing = true
         #expect(
-            SidebarVMRowCellView.visibleAgentStatus(for: missing, installPromptDisabled: true)
+            SidebarVMRowCellView.visibleAgentPresentation(for: missing, installPromptDisabled: true)?.status
                 == .expectedMissing(expected: "1.2.3"))
     }
 
@@ -268,7 +290,7 @@ struct SidebarViewControllerTests {
 
         viewModel.toggleGuestAgentDisk(on: instance)
         #expect(instance.hasGuestAgentInstallerMounted)
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.status == .waiting)
 
         // The cell's observation applies on a later main-actor turn, with no
         // observable of its own to await.

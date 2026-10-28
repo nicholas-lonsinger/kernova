@@ -1,4 +1,6 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
@@ -84,6 +86,23 @@ struct VMSleepWakeCoordinatorTests {
     }
 
     // MARK: - Sleep
+
+    @Test("A sleep pause freezes the VM's agent connections")
+    func sleepPauseFreezesAgents() async throws {
+        let (coordinator, roster, virtService) = makeCoordinator()
+        let probe = AgentHubProbe()
+        let instance = VMInstanceFixture.make(name: "Agent", agentConnector: probe)
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.agentHub.attach(probe, policy: PolicySnapshot(), republisher: GuestLogRepublisher(vmLabel: "Agent"))
+        try await probe.changed.wait { probe.isStarted }
+        #expect(probe.connect())
+        roster.instances.append(instance)
+
+        await sleep(coordinator, virtService)
+
+        #expect(instance.status == .paused)
+        try await probe.changed.wait { probe.commands.contains(.setPeerFrozen(true)) }
+    }
 
     @Test("Sleep pauses every running VM, then allows sleep")
     func sleepPausesRunningVMsThenAllowsSleep() async {
