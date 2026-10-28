@@ -5988,9 +5988,9 @@ struct VMLibraryViewModelTests {
         instance.beginSessionContextForTesting()
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .mount(.install))
 
-        viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.toggleGuestAgentDisk(on: instance)
 
-        // Alert is set synchronously; reconcile attach is async.
+        // Alert is set by the time the mount returns; reconcile attach is async.
         #expect(presenter.showInstallerMountedAlert == true)
         #expect(presenter.installerMountedVMName == instance.name)
         #expect(presenter.installerMountedPurpose == .install)
@@ -6008,7 +6008,7 @@ struct VMLibraryViewModelTests {
     /// reaches the disk through this one call, so an attached installer is
     /// ejected rather than mounted a second time.
     @Test("toggleGuestAgentDisk ejects an attached installer without an alert")
-    func toggleGuestAgentDiskEjectsAttachedInstaller() throws {
+    func toggleGuestAgentDiskEjectsAttachedInstaller() async throws {
         let installerURL = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
@@ -6021,7 +6021,7 @@ struct VMLibraryViewModelTests {
         instance.beginSessionContextForTesting()
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .eject)
 
-        viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.toggleGuestAgentDisk(on: instance)
 
         #expect(mock.attachCallCount == 0)
         #expect(presenter.showInstallerMountedAlert == false)
@@ -6038,7 +6038,7 @@ struct VMLibraryViewModelTests {
         }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.toggleGuestAgentDisk(on: instance)
         try await instance.waitUntilIdle()
 
         #expect(presenter.showInstallerMountedAlert == true)

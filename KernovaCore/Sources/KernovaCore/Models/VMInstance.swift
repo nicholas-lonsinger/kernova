@@ -185,9 +185,10 @@ package final class VMInstance {
             ) -> VMLibrary.SettingsWrite
         )?
 
-    /// Fired when the guest agent handshakes a new version that is current
-    /// (matches or exceeds what the host bundles) — i.e. an install/update just
-    /// completed.
+    /// Fired when a guest agent the host bundles arrives — an install or
+    /// update just completed: the macOS agent handshaking a new version that is
+    /// current (matches or exceeds what the host bundles), or a peer of the
+    /// agent hub whose payload is the bundled one.
     ///
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
@@ -265,7 +266,22 @@ package final class VMInstance {
     @ObservationIgnored package let agentHub: AgentHub
 
     /// The hub's latest snapshot, as it publishes it to the main actor.
-    package private(set) var agentHubSnapshot = AgentHubSnapshot.empty
+    ///
+    /// A peer arriving whose payload is the one the host bundles for it fires
+    /// ``onAgentBecameCurrent``, as the macOS agent's Hello of a new current
+    /// version does.
+    package private(set) var agentHubSnapshot = AgentHubSnapshot.empty {
+        didSet {
+            if Self.connectsCurrentPeer(from: oldValue, to: agentHubSnapshot) { onAgentBecameCurrent?() }
+        }
+    }
+
+    /// Whether `new` holds a peer `old` does not whose payload is the one the
+    /// host bundles.
+    static func connectsCurrentPeer(from old: AgentHubSnapshot, to new: AgentHubSnapshot) -> Bool {
+        let known = Set(old.peers.map(\.handle))
+        return new.peers.contains { $0.standing == .current && !known.contains($0.handle) }
+    }
 
     #if DEBUG
     /// Lands `snapshot` as the hub's publish does; tests only.
@@ -396,11 +412,10 @@ package final class VMInstance {
         return disks.count == 1 && disks[0].id == disk.id
     }
 
-    /// `true` when the bundled Guest Agent installer DMG is in this VM's
+    /// `true` when a guest-agent installer disk is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        guard let path = bundleProducts.guestAgents.macOSInstallerPath else { return false }
-        return (configuration.removableMedia ?? []).contains { $0.path == path }
+        (configuration.removableMedia ?? []).contains { $0.isInstaller(of: bundleProducts.guestAgents) }
     }
 
     var diskImageURL: URL { bundleLayout.diskImageURL }

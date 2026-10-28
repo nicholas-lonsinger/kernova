@@ -51,6 +51,9 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     private(set) var isInstallerMounted = false
     /// The trailing button, resolved from the guest-agent disk control.
     private(set) var actionButtonRole = ActionButton.done
+    /// The command the attached disk installs from, shown with a Copy button;
+    /// `nil` hides the row.
+    private(set) var installCommand: String?
     /// VM name interpolated into the body text.
     private(set) var vmName: String = ""
     /// When `true`, surfaces the "Don't show again" link in the action row.
@@ -71,6 +74,10 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
     /// The hub's agent lines and capability rows; hidden for the macOS agent.
     private let rowsStack = NSStackView()
+    /// ``installCommand`` and its Copy button.
+    private let commandRow = NSStackView()
+    private let commandLabel = NSTextField(wrappingLabelWithString: "")
+    private let copyCommandButton = CopyValueButton(name: "Copy Install Command")
     private let actionButton = NSButton()
     private let dismissButton = NSButton()
     private let dismissSpacer = NSView()
@@ -91,6 +98,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         configureBodyLabel()
         configureActionButton()
         configureDismissButton()
+        configureCommandRow()
 
         let actionRow = NSStackView()
         actionRow.orientation = .horizontal
@@ -111,7 +119,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = Spacing.small
-        stack.setViews([titleLabel, bodyLabel, rowsStack, actionRow], in: .leading)
+        stack.setViews([titleLabel, bodyLabel, rowsStack, commandRow, actionRow], in: .leading)
 
         container.addSubview(stack)
         let padding = Self.padding
@@ -145,6 +153,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         self.presentation = presentation
         self.isInstallerMounted = isInstallerMounted
         actionButtonRole = ActionButton(diskControl)
+        installCommand = diskControl.installCommand
         self.vmName = vmName
         self.hasDismissAction = hasDismissAction
         if isViewLoaded {
@@ -179,6 +188,18 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         actionButton.action = #selector(actionTapped(_:))
     }
 
+    private func configureCommandRow() {
+        commandLabel.font = .monospacedSystemFont(
+            ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
+        commandLabel.isSelectable = true
+        commandLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        commandRow.orientation = .horizontal
+        commandRow.alignment = .firstBaseline
+        commandRow.spacing = Spacing.small
+        commandRow.setViews([commandLabel, copyCommandButton], in: .leading)
+        commandRow.widthAnchor.constraint(equalToConstant: Self.bodyWidth).isActive = true
+    }
+
     private func configureDismissButton() {
         // AppKit ships no borderless link bezel, so this is a bordered button
         // given a borderless look.
@@ -204,6 +225,9 @@ final class AgentStatusPopoverContentViewController: NSViewController {
             rowsStack.isHidden = true
             rowsStack.setViews([], in: .leading)
         }
+        commandRow.isHidden = installCommand == nil
+        commandLabel.stringValue = installCommand ?? ""
+        copyCommandButton.value = installCommand
         actionButton.title = actionButtonRole.title
         dismissButton.isHidden = !hasDismissAction
     }

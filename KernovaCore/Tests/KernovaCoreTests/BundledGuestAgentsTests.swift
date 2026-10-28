@@ -77,7 +77,7 @@ struct BundledGuestAgentsTests {
     func linuxMissing() async throws {
         let entries = BundledGuestAgents.entries(in: try bundle([:]), versionLabel: "1.2 (34)")
         #expect(entries.isEmpty)
-        #expect(await BundledGuestAgents(entries: entries).payloads(for: .linux).isEmpty)
+        #expect(await BundledGuestAgents(entries: entries, linuxDisk: .testing).payloads(for: .linux).isEmpty)
     }
 
     @Test("The macOS agent is its installer DMG and version, and offers no in-band payload")

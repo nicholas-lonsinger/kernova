@@ -884,14 +884,15 @@ extension VMCommandCore {
 
     /// The references behind ``externalAttachments(for:)`` — the kinds
     /// ``ExternalFileReference/Kind/isOfferedOnVMDelete`` admits, less the
-    /// bundled Guest Agent installer DMG.
+    /// guest-agent installer disks.
     ///
-    /// The DMG's path points *inside the app bundle*, so trashing it would
-    /// corrupt the app for every VM.
+    /// Those are the app's own: the macOS DMG is inside the app bundle, so
+    /// trashing it would corrupt the app for every VM, and every Linux VM
+    /// shares the one Linux disk.
     private func offeredExternalReferences(for instance: VMInstance) -> [ExternalFileReference] {
-        let agentPath = instance.bundleProducts.guestAgents.macOSInstallerPath
+        let agents = instance.bundleProducts.guestAgents
         return instance.configuration.externalFileReferences
-            .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
+            .filter { $0.kind.isOfferedOnVMDelete && !agents.isInstallerDisk(path: $0.path) }
     }
 
     /// ``externalAttachments(for:)`` of the VM `selector` names.

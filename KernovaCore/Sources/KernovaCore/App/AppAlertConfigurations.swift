@@ -286,9 +286,16 @@ package struct AppAlertConfigurations {
         }
     }
 
+    /// What the user does with the disk just put in front of `vmName`, a
+    /// `guestOS` guest: open it in Finder for macOS; run its command in a
+    /// terminal for Linux, which `copy` puts on the host pasteboard.
     package func installerMountedConfig(
-        _ vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
+        _ vmName: String, guestOS: VMGuestOS, purpose: GuestAgentInstallerPurpose,
+        delivery: GuestAgentDiskDelivery, copy: @escaping (String) -> Void
     ) -> AlertConfiguration {
+        if guestOS == .linux {
+            return linuxInstallerMountedConfig(vmName, purpose: purpose, copy: copy)
+        }
         let nextStep: String
         switch purpose {
         case .install:
@@ -316,5 +323,35 @@ package struct AppAlertConfigurations {
             message:
                 "\(lead) Inside the VM, open the “\(BundledGuestAgents.macOSDiskLabel)” disk in Finder and \(nextStep)"
         )
+    }
+
+    /// The Linux disk's alert: the commands that install or remove the agent
+    /// from it, each with a button that copies it.
+    private func linuxInstallerMountedConfig(
+        _ vmName: String, purpose: GuestAgentInstallerPurpose, copy: @escaping (String) -> Void
+    ) -> AlertConfiguration {
+        let lead = "The Kernova guest agent disk has been attached to \(vmName) as a USB disk."
+        let install = LinuxAgentDisk.installCommand
+        switch purpose {
+        case .install:
+            return AlertConfiguration(
+                title: "Installer Mounted",
+                message: "\(lead) Inside the VM, open a terminal and run:\n\n\(install)",
+                buttons: [
+                    AlertButton("Copy Command", role: .default) { copy(install) },
+                    AlertButton("Done", role: .cancel),
+                ])
+        case .manage:
+            let uninstall = LinuxAgentDisk.uninstallCommand
+            return AlertConfiguration(
+                title: "Guest Agent Disk Attached",
+                message:
+                    "\(lead) Inside the VM, open a terminal. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)",
+                buttons: [
+                    AlertButton("Copy Install Command", role: .default) { copy(install) },
+                    AlertButton("Done", role: .cancel),
+                    AlertButton("Copy Uninstall Command") { copy(uninstall) },
+                ])
+        }
     }
 }

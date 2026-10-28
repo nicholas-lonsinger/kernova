@@ -127,4 +127,37 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
         #expect(instance.agentPresentation?.hub?.peers.first?.title == "Session agent — pbear")
     }
+
+    private static func peer(_ handle: UInt64, standing: PeerSummary.Standing) -> PeerSummary {
+        PeerSummary(
+            handle: PeerHandle(rawValue: handle), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+            userName: "pbear", console: .on, versionLabel: "1.0", standing: standing, isResponsive: true)
+    }
+
+    @Test(
+        "A peer arriving on the bundled payload ejects the installer disk; one already there, or out of date, does not")
+    func currentPeerArrivalFiresTheEject() {
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        var fired = 0
+        instance.onAgentBecameCurrent = { fired += 1 }
+        let outdated = Self.peer(1, standing: .outdated(offeredVersionLabel: "2.0"))
+        let current = Self.peer(2, standing: .current)
+
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [outdated], features: FeatureStatus.merge([])))
+        #expect(fired == 0)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [current, outdated], features: FeatureStatus.merge([])))
+        #expect(fired == 1)
+        // The same peers again, or the current one alone, is no arrival.
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [current, outdated], features: FeatureStatus.merge([])))
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [current], features: FeatureStatus.merge([])))
+        #expect(fired == 1)
+        // A reconnect is a new peer.
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [Self.peer(3, standing: .current)], features: FeatureStatus.merge([])))
+        #expect(fired == 2)
+    }
 }

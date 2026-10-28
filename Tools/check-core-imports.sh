@@ -70,7 +70,7 @@ fi
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
-core_modules='Foundation KernovaAgentCore KernovaAgentHost KernovaAgentRuntime KernovaCommandModel KernovaKit KernovaLogging KernovaWire AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
+core_modules='Foundation KernovaAgentCore KernovaAgentHost KernovaAgentRuntime KernovaCommandModel KernovaISO9660 KernovaKit KernovaLogging KernovaWire AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
 test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaAgentCore KernovaWire KernovaTestSupport KernovaSynchronization SwiftProtobuf CoreGraphics Observation'
 support_modules='Testing KernovaCore KernovaAgentCore KernovaTestSupport KernovaSynchronization CoreGraphics Observation'
 

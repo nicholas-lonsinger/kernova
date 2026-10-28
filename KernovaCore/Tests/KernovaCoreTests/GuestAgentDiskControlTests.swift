@@ -47,7 +47,7 @@ struct GuestAgentDiskControlTests {
             preferences: makeTestPreferences(),
             bundleProducts: AppBundleProducts(
                 bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
-                guestAgents: BundledGuestAgents(entries: [:])))
+                guestAgents: .none))
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
@@ -134,5 +134,45 @@ struct GuestAgentDiskControlTests {
         #expect(
             GuestAgentDiskControl.unavailableTitle
                 == GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false).title)
+    }
+
+    @Test("On a Linux guest the control mounts the agent's disk, and while it is attached carries its command")
+    func linuxGuest() throws {
+        let agents = BundledGuestAgents.linux(agent: URL(filePath: "/var/empty/kernova-agent"), disk: .testing)
+        let viewModel = makeLibraryViewModel(
+            preferences: makeTestPreferences(),
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgents: agents))
+        let instance = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        // A Linux guest's agents are reachable only through the hub's transport.
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)
+        instance.attachAgentTransport(AgentHubProbe())
+        let detached = GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+        #expect(detached.action == .mount(.install))
+        #expect(detached.isEnabled)
+        #expect(detached.installCommand == nil)
+
+        let attached = viewModel.library.admitFixture(
+            name: "Attached", guestOS: .linux, phase: .running(sessionID: UUID())
+        ) {
+            $0.removableMedia = [
+                RemovableMediaItem(path: agents.linuxDisk.url.path(percentEncoded: false), readOnly: true)
+            ]
+        }
+        attached.beginSessionContextForTesting()
+        attached.attachAgentTransport(AgentHubProbe())
+        let ejecting = GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities)
+        #expect(ejecting.action == .eject)
+        #expect(ejecting.installCommand == #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#)
+    }
+
+    @Test("A Linux guest in a build without the Linux agent is withheld the control")
+    func linuxGuestWithoutTheAgent() {
+        let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
+        let instance = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)
     }
 }

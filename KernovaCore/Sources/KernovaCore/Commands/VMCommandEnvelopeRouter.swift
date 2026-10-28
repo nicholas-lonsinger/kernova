@@ -240,7 +240,7 @@ package struct VMCommandEnvelopeRouter {
 
         case .guestAgentDisk(let selector, let edit):
             switch edit {
-            case .mount: _ = try commands.mountGuestAgentDisk(selector)
+            case .mount: _ = try await commands.mountGuestAgentDisk(selector)
             case .unmount: try commands.unmountGuestAgentDisk(selector)
             }
             return .ok

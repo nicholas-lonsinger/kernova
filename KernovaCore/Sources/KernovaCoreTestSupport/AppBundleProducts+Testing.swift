@@ -1,9 +1,32 @@
 import Foundation
 import KernovaAgentCore
+import KernovaWire
 
 @testable import KernovaCore
 
+extension GuestAgentDiskCache {
+    /// A cache under `/var/empty`, which no write reaches: a test that makes
+    /// the Linux disk passes a scratch one instead.
+    package static let testing = GuestAgentDiskCache(
+        directory: URL(filePath: "/var/empty/GuestAgentDisks", directoryHint: .isDirectory))
+}
+
 extension BundledGuestAgents {
+    /// No agent at all.
+    package static let none = BundledGuestAgents(entries: [:], linuxDisk: .testing)
+
+    /// Only a Linux agent, the file at `agent`, whose disk `disk` writes.
+    package static func linux(agent: URL, disk: GuestAgentDiskCache, versionLabel: String = "1.0 (1)")
+        -> BundledGuestAgents
+    {
+        var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
+        for scope in [InstallScope.user, .system] {
+            entries[BundledGuestAgentKey(.linux, .arm64, scope)] = BundledGuestAgentEntry(
+                fileURL: agent, kind: .payload(.executable, versionLabel: versionLabel))
+        }
+        return BundledGuestAgents(entries: entries, linuxDisk: disk)
+    }
+
     /// A macOS agent at version 2.0 whose installer image names no file: it is
     /// under `/var/empty`, the root-owned directory macOS keeps empty, so no
     /// path the core is handed for it reaches a real file. No Linux agent.
@@ -18,7 +41,7 @@ extension BundledGuestAgents {
             entries[BundledGuestAgentKey(.macOS, .arm64, .user)] = BundledGuestAgentEntry(
                 fileURL: installerDiskImageURL, kind: .installerDisk(version: version))
         }
-        return BundledGuestAgents(entries: entries)
+        return BundledGuestAgents(entries: entries, linuxDisk: .testing)
     }
 }
 

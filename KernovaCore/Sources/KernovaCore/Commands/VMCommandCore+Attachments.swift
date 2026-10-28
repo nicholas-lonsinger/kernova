@@ -666,21 +666,23 @@ extension VMCommandCore {
 
     // MARK: - Guest Agent Disk
 
-    /// Puts the bundled `KernovaMacOSAgent.dmg` in front of the guest, so the
-    /// user can run `install.command` inside it.
+    /// Puts the guest-agent installer disk for the VM's guest OS in front of the
+    /// guest: the bundled `KernovaMacOSAgent.dmg`, whose `install.command` the
+    /// user runs, or the Linux agent's disk, made off the main actor on this
+    /// process's first mount, whose `install.sh` the user runs.
     ///
-    /// Answers how the image reached the guest: a guest whose kernel binds no
-    /// USB mass storage driver already carries it on `storageDevices` for the
+    /// Answers how the disk reached the guest: a macOS guest whose kernel binds
+    /// no USB mass storage driver already carries it on `storageDevices` for the
     /// whole session, so there the verb attaches nothing and says so.
     @discardableResult
-    func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome {
+    func mountGuestAgentDisk(_ selector: VMSelector) async throws -> GuestAgentDiskMountOutcome {
         let instance = try resolve(selector)
         try require(.toggleGuestAgentDisk, on: instance)
-        guard let url = instance.bundleProducts.guestAgents.macOSInstallerDiskImageURL else {
-            logger.log(.fault, "Guest agent installer DMG missing from app bundle")
-            assertionFailure(
-                "KernovaMacOSAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs"
-            )
+        let guestOS = instance.configuration.guestOS
+        let agents = instance.bundleProducts.guestAgents
+        guard agents.bundlesInstallerDisk(for: guestOS) else {
+            logger.log(
+                .fault, "Guest agent installer for \(guestOS.rawValue, privacy: .public) missing from app bundle")
             throw CommandError.operationFailed(
                 verb: .guestAgentDisk,
                 message: "The Guest Agent installer is missing from this copy of Kernova.")
@@ -699,17 +701,30 @@ extension VMCommandCore {
                 "Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
             return .alreadyPresent(delivery)
         }
+        let disk: URL?
+        do {
+            disk = try await agents.installerDisk(for: guestOS)
+        } catch {
+            throw CommandError.operationFailed(
+                verb: .guestAgentDisk,
+                message: "Kernova couldn't make the Guest Agent disk: \(error.localizedDescription)")
+        }
+        guard let disk else {
+            throw CommandError.operationFailed(
+                verb: .guestAgentDisk,
+                message: "The Guest Agent installer is missing from this copy of Kernova.")
+        }
         logger.log(
             .notice,
             "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
+        let item = RemovableMediaItem(
+            path: disk.path(percentEncoded: false), readOnly: true,
+            label: BundledGuestAgents.installerDiskLabel(for: guestOS))
         try writeConfiguration(of: instance, as: .toggleGuestAgentDisk, verb: .guestAgentDisk) { config in
-            config.removableMedia =
-                (config.removableMedia ?? [])
-                + [
-                    RemovableMediaItem(
-                        path: url.path(percentEncoded: false), readOnly: true,
-                        label: BundledGuestAgents.macOSDiskLabel)
-                ]
+            // A mount that raced this one across the disk's write has attached it already.
+            let media = config.removableMedia ?? []
+            guard !media.contains(where: { $0.isInstaller(of: agents) }) else { return }
+            config.removableMedia = media + [item]
         }
         return .attached(delivery)
     }
@@ -729,10 +744,8 @@ extension VMCommandCore {
     /// eject finishes an install the user already asked for, so a state gate
     /// between the two could only strand the disk.
     func detachGuestAgentDisk(from instance: VMInstance) {
-        guard let url = instance.bundleProducts.guestAgents.macOSInstallerDiskImageURL,
-            instance.hasGuestAgentInstallerMounted
-        else { return }
-        let path = url.path(percentEncoded: false)
+        guard instance.hasGuestAgentInstallerMounted else { return }
+        let agents = instance.bundleProducts.guestAgents
         logger.log(
             .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
@@ -740,7 +753,7 @@ extension VMCommandCore {
         do {
             write = try instance.activity.edit(.hotPlugMedia) { permit in
                 library.updateConfiguration(permit) { config in
-                    let pruned = (config.removableMedia ?? []).filter { $0.path != path }
+                    let pruned = (config.removableMedia ?? []).filter { !$0.isInstaller(of: agents) }
                     config.removableMedia = pruned.isEmpty ? nil : pruned
                 }
             }

@@ -74,6 +74,7 @@ final class WiredCommandCore {
         organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
         preferences: AppPreferences = makeTestPreferences(),
         virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
+        bundleProducts: AppBundleProducts = .testing,
         clock: any EngineClock = makePlatformEngineClock(),
         logSink: KernovaLogger.ForwardingSink? = nil
     ) {
@@ -99,6 +100,7 @@ final class WiredCommandCore {
             networks: networks,
             organization: organization,
             guestAccountPasswords: passwords,
+            bundleProducts: bundleProducts,
             virtualizationHost: virtualizationHost,
             logSink: logSink)
         let core = VMCommandCore(

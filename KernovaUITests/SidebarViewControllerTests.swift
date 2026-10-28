@@ -288,7 +288,7 @@ struct SidebarViewControllerTests {
         #expect(badge.status == .waiting)
         #expect(!badge.isInstallerMounted)
 
-        viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.toggleGuestAgentDisk(on: instance)
         #expect(instance.hasGuestAgentInstallerMounted)
         #expect(instance.agentPresentation?.status == .waiting)
 

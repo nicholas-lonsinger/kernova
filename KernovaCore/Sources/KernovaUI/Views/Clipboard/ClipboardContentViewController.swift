@@ -946,7 +946,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var isPassthroughOn: Bool { instance.configuration.clipboardPassthroughEnabled }
 
     @objc private func actionButtonClicked(_: Any?) {
-        viewModel?.toggleGuestAgentDisk(on: instance)
+        guard let viewModel else { return }
+        Task { @MainActor [instance] in await viewModel.toggleGuestAgentDisk(on: instance) }
     }
 
     // MARK: - Agent status bar

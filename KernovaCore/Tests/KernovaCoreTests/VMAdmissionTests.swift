@@ -175,11 +175,11 @@ struct VMAdmissionTests {
     /// The settled answers where a fact other than the phase decides: the same
     /// columns, under the named variant.
     nonisolated private static let settledFactTable: [(Variant, VMAdmission.Request, String)] = [
-        // Recovery and the guest-agent disk are macOS's; a plain Start is
+        // Recovery is macOS's; a plain Start and the guest-agent disk are
         // every guest's.
         (.linux, .start(recovery: true), "IIIIIIR"),
         (.linux, .start(recovery: false), "AAAAIIR"),
-        (.linux, .affordance(.guestAgentDisk), "IIIIIIR"),
+        (.linux, .affordance(.guestAgentDisk), "IIIIAAR"),
         // A pending setup is what a Start runs, and nothing else boots the
         // VM until it has run — a saved state still restores.
         (.pendingSetup, .start(recovery: false), "AAAAIIR"),

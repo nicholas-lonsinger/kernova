@@ -43,8 +43,10 @@ let package = Package(
                 .product(name: "KernovaAgentHost", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
+                .product(name: "KernovaISO9660", package: "KernovaKit"),
             ],
             resources: [
+                .copy("Resources/LinuxAgentDisk"),
                 .copy("Resources/LinuxImageCatalog.json"),
                 .copy("Resources/RestoreImageCatalog.json"),
             ],

@@ -1525,13 +1525,13 @@ package final class VMLibraryViewModel {
     /// shows the next-step alert on every outcome: the alert is the whole action
     /// on two of the verb's three paths — an image already mounted, and a guest
     /// that takes it on virtio for the whole session.
-    package func toggleGuestAgentDisk(on instance: VMInstance) {
+    package func toggleGuestAgentDisk(on instance: VMInstance) async {
         switch GuestAgentDiskControl.model(for: instance, in: capabilities).action {
         case .eject:
             runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
         case .mount(let purpose):
-            runEdit(on: instance) {
-                let outcome = try self.commands.mountGuestAgentDisk(.id(instance.id))
+            await runEdit(on: instance) {
+                let outcome = try await self.commands.mountGuestAgentDisk(.id(instance.id))
                 self.presenter?.presentInstallerMounted(
                     for: instance, purpose: purpose, delivery: outcome.delivery)
             }

@@ -596,9 +596,7 @@ package enum VMAdmission {
         case .clipboard:
             admitted = facts.clipboardSharingEnabled && phase.hasLiveSession
         case .guestAgentDisk:
-            guard facts.guestOS == .macOS, phase.hasLiveSession else {
-                return .refuse(.invalidState)
-            }
+            guard phase.hasLiveSession else { return .refuse(.invalidState) }
             return decideOnTheVM(
                 .edit(.hotPlugMedia), posture: posture, phase: phase, facts: facts)
         }

@@ -177,13 +177,12 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
 }
 
 extension RemovableMediaItem {
-    /// `true` when this is `agents`' macOS installer DMG.
+    /// `true` when this is one of `agents`' installer disks.
     ///
-    /// The installer lives *inside the app bundle*, so a "remove" of it must
-    /// only detach the entry and never trash the file.
+    /// The app owns them, so a "remove" of one must only detach the entry and
+    /// never trash the file.
     package func isInstaller(of agents: BundledGuestAgents) -> Bool {
-        guard let agentPath = agents.macOSInstallerPath else { return false }
-        return path == agentPath
+        agents.isInstallerDisk(path: path)
     }
 
     /// Whether `new` is `old` with items removed and nothing else changed:

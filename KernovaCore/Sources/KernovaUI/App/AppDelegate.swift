@@ -444,7 +444,7 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
 
     @objc func toggleGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.toggleGuestAgentDisk(on: instance)
+        Task { @MainActor [viewModel] in await viewModel.toggleGuestAgentDisk(on: instance) }
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)

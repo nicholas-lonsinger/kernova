@@ -714,7 +714,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
             },
             onAgentDiskControl: { [weak self, weak instance] in
                 guard let self, let instance else { return }
-                self.viewModel.toggleGuestAgentDisk(on: instance)
+                Task { @MainActor [viewModel = self.viewModel] in await viewModel.toggleGuestAgentDisk(on: instance) }
             },
             onDismissAgentNudge: { [weak self, weak instance] in
                 guard let self, let instance else { return }

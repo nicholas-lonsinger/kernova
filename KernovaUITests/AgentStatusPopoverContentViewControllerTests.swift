@@ -207,6 +207,28 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(!visibleTexts(in: vc.view).contains("Status"))
     }
 
+    @Test("An attached disk opened from a terminal shows its command with a Copy button; none otherwise")
+    func installCommandRow() {
+        let vc = AgentStatusPopoverContentViewController()
+        vc.loadViewIfNeeded()
+        let command = #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
+        var eject = Self.eject
+        eject.installCommand = command
+        vc.update(
+            presentation: GuestAgentPresentation(hub: .empty), isInstallerMounted: true, diskControl: eject,
+            vmName: "Ubuntu", hasDismissAction: false)
+        #expect(visibleTexts(in: vc.view).contains(command))
+        let copy = firstSubview(NSButton.self, in: vc.view) { $0.accessibilityLabel() == "Copy Install Command" }
+        #expect(copy?.isHidden == false)
+        #expect(vc.installCommand == command)
+
+        vc.update(
+            presentation: GuestAgentPresentation(hub: .empty), isInstallerMounted: false, diskControl: Self.install,
+            vmName: "Ubuntu", hasDismissAction: false)
+        #expect(!visibleTexts(in: vc.view).contains(command))
+        #expect(vc.installCommand == nil)
+    }
+
     // MARK: - Helpers
 
     /// The text of every label on screen, in document order: none under a hidden view.

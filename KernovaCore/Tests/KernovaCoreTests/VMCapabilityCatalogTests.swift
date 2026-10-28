@@ -532,8 +532,8 @@ struct VMCapabilityCatalogTests {
 
     // MARK: - Guest-specific capabilities
 
-    @Test("Recovery and the guest-agent disk are macOS-guest capabilities")
-    func macOSOnlyCapabilities() {
+    @Test("Recovery is a macOS-guest capability; the guest-agent disk is every guest's")
+    func guestOSCapabilities() {
         let harness = makeHarness()
         let linux = makeInstance(in: harness, name: "Linux", phase: .stopped)
         let mac = makeInstance(in: harness, name: "macOS", phase: .stopped, guestOS: .macOS)
@@ -541,13 +541,15 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isApplicable(.startInRecovery, to: linux))
         #expect(harness.catalog.isApplicable(.startInRecovery, to: mac))
 
-        // The agent disk additionally needs a live session to look inside, which
-        // neither stopped VM has.
+        // The agent disk needs a live session to look inside, which neither
+        // stopped VM has.
         #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: mac))
-        let running = makeInstance(
-            in: harness, name: "Running macOS", phase: .running(sessionID: UUID()),
-            guestOS: .macOS)
-        #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
+        #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: linux))
+        for guestOS in VMGuestOS.allCases {
+            let running = makeInstance(
+                in: harness, name: "Running \(guestOS)", phase: .running(sessionID: UUID()), guestOS: guestOS)
+            #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
+        }
     }
 
     @Test("A USB accessory edit exists only in a process that can pass one through")

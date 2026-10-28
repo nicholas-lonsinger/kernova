@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// The guest-agent disk control every surface offers — the Virtual Machine menu
 /// item, the sidebar agent popover, the Clipboard window's footer — and the one
@@ -23,15 +24,26 @@ package enum GuestAgentDiskControl {
         package let title: String
         package let isEnabled: Bool
         let action: Action
+        /// The command the user runs inside the guest to install from the
+        /// attached disk, for a disk opened from a terminal rather than in
+        /// Finder: the Linux agent's, while it is attached.
+        package var installCommand: String?
+
+        init(title: String, isEnabled: Bool, action: Action, installCommand: String? = nil) {
+            self.title = title
+            self.isEnabled = isEnabled
+            self.action = action
+            self.installCommand = installCommand
+        }
     }
 
     /// The title the item carries whenever a hard gate withholds the command,
     /// and the placeholder it is built with.
     ///
     /// A rejected item keeps whatever title the last accepted validation left
-    /// on it, so the reject path has to retitle too: switching from a macOS
-    /// guest with the disk attached to a Linux guest would otherwise strand
-    /// "Eject Guest Agent Media" on a VM that can never have it.
+    /// on it, so the reject path has to retitle too: switching from a VM with
+    /// the disk attached to one that is stopped would otherwise strand "Eject
+    /// Guest Agent Media" on a VM that cannot have it.
     package static let unavailableTitle = "Install Guest Agent…"
 
     /// The control while the command is withheld.
@@ -40,20 +52,26 @@ package enum GuestAgentDiskControl {
 
     /// Resolves the control for `instance` now: disabled under
     /// ``unavailableTitle`` while `capabilities` refuses the command or no
-    /// installer disk is bundled, and otherwise the status mapping of
-    /// ``model(status:isInstallerMounted:)``.
+    /// installer disk is bundled for the VM's guest OS, and otherwise the
+    /// status mapping of ``model(status:isInstallerMounted:)``, with the
+    /// Linux disk's ``Model/installCommand`` while it is attached.
     @MainActor
     package static func model(
         for instance: VMInstance, in capabilities: VMCapabilityCatalog
     ) -> Model {
+        let guestOS = instance.configuration.guestOS
         guard capabilities.isAvailable(.toggleGuestAgentDisk, on: instance),
-            instance.bundleProducts.guestAgents.macOSInstallerDiskImageURL != nil
+            instance.bundleProducts.guestAgents.bundlesInstallerDisk(for: guestOS)
         else {
             return withheld
         }
-        return model(
+        var model = model(
             status: instance.agentPresentation?.status,
             isInstallerMounted: instance.hasGuestAgentInstallerMounted)
+        if model.action == .eject, guestOS == .linux {
+            model.installCommand = LinuxAgentDisk.installCommand
+        }
+        return model
     }
 
     /// Resolves the control for the given state.

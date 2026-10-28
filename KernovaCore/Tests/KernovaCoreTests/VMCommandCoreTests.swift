@@ -618,7 +618,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: running) == [
                 .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .editRemovableMedia, .setConfiguration, .clone, .rename, .showInFinder,
+                .editRemovableMedia, .setConfiguration, .clone, .rename, .showInFinder, .guestAgentDisk,
             ])
     }
 
