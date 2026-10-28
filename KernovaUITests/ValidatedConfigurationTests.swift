@@ -75,9 +75,36 @@ struct ValidatedConfigurationTests {
     )
     @MainActor
     func linuxSessionAttachesTheAgentHub() async throws {
+        let (instance, context) = try await startVsockServices(deviceShape: .current)
+
+        #expect(context.hasAgentTransport)
+        instance.handleSessionEvent(.guestDidStop)
+    }
+
+    @Test(
+        "A session restored into a recorded shape without a socket device attaches no hub transport",
+        .enabled(if: VZVirtualMachine.isSupported)
+    )
+    @MainActor
+    func shapeWithoutSocketAttachesNoHub() async throws {
+        let (instance, context) = try await startVsockServices(
+            deviceShape: VMDeviceShape(virtioSocketDevice: false))
+
+        #expect(context.session?.hasVirtioSocketDevice == false)
+        #expect(!context.hasAgentTransport)
+        instance.handleSessionEvent(.guestDidStop)
+    }
+
+    /// Runs a Linux instance's vsock services over a real session built from a
+    /// configuration recording `deviceShape`, answering the session's context.
+    @MainActor
+    private func startVsockServices(
+        deviceShape: VMDeviceShape
+    ) async throws -> (VMInstance, VMSessionContext) {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-        let result = try await ConfigurationBuilder.testing().build(
-            from: VMConfiguration.testLinux(), bundleURL: bundleURL)
+        var config = VMConfiguration.testLinux()
+        config.deviceShape = deviceShape
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
         let session = await VMSession.make(
             configuration: result.configuration, events: VMSessionEvents(handle: { _, _ in }))
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: session.id))
@@ -85,9 +112,7 @@ struct ValidatedConfigurationTests {
         context.session = session
 
         await instance.startVsockServices()
-
-        #expect(context.hasAgentTransport)
-        #expect(instance.agentPresentation?.hub != nil)
-        context.tearDown()
+        #expect((instance.agentPresentation?.hub != nil) == context.hasAgentTransport)
+        return (instance, context)
     }
 }

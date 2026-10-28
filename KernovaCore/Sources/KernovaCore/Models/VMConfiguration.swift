@@ -258,6 +258,13 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
     package var genericMachineIdentifierData: Data?
 
+    // MARK: - Device shape
+
+    /// The devices the last cold boot gave this VM, which a restore of its
+    /// saved state builds; `nil` when no cold boot has recorded one, and a
+    /// build then applies ``VMDeviceShape/current``.
+    package var deviceShape: VMDeviceShape?
+
     // MARK: - Linux kernel boot
 
     package var kernelPath: String?
@@ -531,6 +538,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
+        self.deviceShape = try c.decodeIfPresent(VMDeviceShape.self, forKey: .deviceShape)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(

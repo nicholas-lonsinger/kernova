@@ -1282,6 +1282,30 @@ struct VMConfigurationTests {
         }
     }
 
+    // MARK: - Device shape
+
+    @Test("A config.json no cold boot recorded a shape in decodes with none")
+    func absentDeviceShapeDecodesAsUnrecorded() throws {
+        let config = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+        #expect(config.deviceShape == nil)
+    }
+
+    @Test("A recorded shape round-trips, and a device field it predates decodes as off")
+    func recordedDeviceShapeDecodes() throws {
+        let recorded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self,
+            from: Data(Self.makeBaseJSON(extraFields: #""deviceShape": {"virtioSocketDevice": true}"#).utf8))
+        #expect(recorded.deviceShape == .current)
+        let reencoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(recorded))
+        #expect(reencoded.deviceShape == .current)
+
+        let predating = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: Data(Self.makeBaseJSON(extraFields: #""deviceShape": {}"#).utf8))
+        #expect(predating.deviceShape == VMDeviceShape(virtioSocketDevice: false))
+    }
+
     // MARK: - Snapshot revert
 
     @Test("Adopting a snapshot's state takes its hardware and keeps this VM's identity")

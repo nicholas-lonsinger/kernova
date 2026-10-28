@@ -536,6 +536,7 @@ struct VirtualizationServiceTests {
     private func makeRevertFixture(
         phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm,
         macAddress: String? = nil, capturedMACAddress: String? = nil,
+        deviceShape: VMDeviceShape? = nil, capturedDeviceShape: VMDeviceShape? = nil,
         machineFiles: (any VMBundleMachineFileWorking)? = nil
     ) throws -> RevertFixture {
         let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
@@ -547,6 +548,7 @@ struct VirtualizationServiceTests {
         ) {
             $0.memorySizeInGB = .gibibytes(16)
             $0.macAddress = macAddress
+            $0.deviceShape = deviceShape
         }
         let layout = instance.bundleLayout
         try Data("live-disk".utf8).write(to: layout.diskImageURL)
@@ -555,6 +557,7 @@ struct VirtualizationServiceTests {
         var capturedConfiguration = instance.configuration
         capturedConfiguration.memorySizeInGB = .gibibytes(8)
         capturedConfiguration.macAddress = capturedMACAddress ?? macAddress
+        capturedConfiguration.deviceShape = capturedDeviceShape ?? deviceShape
         let extraID = UUID()
         capturedConfiguration.storageDisks = [
             StorageDisk(path: "Disk.asif", isInternal: true),
@@ -678,6 +681,47 @@ struct VirtualizationServiceTests {
         let written = try VMConfiguration.load(
             fromBundle: fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id).bundleURL)
         #expect(written.macAddress == captured.macAddress)
+    }
+
+    // MARK: - Device shape
+
+    private nonisolated static let noSocketDevice = VMDeviceShape(virtioSocketDevice: false)
+
+    @Test("A capture records the device shape the VM holds, and a revert restores the snapshot's")
+    func snapshotCarriesItsDeviceShape() async throws {
+        let fixture = try makeRevertFixture(
+            deviceShape: .current, capturedDeviceShape: Self.noSocketDevice)
+        let request = VMSnapshotCaptureRequest(name: "Under the current shape")
+
+        _ = try await capture(fixture.instance, request)
+        let written = try VMConfiguration.load(
+            fromBundle: fixture.instance.bundleLayout.snapshotLayout(id: request.id).bundleURL)
+        #expect(written.deviceShape == .current)
+
+        try await revert(fixture)
+        #expect(fixture.instance.configuration.deviceShape == Self.noSocketDevice)
+        let onDisk = try VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
+        #expect(onDisk.deviceShape == Self.noSocketDevice)
+    }
+
+    @Test(
+        "A cold boot builds and records the current device shape over whatever was recorded",
+        arguments: [nil, VirtualizationServiceTests.noSocketDevice]
+    )
+    func coldBootRecordsTheCurrentShape(recorded: VMDeviceShape?) async throws {
+        let fixture = try makeRevertFixture(deviceShape: recorded)
+        let instance = fixture.instance
+
+        try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
+            context in
+            let built = try instance.coldBootConfiguration(context)
+            #expect(built.deviceShape == .current)
+            return .rest(.atRest(.stopped), ())
+        }.value()
+
+        #expect(instance.configuration.deviceShape == .current)
+        let onDisk = try VMConfiguration.load(fromBundle: instance.bundleURL)
+        #expect(onDisk.deviceShape == .current)
     }
 
     @Test("An incomplete snapshot is refused before the live VM is torn down")
@@ -1410,6 +1454,8 @@ struct VirtualizationServiceTests {
             $0.bootMode = .linuxKernel
             $0.kernelPath = picked.path(percentEncoded: false)
             $0.kernelBookmark = bookmark
+            // Already recorded, so the cold boot owes no write of its own.
+            $0.deviceShape = .current
         }
         defer { withExtendedLifetime(library) {} }
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
@@ -1429,5 +1475,20 @@ struct VirtualizationServiceTests {
         }
         #expect(instance.configuration.kernelPath == picked.path(percentEncoded: false))
         #expect(storage.bundles[instance.bundleURL]?.kernelPath == picked.path(percentEncoded: false))
+    }
+
+    @Test("A cold boot whose device shape cannot be recorded builds nothing")
+    func coldBootRefusesAnUnrecordedShape() async throws {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = library.registerFixture(phase: .stopped)
+        defer { withExtendedLifetime(library) {} }
+        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
+
+        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
+            try await start(instance)
+        }
+        #expect(instance.configuration.deviceShape == nil)
+        #expect(instance.session == nil)
     }
 }

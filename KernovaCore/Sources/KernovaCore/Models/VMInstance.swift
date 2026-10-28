@@ -761,6 +761,19 @@ package final class VMInstance {
         return context
     }
 
+    /// The configuration a cold boot builds: this VM's under the current
+    /// device policy, which is recorded in the bundle first so a state saved
+    /// from the session restores into the devices it was built with.
+    ///
+    /// Throws what kept the record from landing, since a session whose shape
+    /// went unrecorded would save a state no restore could match.
+    package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
+        if configuration.deviceShape != .current {
+            try bringUp.operation.permit.updateConfiguration { $0.deviceShape = .current }.get()
+        }
+        return effectiveConfiguration
+    }
+
     #if DEBUG
     /// ``beginSessionContext(_:bootedIntoRecovery:)`` with no bring-up behind
     /// it, replacing and releasing any prior context; tests only.

@@ -142,7 +142,8 @@ package final class VirtualizationService {
         // Per attempt, not once per start: the lock-contention retry loop ends
         // the session between attempts, taking this context's scopes with it.
         instance.beginSessionContext(context, bootedIntoRecovery: bootIntoRecovery)
-        let result = try await buildConfiguration(for: instance, context.operation)
+        let result = try await buildConfiguration(
+            try instance.coldBootConfiguration(context), context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -583,12 +584,11 @@ package final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds a VZ configuration, first creating the EFI variable store an EFI
-    /// boot reads when the bundle holds none.
+    /// Builds `config` into a VZ configuration, first creating the EFI variable
+    /// store an EFI boot reads when the bundle holds none.
     private func buildConfiguration(
-        for instance: VMInstance, _ context: borrowing VMOperationContext
+        _ config: VMConfiguration, _ context: borrowing VMOperationContext
     ) async throws -> sending ConfigurationBuilder.BuildResult {
-        let config = instance.effectiveConfiguration
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }
@@ -645,7 +645,8 @@ package final class VirtualizationService {
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
         instance.beginSessionContext(context)
-        let result = try await buildConfiguration(for: instance, context.operation)
+        // Built in the recorded shape the saved state was made in.
+        let result = try await buildConfiguration(instance.effectiveConfiguration, context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }

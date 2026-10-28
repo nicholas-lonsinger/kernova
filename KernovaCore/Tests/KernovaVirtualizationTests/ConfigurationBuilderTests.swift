@@ -1336,6 +1336,24 @@ struct ConfigurationBuilderTests {
         #expect(devices.first is VZVirtioSocketDeviceConfiguration)
     }
 
+    @Test(
+        "A build gives the recorded shape's socket device, and the current policy's when none is recorded",
+        arguments: [
+            (nil, 1), (VMDeviceShape.current, 1), (VMDeviceShape(virtioSocketDevice: false), 0),
+        ] as [(VMDeviceShape?, Int)]
+    )
+    func socketDeviceFollowsTheRecordedShape(shape: VMDeviceShape?, socketDevices: Int) throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        var config = VMConfiguration.testLinux()
+        config.deviceShape = shape
+
+        let devices = try ConfigurationBuilder.testing()
+            .assemble(from: config, bundleURL: bundleURL, validate: false)
+            .configuration.socketDevices
+
+        #expect(devices.count == socketDevices)
+    }
+
     // MARK: - Path-Traversal Containment
 
     @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")
