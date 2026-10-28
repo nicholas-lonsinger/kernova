@@ -45,6 +45,12 @@ struct LogindPeerStateTests {
             try inbox.next().get()
         }
 
+        /// The next delivery, which must be a failure.
+        func nextFailure() throws -> LogindError? {
+            guard case .failure(let error) = try inbox.next() else { return nil }
+            return error
+        }
+
         /// Emits `PropertiesChanged` for the session interface on `session`.
         func sessionChanged(_ session: LogindSessionReference, _ changed: [(String, DBusValue)]) throws {
             try fake.emitChange(on: session.path, interface: Logind.sessionInterface, changed: changed, invalidated: [])
@@ -150,6 +156,61 @@ struct LogindPeerStateTests {
         watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
         try watch.displayChanged()
         #expect(try watch.next()?.sessionID == "3")
+    }
+
+    static let unknownObject = LogindError.call(
+        .remote(DBusRemoteError(name: "org.freedesktop.DBus.Error.UnknownObject", message: "Unknown object")))
+
+    @Test("A read that fails delivers its error alone, keeps both subscriptions, and the next signal rereads")
+    func failedReadKeepsWatching() throws {
+        let watch = try Watch(.session(uid: FakeLogind.displayUID))
+        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
+
+        // Display names a session whose properties are already gone.
+        watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.nextUserSession.path] }
+        watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
+        try watch.displayChanged()
+        #expect(try watch.nextFailure() == Self.unknownObject)
+        #expect(try watch.isSettled())
+
+        // The session subscription it had still rereads...
+        watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
+        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+        #expect(try watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
+
+        // ...and so does the user's.
+        watch.fake.recorder.display.withLock { $0 = FakeLogind.userSession }
+        try watch.displayChanged()
+        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
+    }
+
+    @Test("After a failed read, a state equal to the last one delivered is not delivered again")
+    func failedReadKeepsLastState() throws {
+        let watch = try Watch(.session(uid: FakeLogind.displayUID))
+        #expect(try watch.next()?.console == .off)
+
+        watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
+        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+        #expect(try watch.nextFailure() == Self.unknownObject)
+        watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
+        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+        #expect(try watch.isSettled())
+
+        watch.fake.recorder.userSessionActive.withLock { $0 = true }
+        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
+        #expect(try watch.next()?.console == .on)
+    }
+
+    @Test("A first read that fails delivers its error, and the next signal delivers the first state")
+    func failedFirstRead() throws {
+        let watch = try Watch(.session(uid: FakeLogind.displayUID)) { recorder in
+            recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
+        }
+        #expect(try watch.nextFailure() == Self.unknownObject)
+        #expect(try watch.isSettled())
+        watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
+        try watch.displayChanged()
+        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
     }
 
     @Test("A display session on no seat, which logind reports as always active, never holds the console")

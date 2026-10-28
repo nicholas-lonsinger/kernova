@@ -37,6 +37,8 @@ final class FakeLogind: Sendable {
         let userSessionActive = Mutex(false)
         /// The user session's `Class`.
         let userSessionClass = Mutex("user")
+        /// Sessions whose properties answer `UnknownObject`, as a session logind has just finalized does.
+        let vanishedSessions = Mutex<Set<DBusObjectPath>>([])
         /// The user session's `Seat` ID; nil for a session on no seat.
         let userSessionSeat = Mutex<String?>("seat0")
     }
@@ -79,6 +81,11 @@ final class FakeLogind: Sendable {
         if header.path == Logind.managerPath, header.interface == Logind.managerInterface, let member = header.member {
             recorder.calls.withLock { $0.append((member, body)) }
             return manager(call, member: member, body: body, recorder: recorder) ?? unknown
+        }
+        if let path = header.path, recorder.vanishedSessions.withLock({ $0.contains(path) }) {
+            return .error(
+                replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownObject",
+                message: "Unknown object")
         }
         guard header.interface == "org.freedesktop.DBus.Properties", let path = header.path,
             let properties = properties(of: path, interface: body.first, recorder: recorder)
