@@ -26,7 +26,8 @@ final class SidebarAgentStatusButtonView: NSView {
     private let popoverPresenter = PopoverPresenter()
     private let contentVC = AgentStatusPopoverContentViewController()
 
-    private(set) var status: AgentStatus = .waiting
+    private(set) var presentation = GuestAgentPresentation(macOSAgent: .waiting)
+    var status: AgentStatus { presentation.status }
     private(set) var isInstallerMounted = false
     private(set) var diskControl: GuestAgentDiskControl.Model?
     private(set) var vmName: String = ""
@@ -67,16 +68,16 @@ final class SidebarAgentStatusButtonView: NSView {
         fatalError("SidebarAgentStatusButtonView does not support NSCoder")
     }
 
-    /// Applies a new status / installer state / disk control / VM name /
+    /// Applies a new presentation / installer state / disk control / VM name /
     /// dismiss-availability snapshot.
     ///
     /// An open popover is updated in place, so an in-flight change doesn't
     /// dismiss it.
     func configure(
-        status: AgentStatus, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
+        presentation: GuestAgentPresentation, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
         vmName: String, hasDismissAction: Bool
     ) {
-        self.status = status
+        self.presentation = presentation
         self.isInstallerMounted = isInstallerMounted
         self.diskControl = diskControl
         self.vmName = vmName
@@ -86,7 +87,7 @@ final class SidebarAgentStatusButtonView: NSView {
         applyVisualState()
 
         contentVC.update(
-            status: status, isInstallerMounted: isInstallerMounted, diskControl: diskControl,
+            presentation: presentation, isInstallerMounted: isInstallerMounted, diskControl: diskControl,
             vmName: vmName, hasDismissAction: hasDismissAction)
     }
 
@@ -156,7 +157,7 @@ final class SidebarAgentStatusButtonView: NSView {
         case .waiting: "exclamationmark.circle.fill"
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
         case .connecting: "arrow.triangle.2.circlepath.circle.fill"
-        case .current: "checkmark.circle.fill"
+        case .current, .connected: "checkmark.circle.fill"
         case .unresponsive: "wifi.exclamationmark"
         case .expectedMissing: "exclamationmark.triangle.fill"
         }
@@ -167,7 +168,7 @@ final class SidebarAgentStatusButtonView: NSView {
         case .waiting: StatusColor.inactive
         case .outdated: StatusColor.warning
         case .connecting: StatusColor.inactive
-        case .current: StatusColor.running
+        case .current, .connected: StatusColor.running
         case .unresponsive: StatusColor.warning
         case .expectedMissing: StatusColor.warning
         }
@@ -179,7 +180,7 @@ final class SidebarAgentStatusButtonView: NSView {
         case .outdated(let installed, let bundled):
             "Guest agent update available (\(installed) → \(bundled))"
         case .connecting(let expected): "Connecting to guest agent (was \(expected))"
-        case .current(let version): "Guest agent connected (\(version))"
+        case .current(let version), .connected(let version): "Guest agent connected (\(version))"
         case .unresponsive(let version): "Guest agent unresponsive (\(version))"
         case .expectedMissing(let expected): "Guest agent didn't reconnect (was \(expected))"
         }

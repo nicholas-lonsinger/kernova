@@ -24,7 +24,7 @@ struct GuestAgentDiskControlTests {
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .operating(.saving, from: .running(sessionID: UUID())))
         instance.beginSessionContextForTesting()
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.status == .waiting)
 
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)
     }

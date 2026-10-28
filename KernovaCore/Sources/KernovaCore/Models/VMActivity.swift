@@ -1372,8 +1372,10 @@ package final class VMActivity {
     /// the follow-ups it owes queued for the step's drain.
     private func setPhase(_ new: VMLifecyclePhase) {
         let wasAttachable = attachableSessionID != nil
+        let wasLivePaused = isLivePaused
         phase = new
         phaseCommits &+= 1
+        if wasLivePaused != isLivePaused { owner?.livePauseDidChange(isLivePaused) }
         guard !wasAttachable, attachableSessionID != nil else { return }
         enqueue(onSessionBecameAttachable?() ?? [])
     }

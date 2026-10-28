@@ -5,8 +5,11 @@ import KernovaKit
 /// Popover content shown when the user clicks the sidebar agent-status
 /// button (the small SF Symbol or spinner next to each VM row).
 ///
+/// The macOS agent's status reads as a title and a paragraph; the agent hub's
+/// agents add a line per agent and a row per capability.
+///
 /// State is mutable in place via
-/// ``update(status:isInstallerMounted:diskControl:vmName:hasDismissAction:)``
+/// ``update(presentation:isInstallerMounted:diskControl:vmName:hasDismissAction:)``
 /// so the host can refresh the popover when any input flips while it is open,
 /// without dismiss/re-present flicker.
 @MainActor
@@ -40,8 +43,10 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     /// `hasDismissAction` surfaces.
     var onDismiss: (() -> Void)?
 
-    /// Current status driving the popover's title and body.
-    private(set) var status: AgentStatus = .waiting
+    /// Current presentation driving the popover's title, body and rows.
+    private(set) var presentation = GuestAgentPresentation(macOSAgent: .waiting)
+    /// The presentation's status.
+    var status: AgentStatus { presentation.status }
     /// Whether the bundled installer disk is attached to the VM.
     private(set) var isInstallerMounted = false
     /// The trailing button, resolved from the guest-agent disk control.
@@ -64,6 +69,8 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
+    /// The hub's agent lines and capability rows; hidden for the macOS agent.
+    private let rowsStack = NSStackView()
     private let actionButton = NSButton()
     private let dismissButton = NSButton()
     private let dismissSpacer = NSView()
@@ -101,7 +108,10 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         stack.alignment = .leading
         stack.spacing = Self.verticalSpacing
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setViews([titleLabel, bodyLabel, actionRow], in: .leading)
+        rowsStack.orientation = .vertical
+        rowsStack.alignment = .leading
+        rowsStack.spacing = Spacing.small
+        stack.setViews([titleLabel, bodyLabel, rowsStack, actionRow], in: .leading)
 
         container.addSubview(stack)
         let padding = Self.padding
@@ -125,13 +135,14 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    /// Replaces the popover's status, installer state, disk control, VM name,
-    /// and dismiss-action flag and refreshes every label and button in place.
+    /// Replaces the popover's presentation, installer state, disk control, VM
+    /// name, and dismiss-action flag and refreshes every label and button in
+    /// place.
     func update(
-        status: AgentStatus, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
+        presentation: GuestAgentPresentation, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
         vmName: String, hasDismissAction: Bool
     ) {
-        self.status = status
+        self.presentation = presentation
         self.isInstallerMounted = isInstallerMounted
         actionButtonRole = ActionButton(diskControl)
         self.vmName = vmName
@@ -182,10 +193,43 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     private func applyContent() {
         titleLabel.stringValue = Self.title(for: status)
-        bodyLabel.stringValue = Self.bodyText(
-            for: status, isInstallerMounted: isInstallerMounted, vmName: vmName)
+        if let hub = presentation.hub {
+            bodyLabel.isHidden = true
+            rowsStack.isHidden = false
+            rowsStack.setViews(Self.rows(hub).map(makeRow), in: .leading)
+        } else {
+            bodyLabel.isHidden = false
+            bodyLabel.stringValue = Self.bodyText(
+                for: status, isInstallerMounted: isInstallerMounted, vmName: vmName)
+            rowsStack.isHidden = true
+            rowsStack.setViews([], in: .leading)
+        }
         actionButton.title = actionButtonRole.title
         dismissButton.isHidden = !hasDismissAction
+    }
+
+    /// The hub's agent lines, then its capability rows, each as a title and the
+    /// value beside it.
+    static func rows(_ hub: GuestAgentPresentation.Hub) -> [(title: String, value: String)] {
+        hub.peers.map { ($0.title, $0.state) } + hub.capabilities.map { ($0.title, $0.detail) }
+    }
+
+    private func makeRow(_ row: (title: String, value: String)) -> NSView {
+        let title = NSTextField(labelWithString: row.title)
+        title.font = .preferredFont(forTextStyle: .callout)
+        title.isSelectable = false
+        let value = NSTextField(wrappingLabelWithString: row.value)
+        value.font = .preferredFont(forTextStyle: .callout)
+        value.textColor = .secondaryLabelColor
+        value.isSelectable = false
+        value.alignment = .right
+        value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let line = NSStackView(views: [title, value])
+        line.orientation = .horizontal
+        line.distribution = .fill
+        line.spacing = Spacing.standard
+        line.widthAnchor.constraint(equalToConstant: Self.bodyWidth).isActive = true
+        return line
     }
 
     // MARK: - Actions
@@ -208,7 +252,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
         case .connecting: "Connecting to guest agent"
-        case .current: "Guest agent connected"
+        case .current, .connected: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
         case .expectedMissing: "Guest agent didn't reconnect"
         }
@@ -233,7 +277,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         case .connecting(let expected):
             return
                 "Waiting for guest agent \(expected) on \(vmName) to connect."
-        case .current(let version):
+        case .current(let version), .connected(let version):
             return "\(vmName) is connected with guest agent \(version)."
         case .unresponsive(let version):
             return

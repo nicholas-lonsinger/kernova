@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 
 #if SWIFT_PACKAGE
@@ -30,6 +31,7 @@ enum VMInstanceFixture {
         pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
         files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
         bundleFactory: VMBundle.Factory? = nil,
+        agentConnector: (any HostConnectionMaking)? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let read = seed(
@@ -39,7 +41,8 @@ enum VMInstanceFixture {
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
-            hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil,
+            agentConnector: agentConnector)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
         return instance
@@ -65,7 +68,7 @@ enum VMInstanceFixture {
     }
 
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
-    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``
+    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:agentConnector:mutate:)``
     /// and a library's fixture admission build their bundle from.
     static func seed(
         name: String, guestOS: VMGuestOS, hostState: VMHostState, snapshots: VMSnapshotManifest,

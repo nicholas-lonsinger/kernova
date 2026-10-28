@@ -143,6 +143,16 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // The host's side: one hub per VM over the runtime's host connections,
+    // and the transport admission it accepts through. Portable, though only
+    // the Mac runs a host, so its tests ride the runtime's harness.
+    .target(
+        name: "KernovaAgentHost",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
     // Like `KernovaPortableTests` below, it cannot reach `KernovaTestSupport`.
     .testTarget(
         name: "KernovaWireTests",
@@ -184,7 +194,7 @@ var targets: [Target] = [
         name: "KernovaAgentRuntimeTests",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
-            "KernovaSynchronization", "KernovaPlatformPOSIX",
+            "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
@@ -216,9 +226,11 @@ products += [
     .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
     .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
     .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
-    // The protocol's vocabulary — the bundled-payload catalog's keys and
-    // manifests — for KernovaCore.
-    .library(name: "KernovaAgentCore", targets: ["KernovaAgentCore", "KernovaWire"]),
+    // The app's agent hub, and the protocol types and stream it is driven
+    // with, for KernovaCore.
+    .library(
+        name: "KernovaAgentHost",
+        targets: ["KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX"]),
 ]
 
 dependencies += [

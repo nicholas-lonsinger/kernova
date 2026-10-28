@@ -32,9 +32,9 @@ public final class HostConnectionRuntime: Sendable {
         self.receiverPolicy = receiverPolicy
     }
 
-    /// Starts a connection over `stream` with a fresh session token. Its events reach `handler` with
-    /// `async` on `queue`, the hub's.
-    public func accept(
+    /// A connection over `stream` with a fresh session token, not yet started: nothing reaches `handler`,
+    /// with `async` on `queue`, the hub's, until `HostConnection.start()`.
+    public func makeConnection(
         _ stream: any ByteStream, policy: PolicySnapshot, bundles: [BundledPayload], deliveringOn queue: DispatchQueue,
         _ handler: @escaping @Sendable (HostEvent) -> Void
     ) -> HostConnection {
@@ -63,7 +63,6 @@ public final class HostConnectionRuntime: Sendable {
                     }
                 },
                 event: { event, _ in queue.async { handler(event) } }))
-        driver.start()
         return HostConnection(driver: driver)
     }
 }
@@ -74,6 +73,11 @@ public struct HostConnection: Sendable {
 
     /// The connection's generation; every id it hands out carries it.
     public var generation: ConnectionGeneration { driver.generation }
+
+    /// Starts the stream's events and writes the preamble and Hello.
+    public func start() {
+        driver.start()
+    }
 
     /// Sends `command` to the connection's driver with `async`.
     public func send(_ command: HostCommand) {

@@ -425,7 +425,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
                 _ = self.instance.vsockControlService?.agentStatus
-                _ = self.instance.agentStatus
+                _ = self.instance.agentPresentation
                 _ = self.diskControl
                 _ = self.instance.configuration.clipboardPassthroughEnabled
             },
@@ -506,7 +506,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private func updateUI() {
         let service = instance.clipboardService
-        let status = instance.agentStatus
+        let status = instance.clipboardChannelStatus
         let diskControl = diskControl
 
         textView.isEditable = service != nil
@@ -975,7 +975,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .connecting(let expected):
             statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Connecting (was \(expected))"
-        case .current(let version):
+        case .current(let version), .connected(let version):
             statusCircle.contentTintColor = StatusColor.running
             statusLabel.stringValue = "Connected (\(version))"
         case .unresponsive(let version):

@@ -98,7 +98,7 @@ package final class VsockControlService: VsockFeatureService {
         guard let installed = agentVersion else { return .waiting }
         if isUnresponsive { return .unresponsive(version: installed) }
         guard let bundled = bundledAgentVersion else {
-            return .current(version: installed)
+            return .connected(version: installed)
         }
         return AgentStatus.isObservedVersionCurrent(installed, bundled: bundled)
             ? .current(version: installed)

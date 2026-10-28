@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCore
 import KernovaLogging
 import Virtualization
@@ -306,19 +307,32 @@ package actor VMSession: VMSessionOperating {
     /// method is `@optional`, so a listener whose host has been released stays
     /// bound to its port with undocumented admission behavior. The session
     /// retains each host for exactly as long as its listener is bound.
-    private var socketListenerHosts: [UInt32: VsockListenerHost] = [:]
+    private var socketListenerHosts: [UInt32: any VsockPortListening] = [:]
 
     /// Installs every listener in `listeners` in one hop, replacing whatever
     /// was bound to the ports they serve.
     package func attach(_ listeners: [VsockListener]) {
+        for host in listeners.map(VsockListenerHost.init) { bind(host) }
+    }
+
+    /// The agent hub's transport on this session's socket device, `nil` when
+    /// the VM has none.
+    package nonisolated func makeAgentTransport() -> (any GuestStreamTransport)? {
+        hasVirtioSocketDevice ? VZGuestStreamTransport(session: self) : nil
+    }
+
+    /// Binds the agent transport's listener, replacing whatever held its port.
+    func bindAgentListener(_ host: AgentListenerHost) {
+        bind(host)
+    }
+
+    private func bind(_ host: any VsockPortListening) {
         guard let device = virtioSocketDevice() else { return }
-        for host in listeners.map(VsockListenerHost.init) {
-            // Store after the bind: `setSocketListener` has already replaced
-            // the prior listener, so a displaced host is never released while
-            // it is still the one bound.
-            host.attach(to: device)
-            socketListenerHosts[host.port] = host
-        }
+        // Store after the bind: `setSocketListener` has already replaced the
+        // prior listener, so a displaced host is never released while it is
+        // still the one bound.
+        host.attach(to: device)
+        socketListenerHosts[host.port] = host
     }
 
     /// Unbinds every port in `ports` in one hop and releases the host that

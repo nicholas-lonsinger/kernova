@@ -75,10 +75,8 @@ package struct VsockListener: Sendable {
     /// Resolves one accepted connection on the accepting thread: admission
     /// check, socket configuration, channel construction or raw hand-off.
     ///
-    /// `fd` is a `dup()` of the accepted connection's descriptor — a fully
-    /// independent fd on the same socket file description, so the framework
-    /// can release its own copy without affecting this one — and `dupErrno`
-    /// the `errno` a failed `dup()` left.
+    /// `fd` and `dupErrno` are ``AcceptedVsockSocket/duplicate(_:)``'s answer
+    /// for the accepted connection's descriptor.
     ///
     /// Takes ownership of `fd` on every path — the built channel closes it, a
     /// data port's `onAcceptFd` takes it over, or a refusal closes it here.
@@ -143,43 +141,8 @@ package struct VsockListener: Sendable {
 
     /// Applies the host-side socket options to a freshly accepted vsock fd.
     func configureAcceptedSocket(_ fd: Int32) {
-        applySendBuffer(fd)
+        AcceptedVsockSocket.raiseSendBuffer(fd, port: port)
         applySendTimeout(fd)
-    }
-
-    /// Enlarges the socket send buffer to unlock host→guest streaming throughput.
-    ///
-    /// Throughput is gated by the *writer's* send buffer, and this fd is born at
-    /// XNU's 8 KiB `net.local.stream.sendspace` default — the host writer then
-    /// ping-pongs with the VM helper process every 8 KiB, capping host→guest at
-    /// ~0.7 GiB/s. 1 MiB lifts that ~9×, with the knee at 256 KiB
-    /// (`docs/research/2026-07-13-vsock-transport-throughput.md`). The guest→host
-    /// writer lives in Apple's VM helper process, unreachable per-fd.
-    private func applySendBuffer(_ fd: Int32) {
-        var size = Int32(Self.sendBufferBytes)
-        let rc = setsockopt(
-            fd, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size))
-        if rc != 0 {
-            Self.logger.log(
-                .warning,
-                "setsockopt(SO_SNDBUF) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — host→guest throughput stays at the 8 KiB-default transport ceiling"
-            )
-            return
-        }
-        var applied: Int32 = 0
-        var len = socklen_t(MemoryLayout<Int32>.size)
-        guard getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &applied, &len) == 0 else { return }
-        if applied < Int32(Self.sendBufferBytes) {
-            Self.logger.log(
-                .warning,
-                "SO_SNDBUF on vsock port \(self.port, privacy: .public) clamped to \(applied, privacy: .public) bytes (requested \(Self.sendBufferBytes, privacy: .public)) — host→guest throughput may stay below the unlocked ceiling"
-            )
-        } else {
-            Self.logger.log(
-                .debug,
-                "SO_SNDBUF on vsock port \(self.port, privacy: .public) set to \(applied, privacy: .public) bytes"
-            )
-        }
     }
 
     /// Bounds a host write to a stalled guest defensively.
@@ -203,10 +166,6 @@ package struct VsockListener: Sendable {
 
     /// Defensive host-side send timeout, matching the guest's socket timeout.
     private static let sendTimeoutSeconds = Int(ClipboardStreamTuning.dataSocketTimeout)
-
-    /// Host-side socket send-buffer size, well under `kern.ipc.maxsockbuf`
-    /// (8 MiB) — see `applySendBuffer` for why it is raised at all.
-    private static let sendBufferBytes = ClipboardStreamTuning.dataSendBufferBytes
 }
 
 /// The queue-side install of a VM's vsock listeners, as the main actor drives

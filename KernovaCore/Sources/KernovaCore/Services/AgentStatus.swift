@@ -11,6 +11,10 @@ package enum AgentStatus: Equatable, Sendable {
     /// The guest agent is connected and its version matches what the host bundles.
     case current(version: String)
 
+    /// The guest agent is connected, and the host bundles nothing to judge its
+    /// version against.
+    case connected(version: String)
+
     /// The guest agent is connected but reports a version older than what the
     /// host bundles.
     case outdated(installed: String, bundled: String)
@@ -27,7 +31,7 @@ package enum AgentStatus: Equatable, Sendable {
     /// elapsed with no `Hello` — after the VM started or resumed, or after the
     /// control channel died mid-session.
     ///
-    /// Synthesized only at `VMInstance.agentStatus`; `VsockControlService`,
+    /// Synthesized only at `VMInstance.agentPresentation`; `VsockControlService`,
     /// which has no access to persisted state, never returns it.
     case expectedMissing(expected: String)
 
@@ -38,7 +42,7 @@ package enum AgentStatus: Equatable, Sendable {
     ///
     /// Resolves to `.current` once a handshake completes, or to
     /// `.expectedMissing` if the agent-arrival watchdog fires. Synthesized only
-    /// at `VMInstance.agentStatus`; `VsockControlService` never returns it.
+    /// at `VMInstance.agentPresentation`; `VsockControlService` never returns it.
     case connecting(expected: String)
 
     package var isConnecting: Bool {
@@ -80,6 +84,7 @@ package enum AgentStatus: Equatable, Sendable {
         switch self {
         case .waiting: "waiting"
         case .current: "current"
+        case .connected: "connected"
         case .outdated: "outdated"
         case .unresponsive: "unresponsive"
         case .expectedMissing: "expectedMissing"
@@ -91,8 +96,8 @@ package enum AgentStatus: Equatable, Sendable {
     /// version — i.e. resolves to `.current` rather than `.outdated`.
     ///
     /// The same comparison the guest-agent filter buckets by
-    /// (``VMGuestAgentBucket/init(lastSeenVersion:bundledVersion:)``), which
-    /// counts a `nil` `bundled` — the host's version sidecar missing — as
+    /// (``VMGuestAgentBucket/init(lastSeenVersion:bundledVersion:)``): a `nil`
+    /// `bundled` — the host's version sidecar missing — makes no version
     /// current.
     static func isObservedVersionCurrent(_ version: String, bundled: String?) -> Bool {
         VMGuestAgentBucket(lastSeenVersion: version, bundledVersion: bundled) == .upToDate

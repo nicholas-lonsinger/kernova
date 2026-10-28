@@ -231,11 +231,12 @@ struct HostConnectionRuntimeTests {
             let runtime = HostConnectionRuntime(
                 claim: Fixture.hostClaim, scheduler: scheduler, payloadSource: source, logger: Fixture.logger)
             let events = events
-            connection = runtime.accept(
+            connection = runtime.makeConnection(
                 stream, policy: PolicySnapshot(),
                 bundles: [BundledPayload(os: .linux, architecture: .arm64, scope: .user, manifest: manifest)],
                 deliveringOn: hub
             ) { events.record($0) }
+            connection.start()
         }
 
         func pump() async {

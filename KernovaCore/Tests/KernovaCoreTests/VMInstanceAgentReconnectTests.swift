@@ -86,7 +86,7 @@ struct VMInstanceAgentReconnectTests {
 
         try guest.send(makeGuestHello(agentVersion: version))
         try await waitForChange { instance.vsockControlService?.agentVersion != nil }
-        #expect(instance.agentStatus == .current(version: version))
+        #expect(instance.agentPresentation?.status == .current(version: version))
         #expect(instance.hasSeenAgentThisSession)
         // A connected agent is nothing to wait for.
         #expect(instance.agentPostStartTaskForTesting == nil)
@@ -99,7 +99,7 @@ struct VMInstanceAgentReconnectTests {
         // `onChannelLost` runs inside the settle, so the re-arm is already done
         // by the time the settle is observable.
         #expect(instance.agentPostStartTaskForTesting != nil)
-        #expect(instance.agentStatus == .connecting(expected: version))
+        #expect(instance.agentPresentation?.status == .connecting(expected: version))
     }
 
     @Test("A replacement channel that never handshakes still escalates")
@@ -125,14 +125,14 @@ struct VMInstanceAgentReconnectTests {
         // wedges: open, but never a valid Hello.
         let second = try attachControlService(to: instance)
         defer { second.close() }
-        #expect(instance.agentStatus == .connecting(expected: version))
+        #expect(instance.agentPresentation?.status == .connecting(expected: version))
         #expect(instance.agentPostStartTaskForTesting != nil)
 
         // Re-arm short to watch that clock actually run out.
         instance.cancelAgentPostStartWatchdog()
         instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
         await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentStatus == .expectedMissing(expected: version))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: version))
     }
 
     @Test("An owner teardown of the control service arms nothing")
@@ -177,7 +177,7 @@ struct VMInstanceAgentReconnectTests {
         #expect(instance.vsockControlService?.isConnected == true)
         #expect(instance.agentPostStartTaskForTesting == nil)
         #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.agentStatus == .current(version: version))
+        #expect(instance.agentPresentation?.status == .current(version: version))
     }
 
     @Test("A channel lost while live-paused still arms nothing")
@@ -208,6 +208,6 @@ struct VMInstanceAgentReconnectTests {
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
         await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentStatus == .expectedMissing(expected: version))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: version))
     }
 }

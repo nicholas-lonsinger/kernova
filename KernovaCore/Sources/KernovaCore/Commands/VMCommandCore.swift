@@ -678,7 +678,7 @@ package final class VMCommandCore {
             networkName: library.networks.networkName(of: config),
             macAddress: config.macAddress,
             ipAddress: library.guestAddresses.address(for: instance),
-            agentStatus: instance.agentStatus?.wireName,
+            agentStatus: instance.agentPresentation?.status.wireName,
             hasSavedState: instance.hasSaveFile,
             isEphemeral: subject.isEphemeral,
             snapshotCount: instance.snapshotManifest.snapshots.count,
@@ -778,7 +778,7 @@ package final class VMCommandCore {
             _ = instance.configuration.name
             _ = instance.status
             _ = instance.errorMessage
-            _ = instance.agentStatus
+            _ = instance.agentPresentation
             _ = instance.activity.lastStartFailure
         }
     }
@@ -791,7 +791,7 @@ package final class VMCommandCore {
                 states[instance.instanceID] = ObservedState(
                     name: instance.name,
                     status: instance.status,
-                    agentStatus: instance.agentStatus,
+                    agentStatus: instance.agentPresentation?.status,
                     errorMessage: instance.errorMessage,
                     startFailure: instance.activity.lastStartFailure)
             case .arriving(let arrival):

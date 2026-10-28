@@ -66,6 +66,7 @@ SWIFT_FORMAT := xcrun swift-format
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh \
+                 Tools/tests/check-core-imports.sh \
                  Tools/tests/checkout-lock.sh \
                  Tools/tests/attest.sh \
                  Tools/tests/arena-label.sh \
@@ -239,7 +240,7 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # own scratch path keeps the swift.org toolchain's build state apart from the
 # Xcode toolchain's, which `test-unhosted` uses. `swift build` keeps only the
 # last of several `--target` options, so each target is a build of its own.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaPlatformPOSIX KernovaDBus KernovaDigest KernovaPlatformLinux CKernovaAgentVersion KernovaLinuxAgent
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaAgentHost KernovaPlatformPOSIX KernovaDBus KernovaDigest KernovaPlatformLinux CKernovaAgentVersion KernovaLinuxAgent
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
