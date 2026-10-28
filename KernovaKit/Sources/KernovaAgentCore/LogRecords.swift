@@ -69,7 +69,9 @@ public struct LogRecordValue: Sendable, Equatable {
         self.level = level
         self.subsystem = Normalize.clip(subsystem, maxBytes: Self.maxLabelBytes)
         self.category = Normalize.clip(category, maxBytes: Self.maxLabelBytes)
-        var cut = truncated || segments.count > Self.maxSegments
+        var cut =
+            truncated || segments.count > Self.maxSegments || subsystem.utf8.count > Self.maxLabelBytes
+            || category.utf8.count > Self.maxLabelBytes
         var kept: [LogSegmentValue] = []
         var budget = Self.maxTextBytes
         for segment in segments.prefix(Self.maxSegments) {
@@ -167,7 +169,8 @@ public struct LogRing: Sendable, Equatable {
     public static let capacity = 256
     /// A batch's record bound.
     public static let batchRecords = 64
-    /// A batch's encoded bound, under the 64 KiB message limit.
+    /// A batch's encoded bound, under the 64 KiB message limit and the credit
+    /// the forwarder waits for before asking for one.
     public static let batchBytes = 61_440
 
     private var records: [LogRecordValue] = []

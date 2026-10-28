@@ -137,10 +137,14 @@ public struct LogForwarder: FeatureMachine {
         checkReady(&connection)
     }
 
+    /// Asks for a batch once a whole one is sendable. It waits for the credit
+    /// `.writable` rises at, not the smaller batch bound: readiness is re-checked
+    /// only on `.writable`, so any lower threshold would leave credit between the
+    /// two with nothing to re-check it.
     private mutating func checkReady(_ connection: inout Connection) {
-        guard let stream, !ending, recordsMayWait, connection.canSendMessage(LogRing.batchBytes, on: stream) else {
-            return
-        }
+        guard let stream, !ending, recordsMayWait,
+            connection.canSendMessage(Limits.writableLowWater, on: stream)
+        else { return }
         recordsMayWait = false
         outbox.append(.logs(.ready))
     }
