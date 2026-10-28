@@ -61,7 +61,13 @@ jobs:
         run: swift build --package-path KernovaKit
 
       - name: Test
-        run: swift test --package-path KernovaKit
+        run: |
+          for t in KernovaWireTests KernovaPortableTests KernovaDBusTests KernovaPlatformLinuxTests; do
+            echo "=== $t"
+            timeout -s QUIT 200 swift test --package-path KernovaKit --skip-build --filter "$t" 2>&1 | tail -150 || true
+            echo "=== $t done: ${PIPESTATUS[0]}"
+          done
+          exit 1
 
   windows:
     name: Windows (arm64)
