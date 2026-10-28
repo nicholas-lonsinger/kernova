@@ -52,6 +52,17 @@ struct ConnectionDriverTests {
                 == ["event established", "event policyReceived", "event updateAvailable"])
     }
 
+    @Test("An input and a close sent before start() run after the stream starts, as the hub sends a new connection")
+    func sentBeforeStartRunsAfterIt() async {
+        let harness = PeerDriverHarness()
+        harness.driver.handle(Self.available)
+        harness.driver.close(.shuttingDown)
+        harness.driver.start()
+        await harness.settle()
+        #expect(harness.journal.take().prefix(2) == ["start", "arm"])
+        #expect(harness.stream.writeCount == 1)
+    }
+
     @Test("Nothing is written while a write is outstanding")
     func oneWriteAtATime() async {
         let harness = PeerDriverHarness(power: .absent(.notOnConsole, debugDetail: ""))
