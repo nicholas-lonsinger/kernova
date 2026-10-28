@@ -79,7 +79,7 @@ struct DeliveryTests {
         }.start()
         // The handler is held at the gate, so a caller that did not wait would
         // put "returned" here instead.
-        #expect(try events.next() == "waiting")
+        try #require(try events.next() == "waiting")
         gate.put("go")
         #expect(try [events.next(), events.next()] == ["finished", "returned"])
     }
