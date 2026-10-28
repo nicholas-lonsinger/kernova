@@ -72,8 +72,13 @@ struct Deadline: Sendable {
     }
 }
 
-/// Runs `body` on a new detached thread, returning `pthread_create`'s error,
-/// 0 when the thread started.
+/// The stack every thread `startThread(_:)` starts gets, whatever the libc's
+/// default: glibc's is 8 MiB, musl's 128 KiB, and the reader runs handlers and
+/// a decode nested up to `DBusLimits.maximumValueNesting` deep.
+let threadStackSize = 1 << 20
+
+/// Runs `body` on a new detached thread with a `threadStackSize` stack,
+/// returning `pthread_create`'s error, 0 when the thread started.
 func startThread(_ body: @escaping @Sendable () -> Void) -> Int32 {
     final class Body {
         let run: @Sendable () -> Void
@@ -84,6 +89,7 @@ func startThread(_ body: @escaping @Sendable () -> Void) -> Int32 {
     pthread_attr_init(&attributes)
     defer { pthread_attr_destroy(&attributes) }
     pthread_attr_setdetachstate(&attributes, Int32(PTHREAD_CREATE_DETACHED))
+    pthread_attr_setstacksize(&attributes, threadStackSize)
     // Glibc spells `pthread_t` as an integer, Musl as a pointer.
     #if canImport(Glibc)
     var thread = pthread_t()
