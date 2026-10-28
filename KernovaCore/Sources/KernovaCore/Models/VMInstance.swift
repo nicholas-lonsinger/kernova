@@ -761,6 +761,19 @@ package final class VMInstance {
         return context
     }
 
+    /// The configuration a cold boot builds: this VM's under the current
+    /// device policy, which is recorded in the bundle first so a state saved
+    /// from the session restores into the devices it was built with.
+    ///
+    /// Throws what kept the record from landing, so no session runs in a
+    /// shape the bundle does not record.
+    package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
+        if configuration.deviceShape != .current {
+            try bringUp.operation.permit.updateConfiguration { $0.deviceShape = .current }.get()
+        }
+        return effectiveConfiguration
+    }
+
     #if DEBUG
     /// ``beginSessionContext(_:bootedIntoRecovery:)`` with no bring-up behind
     /// it, replacing and releasing any prior context; tests only.
@@ -959,10 +972,8 @@ package final class VMInstance {
     /// and attaches the agent hub's transport beside them.
     ///
     /// A no-op when no socket device is present. Idempotent: any previously
-    /// installed listeners are torn down first. The control listener is always
-    /// installed; the log, clipboard and drop listeners are gated on
-    /// `agentLogForwardingEnabled` / `clipboardSharingEnabled` /
-    /// `dropFilesEnabled`.
+    /// installed listeners are torn down first. Which listeners go up is
+    /// `VsockFeatureDescriptor.isEnabled(_:)`'s answer: a macOS guest's only.
     package func startVsockServices() async {
         stopVsockServices()
         guard let session, session.hasVirtioSocketDevice, let vsock = sessionContext?.vsock
@@ -1261,14 +1272,10 @@ package final class VMInstance {
 
         guard hasLiveVirtualMachine else { return }
 
-        // Host-only (no vsock device), so handle it before the socket-device
-        // guard returns early for guests without a `VZVirtioSocketDevice`.
         if oldConfig.serialSocketRelayEnabled != newConfig.serialSocketRelayEnabled {
             applyLiveSerialRelayPolicy(enabled: newConfig.serialSocketRelayEnabled)
         }
 
-        // Likewise host-side only, so apply it before the socket-device guard —
-        // it must work for Linux/SPICE guests too.
         if oldConfig.clipboardPassthroughEnabled != newConfig.clipboardPassthroughEnabled
             || oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
         {
