@@ -71,17 +71,18 @@ final class MemoryStream: ByteStream {
     }
 
     func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void) {
-        let (queue, error, deliver) = state.withLock { state -> (DispatchQueue?, ByteStreamError?, Data?) in
-            guard !state.isShutDown else { return (state.queue, .shutDown, nil) }
+        let (queue, error, deliver) = state.withLock { state -> (DispatchQueue, ByteStreamError?, Data?) in
+            guard let queue = state.queue else { preconditionFailure("a write before start") }
+            guard !state.isShutDown else { return (queue, .shutDown, nil) }
             let bytes = chunks.reduce(into: Data()) { $0.append($1) }
             if state.holdsOutbound {
                 state.heldOutbound.append(bytes)
-                return (state.queue, nil, nil)
+                return (queue, nil, nil)
             }
-            return (state.queue, nil, bytes)
+            return (queue, nil, bytes)
         }
         if let deliver, !deliver.isEmpty { far.withLock { $0 }?.receive(deliver) }
-        (queue ?? DispatchQueue.global()).async { completion(error) }
+        queue.async { completion(error) }
     }
 
     func shutdown() {

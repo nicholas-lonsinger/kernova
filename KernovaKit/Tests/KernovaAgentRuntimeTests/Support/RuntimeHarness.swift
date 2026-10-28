@@ -51,12 +51,14 @@ final class PeerRuntimeHarness: Sendable {
     let stops = Recorder<StopReason>()
     let runtime: PeerAgentRuntime
 
-    init(power: FakePowerAdapter = FakePowerAdapter(handsOff: false)) {
+    init(
+        power: FakePowerAdapter = FakePowerAdapter(handsOff: false), state: PeerSessionState? = Fixture.peerState
+    ) {
         self.power = power
         let events = events
         let stops = stops
         runtime = PeerAgentRuntime(
-            claim: Fixture.peerClaim, state: Fixture.peerState, registry: PeerFeatureRegistry(power: power),
+            claim: Fixture.peerClaim, state: state, registry: PeerFeatureRegistry(power: power),
             dialer: dialer, scheduler: scheduler, logger: Fixture.logger,
             handlers: PeerAgentRuntime.Handlers(event: { events.record($0) }, stop: { stops.record($0) }))
     }

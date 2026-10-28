@@ -620,17 +620,17 @@ struct VMConfigurationKeyRegistryTests {
         #expect(Keys.agentInstallReminder.read(settings) == "false")
     }
 
-    @Test("The guest-agent and input-device keys apply to macOS guests only")
-    func agentKeysApplyToMacOSOnly() {
+    @Test("Log forwarding applies to every guest; drag and drop, the install reminder and input devices to macOS only")
+    func agentKeysApplyPerGuest() {
         typealias Keys = VMConfigurationKeyRegistry
         let linux = makeConfiguration(guestOS: .linux)
         let macOS = makeConfiguration(guestOS: .macOS)
-        for key in [
-            Keys.inputDevices, Keys.dropFiles, Keys.agentLogForwarding, Keys.agentInstallReminder,
-        ] {
+        for key in [Keys.inputDevices, Keys.dropFiles, Keys.agentInstallReminder] {
             #expect(!key.applies(linux), "\(key.name)")
             #expect(key.applies(macOS), "\(key.name)")
         }
+        #expect(Keys.agentLogForwarding.applies(linux))
+        #expect(Keys.agentLogForwarding.applies(macOS))
     }
 
     @Test("A baseline named by identifier or by name turns the mode on with that snapshot")

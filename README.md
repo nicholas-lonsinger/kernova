@@ -204,6 +204,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 |---|---|
 | **Git hooks** | Activates the checked-in `.githooks/` — a pre-push `make lint` (`git push --no-verify` bypasses once), a commit-msg check that an agent's co-author trailer names the model and version, and a post-checkout hook that readies new worktrees. |
 | **Homebrew tools** | `shellcheck`, `gh`, `xcode-build-server` — skipped if present or if [Homebrew](https://brew.sh) is absent; none is needed to build or test. |
+| **swift.org toolchain** | swiftly, the Swift release `.swift-version` pins and its Static Linux SDK, which the app build cross-builds the Linux guest agent with; Xcode's own toolchain stays the default `swift`. |
 | **`buildServer.json`** | Gives editors and language servers the project's real compiler flags; build once for them to resolve. |
 | **Periphery** | The pinned release `make dead-code` scans with. |
 | **`make doctor`** | Checks toolchain, signing, and hooks against what Kernova needs. |

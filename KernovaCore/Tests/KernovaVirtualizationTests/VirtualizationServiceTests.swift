@@ -15,7 +15,7 @@ import Virtualization
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
         vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetAttachments().maker,
-        bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled, guestAgent: .testing,
+        bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled, guestAgents: .testing,
         isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 

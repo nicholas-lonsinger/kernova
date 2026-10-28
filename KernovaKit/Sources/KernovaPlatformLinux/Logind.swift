@@ -86,6 +86,36 @@ public struct Logind: Sendable {
         try LogindSessionReference(try property("Display", of: user, Self.userInterface))
     }
 
+    /// The user's `Name`: their login name, as logind holds it. A static
+    /// binary has no NSS to look a uid up with, so this is how the agent
+    /// learns it.
+    public func userName(_ user: DBusObjectPath) throws(LogindError) -> String {
+        let value = try property("Name", of: user, Self.userInterface)
+        return try Self.read { () throws(DBusValueMismatch) in try value.string() }
+    }
+
+    /// Calls `onChange` for each `PropertiesChanged` logind emits for the
+    /// user that touches `Display`, until the subscription is cancelled; as
+    /// `observeSession(_:onChange:)`, subscribe before reading
+    /// `displaySession(ofUser:)`.
+    ///
+    /// logind emits it as one of the user's sessions starts and as one is
+    /// finalized (systemd's `session_start` and `session_finalize`). A
+    /// session that stops re-elects `Display` at once but emits nothing until
+    /// it is finalized, which waits on its last process.
+    public func observeUser(
+        _ user: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindUserChange, LogindError>) -> Void
+    ) throws(LogindError) -> DBusSubscription {
+        try observeProperties(of: user, Self.userInterface, onChange: onChange) {
+            changed, invalidated throws(LogindError) in
+            if let value = changed["Display"] {
+                let content = try Self.read { () throws(DBusValueMismatch) in try value.variantContent() }
+                return .display(try LogindSessionReference(content))
+            }
+            return invalidated.contains("Display") ? .displayInvalidated : nil
+        }
+    }
+
     /// `GetSeat(id)`: the seat's object, as `seat0` for the console. logind
     /// answers with an ERROR for a seat that does not exist.
     public func seat(_ id: String) throws(LogindError) -> DBusObjectPath {
@@ -99,7 +129,7 @@ public struct Logind: Sendable {
         try LogindSessionReference(try property("ActiveSession", of: seat, Self.seatInterface))
     }
 
-    /// The session's `Id`, `Active`, `State` and `Class`.
+    /// The session's `Id`, `Active`, `State`, `Class` and `Seat`.
     public func sessionProperties(_ session: DBusObjectPath) throws(LogindError) -> LogindSessionProperties {
         let body = try call(
             session, Self.propertiesInterface, "GetAll", [.string(Self.sessionInterface)], expecting: "a{sv}")
@@ -113,9 +143,13 @@ public struct Logind: Sendable {
             guard let value = properties[name] else { throw .missingProperty(name) }
             return try Self.read { () throws(DBusValueMismatch) in try value.variantContent().string() }
         }
+        guard let seat = properties["Seat"] else { throw .missingProperty("Seat") }
+        // The `(so)` logind holds for a seat has the shape of a session reference, the empty ID for none.
+        let seatReference = try LogindSessionReference(
+            try Self.read { () throws(DBusValueMismatch) in try seat.variantContent() })
         return LogindSessionProperties(
             id: try string("Id"), active: active, state: LogindSessionState(rawValue: try string("State")),
-            sessionClass: sessionClass)
+            sessionClass: sessionClass, seat: seatReference?.id)
     }
 
     /// Calls `onChange` for each `PropertiesChanged` logind emits for the
@@ -366,13 +400,19 @@ public struct LogindSessionProperties: Sendable, Hashable {
     public var state: LogindSessionState
     /// The session's class.
     public var sessionClass: LogindSessionClass
+    /// The seat the session is attached to, as `seat0`; nil for a session on no seat, as one over SSH is.
+    /// logind reports a seatless session as always active.
+    public var seat: String?
 
     /// Properties of these values.
-    public init(id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass) {
+    public init(
+        id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass, seat: String?
+    ) {
         self.id = id
         self.active = active
         self.state = state
         self.sessionClass = sessionClass
+        self.seat = seat
     }
 }
 
@@ -431,6 +471,15 @@ public struct LogindSessionReference: Sendable, Hashable {
         guard !id.isEmpty else { return nil }
         self.init(id: id, path: path)
     }
+}
+
+/// What one `PropertiesChanged` on a user says of its `Display`.
+public enum LogindUserChange: Sendable, Hashable {
+    /// The user's display session is now this one, or none.
+    case display(LogindSessionReference?)
+    /// The property changed without a value; reread it with
+    /// `Logind.displaySession(ofUser:)`.
+    case displayInvalidated
 }
 
 /// What one `PropertiesChanged` on a seat says of its `ActiveSession`.

@@ -21,7 +21,7 @@ struct VMInstanceAgentReconnectTests {
     /// `Hello` report, so a connected agent renders `.current` rather than
     /// `.outdated` against whatever the host bundles.
     private func bundledAgentVersion() throws -> String {
-        try #require(BundledGuestAgent.testing.version)
+        try #require(BundledGuestAgents.testing.macOSVersion)
     }
 
     private func makeInstance(

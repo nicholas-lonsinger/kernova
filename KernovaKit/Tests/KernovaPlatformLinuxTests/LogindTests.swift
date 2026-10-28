@@ -5,10 +5,12 @@ import Synchronization
 import Testing
 
 /// `org.freedesktop.login1` as the agent sees it, exported on a private bus:
-/// the manager calls the wrappers make, two users, seat0, and two sessions —
-/// a user's graphical session and a greeter.
+/// the manager calls the wrappers make, two users, seat0, and three sessions —
+/// a user's graphical session, the same user's next one, and a greeter.
 final class FakeLogind: Sendable {
     static let userSession = LogindSessionReference(id: "2", path: "/org/freedesktop/login1/session/_32")
+    /// The display user's next graphical session: active, of class `user`, on seat0.
+    static let nextUserSession = LogindSessionReference(id: "3", path: "/org/freedesktop/login1/session/_33")
     static let greeterSession = LogindSessionReference(id: "c1", path: "/org/freedesktop/login1/session/c1")
     static let seatPath: DBusObjectPath = "/org/freedesktop/login1/seat/seat0"
     /// Logged in with a graphical session.
@@ -29,6 +31,16 @@ final class FakeLogind: Sendable {
         let refusal = Mutex<DBusRemoteError?>(nil)
         /// seat0's foreground session.
         let activeSession = Mutex<LogindSessionReference?>(FakeLogind.greeterSession)
+        /// The display user's `Display`.
+        let display = Mutex<LogindSessionReference?>(FakeLogind.userSession)
+        /// The user session's `Active`.
+        let userSessionActive = Mutex(false)
+        /// The user session's `Class`.
+        let userSessionClass = Mutex("user")
+        /// Sessions whose properties answer `UnknownObject`, as a session logind has just finalized does.
+        let vanishedSessions = Mutex<Set<DBusObjectPath>>([])
+        /// The user session's `Seat` ID; nil for a session on no seat.
+        let userSessionSeat = Mutex<String?>("seat0")
     }
 
     static let inhibitors: [DBusValue] = [
@@ -42,6 +54,11 @@ final class FakeLogind: Sendable {
         _ what: String, _ who: String, _ why: String, _ mode: String, _ uid: UInt32, _ pid: UInt32
     ) -> DBusValue {
         .struct([.string(what), .string(who), .string(why), .string(mode), .uint32(uid), .uint32(pid)])
+    }
+
+    /// A `(so)` reference to seat `seat`, which the fake keeps at seat0's object; `("", "/")` for none.
+    static func seatReference(_ seat: String?) -> DBusValue {
+        .struct([.string(seat ?? ""), .objectPath(seat == nil ? .root : seatPath)])
     }
 
     /// A `(so)` session reference; `("", "/")` for none, as logind holds it.
@@ -65,6 +82,11 @@ final class FakeLogind: Sendable {
             recorder.calls.withLock { $0.append((member, body)) }
             return manager(call, member: member, body: body, recorder: recorder) ?? unknown
         }
+        if let path = header.path, recorder.vanishedSessions.withLock({ $0.contains(path) }) {
+            return .error(
+                replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownObject",
+                message: "Unknown object")
+        }
         guard header.interface == "org.freedesktop.DBus.Properties", let path = header.path,
             let properties = properties(of: path, interface: body.first, recorder: recorder)
         else { return unknown }
@@ -85,18 +107,28 @@ final class FakeLogind: Sendable {
     ) -> [String: DBusValue]? {
         switch (path, interface) {
         case (displayUserPath, .string(Logind.userInterface)?):
-            ["Display": reference(userSession), "Name": .string("user")]
+            ["Display": reference(recorder.display.withLock { $0 }), "Name": .string("user")]
         case (sessionlessUserPath, .string(Logind.userInterface)?):
             ["Display": reference(nil), "Name": .string("lingering")]
         case (seatPath, .string(Logind.seatInterface)?):
             ["ActiveSession": reference(recorder.activeSession.withLock { $0 }), "Id": .string("seat0")]
         case (userSession.path, .string(Logind.sessionInterface)?):
             [
-                "Id": .string("2"), "Active": .boolean(false), "State": .string("online"), "Class": .string("user"),
+                "Id": .string("2"), "Active": .boolean(recorder.userSessionActive.withLock { $0 }),
+                "State": .string("online"), "Class": .string(recorder.userSessionClass.withLock { $0 }),
+                "Seat": seatReference(recorder.userSessionSeat.withLock { $0 }),
                 "Type": .string("wayland"),
             ]
+        case (nextUserSession.path, .string(Logind.sessionInterface)?):
+            [
+                "Id": .string("3"), "Active": .boolean(true), "State": .string("active"),
+                "Class": .string("user"), "Seat": seatReference("seat0"),
+            ]
         case (greeterSession.path, .string(Logind.sessionInterface)?):
-            ["Id": .string("c1"), "Active": .boolean(true), "State": .string("active"), "Class": .string("greeter")]
+            [
+                "Id": .string("c1"), "Active": .boolean(true), "State": .string("active"),
+                "Class": .string("greeter"), "Seat": seatReference("seat0"),
+            ]
         default:
             nil
         }
@@ -206,7 +238,7 @@ struct LogindTests {
         #expect(session == FakeLogind.userSession)
         #expect(
             try logind.sessionProperties(session.path)
-                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user))
+                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user, seat: "seat0"))
     }
 
     @Test("A user in no graphical session has no display session, and a user not logged in is an error")
@@ -236,7 +268,8 @@ struct LogindTests {
         #expect(greeter == FakeLogind.greeterSession)
         #expect(
             try logind.sessionProperties(greeter.path)
-                == LogindSessionProperties(id: "c1", active: true, state: .active, sessionClass: .greeter))
+                == LogindSessionProperties(
+                    id: "c1", active: true, state: .active, sessionClass: .greeter, seat: "seat0"))
 
         fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
         #expect(try logind.activeSession(onSeat: seat) == FakeLogind.userSession)
@@ -265,6 +298,32 @@ struct LogindTests {
         #expect(try inbox.next().get() == .activeSession(nil))
         try fake.emitChange(on: seat, interface: interface, changed: [], invalidated: ["ActiveSession"])
         #expect(try inbox.next().get() == .activeSessionInvalidated)
+        #expect(inbox.isEmpty)
+        subscription.cancel()
+    }
+
+    @Test("Observing a user delivers each change of its display session")
+    func observeUser() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        let user = try logind.user(FakeLogind.displayUID)
+        let inbox = Inbox<Result<LogindUserChange, LogindError>>()
+        let subscription = try logind.observeUser(user) { inbox.put($0) }
+
+        let interface = Logind.userInterface
+        try fake.emitChange(on: user, interface: interface, changed: [("IdleHint", .boolean(true))], invalidated: [])
+        try fake.emitChange(
+            on: user, interface: Logind.sessionInterface,
+            changed: [("Display", FakeLogind.reference(FakeLogind.nextUserSession))], invalidated: [])
+        let toNext = [("Display", FakeLogind.reference(FakeLogind.nextUserSession))]
+        try fake.emitChange(on: user, interface: interface, changed: toNext, invalidated: [])
+        #expect(try inbox.next().get() == .display(FakeLogind.nextUserSession))
+        try fake.emitChange(
+            on: user, interface: interface, changed: [("Display", FakeLogind.reference(nil))], invalidated: [])
+        #expect(try inbox.next().get() == .display(nil))
+        try fake.emitChange(on: user, interface: interface, changed: [], invalidated: ["Display"])
+        #expect(try inbox.next().get() == .displayInvalidated)
         #expect(inbox.isEmpty)
         subscription.cancel()
     }

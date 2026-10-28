@@ -80,3 +80,34 @@ uint64_t kernova_monotonic_nanoseconds(void) {
 }
 
 #endif
+
+#if defined(__linux__)
+#include <errno.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <linux/vm_sockets.h>
+
+int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress) {
+    int descriptor = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (descriptor < 0) {
+        return -1;
+    }
+    struct sockaddr_vm address;
+    memset(&address, 0, sizeof address);
+    address.svm_family = AF_VSOCK;
+    address.svm_cid = cid;
+    address.svm_port = port;
+    if (connect(descriptor, (const struct sockaddr *)&address, sizeof address) == 0) {
+        *in_progress = 0;
+        return descriptor;
+    }
+    if (errno == EINPROGRESS) {
+        *in_progress = 1;
+        return descriptor;
+    }
+    int saved = errno;
+    close(descriptor);
+    errno = saved;
+    return -1;
+}
+#endif

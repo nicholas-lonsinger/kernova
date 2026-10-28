@@ -41,7 +41,7 @@ struct VsockFeatureServiceSettleTests {
         case .control:
             let service = VsockControlService(
                 channel: channel, label: label, hostVersion: AppBundleProducts.testing.hostVersion,
-                bundledAgentVersion: BundledGuestAgent.testing.version)
+                bundledAgentVersion: BundledGuestAgents.testing.macOSVersion)
             return (service, { service.isConnected })
         case .log:
             return (VsockGuestLogService(channel: channel, label: label), nil)

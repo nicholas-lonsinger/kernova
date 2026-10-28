@@ -46,8 +46,9 @@ public protocol ByteStream: Sendable {
     func start(on queue: DispatchQueue, _ handler: @escaping @Sendable (ByteStreamEvent) -> Void)
     /// Allows the next event after a `.received`.
     func readMore()
-    /// At most one write outstanding; the completion runs on the start queue, never inside this call. A write
-    /// error says only that writing failed: the read side keeps delivering what the far side sent.
+    /// Only after `start(on:)`, and at most one write outstanding; the completion runs on the start queue, never
+    /// inside this call. A write error says only that writing failed: the read side keeps delivering what the far
+    /// side sent.
     func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void)
     /// Ends both directions. A pending write completes with an error; `.ended` is delivered once if it was not;
     /// every thread the stream parks is woken, and once both have been delivered the stream releases its

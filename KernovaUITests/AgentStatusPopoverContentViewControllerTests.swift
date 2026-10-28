@@ -178,7 +178,7 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(doneCount == 0)
     }
 
-    @Test("A hub presentation shows a line per agent and its Status row in place of the body")
+    @Test("A hub presentation shows a line per agent and its capability rows in place of the body")
     func hubRows() {
         let vc = AgentStatusPopoverContentViewController()
         vc.loadViewIfNeeded()
@@ -187,7 +187,7 @@ struct AgentStatusPopoverContentViewControllerTests {
                 PeerSummary(
                     handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
                     userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
-            ], features: FeatureStatus.merge([]))
+            ], features: FeatureStatusTable([(feature: .logs, status: .absent(.disabledByPolicy, debugDetail: ""))]))
 
         vc.update(
             presentation: GuestAgentPresentation(hub: snapshot), isInstallerMounted: false,
@@ -198,6 +198,7 @@ struct AgentStatusPopoverContentViewControllerTests {
         #expect(
             visibleTexts(in: vc.view) == [
                 "Guest agent connected", "Session agent — pbear", "Up to date", "Status", "Connected",
+                "Guest logs in Console", "Turned off in Settings.",
             ])
 
         vc.update(

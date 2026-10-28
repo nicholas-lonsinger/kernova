@@ -17,8 +17,18 @@ extension CoreUnits {
             var now: Int64 = 0
             var effects: [AgentEffect] = []
 
-            init() {
-                agent = PeerAgent(now: Unit.at(0))
+            init(parked: Bool = false) {
+                agent = PeerAgent(now: Unit.at(0), parked: parked)
+                collect()
+            }
+
+            mutating func park() {
+                agent.park(now: Unit.at(now))
+                collect()
+            }
+
+            mutating func unpark() {
+                agent.unpark(now: Unit.at(now))
                 collect()
             }
 
@@ -226,6 +236,81 @@ extension CoreUnits {
             driver.collect()
             #expect(driver.effects == [.dial, .stop(.noTransport)])
             #expect(driver.agent.nextDeadline == nil)
+        }
+
+        @Test("A parked agent dials nothing until it is unparked, then dials at once")
+        func startsParked() {
+            var driver = Driver(parked: true)
+            #expect(driver.effects.isEmpty)
+            #expect(driver.agent.nextDeadline == nil)
+            driver.step(to: 600_000)
+            #expect(driver.effects.isEmpty)
+            driver.unpark()
+            #expect(driver.effects == [.dial])
+            driver.unpark()
+            #expect(driver.effects == [.dial])
+        }
+
+        @Test("Parked while connected: the connection's end schedules nothing, and unparking dials at once")
+        func parkWhileConnected() {
+            var driver = Driver()
+            let generation = driver.connect()
+            driver.park()
+            driver.end(generation, .closedLocally(WireError(.shuttingDown)), after: 100)
+            #expect(driver.agent.nextDeadline == nil)
+            driver.step(to: 600_000)
+            #expect(driver.effects == [.dial])
+            driver.unpark()
+            #expect(driver.effects == [.dial, .dial])
+        }
+
+        @Test("Parked and unparked while connected: the connection's end redials at once, with no backoff")
+        func reparkWhileConnected() {
+            var driver = Driver()
+            _ = driver.failDials(3)
+            let generation = driver.connect()
+            driver.park()
+            driver.unpark()
+            #expect(driver.effects.count == 4)
+            driver.end(generation, .closedLocally(WireError(.shuttingDown)), after: 100)
+            #expect(driver.effects.count == 5)
+            #expect(driver.agent.nextDeadline == nil)
+            #expect(driver.failDials(1) == [8])
+        }
+
+        @Test("Parked during a dial: its connection is refused, and a failure schedules nothing")
+        func parkWhileDialing() {
+            var driver = Driver()
+            driver.park()
+            #expect(driver.agent.dialSucceeded(now: Unit.at(0)) == nil)
+            driver.unpark()
+            #expect(driver.effects == [.dial, .dial])
+            driver.park()
+            driver.agent.dialFailed(.transient, now: Unit.at(0))
+            #expect(driver.agent.nextDeadline == nil)
+        }
+
+        @Test("Unparked during a dial: that dial's connection serves, and its end backs off as usual")
+        func unparkWhileDialing() {
+            var driver = Driver()
+            driver.park()
+            driver.unpark()
+            #expect(driver.effects == [.dial])
+            let generation = driver.connect()
+            driver.end(generation, .transportLost, after: 100)
+            #expect(driver.wait == 1_000)
+        }
+
+        @Test("Parked while waiting out a backoff: the timer is disarmed")
+        func parkDuringBackoff() {
+            var driver = Driver()
+            _ = driver.failDials(1)
+            driver.agent.dialFailed(.transient, now: Unit.at(driver.now))
+            #expect(driver.wait != nil)
+            driver.park()
+            #expect(driver.agent.nextDeadline == nil)
+            driver.step(to: 600_000)
+            #expect(driver.effects == [.dial, .dial])
         }
 
         @Test("A clock stepping backwards does not delay a dial")

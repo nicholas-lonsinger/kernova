@@ -23,14 +23,11 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-# The Static Linux SDK release for the pinned toolchain, and its checksum from
-# https://www.swift.org/api/v1/install/releases.json. Moving `.swift-version`
-# moves these with it; a stale pair fails the checksum rather than installing.
-STATIC_SDK_VERSION='0.1.0'
-STATIC_SDK_CHECKSUM='cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c'
+# shellcheck source=lib/static-linux-sdk.sh
+. "$lib_dir/lib/static-linux-sdk.sh"
 
 swift_version="$(tr -d '[:space:]' <.swift-version)"
-swiftly="${SWIFTLY_HOME_DIR:-$HOME/.swiftly}/bin/swiftly"
+swiftly="$(swiftly_binary)"
 
 if [ ! -x "$swiftly" ]; then
     tmp_dir="$(mktemp -d)"
@@ -43,12 +40,10 @@ fi
 
 "$swiftly" install "$swift_version" --assume-yes >&2
 
-sdk_id="swift-${swift_version}-RELEASE_static-linux-${STATIC_SDK_VERSION}"
+sdk_id="$(static_sdk_id "$swift_version")"
 installed_sdks="$("$swiftly" run swift sdk list "+$swift_version")"
 if ! grep -qxF "$sdk_id" <<<"$installed_sdks"; then
-    release_dir="swift-${swift_version}-release/static-sdk/swift-${swift_version}-RELEASE"
-    "$swiftly" run swift sdk install \
-        "https://download.swift.org/${release_dir}/${sdk_id}.artifactbundle.tar.gz" \
+    "$swiftly" run swift sdk install "$(static_sdk_url "$swift_version")" \
         --checksum "$STATIC_SDK_CHECKSUM" "+$swift_version" >&2
 fi
 

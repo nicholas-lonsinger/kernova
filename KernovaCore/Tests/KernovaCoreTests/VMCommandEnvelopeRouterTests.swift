@@ -701,7 +701,7 @@ struct VMCommandEnvelopeRouterTests {
 
     @Test("Both guest-agent-disk edits cross the wire")
     func guestAgentDiskEditsCrossTheWire() async throws {
-        let installerPath = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
         let instance = makeInstance(
