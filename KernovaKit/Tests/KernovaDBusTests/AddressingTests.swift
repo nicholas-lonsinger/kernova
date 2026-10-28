@@ -108,6 +108,12 @@ struct AddressingTests {
         var otherKind = rule
         otherKind.kind = .methodCall
         #expect(!otherKind.matches(signal, senderOwner: ":1.5"))
+        var otherInterface = rule
+        otherInterface.interface = "org.freedesktop.login1.Session"
+        #expect(!otherInterface.matches(signal, senderOwner: ":1.5"))
+        var otherMember = rule
+        otherMember.member = "Lock"
+        #expect(!otherMember.matches(signal, senderOwner: ":1.5"))
         #expect(DBusMatchRule().matches(signal, senderOwner: nil))
 
         // arg0 needs a string first argument.

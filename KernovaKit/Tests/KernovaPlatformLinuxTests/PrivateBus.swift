@@ -50,9 +50,19 @@ final class PrivateBus {
         self.process = process
     }
 
+    /// Kills the daemon now, closing every connection to it.
+    func killDaemon() {
+        Self.stop(process)
+    }
+
     deinit {
         // A process spawned from a Dispatch worker thread inherits the signals
         // that thread blocks, SIGTERM among them, so SIGKILL is what ends it.
+        Self.stop(process)
+    }
+
+    private static func stop(_ process: Process) {
+        guard process.isRunning else { return }
         kill(process.processIdentifier, SIGKILL)
         process.waitUntilExit()
     }
