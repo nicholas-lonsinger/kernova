@@ -221,6 +221,12 @@ package final class VMCommandCore {
         library.onAgentBecameCurrent = { [weak self] instance in
             self?.detachGuestAgentDisk(from: instance)
         }
+        // A power-off takes the installer disk and the VM's copies with it; a
+        // suspend keeps both for the resume.
+        library.onGuestPoweredOff = { [weak self] instance in
+            self?.detachGuestAgentDisk(from: instance)
+            GuestAgentDiskCopies.removeAll(in: instance.bundleLayout)
+        }
         library.onArrivalFailed = { [weak self] arrival, error in
             self?.arrivalFailed(arrival, with: error)
         }

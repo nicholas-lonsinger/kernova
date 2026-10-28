@@ -167,14 +167,6 @@ package struct BundledGuestAgents: Sendable {
         }
     }
 
-    /// Makes the installer disk `config` carries this build's, before a bring-up builds from it: the Linux
-    /// disk is written once per process, so an entry left from an earlier copy of Kernova attaches the agent
-    /// this one bundles. A write that fails fails the bring-up.
-    package func prepareInstallerDisk(for config: VMConfiguration) async throws {
-        guard (config.removableMedia ?? []).contains(where: { $0.isInstaller(of: self) }) else { return }
-        _ = try await installerDisk(for: config.guestOS)
-    }
-
     /// The label an attachment of `guestOS`'s installer disk carries: the volume name the guest shows.
     package static func installerDiskLabel(for guestOS: VMGuestOS) -> String {
         switch guestOS {

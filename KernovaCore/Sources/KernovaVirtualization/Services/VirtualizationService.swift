@@ -358,10 +358,7 @@ package final class VirtualizationService {
     ) async throws -> VMOperationEnding<VMSnapshot> {
         guard capture.operation.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         let snapshot = request.record(capturedIn: .live)
-        // The capture takes the installer disk off before it writes the state,
-        // so the configuration the snapshot keeps lists none either.
-        var configuration = instance.configuration
-        configuration.removeInstallerDisks(of: instance.bundleProducts.guestAgents)
+        let configuration = instance.configuration
         let snapshotID = snapshot.id
 
         let captured = await VMLiveStateCapture.captureWarm(
@@ -589,13 +586,14 @@ package final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds `config` into a VZ configuration, first making the installer disk
-    /// it carries this build's and creating the EFI variable store an EFI boot
-    /// reads when the bundle holds none.
+    /// Builds `config` into a VZ configuration, first making the VM's copy of
+    /// each installer disk it attaches that the bundle lacks and creating the
+    /// EFI variable store an EFI boot reads when the bundle holds none.
     private func buildConfiguration(
         _ config: VMConfiguration, _ context: borrowing VMOperationContext
     ) async throws -> sending ConfigurationBuilder.BuildResult {
-        try await guestAgents.prepareInstallerDisk(for: config)
+        try await GuestAgentDiskCopies.ensure(
+            for: config, in: VMBundleLayout(bundleURL: context.bundle.url), agents: guestAgents)
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }

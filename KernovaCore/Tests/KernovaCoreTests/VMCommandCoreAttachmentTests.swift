@@ -1415,12 +1415,39 @@ struct VMCommandCoreAttachmentTests {
         #expect(image.count % 2048 == 0)
         #expect(String(decoding: image[16 * 2048 + 40..<16 * 2048 + 53], as: UTF8.self) == "KERNOVA_AGENT")
 
+        // The guest gets the VM's own copy of the disk, with the disk's bytes.
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(of: item.path)
+        #expect(try Data(contentsOf: copy) == image)
+        try await waitForChange { !instance.liveRemovableMedia.isEmpty }
+        #expect(harness.removableMedia.lastAttachedPath == copy.path(percentEncoded: false))
+        // An update rewriting the app's disk leaves the VM's copy as it was.
+        try Data("a later build's disk".utf8).write(to: cache.url)
+        #expect(try Data(contentsOf: copy) == image)
+
         #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
         // The disk is the app's, so a VM's delete never offers to trash it.
         #expect(await harness.core.externalAttachments(for: instance).isEmpty)
 
+        // An eject takes the entry and the copy.
         instance.onAgentBecameCurrent?()
         #expect(instance.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
+    }
+
+    @Test("A power-off takes the installer disk's entry and the VM's copy")
+    func powerOffRemovesTheInstallerCopy() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id))
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(
+            of: try #require(instance.configuration.removableMedia?.first).path)
+        #expect(FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
+
+        instance.onGuestPoweredOff?()
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
     }
 
     @Test("A guest that takes the disk on virtio attaches nothing and says so")

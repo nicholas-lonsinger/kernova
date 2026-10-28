@@ -28,6 +28,7 @@ package enum VMBundleItems {
         var paths = disks.filter(\.isInternal).map(\.path)
         for firmware in [
             VMBundleLayout.auxiliaryStorageRelativePath, VMBundleLayout.efiVariableStoreRelativePath,
+            VMBundleLayout.guestAgentDiskRelativePath,
         ] {
             let url = layout.bundleURL.appendingPathComponent(firmware)
             if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaISO9660
 import KernovaLogging
 import Synchronization
@@ -163,4 +164,70 @@ package final class GuestAgentDiskCache: Sendable {
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "GuestAgentDiskCache")
+}
+
+/// The VM's own copies of guest-agent installer disks, in its bundle's
+/// ``VMBundleLayout/guestAgentDiskDirectoryURL``: made when a disk is attached,
+/// and removed when it is ejected and when the VM powers off.
+package enum GuestAgentDiskCopies {
+    /// Clones `source` into `layout`'s copy directory, replacing a copy already there in one rename.
+    package static func make(of source: URL, in layout: VMBundleLayout) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let directory = layout.guestAgentDiskDirectoryURL
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let copy = layout.guestAgentDiskCopyURL(of: source.path(percentEncoded: false))
+            let partial = directory.appending(path: ".\(copy.lastPathComponent).\(UUID().uuidString)")
+            try FileManager.default.copyItem(at: source, to: partial)
+            guard rename(partial.path(percentEncoded: false), copy.path(percentEncoded: false)) == 0 else {
+                let failure = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                try? FileManager.default.removeItem(at: partial)
+                throw failure
+            }
+        }.value
+    }
+
+    /// Makes the copy of every disk `config` attaches that `layout` lacks — an
+    /// installer entry, and the virtio DMG of a macOS guest below 12.3 — from
+    /// what `agents` bundles now.
+    package static func ensure(
+        for config: VMConfiguration, in layout: VMBundleLayout, agents: BundledGuestAgents
+    ) async throws {
+        var sources: [VMGuestOS] = []
+        if (config.removableMedia ?? []).contains(where: { $0.isInstaller(of: agents) }) {
+            sources.append(config.guestOS)
+        }
+        if GuestAgentDiskDelivery.mode(for: config) == .virtio, agents.bundlesInstallerDisk(for: .macOS) {
+            sources.append(.macOS)
+        }
+        for guestOS in sources {
+            guard let disk = try await agents.installerDisk(for: guestOS) else { continue }
+            let copy = layout.guestAgentDiskCopyURL(of: disk.path(percentEncoded: false))
+            guard !FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)) else { continue }
+            try await make(of: disk, in: layout)
+        }
+    }
+
+    /// Removes the copy of the disk at `sourcePath`; a missing one is skipped.
+    package static func remove(of sourcePath: String, in layout: VMBundleLayout) {
+        remove(layout.guestAgentDiskCopyURL(of: sourcePath))
+    }
+
+    /// Removes every copy `layout` holds.
+    package static func removeAll(in layout: VMBundleLayout) {
+        remove(layout.guestAgentDiskDirectoryURL)
+    }
+
+    private static func remove(_ url: URL) {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch CocoaError.fileNoSuchFile {
+        } catch {
+            logger.log(
+                .error,
+                "Cannot remove the guest agent disk copy \(url.path(percentEncoded: false), privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "GuestAgentDiskCopies")
 }

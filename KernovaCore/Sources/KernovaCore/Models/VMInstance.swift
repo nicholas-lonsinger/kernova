@@ -193,6 +193,10 @@ package final class VMInstance {
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
 
+    /// Fired once a power-off has rested the VM: its guest-agent disk and the
+    /// VM's copy of it go with the session.
+    @ObservationIgnored var onGuestPoweredOff: (@MainActor () -> Void)?
+
     // MARK: - Session Projection
 
     /// The guest agent version this VM last reported: this session's Hello when
@@ -795,9 +799,16 @@ package final class VMInstance {
     /// Throws what kept the record from landing, so no session runs in a
     /// shape the bundle does not record.
     package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
-        if configuration.deviceShape != .current {
-            try bringUp.operation.permit.updateConfiguration { $0.deviceShape = .current }.get()
+        let agents = bundleProducts.guestAgents
+        if configuration.deviceShape != .current || hasGuestAgentInstallerMounted {
+            try bringUp.operation.permit.updateConfiguration {
+                $0.deviceShape = .current
+                // The disk was the last session's; this one starts without it.
+                $0.removeInstallerDisks(of: agents)
+            }.get()
         }
+        // Each boot that attaches an installer disk makes its own copy.
+        GuestAgentDiskCopies.removeAll(in: bundleLayout)
         return effectiveConfiguration
     }
 
@@ -850,6 +861,7 @@ package final class VMInstance {
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
+        onGuestPoweredOff?()
     }
 
     /// Called by ``activity`` once an operation of `kind` has ended with the

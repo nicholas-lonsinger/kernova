@@ -714,6 +714,14 @@ extension VMCommandCore {
                 verb: .guestAgentDisk,
                 message: "The Guest Agent installer is missing from this copy of Kernova.")
         }
+        do {
+            // The guest gets the VM's own copy, never the app's shared file.
+            try await GuestAgentDiskCopies.make(of: disk, in: instance.bundleLayout)
+        } catch {
+            throw CommandError.operationFailed(
+                verb: .guestAgentDisk,
+                message: "Kernova couldn't copy the Guest Agent disk into the VM: \(error.localizedDescription)")
+        }
         logger.log(
             .notice,
             "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
@@ -736,8 +744,8 @@ extension VMCommandCore {
         detachGuestAgentDisk(from: instance)
     }
 
-    /// Drops the bundled installer's `removableMedia` entry when it is there;
-    /// the reconcile pass performs the runtime detach.
+    /// Drops the installer's `removableMedia` entry when it is there, and the
+    /// VM's copy of the disk; the reconcile pass performs the runtime detach.
     ///
     /// The auto-eject an agent handshake triggers calls this rather than
     /// ``unmountGuestAgentDisk(_:)``: the Hello proves a live session, and the
@@ -746,6 +754,7 @@ extension VMCommandCore {
     func detachGuestAgentDisk(from instance: VMInstance) {
         guard instance.hasGuestAgentInstallerMounted else { return }
         let agents = instance.bundleProducts.guestAgents
+        let ejected = (instance.configuration.removableMedia ?? []).filter { $0.isInstaller(of: agents) }
         logger.log(
             .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
@@ -763,7 +772,8 @@ extension VMCommandCore {
         }
         switch write {
         case .saved:
-            break
+            // The guest's handle on the copy outlives its name until the detach.
+            for item in ejected { GuestAgentDiskCopies.remove(of: item.path, in: instance.bundleLayout) }
         case .refused(let refusal):
             logger.log(
                 .notice,

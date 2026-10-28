@@ -28,11 +28,11 @@ extension BundledGuestAgents {
         return BundledGuestAgents(entries: entries, linuxDisk: disk)
     }
 
-    /// A macOS agent at version 2.0 whose installer image names no file: it is
-    /// under `/var/empty`, the root-owned directory macOS keeps empty, so no
-    /// path the core is handed for it reaches a real file. No Linux agent.
+    /// A macOS agent at version 2.0 whose installer image stands in as a small
+    /// file every Mac holds: the core only reads it, copying it into a VM's
+    /// bundle when the disk is attached. No Linux agent.
     package static let testing = macOS(
-        version: "2.0", installerDiskImageURL: URL(filePath: "/var/empty/KernovaMacOSAgent.dmg"))
+        version: "2.0", installerDiskImageURL: URL(filePath: "/System/Library/CoreServices/SystemVersion.plist"))
 
     /// Only a macOS agent at `version` with its installer at
     /// `installerDiskImageURL`, or no agent at all when that is `nil`.

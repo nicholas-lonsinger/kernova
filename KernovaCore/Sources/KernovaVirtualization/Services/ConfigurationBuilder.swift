@@ -91,7 +91,7 @@ struct ConfigurationBuilder: Sendable {
         configureUSBControllers(vzConfig)
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
         let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
-        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
+        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config, bundleURL: bundleURL)
         let sessionNetworks = vmnetNetworks.sessionNetworks(ownedBy: config.id)
         try configureNetwork(vzConfig, config: config, vmnetNetworks: sessionNetworks)
         configureEntropy(vzConfig)
@@ -424,8 +424,10 @@ struct ConfigurationBuilder: Sendable {
             return false
         }
 
-        let disk = Self.guestAgentDisk(
-            installerPath: installerURL.path(percentEncoded: false), bundleURL: bundleURL)
+        // The VM's copy, made by the bring-up, never the app's shared file.
+        let copy = VMBundleLayout(bundleURL: bundleURL).guestAgentDiskCopyURL(
+            of: installerURL.path(percentEncoded: false))
+        let disk = Self.guestAgentDisk(installerPath: copy.path(percentEncoded: false), bundleURL: bundleURL)
         do {
             let resolved = try ConfigurationPaths.resolveFile(
                 at: disk.path, context: "Guest agent disk",
@@ -480,7 +482,8 @@ struct ConfigurationBuilder: Sendable {
     /// runtime tracking in `instance.liveRemovableMedia`.
     private func configureRemovableMedia(
         _ vzConfig: VZVirtualMachineConfiguration,
-        config: VMConfiguration
+        config: VMConfiguration,
+        bundleURL: URL
     ) throws -> [RemovableMediaDeviceInfo] {
         guard let items = config.removableMedia, !items.isEmpty else { return [] }
         guard let xhci = vzConfig.usbControllers.first else {
@@ -490,9 +493,14 @@ struct ConfigurationBuilder: Sendable {
 
         var infos: [RemovableMediaDeviceInfo] = []
         var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
+        let layout = VMBundleLayout(bundleURL: bundleURL)
         for item in items {
+            // An installer entry names the app's disk; the guest gets the VM's copy of it.
+            let path =
+                item.isInstaller(of: guestAgents)
+                ? layout.guestAgentDiskCopyURL(of: item.path).path(percentEncoded: false) : item.path
             let resolved = try ConfigurationPaths.resolveFile(
-                at: item.path, context: "Removable media '\(item.label)'",
+                at: path, context: "Removable media '\(item.label)'",
                 requireWritable: !item.readOnly,
                 notFound: .removableMediaNotFound(
                     id: item.id, path: item.path, label: item.label),

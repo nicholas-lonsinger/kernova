@@ -123,6 +123,28 @@ package struct VMBundleLayout: Sendable {
         FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false))
     }
 
+    // MARK: - Guest agent disks
+
+    static let guestAgentDiskRelativePath = "GuestAgentDisk"
+
+    /// The VM's own copies of the guest-agent installer disks attached to it.
+    ///
+    /// The guest never sees the app's shared file: what is attached is a copy
+    /// here, cloned on APFS, so a saved state resumes onto bytes no update of
+    /// Kernova changes. A snapshot and a clone carry the directory with the
+    /// bundle's other files (``VMBundleItems/capturedRelativePaths(for:layout:)``),
+    /// and a revert writes it back.
+    package var guestAgentDiskDirectoryURL: URL {
+        bundleURL.appendingPathComponent(Self.guestAgentDiskRelativePath, isDirectory: true)
+    }
+
+    /// The VM's copy of the installer disk at `sourcePath`, what a configuration's
+    /// installer entry names.
+    package func guestAgentDiskCopyURL(of sourcePath: String) -> URL {
+        guestAgentDiskDirectoryURL.appendingPathComponent(
+            URL(filePath: sourcePath).lastPathComponent, isDirectory: false)
+    }
+
     // MARK: - Snapshot store
 
     var snapshotsDirectoryURL: URL {

@@ -346,11 +346,7 @@ extension VMCommandCore {
         // milliseconds where a queued import copy can take minutes.
         let copy = CloneCopy(
             of: instance.bundle, outcome: resolved, mode: mode, machineIdentifier: machineIdentifier)
-        var cloned = Self.cloneConfiguration(registered, over: copy.configuration)
-        // A live copy's saved state holds no installer disk — the capture takes
-        // it off first — and the app's own disk is no part of the copy.
-        cloned.removeInstallerDisks(of: instance.bundleProducts.guestAgents)
-        let config = cloned
+        let config = Self.cloneConfiguration(registered, over: copy.configuration)
         try instance.activity.launchCopyOut(mode, resolving: outcome) { context in
             let source = context.operation.bundle.url
             let ending: VMOperationEnding<Void>
