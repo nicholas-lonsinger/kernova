@@ -344,7 +344,7 @@ package final class VMInstance {
         self.hostClipboardPublisher = HostClipboardPublisher(
             pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)
         let snapshots = AgentHubSnapshotRelay()
-        let payloads = NoBundledPayloads()
+        let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         agentHub = AgentHub(
             connector: agentConnector

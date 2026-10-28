@@ -4,8 +4,23 @@ import KernovaLogging
 import KernovaWire
 import Synchronization
 
-/// One guest agent this copy of Kernova bundles: what it installs onto, the file that carries it, and how
-/// the file is identified.
+/// What one bundled guest agent installs onto.
+package struct BundledGuestAgentKey: Hashable, Sendable {
+    /// The OS family.
+    package let os: OSFamily
+    /// The architecture.
+    package let architecture: Architecture
+    /// The install scope it serves.
+    package let scope: InstallScope
+
+    package init(_ os: OSFamily, _ architecture: Architecture, _ scope: InstallScope) {
+        self.os = os
+        self.architecture = architecture
+        self.scope = scope
+    }
+}
+
+/// One guest agent this copy of Kernova bundles: the file that carries it, and how the file is identified.
 package struct BundledGuestAgentEntry: Sendable, Equatable {
     /// How an entry's file is identified.
     package enum Kind: Sendable, Equatable {
@@ -17,27 +32,18 @@ package struct BundledGuestAgentEntry: Sendable, Equatable {
         case payload(PayloadFormat, versionLabel: String)
     }
 
-    /// The OS family it installs onto.
-    package let os: OSFamily
-    /// The architecture it installs onto.
-    package let architecture: Architecture
-    /// The install scope it serves.
-    package let scope: InstallScope
     /// The file in the app bundle.
     package let fileURL: URL
     /// How the file is identified.
     package let kind: Kind
 
-    package init(os: OSFamily, architecture: Architecture, scope: InstallScope, fileURL: URL, kind: Kind) {
-        self.os = os
-        self.architecture = architecture
-        self.scope = scope
+    package init(fileURL: URL, kind: Kind) {
         self.fileURL = fileURL
         self.kind = kind
     }
 }
 
-/// The guest agents a host bundles, keyed by (OS family, architecture, install scope): the macOS agent's
+/// The guest agents a host bundles, one per (OS family, architecture, install scope): the macOS agent's
 /// installer DMG, which the "Package Guest Agent DMG" build phase writes, and the Linux `kernova-agent`,
 /// which "Build Linux Guest Agent" writes, serving both the user and the system scope from one file. A file
 /// the bundle lacks has no entry, so what it would deliver is not offered.
@@ -49,65 +55,88 @@ package struct BundledGuestAgents: Sendable {
     /// guest shows for the mounted volume.
     package static let macOSDiskLabel = "Kernova Guest Agent"
 
-    /// Every entry, in no particular order; at most one per key.
-    package let entries: [BundledGuestAgentEntry]
+    /// Where the bundle carries the Linux agent, under its Resources.
+    static let linuxAgentPath = "GuestAgents/linux-arm64/kernova-agent"
 
-    private let manifests: PayloadManifests
+    /// Every entry, by what it installs onto.
+    package let entries: [BundledGuestAgentKey: BundledGuestAgentEntry]
 
-    package init(entries: [BundledGuestAgentEntry]) {
+    private let digests: FileDigests
+
+    package init(entries: [BundledGuestAgentKey: BundledGuestAgentEntry]) {
         self.entries = entries
-        self.manifests = PayloadManifests()
+        self.digests = FileDigests()
     }
 
     /// The agents `bundle` carries; `versionLabel` is the display version of the payloads the bundle's own
-    /// build labelled.
+    /// build labelled. Every build bundles the Linux agent, so one missing is a packaging defect.
     init(bundle: Bundle, versionLabel: String) {
-        var entries: [BundledGuestAgentEntry] = []
+        let entries = Self.entries(in: bundle, versionLabel: versionLabel)
+        if entries[BundledGuestAgentKey(.linux, .arm64, .user)] == nil {
+            Self.logger.log(.fault, "\(Self.linuxAgentPath, privacy: .public) missing from app bundle")
+            assertionFailure("\(Self.linuxAgentPath) missing — check the 'Build Linux Guest Agent' build phase")
+        }
+        self.init(entries: entries)
+    }
+
+    /// The entries for the files `bundle` carries.
+    static func entries(in bundle: Bundle, versionLabel: String) -> [BundledGuestAgentKey: BundledGuestAgentEntry] {
+        var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
         if let dmg = bundle.url(forResource: "KernovaMacOSAgent", withExtension: "dmg"),
-            let version = Self.macOSVersion(in: bundle)
+            let version = macOSVersion(in: bundle)
         {
-            entries.append(
-                BundledGuestAgentEntry(
-                    os: .macOS, architecture: .arm64, scope: .user, fileURL: dmg,
-                    kind: .installerDisk(version: version)))
+            entries[BundledGuestAgentKey(.macOS, .arm64, .user)] = BundledGuestAgentEntry(
+                fileURL: dmg, kind: .installerDisk(version: version))
         }
         if let agent = bundle.url(
             forResource: "kernova-agent", withExtension: nil, subdirectory: "GuestAgents/linux-arm64")
         {
             for scope in [InstallScope.user, .system] {
-                entries.append(
-                    BundledGuestAgentEntry(
-                        os: .linux, architecture: .arm64, scope: scope, fileURL: agent,
-                        kind: .payload(.executable, versionLabel: versionLabel)))
+                entries[BundledGuestAgentKey(.linux, .arm64, scope)] = BundledGuestAgentEntry(
+                    fileURL: agent, kind: .payload(.executable, versionLabel: versionLabel))
             }
-        } else {
-            Self.logger.log(.fault, "GuestAgents/linux-arm64/kernova-agent missing from app bundle")
         }
-        self.init(entries: entries)
+        return entries
     }
 
     /// The entry for `os`, `architecture` and `scope`, or nil when none is bundled.
     package func entry(
         _ os: OSFamily, _ architecture: Architecture, _ scope: InstallScope
     ) -> BundledGuestAgentEntry? {
-        entries.first { $0.os == os && $0.architecture == architecture && $0.scope == scope }
+        entries[BundledGuestAgentKey(os, architecture, scope)]
     }
 
-    /// The update payloads bundled for `os`, each with the manifest the host offers a peer it fits
-    /// (`BundledPayload.offer(from:for:)`). Each file is hashed once per launch, off the main actor, on the
-    /// first ask; entries sharing a file share its manifest. A file that cannot be read is logged and left
-    /// out.
+    /// The update payloads bundled for `os`, in scope order, each with the manifest the host offers a peer
+    /// it fits (`BundledPayload.offer(from:for:)`): the file's digest with the entry's own format and label.
+    /// Each file is hashed once per process, off the main actor, on the first ask, and never re-read; the
+    /// guest verifies the payload's hash before it installs one, so a file changed since is refused, not
+    /// installed. A file that cannot be read is logged and left out.
     package func payloads(for os: OSFamily) async -> [BundledPayload] {
         var payloads: [BundledPayload] = []
-        for entry in entries where entry.os == os {
-            guard case .payload(let format, let versionLabel) = entry.kind,
-                let manifest = await manifests.manifest(of: entry.fileURL, format: format, versionLabel: versionLabel)
+        let keys = entries.keys.filter { $0.os == os }.sorted { $0.scope.rawValue < $1.scope.rawValue }
+        for key in keys {
+            guard let entry = entries[key], case .payload(let format, let versionLabel) = entry.kind,
+                let digest = await digests.digest(of: entry.fileURL)
             else { continue }
             payloads.append(
                 BundledPayload(
-                    os: entry.os, architecture: entry.architecture, scope: entry.scope, manifest: manifest))
+                    os: key.os, architecture: key.architecture, scope: key.scope,
+                    manifest: UpdateManifestValue(
+                        payloadHash: digest.sha256, payloadSize: digest.byteCount, format: format,
+                        versionLabel: versionLabel)))
         }
         return payloads
+    }
+
+    /// The file `manifest` was made from, among the payloads bundled for `os`; nil when none was.
+    package func payloadFile(for manifest: UpdateManifestValue, os: OSFamily) async -> URL? {
+        for (key, entry) in entries where key.os == os {
+            guard case .payload = entry.kind, let digest = await digests.digest(of: entry.fileURL),
+                digest.sha256 == manifest.payloadHash
+            else { continue }
+            return entry.fileURL
+        }
+        return nil
     }
 
     // MARK: The macOS agent
@@ -161,20 +190,22 @@ package struct BundledGuestAgents: Sendable {
     }
 }
 
-/// Each payload file's manifest, computed once per launch on the first ask. The code signature seals the
-/// bundle's files, so a manifest stays true for the life of the process.
-private final class PayloadManifests: Sendable {
-    private let tasks = Mutex<[URL: Task<UpdateManifestValue?, Never>]>([:])
+/// Each payload file's SHA-256 and size, computed once per process on the first ask and never re-read.
+private final class FileDigests: Sendable {
+    struct Digest: Sendable {
+        var sha256: Data
+        var byteCount: UInt64
+    }
 
-    func manifest(of url: URL, format: PayloadFormat, versionLabel: String) async -> UpdateManifestValue? {
+    private let tasks = Mutex<[URL: Task<Digest?, Never>]>([:])
+
+    func digest(of url: URL) async -> Digest? {
         let task = tasks.withLock { tasks in
             if let task = tasks[url] { return task }
-            let task = Task { () async -> UpdateManifestValue? in
+            let task = Task { () async -> Digest? in
                 do {
-                    let digest = try await FileDigest.digest(of: url, priority: .utility, progressHandler: nil)
-                    return UpdateManifestValue(
-                        payloadHash: digest.sha256, payloadSize: digest.byteCount, format: format,
-                        versionLabel: versionLabel)
+                    let digest = try await FileDigest.digest(of: url, priority: .utility)
+                    return Digest(sha256: digest.sha256, byteCount: digest.byteCount)
                 } catch {
                     Self.logger.log(
                         .fault,

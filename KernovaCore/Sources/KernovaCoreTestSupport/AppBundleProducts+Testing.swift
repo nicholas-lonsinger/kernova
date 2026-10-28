@@ -13,14 +13,12 @@ extension BundledGuestAgents {
     /// Only a macOS agent at `version` with its installer at
     /// `installerDiskImageURL`, or no agent at all when that is `nil`.
     package static func macOS(version: String, installerDiskImageURL: URL?) -> BundledGuestAgents {
-        BundledGuestAgents(
-            entries: installerDiskImageURL.map { url in
-                [
-                    BundledGuestAgentEntry(
-                        os: .macOS, architecture: .arm64, scope: .user, fileURL: url,
-                        kind: .installerDisk(version: version))
-                ]
-            } ?? [])
+        var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
+        if let installerDiskImageURL {
+            entries[BundledGuestAgentKey(.macOS, .arm64, .user)] = BundledGuestAgentEntry(
+                fileURL: installerDiskImageURL, kind: .installerDisk(version: version))
+        }
+        return BundledGuestAgents(entries: entries)
     }
 }
 

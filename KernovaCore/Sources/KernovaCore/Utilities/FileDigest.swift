@@ -15,10 +15,11 @@ enum FileDigest {
 
     /// The SHA-256 of the file at `url`, as 64 lowercase hex characters.
     ///
-    /// `progressHandler` reports the fraction read, `0...1`, on the main actor.
+    /// `progressHandler`, when there is one, reports the fraction read,
+    /// `0...1`, on the main actor.
     static func sha256(
         of url: URL,
-        progressHandler: @MainActor @Sendable @escaping (Double) -> Void
+        progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil
     ) async throws -> String {
         try await digest(of: url, progressHandler: progressHandler).sha256
             .map { String(format: "%02x", $0) }.joined()
@@ -32,7 +33,7 @@ enum FileDigest {
     /// `0...1`, on the main actor.
     static func digest(
         of url: URL, priority: TaskPriority = .userInitiated,
-        progressHandler: (@MainActor @Sendable (Double) -> Void)?
+        progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil
     ) async throws -> (sha256: Data, byteCount: UInt64) {
         let totalBytes =
             (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0

@@ -19,25 +19,6 @@ public protocol BundledPayloadProvider: UpdatePayloadSource {
     func loadPayloads(_ completion: @escaping @Sendable ([BundledPayload]) -> Void)
 }
 
-/// A provider bundling nothing.
-public struct NoBundledPayloads: BundledPayloadProvider {
-    /// The provider.
-    public init() {}
-
-    /// Answers no payloads, at once.
-    public func loadPayloads(_ completion: @escaping @Sendable ([BundledPayload]) -> Void) {
-        completion([])
-    }
-
-    /// Fails every read `READ_FAILED`: nothing is offered, so nothing is pulled.
-    public func read(
-        manifest: UpdateManifestValue, offset: UInt64, count: Int,
-        _ completion: @escaping @Sendable (Result<Data, WireError>) -> Void
-    ) {
-        completion(.failure(WireError(.readFailed, debugDetail: "the host bundles no payload")))
-    }
-}
-
 /// What a host connection is built with, as of now: read at accept, so a connection's Hello is
 /// answered from the configuration current when it was accepted (spec §4.1.5).
 struct HostConfigurationTemplate: Sendable {

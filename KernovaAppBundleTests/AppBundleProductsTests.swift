@@ -34,7 +34,7 @@ struct AppBundleProductsTests {
 
     @Test("The built app carries the Linux agent for both scopes, readable and not executable")
     func builtAppCarriesTheLinuxAgent() throws {
-        let entries = products.guestAgents.entries.filter { $0.fileURL.lastPathComponent == "kernova-agent" }
+        let entries = products.guestAgents.entries.values.filter { $0.fileURL.lastPathComponent == "kernova-agent" }
         #expect(entries.count == 2)
         let url = try #require(entries.first?.fileURL)
         #expect(url.path(percentEncoded: false).hasSuffix("Contents/Resources/GuestAgents/linux-arm64/kernova-agent"))

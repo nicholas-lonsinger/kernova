@@ -260,7 +260,8 @@ struct LogindTests {
         #expect(greeter == FakeLogind.greeterSession)
         #expect(
             try logind.sessionProperties(greeter.path)
-                == LogindSessionProperties(id: "c1", active: true, state: .active, sessionClass: .greeter, seat: "seat0"))
+                == LogindSessionProperties(
+                    id: "c1", active: true, state: .active, sessionClass: .greeter, seat: "seat0"))
 
         fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
         #expect(try logind.activeSession(onSeat: seat) == FakeLogind.userSession)
