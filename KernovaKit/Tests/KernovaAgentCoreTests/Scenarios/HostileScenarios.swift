@@ -9,8 +9,8 @@ import KernovaAgentSimulation
 import KernovaWire
 import Testing
 
-/// One hostile row (§10.2 `.hostile`, §10.4): a real endpoint against raw
-/// bytes, each seed splitting them differently.
+/// One hostile row: a real endpoint against a far side's raw bytes, each seed
+/// splitting them differently.
 struct HostileRow: Sendable, CustomTestStringConvertible {
     enum Outcome: Sendable, Equatable {
         /// The connection closes with this RESET(0) code.
@@ -37,6 +37,15 @@ struct HostileRow: Sendable, CustomTestStringConvertible {
 
     static let hostHello = WireFrames.hello(role: .host)
     static let peerHello = WireFrames.hello(role: .sessionPeer)
+    /// The offer the update rows' peer pulls on stream 1.
+    static let pulled = Unit.manifest(tag: 16, size: 20_000)
+
+    /// The peer aborted the pull and recorded its hash rejected, once each.
+    static func rejectedRecorded(_ run: HostileRun) -> [String] {
+        let effects = run.peerEffects.compactMap { if case .update(let effect) = $0 { effect } else { nil } }
+        let id = UpdatePullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 1))
+        return effects.suffix(2) == [.abort(id), .recordRejected(pulled.payloadHash)] ? [] : ["effects: \(effects)"]
+    }
 
     func run(seed: UInt64) -> [String] {
         let run = HostileRun(local: local, seed: seed, testKinds: testKinds, tweak: tweak)
@@ -85,37 +94,37 @@ enum HostileRows {
     }
 
     static let fatalRows: [HostileRow] = [
-        HostileRow(name: "§2.5 bad preamble", local: .host, outcome: .notThisProtocol) { run in
+        HostileRow(name: "bad preamble", local: .host, outcome: .notThisProtocol) { run in
             run.feed(Data([0, 0, 0, 40]) + WireFrames.bytes([HostileRow.peerHello], preamble: false))
         },
-        HostileRow(name: "§2.5 unknown frame type", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "unknown frame type", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]) + Data([0, 0, 0, 0, 6, 0, 0, 0, 0, 0]))
         },
-        HostileRow(name: "§2.5 undefined flag bit", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "undefined flag bit", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]) + Data([0, 0, 0, 0, 5, 2, 0, 0, 0, 8]) + Data(count: 8))
         },
-        HostileRow(name: "§2.5 MESSAGE flag on PING", local: .peer, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "MESSAGE flag on PING", local: .peer, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]) + Data([0, 0, 0, 0, 5, 1, 0, 0, 0, 8]) + Data(count: 8))
         },
-        HostileRow(name: "§2.5 payload over the type's maximum", local: .host, outcome: .fatal(.frameTooLarge)) { run in
+        HostileRow(name: "payload over the type's maximum", local: .host, outcome: .fatal(.frameTooLarge)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]) + Data([0, 0, 0, 0, 1, 0, 0, 1, 0, 1]))
         },
-        HostileRow(name: "§2.5 WINDOW of the wrong length", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "WINDOW of the wrong length", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]) + Data([0, 0, 0, 0, 4, 0, 0, 0, 0, 3, 1, 1, 1]))
         },
-        HostileRow(name: "§2.5 PING over the control maximum", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "PING over the control maximum", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]) + Data([0, 0, 0, 0, 5, 0, 0, 2, 0, 0]))
         },
-        HostileRow(name: "§2.5 empty raw DATA", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "empty raw DATA", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]) + Data([0, 0, 0, 1, 0, 0, 0, 0, 0, 0]))
         },
-        HostileRow(name: "§2.5 first frame not a Hello", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "first frame not a Hello", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([WireFrames.ping(), HostileRow.peerHello]))
         },
-        HostileRow(name: "§2.5 a second Hello", local: .peer, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "a second Hello", local: .peer, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello, HostileRow.hostHello]))
         },
-        HostileRow(name: "§2.5 stream-0 payload not a SessionMessage", local: .host, outcome: .fatal(.protocolError)) {
+        HostileRow(name: "stream-0 payload not a SessionMessage", local: .host, outcome: .fatal(.protocolError)) {
             run in
             run.feed(
                 WireFrames.bytes([
@@ -123,85 +132,85 @@ enum HostileRows {
                     Frame(streamID: .session, type: .data, flags: .message, payload: Data([0xFF, 0xFF, 0xFF])),
                 ]))
         },
-        HostileRow(name: "§2.5 host refuses a HOST Hello", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "host refuses a HOST Hello", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([WireFrames.hello(role: .host)]))
         },
-        HostileRow(name: "§2.5 peer refuses a peer Hello", local: .peer, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "peer refuses a peer Hello", local: .peer, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([WireFrames.hello(role: .systemPeer, scope: .system)]))
         },
-        HostileRow(name: "§2.5 system peer with USER scope", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "system peer with USER scope", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([WireFrames.hello(role: .systemPeer, scope: .user)]))
         },
-        HostileRow(name: "§2.5 session peer without a session id", local: .host, outcome: .fatal(.protocolError)) {
+        HostileRow(name: "session peer without a session id", local: .host, outcome: .fatal(.protocolError)) {
             run in
             run.feed(WireFrames.bytes([WireFrames.hello(role: .sessionPeer, sessionID: "\u{200B}")]))
         },
-        HostileRow(name: "§2.5 peer sends a PolicyUpdate", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "peer sends a PolicyUpdate", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([HostileRow.peerHello, WireFrames.session { $0.policy = Kernova_V2_PolicyUpdate() }]))
         },
-        HostileRow(name: "§2.5 peer sends an UpdateAvailable", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "peer sends an UpdateAvailable", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([
                     HostileRow.peerHello, WireFrames.session { $0.updateAvailable = Kernova_V2_UpdateAvailable() },
                 ]))
         },
-        HostileRow(name: "§2.5 host sends a PeerState", local: .peer, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "host sends a PeerState", local: .peer, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([HostileRow.hostHello, WireFrames.session { $0.peerState = Kernova_V2_PeerState() }]))
         },
-        HostileRow(name: "§2.5 session id changes", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "session id changes", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([
                     HostileRow.peerHello, WireFrames.session { $0.peerState.sessionID = "other" },
                 ]))
         },
-        HostileRow(name: "§2.5 OPEN on stream 0", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "OPEN on stream 0", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([HostileRow.peerHello, WireFrames.open(0, .logForward, body: Kernova_V2_LogOpen())]))
         },
-        HostileRow(name: "§2.5 END on stream 0", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "END on stream 0", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello, Frame(streamID: .session, type: .end)]))
         },
-        HostileRow(name: "§2.5 raw DATA on stream 0", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "raw DATA on stream 0", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([HostileRow.peerHello, Frame(streamID: .session, type: .data, payload: Data([1]))]))
         },
-        HostileRow(name: "§2.5 PING on stream 1", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "PING on stream 1", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([
                     HostileRow.peerHello, WireFrames.open(1, .logForward, body: Kernova_V2_LogOpen()),
                     Frame(streamID: StreamID(rawValue: 1), type: .ping, payload: Data(count: 8)),
                 ]))
         },
-        HostileRow(name: "§2.5 OPEN with the wrong parity", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "OPEN with the wrong parity", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([HostileRow.peerHello, WireFrames.open(2, .logForward, body: Kernova_V2_LogOpen())]))
         },
-        HostileRow(name: "§2.5 OPEN not above the last", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "OPEN not above the last", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([
                     HostileRow.peerHello, WireFrames.open(5, .logForward, body: Kernova_V2_LogOpen()),
                     WireFrames.open(3, .updatePull, body: Kernova_V2_UpdatePull()),
                 ]))
         },
-        HostileRow(name: "§2.5 DATA on a never-opened stream", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "DATA on a never-opened stream", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(
                 WireFrames.bytes([
                     HostileRow.peerHello, Frame(streamID: StreamID(rawValue: 7), type: .data, payload: Data([1])),
                 ]))
         },
         HostileRow(
-            name: "§2.5 WINDOW on a never-opened stream of this side", local: .host, outcome: .fatal(.protocolError)
+            name: "WINDOW on a never-opened stream of this side", local: .host, outcome: .fatal(.protocolError)
         ) {
             run in
             run.feed(WireFrames.bytes([HostileRow.peerHello, WireFrames.window(2, 100)]))
         },
-        HostileRow(name: "§2.5 RESET on a never-opened stream", local: .peer, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "RESET on a never-opened stream", local: .peer, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello, WireFrames.reset(1, code: 50)]))
         },
         HostileRow(
-            name: "§2.5 MESSAGE DATA beyond the stream's credit", local: .host, outcome: .fatal(.flowControlError)
+            name: "MESSAGE DATA beyond the stream's credit", local: .host, outcome: .fatal(.flowControlError)
         ) {
             run in
             var batch = Kernova_V2_LogBatch()
@@ -216,7 +225,7 @@ enum HostileRows {
                         + Array(repeating: message, count: 12)))
         },
         HostileRow(
-            name: "§2.5 raw DATA beyond the stream's credit", local: .peer, testKinds: true,
+            name: "raw DATA beyond the stream's credit", local: .peer, testKinds: true,
             outcome: .fatal(.flowControlError)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
@@ -225,7 +234,7 @@ enum HostileRows {
             run.feed(WireFrames.bytes(Array(repeating: chunk, count: 9), preamble: false), maxSplit: 1 << 20)
         },
         HostileRow(
-            name: "§2.5 raw DATA beyond the connection's credit", local: .peer, testKinds: true,
+            name: "raw DATA beyond the connection's credit", local: .peer, testKinds: true,
             outcome: .fatal(.flowControlError)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
@@ -239,23 +248,23 @@ enum HostileRows {
             frames.append(Frame(streamID: StreamID(rawValue: 5), type: .data, payload: Data([1])))
             run.feed(WireFrames.bytes(frames, preamble: false), maxSplit: 1 << 20)
         },
-        HostileRow(name: "§2.5 WINDOW past 2^31-1", local: .host, outcome: .fatal(.flowControlError)) { run in
+        HostileRow(name: "WINDOW past 2^31-1", local: .host, outcome: .fatal(.flowControlError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello, WireFrames.window(0, 0x7FFF_FFFF)]))
         },
-        HostileRow(name: "§2.5 WINDOW of 0", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "WINDOW of 0", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello, WireFrames.window(0, 0)]))
         },
-        HostileRow(name: "§2.5 no Hello within the timeout", local: .host, outcome: .fatal(.helloTimeout)) { run in
+        HostileRow(name: "no Hello within the timeout", local: .host, outcome: .fatal(.helloTimeout)) { run in
             run.feed(WireConstants.preamble)
             run.advance(.sec(13))
         },
-        HostileRow(name: "§2.5 silence past the close threshold", local: .peer, outcome: .fatal(.livenessExpired)) {
+        HostileRow(name: "silence past the close threshold", local: .peer, outcome: .fatal(.livenessExpired)) {
             run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
             run.advance(.sec(33))
         },
         HostileRow(
-            name: "§2.5 stream ids exhausted", local: .peer, testKinds: true,
+            name: "stream ids exhausted", local: .peer, testKinds: true,
             tweak: { $0.firstLocalStreamID = UInt64(UInt32.max) }, outcome: .fatal(.streamIdsExhausted)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
@@ -263,17 +272,16 @@ enum HostileRows {
             _ = run.openTestBulk(.UNRECOGNIZED(9000), consumes: true)
         },
         HostileRow(
-            name: "§2.5 RESET(0) with an unknown code reads INTERNAL", local: .peer, outcome: .closedByPeer(.internal)
+            name: "RESET(0) with an unknown code reads INTERNAL", local: .peer, outcome: .closedByPeer(.internal)
         ) {
             run in
             run.feed(WireFrames.bytes([HostileRow.hostHello, WireFrames.reset(0, code: 77)]))
         },
-        HostileRow(name: "§2.5 RESET(0) as the first frame closes", local: .peer, outcome: .closedByPeer(.shuttingDown))
-        {
+        HostileRow(name: "RESET(0) as the first frame closes", local: .peer, outcome: .closedByPeer(.shuttingDown)) {
             run in
             run.feed(WireFrames.bytes([WireFrames.reset(0, code: 6)]))
         },
-        HostileRow(name: "§3.3 OPEN flood past twice the limit", local: .host, outcome: .fatal(.protocolError)) { run in
+        HostileRow(name: "OPEN flood past twice the limit", local: .host, outcome: .fatal(.protocolError)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))
             run.writerStalled = true
             let opens = (0..<130).map {
@@ -286,8 +294,7 @@ enum HostileRows {
     ]
 
     static let streamRows: [HostileRow] = [
-        HostileRow(name: "§3.6 unknown kind → UNSUPPORTED_KIND", local: .host, outcome: .streamReset(.unsupportedKind))
-        {
+        HostileRow(name: "unknown kind → UNSUPPORTED_KIND", local: .host, outcome: .streamReset(.unsupportedKind)) {
             run in
             run.feed(
                 WireFrames.bytes([
@@ -295,7 +302,7 @@ enum HostileRows {
                 ]))
         },
         HostileRow(
-            name: "§3.6 a kind the opener's role never opens", local: .host, outcome: .streamReset(.unsupportedKind)
+            name: "a kind the opener's role never opens", local: .host, outcome: .streamReset(.unsupportedKind)
         ) {
             run in
             run.feed(
@@ -304,7 +311,7 @@ enum HostileRows {
                 ]))
         },
         HostileRow(
-            name: "§3.6 an OPEN body that does not decode", local: .peer, outcome: .streamReset(.malformedMessage)
+            name: "an OPEN body that does not decode", local: .peer, outcome: .streamReset(.malformedMessage)
         ) {
             run in
             var open = Kernova_V2_Open()
@@ -317,7 +324,7 @@ enum HostileRows {
                         streamID: StreamID(rawValue: 2), type: .open, payload: (try? open.serializedBytes()) ?? Data()),
                 ]))
         },
-        HostileRow(name: "§3.6 a second LOG_FORWARD", local: .host, outcome: .streamReset(.streamProtocolError)) {
+        HostileRow(name: "a second LOG_FORWARD", local: .host, outcome: .streamReset(.streamProtocolError)) {
             run in
             run.feed(
                 WireFrames.bytes([
@@ -326,7 +333,7 @@ enum HostileRows {
                 ]))
         },
         HostileRow(
-            name: "§3.6 a second UPDATE_PULL → UPDATE_IN_PROGRESS", local: .host,
+            name: "a second UPDATE_PULL → UPDATE_IN_PROGRESS", local: .host,
             outcome: .streamReset(.updateInProgress)
         ) {
             run in
@@ -338,7 +345,7 @@ enum HostileRows {
                     WireFrames.open(1, .updatePull, body: pull), WireFrames.open(3, .updatePull, body: pull),
                 ]))
         },
-        HostileRow(name: "§3.6 OPEN past the OPEN rate", local: .host, outcome: .streamReset(.tooManyStreams)) { run in
+        HostileRow(name: "OPEN past the OPEN rate", local: .host, outcome: .streamReset(.tooManyStreams)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))
             let opens = (0..<70).flatMap { index -> [Frame] in
                 let stream = UInt32(2 * index + 1)
@@ -346,8 +353,7 @@ enum HostileRows {
             }
             run.feed(WireFrames.bytes(opens, preamble: false))
         },
-        HostileRow(name: "§3.7 a message that does not decode", local: .host, outcome: .streamReset(.malformedMessage))
-        {
+        HostileRow(name: "a message that does not decode", local: .host, outcome: .streamReset(.malformedMessage)) {
             run in
             run.feed(
                 WireFrames.bytes([
@@ -355,7 +361,7 @@ enum HostileRows {
                     Frame(streamID: StreamID(rawValue: 1), type: .data, flags: .message, payload: Data([0xFF, 0xFF])),
                 ]))
         },
-        HostileRow(name: "§3.7 raw DATA the kind forbids", local: .host, outcome: .streamReset(.streamProtocolError)) {
+        HostileRow(name: "raw DATA the kind forbids", local: .host, outcome: .streamReset(.streamProtocolError)) {
             run in
             run.feed(
                 WireFrames.bytes([
@@ -364,7 +370,7 @@ enum HostileRows {
                 ]))
         },
         HostileRow(
-            name: "§3.7 a message on a direction that carries nothing", local: .peer,
+            name: "a message on a direction that carries nothing", local: .peer,
             outcome: .streamReset(.streamProtocolError)
         ) {
             run in
@@ -377,7 +383,7 @@ enum HostileRows {
                     WireFrames.message(2, Kernova_V2_PowerProgress()),
                 ]))
         },
-        HostileRow(name: "§3.7 progress out of order", local: .host, outcome: .streamReset(.streamProtocolError)) {
+        HostileRow(name: "progress out of order", local: .host, outcome: .streamReset(.streamProtocolError)) {
             run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))
             run.command(
@@ -390,7 +396,7 @@ enum HostileRows {
             return indeterminate ? [] : ["the request did not end indeterminate"]
         },
         HostileRow(
-            name: "§3.7 DATA after the far side's END", local: .peer, outcome: .streamReset(.streamProtocolError)
+            name: "DATA after the far side's END", local: .peer, outcome: .streamReset(.streamProtocolError)
         ) { run in
             var request = Kernova_V2_PowerRequest()
             request.action = .shutdown
@@ -403,21 +409,21 @@ enum HostileRows {
         } expect: { run in
             run.streamResets.first?.stream == 2 ? [] : ["no RESET on stream 2: \(run.streamResets)"]
         },
-        HostileRow(name: "§3.7 cancellation → CANCELLED", local: .host, outcome: .streamReset(.cancelled)) { run in
+        HostileRow(name: "cancellation → CANCELLED", local: .host, outcome: .streamReset(.cancelled)) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))
             let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 9)
             run.command(.requestPower(id, .restart))
             run.command(.cancelPower(id))
         },
         HostileRow(
-            name: "§3.7 policy turns LOGS off while open", local: .host, outcome: .streamReset(.disabledByPolicy)
+            name: "policy turns LOGS off while open", local: .host, outcome: .streamReset(.disabledByPolicy)
         ) { run in
             run.feed(
                 WireFrames.bytes([HostileRow.peerHello, WireFrames.open(1, .logForward, body: Kernova_V2_LogOpen())]))
             run.command(.setPolicy(PolicySnapshot()))
         },
         HostileRow(
-            name: "§3.7 an unknown stream RESET code reads STREAM_PROTOCOL_ERROR", local: .host, outcome: .staysUp
+            name: "an unknown stream RESET code reads STREAM_PROTOCOL_ERROR", local: .host, outcome: .staysUp
         ) {
             run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))
@@ -434,7 +440,47 @@ enum HostileRows {
             }
             return closed ? [] : ["UPDATE_INSTALL_FAILED on a power stream did not read STREAM_PROTOCOL_ERROR"]
         },
-        HostileRow(name: "§4.4 a snapshot flood costs one event per drain", local: .host, outcome: .staysUp) { run in
+        HostileRow(
+            name: "an unassigned code inside 50–99 reads STREAM_PROTOCOL_ERROR", local: .host, outcome: .staysUp
+        ) { run in
+            run.feed(WireFrames.bytes([HostileRow.peerHello]))
+            let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1)
+            run.command(.requestPower(id, .shutdown))
+            run.feed(WireFrames.bytes([WireFrames.reset(2, code: 77)], preamble: false))
+        } expect: { run in
+            let closed = run.trace.contains {
+                $0
+                    == .event(
+                        .streamClosed(
+                            StreamID(rawValue: 2),
+                            .resetByPeer(WireError(.streamProtocolError, debugDetail: "code 77: "))))
+            }
+            return closed ? [] : ["code 77 did not read STREAM_PROTOCOL_ERROR: \(run.trace)"]
+        },
+        HostileRow(
+            name: "the host's payload short of payload_size → END REJECTED UPDATE_SIZE_MISMATCH", local: .peer,
+            outcome: .staysUp
+        ) { run in
+            run.feed([HostileRow.hostHello, Unit.updateAvailable(HostileRow.pulled)], preamble: true)
+            run.feed([Unit.raw(1, Data(repeating: 1, count: 19_000)), Unit.end(1)])
+        } expect: { run in
+            let ends = run.written.on(1).filter { $0.type == .end }.compactMap {
+                try? Kernova_V2_UpdateResult(serializedBytes: $0.payload)
+            }
+            return
+                (ends.map(\.kind) == [.rejected] && ends.first?.error.code == .updateSizeMismatch
+                ? [] : ["the peer's END: \(ends)"]) + HostileRow.rejectedRecorded(run)
+        },
+        HostileRow(
+            name: "the host's payload past payload_size → RESET UPDATE_SIZE_MISMATCH", local: .peer,
+            outcome: .streamReset(.updateSizeMismatch)
+        ) { run in
+            run.feed([HostileRow.hostHello, Unit.updateAvailable(HostileRow.pulled)], preamble: true)
+            run.feed([Unit.raw(1, Data(repeating: 1, count: 20_000)), Unit.raw(1, Data(repeating: 2, count: 1_000))])
+        } expect: { run in
+            HostileRow.rejectedRecorded(run)
+        },
+        HostileRow(name: "a snapshot flood costs one event per drain", local: .host, outcome: .staysUp) { run in
             run.feed(WireFrames.bytes([HostileRow.peerHello]))
             let snapshots = (0..<5_000).map { index in
                 WireFrames.session {
@@ -453,7 +499,7 @@ enum HostileRows {
 
 @Suite("Hostile scenarios")
 struct HostileSuite {
-    @Test("Every §2.5 and §3.7 row, over seeded splits", arguments: HostileRows.all)
+    @Test("Every hostile row, over seeded splits", arguments: HostileRows.all)
     func row(_ row: HostileRow) {
         for seed in UInt64(0)..<20 {
             let failures = row.run(seed: seed)
@@ -464,7 +510,7 @@ struct HostileSuite {
         }
     }
 
-    @Test("A misused core closes INTERNAL in release (§9.6)")
+    @Test("A misused core closes INTERNAL in release")
     func misuse() {
         var configuration = ConnectionConfiguration(claim: PeerClaim(role: .host), adverts: [])
         configuration.assertsOnMisuse = false

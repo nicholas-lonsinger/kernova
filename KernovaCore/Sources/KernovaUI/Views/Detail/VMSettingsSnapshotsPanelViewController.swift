@@ -41,8 +41,7 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         loadViewIfNeeded()
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let section = buildSnapshotsSection()
-        panelStack.addArrangedSubview(section)
-        section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
+        addGroupedFormFullWidth(section, to: panelStack)
     }
 
     func prepareForDisappearance() {

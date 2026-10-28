@@ -104,8 +104,8 @@ package enum WireFrames {
     }
 }
 
-/// One real endpoint against raw bytes (§10.2 `.hostile`): the script's bytes are
-/// fed in seeded random splits, and what the endpoint writes is decoded.
+/// One real endpoint against a hostile far side's raw bytes: the script's bytes
+/// are fed in seeded random splits, and what the endpoint writes is decoded.
 package final class HostileRun {
     package var host: HostEndpoint?
     package var peer: PeerEndpoint?
@@ -114,15 +114,19 @@ package final class HostileRun {
     private var outbound = FrameDecoder()
     package private(set) var written: [Frame] = []
     package private(set) var hostEvents: [HostEvent] = []
+    /// The host endpoint's payload reads, in order.
+    package private(set) var hostEffects: [HostEffect] = []
     package private(set) var peerEvents: [PeerEvent] = []
     package private(set) var peerEffects: [PeerEffect] = []
     package private(set) var trace: [ConnectionTrace] = []
     /// While set, nothing is taken from `pollTransmit`: the far side reads nothing.
     package var writerStalled = false
 
-    /// A real host endpoint (`local == .host`) or a real session peer.
+    /// A real host endpoint (`local == .host`) holding `bundles`, or a real
+    /// session peer whose process's power ledger is `powerLedger`.
     package init(
         local: SimSide, seed: UInt64, testKinds: Bool = false,
+        bundles: [BundledPayload] = [SimHub.bundle(size: 100_000, tag: 1)], powerLedger: PowerLedger = PowerLedger(),
         tweak: @escaping @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     ) {
         rng = SplitMix64(seed: seed)
@@ -136,8 +140,7 @@ package final class HostileRun {
         case .host:
             var configuration = HostConfiguration(
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
-                policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]),
-                bundles: [SimHub.bundle(size: 100_000, tag: 1)])
+                policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
             configuration.tweak = configure
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         case .peer:
@@ -146,6 +149,7 @@ package final class HostileRun {
             var configuration = PeerConfiguration(
                 claim: spec.claim, state: spec.state, power: spec.power.offer, logs: .available(NoParams()),
                 update: .available(UpdateOffer(formats: [.executable])))
+            configuration.powerLedger = powerLedger
             configuration.tweak = configure
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         }
@@ -211,6 +215,12 @@ package final class HostileRun {
         drain()
     }
 
+    /// Answers the host's payload read.
+    package func payload(_ input: PayloadInput) {
+        host?.handle(input, now: now)
+        drain()
+    }
+
     package func input(_ input: PeerInput) {
         peer?.handle(input, now: now)
         drain()
@@ -240,40 +250,26 @@ package final class HostileRun {
                 peerEffects.append(effect)
                 progressed = true
             }
+            while let effect = host?.pollEffect() {
+                hostEffects.append(effect)
+                progressed = true
+            }
             while !writerStalled,
                 let transmit = host?.pollTransmit(maxBytes: 1 << 20) ?? peer?.pollTransmit(maxBytes: 1 << 20)
             {
                 progressed = true
                 for chunk in transmit.chunks { outbound.append(chunk) }
                 while let frame = try? outbound.nextFrame() { written.append(frame) }
+                if transmit.isFinal {
+                    host?.finalTransmitWritten(now: now)
+                    peer?.finalTransmitWritten(now: now)
+                }
             }
         }
         trace += host?.takeTrace() ?? []
         trace += peer?.takeTrace() ?? []
     }
 
-    /// Property 1 and 3 over the trace: each stream closes once, nothing follows `.closed`.
-    package var traceViolations: [String] {
-        var open: Set<UInt32> = []
-        var closed: Set<UInt32> = []
-        var connectionClosed = false
-        var violations: [String] = []
-        for entry in trace {
-            if connectionClosed { violations.append("event after .closed: \(entry)") }
-            switch entry {
-            case .localOpened(let id, _): open.insert(id.rawValue)
-            case .event(.opened(let id, _, _)): open.insert(id.rawValue)
-            case .event(.streamClosed(let id, _)):
-                if !open.contains(id.rawValue) || closed.contains(id.rawValue) {
-                    violations.append("stream \(id.rawValue) closed without being open")
-                }
-                open.remove(id.rawValue)
-                closed.insert(id.rawValue)
-            case .event(.closed): connectionClosed = true
-            default: break
-            }
-        }
-        if state != .established, !open.isEmpty, connectionClosed { violations.append("streams \(open) left open") }
-        return violations
-    }
+    /// Properties 1 and 3 over the endpoint's trace.
+    package var traceViolations: [String] { TraceChecker.violations(trace) }
 }

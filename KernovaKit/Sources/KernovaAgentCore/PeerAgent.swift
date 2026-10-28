@@ -22,7 +22,7 @@ public enum AgentEffect: Sendable, Equatable {
     case stop(StopReason)
 }
 
-/// The peer's pure dial scheduler (§9.3): it holds no endpoint, only when to
+/// The peer's pure dial scheduler: it holds no endpoint, only when to
 /// dial next.
 public struct PeerAgent: Sendable {
     /// The delays between attempts; the last repeats.
@@ -54,9 +54,11 @@ public struct PeerAgent: Sendable {
     /// The current connection's generation, once one has connected.
     public var currentGeneration: ConnectionGeneration { generation }
 
-    /// The dial connected; the driver makes the endpoint with the generation returned.
-    public mutating func dialSucceeded(now: CoreInstant) -> ConnectionGeneration {
+    /// The dial connected; the driver makes the endpoint with the generation returned. Nil once the agent
+    /// has stopped: the stream is the caller's to shut down.
+    public mutating func dialSucceeded(now: CoreInstant) -> ConnectionGeneration? {
         clock.advance(to: now)
+        guard !stopped else { return nil }
         dialing = false
         connected = true
         policyAt = nil
@@ -101,6 +103,14 @@ public struct PeerAgent: Sendable {
         }
         self.policyAt = nil
         schedule(after: max(retryAfter ?? .zero, takeBackoff()))
+    }
+
+    /// The shell is exiting: dial no more, with no `.stop` effect, since the shell asked for it. Every
+    /// later input does nothing.
+    public mutating func shutDown(now: CoreInstant) {
+        clock.advance(to: now)
+        stopped = true
+        dialAt = nil
     }
 
     /// The timer fired.

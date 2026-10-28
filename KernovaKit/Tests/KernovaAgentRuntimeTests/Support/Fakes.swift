@@ -10,51 +10,6 @@ import KernovaAgentRuntime
 import KernovaSynchronization
 import KernovaWire
 
-/// Records values from any thread and lets one test task wait for them in order.
-final class Recorder<Element: Sendable>: Sendable {
-    private let all = Locked<[Element]>([])
-    private let stream: AsyncStream<Element>
-    private let continuation: AsyncStream<Element>.Continuation
-
-    init() {
-        (stream, continuation) = AsyncStream.makeStream(of: Element.self)
-    }
-
-    func record(_ element: Element) {
-        all.withLock { $0.append(element) }
-        continuation.yield(element)
-    }
-
-    /// Everything recorded so far.
-    var elements: [Element] { all.withLock { $0 } }
-
-    /// A cursor over every element, from the first.
-    func waiter() -> Waiter { Waiter(iterator: stream.makeAsyncIterator()) }
-
-    /// A cursor over the elements recorded from now on. Only for elements recorded from one serial
-    /// queue, whose stream order is their recording order.
-    func waiterFromNow() -> Waiter {
-        Waiter(iterator: stream.makeAsyncIterator(), skip: elements.count)
-    }
-
-    struct Waiter {
-        var iterator: AsyncStream<Element>.Iterator
-        var skip = 0
-
-        /// The next element matching `predicate`; nil only when the wait is cancelled.
-        mutating func next(where predicate: (Element) -> Bool) async -> Element? {
-            while let element = await iterator.next() {
-                if skip > 0 {
-                    skip -= 1
-                    continue
-                }
-                if predicate(element) { return element }
-            }
-            return nil
-        }
-    }
-}
-
 /// A stream wrapper that can hold back what the inner stream delivers, and reports each write's start
 /// and completion.
 final class GatedStream: ByteStream {
@@ -136,29 +91,68 @@ final class OneShotDialer: TransportDialer {
     }
 }
 
-/// Accepts every action it offers; hands off at once unless told to hold.
+/// Holds each dial until the test answers it.
+final class ScriptedDialer: TransportDialer {
+    private let pending = Locked<[@Sendable (Result<any ByteStream, DialFailure>) -> Void]>([])
+    /// One element per dial, numbered from 1.
+    let dials = Recorder<Int>()
+
+    func dial(_ completion: @escaping @Sendable (Result<any ByteStream, DialFailure>) -> Void) {
+        let count = pending.withLock { pending in
+            pending.append(completion)
+            return pending.count
+        }
+        dials.record(count)
+    }
+
+    /// Answers dial `number`, counted from 1.
+    func answer(_ number: Int, _ result: Result<any ByteStream, DialFailure>) {
+        let completion = pending.withLock { $0[number - 1] }
+        completion(result)
+    }
+}
+
+/// Accepts every action it offers and hands off at once, unless told to hold before or after accepting.
+/// It can never confirm a cancel, so a cancel ends the request `.unconfirmed`.
 final class FakePowerAdapter: PowerAdapter {
     private let reporter = Locked<PowerReporter?>(nil)
     let performed = Recorder<PowerRequestID>()
+    let cancelled = Recorder<PowerRequestID>()
+    let accepts: Bool
     let handsOff: Bool
+    let initial: Availability<PowerOffer>
 
-    init(handsOff: Bool = true) {
+    init(
+        accepts: Bool = true, handsOff: Bool = true,
+        initial: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown]))
+    ) {
+        self.accepts = accepts
         self.handsOff = handsOff
+        self.initial = initial
     }
 
     func start(reporter: PowerReporter) {
         self.reporter.withLock { $0 = reporter }
-        reporter.report(.availability(.available(PowerOffer(actions: [.shutdown, .restart]))))
+        reporter.report(.availability(initial))
     }
 
     func perform(_ id: PowerRequestID, _ action: PowerAction) {
         performed.record(id)
+        guard accepts else { return }
         let reporter = reporter.withLock { $0 }
         reporter?.report(.accepted(id))
         if handsOff { reporter?.report(.handedOff(id)) }
     }
 
-    func cancel(_ id: PowerRequestID) {}
+    func cancel(_ id: PowerRequestID) {
+        cancelled.record(id)
+        report(.unconfirmed(id))
+    }
+
+    /// Reports `input` as the adapter would, from the test's thread.
+    func report(_ input: PowerInput) {
+        reporter.withLock { $0 }?.report(input)
+    }
 }
 
 /// Writes pulls to memory and installs a payload whose bytes match `expected`.
@@ -199,12 +193,14 @@ final class FakeInstaller: UpdateInstaller {
     func abort(_ id: UpdatePullID) { calls.record("abort") }
 }
 
-/// Serves `content`; with `stallAfter`, holds every read past that many bytes.
+/// Serves `content` by position; a read at or past `stallAfter` never completes.
 final class FakePayloadSource: UpdatePayloadSource {
     let content: Data
     let stallAfter: Int?
-    private let served = Locked<[UpdatePullID: Int]>([:])
-    let stalled = Recorder<UpdatePullID>()
+    /// Each read's offset and count, in order.
+    let reads = Recorder<(offset: UInt64, count: Int)>()
+    /// Each read held at the stall.
+    let stalled = Recorder<UInt64>()
 
     init(content: Data, stallAfter: Int? = nil) {
         self.content = content
@@ -212,18 +208,13 @@ final class FakePayloadSource: UpdatePayloadSource {
     }
 
     func read(
-        _ id: UpdatePullID, manifest: UpdateManifestValue, maxBytes: Int,
+        manifest: UpdateManifestValue, offset: UInt64, count: Int,
         _ completion: @escaping @Sendable (Result<Data, WireError>) -> Void
     ) {
-        let slice = served.withLock { served -> Data? in
-            let offset = served[id, default: 0]
-            if let stallAfter, offset >= stallAfter { return nil }
-            let end = min(content.count, offset + maxBytes)
-            served[id] = end
-            return Data(content[offset..<end])
-        }
-        guard let slice else { return stalled.record(id) }
-        completion(.success(slice))
+        reads.record((offset, count))
+        if let stallAfter, offset >= UInt64(stallAfter) { return stalled.record(offset) }
+        let start = Int(clamping: min(offset, UInt64(content.count)))
+        completion(.success(Data(content[start..<min(content.count, start + count)])))
     }
 
     /// A deterministic payload of `count` bytes: a block of prime length repeated, so no two frames at

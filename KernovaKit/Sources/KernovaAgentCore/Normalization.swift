@@ -4,7 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
-/// The receiver's bounds on text and bytes Kernova does not own (§4.1, §7.1).
+/// The receiver's bounds on text and bytes Kernova does not own.
 enum Normalize {
     /// Identity and state strings: at most this many UTF-8 bytes.
     static let identityStringBytes = 64

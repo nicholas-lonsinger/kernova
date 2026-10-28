@@ -1,120 +1,201 @@
 import Darwin
 import Foundation
 import KernovaSynchronization
-import KernovaTestSupport
 import Testing
 
 @testable import KernovaAppRegistry
 
 /// Holding on until Launch Services has let a bundle go, and leaving a running
 /// app alone while doing it.
+///
+/// Every wait runs on a ``FakeClock``: its sleeps advance virtual time and are
+/// recorded, so the back-off schedule is asserted without real time passing.
 @Suite("App registry wait", .caseScoped)
 struct AppRegistryWaitTests {
     private let bundle = URL(fileURLWithPath: "/Applications/Kernova.app")
 
-    @Test("The wait ends once the registered instance reports terminated")
-    func waitEndsWhenTheInstanceTerminates() async throws {
-        let instance = FakeRegisteredInstance()
-        let registry = FakeAppRegistry(registered: [instance])
+    /// The back-off the wait sleeps on, up to and past its cap.
+    private static let schedule: [TimeInterval] = [0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1, 1]
 
-        async let outcome = self.awaitDeregistration(
-            from: registry, scope: .all, within: testWaitBackstop)
-        try await instance.observed.wait { instance.isObserved }
-        instance.terminate()
-        let released = await outcome
+    // MARK: - Released on a fresh read
+
+    /// A bundle wait's first read is lookup one, so the release on lookup five
+    /// follows four sleeps.
+    @Test("A bundle wait ends on the fresh read that finds the instance gone")
+    func bundleWaitEndsOnAFreshRead() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: 5, clock: clock)
+
+        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
 
         #expect(released)
+        #expect(clock.sleeps == Array(Self.schedule.prefix(4)))
     }
 
-    @Test("A registry holding nothing live ends the wait without waiting at all")
-    func waitEndsWhenNothingIsRegistered() async throws {
-        let empty = FakeAppRegistry(registered: [])
-        let gone = FakeAppRegistry(registered: [FakeRegisteredInstance(terminated: true)])
+    /// A fresh read can return an instance Launch Services has recorded as
+    /// exited before it returns none at all.
+    @Test("A bundle wait ends on the fresh read that finds the instance terminated")
+    func bundleWaitEndsOnATerminatedRead() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: 3, release: .terminated,
+            clock: clock)
 
-        // A zero deadline leaves no room to wait in, so a wait that returns
-        // `true` is one that never started.
-        let nothingRegistered = await awaitDeregistration(from: empty, scope: .all, within: 0)
-        let alreadyGone = await awaitDeregistration(from: gone, scope: .all, within: 0)
+        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
 
-        #expect(nothingRegistered)
-        #expect(alreadyGone)
+        #expect(released)
+        #expect(clock.sleeps == Array(Self.schedule.prefix(2)))
     }
 
-    @Test("An instance macOS never lets go fails the wait at its deadline")
-    func waitFailsAtItsDeadline() async throws {
-        let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()])
+    @Test("A pid-keyed wait ends on the fresh read that finds the instance gone")
+    func processWaitEndsOnAFreshRead() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: 4, clock: clock)
 
-        // The deadline is the assertion here, so it is small — the
-        // exception `testWaitBackstop` names.
-        let released = await awaitDeregistration(from: registry, scope: .all, within: 0.2)
+        let released = awaitDeregistration(
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 20, clock: clock)
+
+        #expect(released)
+        #expect(clock.sleeps == Array(Self.schedule.prefix(3)))
+    }
+
+    @Test("A long wait doubles its sleep up to the cap and stays there")
+    func longWaitSleepsAtTheCap() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: 9, clock: clock)
+
+        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
+
+        #expect(released)
+        #expect(clock.sleeps == Self.schedule)
+    }
+
+    // MARK: - Never released
+
+    @Test("An instance macOS never lets go fails the bundle wait, read last at its deadline")
+    func bundleWaitFailsAtItsDeadline() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()], clock: clock)
+
+        let released = awaitDeregistration(from: registry, scope: .all, within: 3, clock: clock)
 
         #expect(!released)
+        Self.expectStoppedAtDeadline(clock: clock, registry: registry, deadline: 3)
+    }
+
+    @Test("An instance macOS never lets go fails the pid-keyed wait, read last at its deadline")
+    func processWaitFailsAtItsDeadline() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()], clock: clock)
+
+        let released = awaitDeregistration(
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 3, clock: clock)
+
+        #expect(!released)
+        Self.expectStoppedAtDeadline(clock: clock, registry: registry, deadline: 3)
+    }
+
+    /// The schedule runs until the next sleep would pass the deadline; that
+    /// sleep is cut to land on it, and one read there decides.
+    private static func expectStoppedAtDeadline(
+        clock: FakeClock, registry: FakeAppRegistry, deadline: TimeInterval
+    ) {
+        let sleeps = clock.sleeps
+        #expect(Array(sleeps.dropLast()) == Array(schedule.prefix(7)))
+        #expect(sleeps.last.map { $0 < 1 } == true)
+        #expect(clock.elapsed == deadline)
+        #expect(registry.lookupTimes.last == deadline)
+    }
+
+    // MARK: - Nothing to wait for
+
+    @Test("A registry holding nothing live ends the wait without sleeping")
+    func waitEndsWhenNothingIsRegistered() {
+        let clock = FakeClock()
+        let empty = FakeAppRegistry(registered: [], clock: clock)
+        let gone = FakeAppRegistry(
+            registered: [FakeRegisteredInstance(terminated: true)], clock: clock)
+
+        #expect(awaitDeregistration(from: empty, scope: .all, within: 20, clock: clock))
+        #expect(awaitDeregistration(from: gone, scope: .all, within: 20, clock: clock))
+        #expect(clock.sleeps.isEmpty)
+    }
+
+    /// The registry holds registered apps only, so a pid it does not know is
+    /// nothing to wait for — including one it has already let go.
+    @Test("A pid the registry does not hold ends the wait without sleeping")
+    func processWaitEndsWhenThePidIsUnknown() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(registered: [], clock: clock)
+
+        let released = awaitDeregistration(
+            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 20, clock: clock)
+
+        #expect(released)
+        #expect(clock.sleeps.isEmpty)
+    }
+
+    @Test("An instance with no process identifier is not one to wait out")
+    func instanceWithoutAPidIsReleased() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance(processIdentifier: 0)], clock: clock)
+
+        let bundleReleased = awaitDeregistration(
+            from: registry, scope: .all, within: 20, clock: clock)
+        let processReleased = awaitDeregistration(
+            ofProcess: 0, from: registry, within: 20, clock: clock)
+
+        #expect(bundleReleased)
+        #expect(processReleased)
+        #expect(clock.sleeps.isEmpty)
     }
 
     // MARK: - Scope
 
     @Test("A running instance is not something the exited-processes scope waits on")
-    func runningInstanceIsLeftAlone() async throws {
-        let registry = FakeAppRegistry(registered: [FakeRegisteredInstance(processExited: false)])
+    func runningInstanceIsLeftAlone() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance(processExited: false)], clock: clock)
 
-        // Zero deadline again: the scope has to drop the instance before the
-        // wait starts, not outlast it.
-        let released = await awaitDeregistration(from: registry, scope: .exitedProcesses, within: 0)
+        let released = awaitDeregistration(
+            from: registry, scope: .exitedProcesses, within: 20, clock: clock)
 
         #expect(released)
+        #expect(clock.sleeps.isEmpty)
     }
 
     @Test("An instance whose process is gone is one the exited-processes scope waits on")
-    func exitedInstanceIsWaitedOut() async throws {
-        let instance = FakeRegisteredInstance(processExited: true)
-        let registry = FakeAppRegistry(registered: [instance])
-
-        async let outcome = self.awaitDeregistration(
-            from: registry, scope: .exitedProcesses, within: testWaitBackstop)
-        try await instance.observed.wait { instance.isObserved }
-        instance.terminate()
-        let released = await outcome
-
-        #expect(released)
-    }
-
-    // MARK: - Keyed on the process
-
-    @Test("A pid-keyed wait ends once that instance reports terminated")
-    func processWaitEndsWhenTheInstanceTerminates() async throws {
-        let instance = FakeRegisteredInstance()
-        let registry = FakeAppRegistry(registered: [], byProcessIdentifier: [42: instance])
-
-        async let outcome = self.awaitDeregistration(
-            ofProcess: 42, from: registry, within: testWaitBackstop)
-        try await instance.observed.wait { instance.isObserved }
-        instance.terminate()
-        let released = await outcome
-
-        #expect(released)
-    }
-
-    /// The registry holds registered apps only, so a pid it does not know is
-    /// nothing to wait for — including one it has already let go.
-    @Test("A pid the registry does not hold ends the wait without waiting at all")
-    func processWaitEndsWhenThePidIsUnknown() async throws {
-        let registry = FakeAppRegistry(registered: [])
-
-        let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0)
-
-        #expect(released)
-    }
-
-    @Test("A pid-keyed wait on an instance macOS never lets go fails at its deadline")
-    func processWaitFailsAtItsDeadline() async throws {
+    func exitedInstanceIsWaitedOut() {
+        let clock = FakeClock()
         let registry = FakeAppRegistry(
-            registered: [], byProcessIdentifier: [42: FakeRegisteredInstance()])
+            registered: [FakeRegisteredInstance(processExited: true)], releasedFromLookup: 2,
+            clock: clock)
 
-        // The deadline is the assertion here, so it is small — the
-        // exception `testWaitBackstop` names.
-        let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0.2)
+        let released = awaitDeregistration(
+            from: registry, scope: .exitedProcesses, within: 20, clock: clock)
 
-        #expect(!released)
+        #expect(released)
+        #expect(clock.sleeps == [Self.schedule[0]])
+    }
+
+    /// Only instances admitted when the wait begins count, so one the registry
+    /// starts holding later does not extend the wait.
+    @Test("An instance registered after the wait begins does not extend it")
+    func laterInstanceDoesNotExtendTheWait() {
+        let clock = FakeClock()
+        let registry = FakeAppRegistry(
+            registered: [FakeRegisteredInstance()], releasedFromLookup: 2, clock: clock,
+            laterInstance: FakeRegisteredInstance(processIdentifier: 43))
+
+        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
+
+        #expect(released)
+        #expect(clock.sleeps == [Self.schedule[0]])
     }
 
     // MARK: - Process liveness
@@ -135,86 +216,144 @@ struct AppRegistryWaitTests {
         #expect(!processIsRunning(999_999))
     }
 
-    /// Runs the wait on a GCD thread, the way production runs it on a main
-    /// thread whose run loop it services rather than parks — so it must not
-    /// hold a cooperative-pool thread (`offCooperativePool`).
+    // MARK: - Entry points
+
     private func awaitDeregistration(
-        from registry: FakeAppRegistry, scope: RegisteredInstanceScope, within deadline: TimeInterval
-    ) async -> Bool {
-        let bundle = bundle
-        return await offCooperativePool {
-            AppRegistryWait.awaitDeregistration(
-                ofBundleAt: bundle, scope: scope,
-                by: Date(timeIntervalSinceNow: deadline), registry: registry)
-        }
+        from registry: FakeAppRegistry, scope: RegisteredInstanceScope,
+        within deadline: TimeInterval, clock: FakeClock
+    ) -> Bool {
+        AppRegistryWait.awaitDeregistration(
+            ofBundleAt: bundle, scope: scope, by: clock.date(after: deadline),
+            registry: registry, now: clock.now, sleep: clock.sleep)
     }
 
-    /// ``awaitDeregistration(from:scope:within:)`` for the pid-keyed entry
-    /// point, on the same off-main thread.
     private func awaitDeregistration(
-        ofProcess identifier: pid_t, from registry: FakeAppRegistry, within deadline: TimeInterval
-    ) async -> Bool {
-        await offCooperativePool {
-            AppRegistryWait.awaitDeregistration(
-                ofProcess: identifier, by: Date(timeIntervalSinceNow: deadline),
-                registry: registry)
-        }
+        ofProcess identifier: pid_t, from registry: FakeAppRegistry,
+        within deadline: TimeInterval, clock: FakeClock
+    ) -> Bool {
+        AppRegistryWait.awaitDeregistration(
+            ofProcess: identifier, by: clock.date(after: deadline), registry: registry,
+            now: clock.now, sleep: clock.sleep)
     }
 }
 
 // MARK: - Doubles
 
-/// A registry answering with whatever instances a test hands it, for any bundle.
-private struct FakeAppRegistry: AppRegistry {
-    let registered: [FakeRegisteredInstance]
-    /// The instance answering a pid lookup, when the test drives that path.
-    var byProcessIdentifier: [pid_t: FakeRegisteredInstance] = [:]
+/// Virtual time that moves only when the wait sleeps, recording each sleep.
+///
+/// Starts at the reference date, so elapsed time is the date's own value.
+private final class FakeClock: Sendable {
+    private struct State: Sendable {
+        var elapsed: TimeInterval = 0
+        var sleeps: [TimeInterval] = []
+    }
 
-    func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance] { registered }
+    private let state = Locked(State())
 
-    func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)? {
-        byProcessIdentifier[identifier]
+    var elapsed: TimeInterval { state.withLock { $0.elapsed } }
+
+    var sleeps: [TimeInterval] { state.withLock { $0.sleeps } }
+
+    func now() -> Date { Date(timeIntervalSinceReferenceDate: elapsed) }
+
+    func date(after interval: TimeInterval) -> Date { now().addingTimeInterval(interval) }
+
+    func sleep(_ interval: TimeInterval) {
+        state.withLock { state in
+            state.elapsed += interval
+            state.sleeps.append(interval)
+        }
     }
 }
 
-/// An instance a test terminates on cue, reporting it through the same callback
-/// Launch Services' own notification would.
-private final class FakeRegisteredInstance: RegisteredAppInstance, Sendable {
-    /// Fires once the wait has registered its observer, so a test can terminate
-    /// the instance without racing the registration.
-    let observed = AsyncGate()
+/// A registry answering with whatever instances a test hands it, for any bundle.
+private final class FakeAppRegistry: AppRegistry, Sendable {
+    /// What a pid lookup finds once the registry has let go.
+    enum Release: Sendable {
+        /// No instance at all.
+        case deregistered
+        /// An instance recorded as exited.
+        case terminated
+    }
 
-    let processHasExited: Bool
+    private let registered: [FakeRegisteredInstance]
+
+    /// The pid lookup, counted from one, from which the registry has let go.
+    private let releasedFromLookup: Int?
+
+    private let release: Release
+
+    private let clock: FakeClock
+
+    /// An instance the bundle listing includes only after its first call.
+    private let laterInstance: FakeRegisteredInstance?
 
     private struct State: Sendable {
-        var terminated: Bool
-        var notify: (@Sendable () -> Void)?
+        var lookups = 0
+        var lookupTimes: [TimeInterval] = []
+        var listings = 0
     }
 
-    private let state: Locked<State>
+    private let state = Locked(State())
 
-    init(terminated: Bool = false, processExited: Bool = true) {
-        state = Locked(State(terminated: terminated))
-        processHasExited = processExited
+    init(
+        registered: [FakeRegisteredInstance], releasedFromLookup: Int? = nil,
+        release: Release = .deregistered, clock: FakeClock,
+        laterInstance: FakeRegisteredInstance? = nil
+    ) {
+        self.registered = registered
+        self.releasedFromLookup = releasedFromLookup
+        self.release = release
+        self.clock = clock
+        self.laterInstance = laterInstance
     }
 
-    var hasTerminated: Bool { state.withLock { $0.terminated } }
+    /// The virtual time of every pid lookup, in order.
+    var lookupTimes: [TimeInterval] { state.withLock { $0.lookupTimes } }
 
-    /// Whether the wait currently holds an observation of this instance.
-    var isObserved: Bool { state.withLock { $0.notify != nil } }
-
-    func observeTermination(_ notify: @escaping @Sendable () -> Void) -> TerminationObservation {
-        state.withLock { $0.notify = notify }
-        observed.notify()
-        return TerminationObservation { [state] in state.withLock { $0.notify = nil } }
-    }
-
-    /// Reports the instance gone the way the registry would.
-    func terminate() {
-        let waiter = state.withLock { state in
-            state.terminated = true
-            return state.notify
+    func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance] {
+        let listing = state.withLock { state in
+            state.listings += 1
+            return state.listings
         }
-        waiter?()
+        return listing > 1 ? registered + [laterInstance].compactMap { $0 } : registered
+    }
+
+    func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)? {
+        let elapsed = clock.elapsed
+        let lookup = state.withLock { state in
+            state.lookups += 1
+            state.lookupTimes.append(elapsed)
+            return state.lookups
+        }
+        let held = (registered + [laterInstance].compactMap { $0 })
+            .first { $0.processIdentifier == identifier }
+        guard let held, let releasedFromLookup, lookup >= releasedFromLookup else { return held }
+        switch release {
+        case .deregistered:
+            return nil
+        case .terminated:
+            return FakeRegisteredInstance(
+                processIdentifier: held.processIdentifier, terminated: true)
+        }
+    }
+}
+
+/// One registry entry, fixed for its lifetime the way a fresh read's is.
+private struct FakeRegisteredInstance: RegisteredAppInstance {
+    /// The pid a fake instance runs as unless a test names another.
+    static let identifier: pid_t = 42
+
+    let processIdentifier: pid_t
+    let hasTerminated: Bool
+    let processHasExited: Bool
+
+    init(
+        processIdentifier: pid_t = FakeRegisteredInstance.identifier, terminated: Bool = false,
+        processExited: Bool = true
+    ) {
+        self.processIdentifier = processIdentifier
+        hasTerminated = terminated
+        processHasExited = processExited
     }
 }

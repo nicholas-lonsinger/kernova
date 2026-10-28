@@ -21,27 +21,28 @@ package enum PowerReport: Sendable, Equatable {
 
 /// How a fake power adapter answers `cancel`.
 package enum CancelBehavior: Sendable, Equatable {
-    /// The OS confirms nothing started, after this delay.
-    case confirm(after: SimTime)
-    /// The adapter cannot tell; it reports nothing.
-    case silent
-    /// The OS took the request first, after this delay.
-    case acceptFirst(after: SimTime)
+    /// The OS confirms nothing started, after a delay drawn from the window.
+    case confirm(after: SimWindow)
+    /// The OS confirms nothing; the adapter reports `.unconfirmed` once it gives
+    /// up waiting, after a delay drawn from the window.
+    case silent(after: SimWindow)
+    /// The OS took the request first.
+    case acceptFirst
 }
 
 /// A fake power adapter's script.
 package struct PowerScript: Sendable {
     package var offer: Availability<PowerOffer>
-    /// Reports after `perform`, each `after` the previous one.
-    package var steps: [(after: SimTime, report: PowerReport)]
+    /// Reports after `perform`, each a delay drawn from `after` past the previous one.
+    package var steps: [(after: SimWindow, report: PowerReport)]
     package var onCancel: CancelBehavior
 
     package init(
         offer: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)),
-        steps: [(after: SimTime, report: PowerReport)] = [
-            (.ms(50), .accepted), (.ms(100), .askingApps), (.ms(200), .handedOff),
+        steps: [(after: SimWindow, report: PowerReport)] = [
+            (.ms(20) ... .ms(80), .accepted), (.ms(50) ... .ms(150), .askingApps), (.ms(100) ... .ms(300), .handedOff),
         ],
-        onCancel: CancelBehavior = .confirm(after: .ms(50))
+        onCancel: CancelBehavior = .confirm(after: .ms(20) ... .ms(80))
     ) {
         self.offer = offer
         self.steps = steps
@@ -56,9 +57,9 @@ package struct InstallerSpec: Sendable {
     package var formats: [PayloadFormat] = [.executable]
     package var rejectedHash: Data?
     /// Delay before each `.consumed`.
-    package var consumeDelay: SimTime = .us(50)
+    package var consumeDelay: SimWindow = .us(20) ... .us(80)
     /// Delay before `.installed` or `.rejected`.
-    package var installDelay: SimTime = .ms(20)
+    package var installDelay: SimWindow = .ms(10) ... .ms(30)
     /// Fail mid-stream after this many bytes with this code.
     package var failAfter: (bytes: Int, code: ErrorCode)?
     /// The version the payload installs hangs before Hello; the rollback check reverts it.
@@ -105,7 +106,7 @@ package struct PeerSpec: Sendable {
     }
 }
 
-/// What a run expects of liveness (§10.3 property 7).
+/// What a run expects of liveness (property 7 of `PropertyChecker`).
 package enum LivenessExpectation: Sendable, Equatable {
     /// No unresponsive verdict, no liveness close and no Hello timeout anywhere.
     case quiet
@@ -113,16 +114,35 @@ package enum LivenessExpectation: Sendable, Equatable {
     case scenarioChecked
 }
 
-/// The faults of §10.2.
+/// A span of world time; the world draws one instant in it from the run's seed.
+package typealias SimWindow = ClosedRange<SimTime>
+
+extension ClosedRange where Bound == SimTime {
+    /// The window holding only `time`.
+    package static func at(_ time: SimTime) -> Self { time...time }
+}
+
+/// A fault the world injects. Each starts at an instant the world draws from
+/// its window, so the seed moves the fault against the protocol's state; a
+/// fault that never takes effect fails the run.
 package enum Fault: Sendable {
-    case cut(PipeDirection, afterByte: Int)
-    case peerDeath(peer: Int, at: SimTime)
-    case peerHang(peer: Int, at: SimTime, for: SimTime)
-    case readerStall(SimSide, link: Int, at: SimTime, for: SimTime)
-    case consumerStall(peer: Int, at: SimTime, for: SimTime)
-    case vmFreeze(at: SimTime, for: SimTime, guestClockJumps: Bool)
-    case hostSleep(at: SimTime, for: SimTime)
-    case clockStep(SimProcess, at: SimTime, by: Int64)
+    /// The link's direction carries a byte count drawn from `afterByte`, then the transport ends both ways.
+    case cut(PipeDirection, afterByte: ClosedRange<Int>)
+    /// The peer's process dies.
+    case peerDeath(peer: Int, in: SimWindow)
+    /// The peer's process runs nothing for `for`.
+    case peerHang(peer: Int, in: SimWindow, for: SimTime)
+    /// One side of a link reads nothing for `for`.
+    case readerStall(SimSide, link: Int, in: SimWindow, for: SimTime)
+    /// One side's consumer of `kind` on the peer's link holds what it is delivered for `for`: the peer's
+    /// installer for UPDATE_PULL, or either side's bulk test sink for a test kind.
+    case consumerStall(SimSide, StreamKind, peer: Int, in: SimWindow, for: SimTime)
+    /// Every peer is paused, and the host is told, for `for`.
+    case vmFreeze(in: SimWindow, for: SimTime, guestClockJumps: Bool)
+    /// The host sleeps for `for`, its VMs paused first.
+    case hostSleep(in: SimWindow, for: SimTime)
+    /// The process's clock steps by `by` nanoseconds.
+    case clockStep(SimProcess, in: SimWindow, by: Int64)
 }
 
 /// A link direction.
@@ -157,8 +177,6 @@ package struct SimOptions: Sendable {
     /// Bytes each accepted test-kind stream sends.
     package var testBulkBytes = 0
     package var payloadSourceDelay: SimTime = .us(20)
-    /// The payload source returns this many bytes more (positive) or fewer than the manifest says.
-    package var payloadSizeSkew = 0
 
     package init() {}
 }

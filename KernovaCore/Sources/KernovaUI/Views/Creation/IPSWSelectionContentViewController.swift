@@ -32,8 +32,8 @@ final class IPSWSelectionContentViewController: NSViewController {
         case unusable(message: String)
     }
     private var existingFileNotice: ExistingFileNotice?
-    /// The destination ``existingFileNotice`` describes, set with it; a notice
-    /// whose path the latest-image lookup has moved away from is stale.
+    /// The destination ``existingFileNotice`` describes, set with it; the notice
+    /// renders only while that is still the destination.
     private var existingFileNoticePath: String?
     /// In-flight inspection, so a second click can't race the first.
     private var adoptTask: Task<Void, Never>?
@@ -143,7 +143,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         adoptTask?.cancel()
         adoptTask = nil
         // Only this VC's redraw is dropped: the lookup itself belongs to the
-        // model, so it still lands for the Review step.
+        // model, and keeps running.
         latestImageTask?.cancel()
         latestImageTask = nil
         localFileInspectionWatchTask?.cancel()
@@ -205,9 +205,9 @@ final class IPSWSelectionContentViewController: NSViewController {
         switch source {
         case .downloadLatest:
             creationVM.selectDownloadLatest()
-            refresh()
-            // Retries a lookup that failed while another source was selected.
+            // Retries a lookup that failed.
             startLatestImageLookup()
+            refresh()
         case .catalogVersion:
             // Same deferred-commit rule as Choose Local File below.
             refresh()
@@ -250,27 +250,37 @@ final class IPSWSelectionContentViewController: NSViewController {
 
         switch creationVM.ipswSelection {
         case .downloadLatest:
-            if let latest = creationVM.latestImage {
-                // Nothing here is the user's to change: installing a particular
-                // build is what the other sources are for, and the destination
-                // is always Downloads, the one location the sandbox's downloads
-                // entitlement covers without per-pick grants.
+            // Nothing here is the user's to change: installing a particular
+            // build is what the other sources are for, and the destination is
+            // always Downloads, the one location the sandbox's downloads
+            // entitlement covers without per-pick grants.
+            let downloadsFolder = wizardAbbreviateWithTilde(
+                creationVM.downloadsDirectory.path(percentEncoded: false))
+            switch creationVM.latestImageLookup {
+            case .unanswered:
+                addGroupedFormFullWidth(
+                    makeWizardProgressBadge(
+                        text: "Looking up the latest macOS\u{2026}", secondaryText: downloadsFolder),
+                    to: conditionalContainer)
+            case .found(let latest, let sizeBytes):
                 addImageBadge(
                     parts: [
                         "macOS \(latest.version)", "Build \(latest.build)",
-                        creationVM.latestImageSizeBytes.map(DataFormatters.formatBytes),
+                        sizeBytes.map(DataFormatters.formatBytes),
                     ],
                     path: creationVM.ipswDownloadPath,
-                    changeAction: nil
-                )
-            } else {
-                conditionalContainer.addArrangedSubview(
-                    makeWizardPathBadge(path: creationVM.ipswDownloadPath))
+                    changeAction: nil)
+            case .failed:
+                addGroupedFormFullWidth(
+                    makeWizardBadge(
+                        symbolName: "exclamationmark.triangle.fill",
+                        text: "Couldn\u{2019}t look up the latest macOS",
+                        secondaryText: downloadsFolder,
+                        trailingButton: makeLinkButton(
+                            "Try Again", target: self, action: #selector(retryLatestImageLookup))),
+                    to: conditionalContainer)
             }
-            // The subject follows the lookup: until it lands the destination is
-            // the shared fallback filename, whose occupant may be any image;
-            // once it lands, the destination is per-build like a pinned pick's.
-            addDownloadBanners(version: creationVM.latestImage?.version)
+            addDownloadBanners(version: creationVM.latestImageLookup.foundImage?.version)
         case .catalogVersion(let entry):
             addImageBadge(
                 parts: [
@@ -309,12 +319,13 @@ final class IPSWSelectionContentViewController: NSViewController {
                     assertionFailure("LocalRestoreImageError must always have an errorDescription")
                     break
                 }
-                addFullWidthBanner(
+                addGroupedFormFullWidth(
                     makeGroupedFormBanner(
                         symbolName: "exclamationmark.triangle.fill",
                         tint: Caution.color,
                         message: message
-                    ))
+                    ),
+                    to: conditionalContainer)
             }
         }
 
@@ -350,8 +361,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                             + "Account step when the installation finishes.")
                 ])
         ])
-        conditionalContainer.addArrangedSubview(card)
-        card.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
+        addGroupedFormFullWidth(card, to: conditionalContainer)
     }
 
     /// Reads the sender rather than a held reference: this card is rebuilt
@@ -369,17 +379,18 @@ final class IPSWSelectionContentViewController: NSViewController {
     /// two badges no longer fit the fixed-size sheet without scrolling. Every
     /// source composes its title line from `parts` here, so they read alike;
     /// a part the source doesn't know drops out.
-    private func addImageBadge(parts: [String?], path: String, changeAction: Selector?) {
+    private func addImageBadge(parts: [String?], path: String?, changeAction: Selector?) {
         let change = changeAction.map {
             makeLinkButton("Change…", target: self, action: $0)
         }
-        conditionalContainer.addArrangedSubview(
+        addGroupedFormFullWidth(
             makeWizardBadge(
                 symbolName: "shippingbox.fill",
                 text: parts.compactMap { $0 }.joined(separator: "  ·  "),
-                secondaryText: wizardAbbreviateWithTilde(path),
+                secondaryText: path.map(wizardAbbreviateWithTilde),
                 trailingButton: change
-            ))
+            ),
+            to: conditionalContainer)
     }
 
     /// Adds the picked file's path badge, with a `Change…` link — the local-file
@@ -387,20 +398,21 @@ final class IPSWSelectionContentViewController: NSViewController {
     /// metadata.
     private func addLocalFilePathBadge(path: String) {
         let change = makeLinkButton("Change…", target: self, action: #selector(changeLocalFile))
-        conditionalContainer.addArrangedSubview(
-            makeWizardPathBadge(path: path, changeButton: change))
+        addGroupedFormFullWidth(
+            makeWizardPathBadge(path: path, changeButton: change), to: conditionalContainer)
     }
 
     /// Adds the overwrite or resume banner for whichever download source is
     /// selected, naming `version` when the pick is a specific one.
     private func addDownloadBanners(version: String?) {
+        guard let destination = creationVM.ipswDownloadPath else { return }
         let subject = version.map { "macOS \($0)" }
         // A verdict on the existing file supersedes the plain overwrite
         // warning — it says something more specific about the same file. One
-        // for a destination the lookup has since moved away from describes a
-        // file that no longer matters, so it drops instead of rendering.
+        // about another destination describes a file that no longer matters,
+        // so it drops instead of rendering.
         if let notice = existingFileNotice {
-            if existingFileNoticePath == creationVM.ipswDownloadPath {
+            if existingFileNoticePath == destination {
                 addExistingFileNotice(notice)
                 return
             }
@@ -411,21 +423,23 @@ final class IPSWSelectionContentViewController: NSViewController {
                 title: "Use Existing File", target: self, action: #selector(useExistingTapped))
             let replace = NSButton(
                 title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
-            addFullWidthBanner(
+            addGroupedFormFullWidth(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
                     tint: Caution.color,
                     message: subject.map { "\($0) is already downloaded." } ?? "A file is already at this location.",
                     trailingButtons: [useExisting, replace]
-                ))
+                ),
+                to: conditionalContainer)
         } else if creationVM.hasResumableDownload {
-            addFullWidthBanner(
+            addGroupedFormFullWidth(
                 makeGroupedFormBanner(
                     symbolName: "arrow.clockwise.circle.fill",
                     tint: .systemBlue,
                     message: subject.map { "An interrupted download of \($0) will resume when the install starts." }
                         ?? "An interrupted download at this location will resume when the install starts."
-                ))
+                ),
+                to: conditionalContainer)
         }
     }
 
@@ -433,43 +447,39 @@ final class IPSWSelectionContentViewController: NSViewController {
     private func addExistingFileNotice(_ notice: ExistingFileNotice) {
         switch notice {
         case .checking:
-            addFullWidthBanner(
+            addGroupedFormFullWidth(
                 makeGroupedFormBanner(
                     symbolName: "magnifyingglass.circle.fill",
                     tint: .systemBlue,
                     message: "Checking the file already at this location…"
-                ))
+                ),
+                to: conditionalContainer)
         case .mismatch(let expected, let found):
             let anyway = NSButton(
                 title: "Use It Anyway", target: self, action: #selector(useExistingAnywayTapped))
             let replace = NSButton(
                 title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
-            addFullWidthBanner(
+            addGroupedFormFullWidth(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
                     tint: Caution.color,
                     message:
                         "The file already here is \(found.summary), not build \(expected). Using it installs \(found.summary).",
                     trailingButtons: [anyway, replace]
-                ))
+                ),
+                to: conditionalContainer)
         case .unusable(let message):
             let replace = NSButton(
                 title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
-            addFullWidthBanner(
+            addGroupedFormFullWidth(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
                     tint: Caution.color,
                     message: message,
                     trailingButtons: [replace]
-                ))
+                ),
+                to: conditionalContainer)
         }
-    }
-
-    /// Adds a banner to the conditional container, pinned to the full step width
-    /// so it lines up with the source options (the path badge stays content-sized).
-    private func addFullWidthBanner(_ banner: NSView) {
-        conditionalContainer.addArrangedSubview(banner)
-        banner.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
     }
 
     // MARK: - Actions
@@ -486,11 +496,16 @@ final class IPSWSelectionContentViewController: NSViewController {
         selectPastedURL()
     }
 
+    /// Looks the latest image up again after a lookup that failed.
+    @objc private func retryLatestImageLookup() {
+        startLatestImageLookup()
+        rebuildConditional()
+    }
+
     /// Checks the existing file before adopting it, so a stale or hand-placed
     /// IPSW can't stand in for the version the wizard is showing.
     @objc private func useExistingTapped() {
-        guard adoptTask == nil else { return }
-        let path = creationVM.ipswDownloadPath
+        guard adoptTask == nil, let path = creationVM.ipswDownloadPath else { return }
         existingFileNotice = .checking
         existingFileNoticePath = path
         rebuildConditional()
@@ -567,7 +582,11 @@ final class IPSWSelectionContentViewController: NSViewController {
         let sheet = RestoreImageCatalogSheetContentViewController(
             entries: creationVM.catalogService.entries,
             selectedBuild: creationVM.lastCatalogPick?.build,
-            generatedAt: creationVM.catalogService.generatedAt
+            generatedAt: creationVM.catalogService.generatedAt,
+            isDownloaded: { [creationVM] entry in
+                FileManager.default.fileExists(
+                    atPath: creationVM.downloadPath(forFilename: entry.suggestedFilename))
+            }
         )
         sheet.onChoose = { [weak self] entry in self?.commitCatalogEntry(entry) }
         sheet.onCancel = { [weak self] in self?.dismissSourceSheet() }
@@ -579,6 +598,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         guard let window = view.window, !catalogSheetPresenter.isShown else { return }
         let sheet = RestoreImageURLSheetContentViewController(
             probeService: creationVM.probeService,
+            downloadsDirectory: creationVM.downloadsDirectory,
             initialURL: creationVM.lastPastedImage?.url.absoluteString
         )
         sheet.onChoose = { [weak self] image in self?.commitPastedImage(image) }

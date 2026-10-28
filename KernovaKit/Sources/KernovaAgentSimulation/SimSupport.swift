@@ -28,6 +28,12 @@ package struct SplitMix64: RandomNumberGenerator, Sendable {
         return range.lowerBound + Int(next() % span)
     }
 
+    /// An instant in `window`.
+    package mutating func time(in window: ClosedRange<UInt64>) -> UInt64 {
+        let span = window.upperBound - window.lowerBound
+        return span == .max ? next() : window.lowerBound + next() % (span + 1)
+    }
+
     package mutating func bytes(_ count: Int) -> Data {
         var data = Data(count: count)
         // Little-endian words: byte i is bits 8·(i mod 8) of word i/8. Frozen

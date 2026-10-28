@@ -16,15 +16,16 @@ public protocol FeatureMachine: Sendable {
     /// Handles one connection-level event for the machine's streams.
     mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant)
     /// When the machine next needs `.deadline`, on the connection's raw time
-    /// (`JudgedClock.external` converts it to the caller's timeline).
-    var nextDeadline: CoreInstant? { get }
+    /// (`JudgedClock.external` converts it to the caller's timeline), computed
+    /// from `clock` as it is now. Every machine receives every `.deadline`.
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant?
 }
 
 /// What an endpoint tells a feature machine.
 public enum FeatureEvent: Sendable, Equatable {
     /// The far side's Hello was read.
     case sessionEstablished
-    /// Some input to §4.3's usability changed.
+    /// Some input to `Connection.usability(_:)` changed.
     case usabilityChanged
     /// The policy changed (a `PolicyUpdate` on a peer, a command on the host).
     case policyChanged
@@ -40,7 +41,10 @@ public enum FeatureEvent: Sendable, Equatable {
     case writable(StreamID)
     /// One of its streams closed.
     case streamClosed(StreamID, StreamClosure)
-    /// Its `nextDeadline` (or any timer) passed.
+    /// A stream this side opened stopped holding a slot, which can be after its
+    /// `streamClosed`: an opener `canOpen` held back tries again.
+    case slotFreed
+    /// A timer passed: some machine's `nextDeadline`, or the connection's.
     case deadline
 }
 

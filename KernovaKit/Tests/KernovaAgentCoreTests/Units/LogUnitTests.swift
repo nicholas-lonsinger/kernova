@@ -25,7 +25,7 @@ extension Unit {
 }
 
 extension CoreUnits {
-    @Suite("LogRing and §7.1's record bounds")
+    @Suite("LogRing and the log record bounds")
     struct LogRingUnitTests {
         @Test("Capacity is 256: an append to a full ring evicts the oldest and counts it")
         func evictsOldest() {
@@ -107,7 +107,7 @@ extension CoreUnits {
             #expect(ring.takeBatch()?.droppedBefore == 0)
         }
 
-        // MARK: §7.1
+        // MARK: Record bounds
 
         @Test("Subsystem and category are clipped to 128 UTF-8 bytes on a scalar boundary")
         func labelBounds() {
@@ -120,7 +120,7 @@ extension CoreUnits {
             #expect(record.truncated)
         }
 
-        @Test("Clipping either label alone sets truncated (§7.1)")
+        @Test("Clipping either label alone sets truncated")
         func labelCutSetsTruncated() {
             let subsystem = LogRecordValue(
                 timestampMilliseconds: 0, level: .info, subsystem: String(repeating: "s", count: 129), category: "c",
@@ -174,7 +174,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("LogForwarder: every row of §7.3")
+    @Suite("LogForwarder: every row of its table")
     struct LogForwarderUnitTests {
         /// A real session peer with the host's Hello read and, unless nil, a first policy.
         static func peer(logs: Bool? = true) -> HostileRun {
@@ -320,8 +320,26 @@ extension CoreUnits {
         @Test("host RESET → the next policy change reopens")
         func resetWaitsForPolicyChange() {
             let run = Self.peer(logs: true)
-            run.feed([WireFrames.reset(1, code: ErrorCode.disabledByPolicy.rawValue)])
+            run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
             run.feed([Unit.policy(logs: false)])
+            #expect(Self.opens(run.written) == [1])
+            run.feed([Unit.policy(logs: true)])
+            #expect(Self.opens(run.written) == [1, 3])
+        }
+
+        @Test("host RESET DISABLED_BY_POLICY under a policy that enables LOGS → reopens at once")
+        func disabledResetUnderEnabledPolicyReopens() {
+            // The host coalesced LOGS off-then-on into one enabling PolicyUpdate, already
+            // read here, while the RESET its off-policy caused still follows.
+            let run = Self.peer(logs: true)
+            run.feed([WireFrames.reset(1, code: ErrorCode.disabledByPolicy.rawValue)])
+            #expect(Self.opens(run.written) == [1, 3])
+        }
+
+        @Test("host RESET DISABLED_BY_POLICY under a policy that disables LOGS → no reopen until it enables")
+        func disabledResetUnderDisabledPolicyWaits() {
+            let run = Self.peer(logs: true)
+            run.feed([Unit.policy(logs: false), WireFrames.reset(1, code: ErrorCode.disabledByPolicy.rawValue)])
             #expect(Self.opens(run.written) == [1])
             run.feed([Unit.policy(logs: true)])
             #expect(Self.opens(run.written) == [1, 3])
@@ -367,7 +385,9 @@ extension CoreUnits {
             #expect(Self.readies(run) == 2)
         }
 
-        @Test("Below 61,440 bytes of stream credit there is no .ready; credit back to a whole batch asks again")
+        @Test(
+            "Below 64 KiB of stream credit there is no .ready, even with a whole batch's worth; reaching 64 KiB asks again"
+        )
         func readyWaitsForCredit() {
             let run = Self.peer(logs: true)
             let batch = Unit.nearlyFullBatch
@@ -398,11 +418,16 @@ extension CoreUnits {
             #expect(Self.readies(run) == 2)
         }
 
-        @Test("An empty batch with nothing dropped sends nothing")
+        @Test("An empty batch with nothing dropped sends nothing and asks for no other batch")
         func emptyBatch() {
             let run = Self.peer(logs: true)
+            let asked = Self.readies(run)
+            #expect(asked == 1)
             run.input(.logs(.batch(LogBatchValue(records: [], droppedBefore: 0))))
             #expect(Self.batches(run.written).isEmpty)
+            #expect(Self.readies(run) == asked)
+            run.input(.logs(.recordsAvailable))
+            #expect(Self.readies(run) == asked + 1)
         }
 
         @Test("A batch after the stream ended sends nothing")
@@ -414,7 +439,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("LogReceiver: every row of §7.4")
+    @Suite("LogReceiver: every row of its table")
     struct LogReceiverUnitTests {
         /// A real host with an established session peer and LOG_FORWARD open on stream 1.
         static func host() -> HostileRun {
@@ -505,7 +530,7 @@ extension CoreUnits {
             #expect(Self.violations(run) == 1)
         }
 
-        @Test("Received strings are bounded again as §7.1")
+        @Test("Received strings are bounded again, as a record is when built")
         func receivedBounds() {
             let run = Self.host()
             var record = Self.protoRecord(String(repeating: "t", count: 20_000))
@@ -528,7 +553,7 @@ extension CoreUnits {
             #expect(Self.deliveries(run).isEmpty)
         }
 
-        @Test("A second LOG_FORWARD while one is open → RESET STREAM_PROTOCOL_ERROR (§3.6 step 5)")
+        @Test("A second LOG_FORWARD while one is open → RESET STREAM_PROTOCOL_ERROR")
         func secondStreamRefused() {
             let run = Self.host()
             run.feed([WireFrames.open(3, .logForward, body: Kernova_V2_LogOpen())])
@@ -546,7 +571,7 @@ extension CoreUnits {
             #expect(run.written.filter { $0.type == .open }.isEmpty)
         }
 
-        @Test("Policy turning LOGS off while the stream is open → RESET DISABLED_BY_POLICY (§3.7)")
+        @Test("Policy turning LOGS off while the stream is open → RESET DISABLED_BY_POLICY")
         func policyOff() {
             let run = Self.host()
             run.command(.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: false)])))

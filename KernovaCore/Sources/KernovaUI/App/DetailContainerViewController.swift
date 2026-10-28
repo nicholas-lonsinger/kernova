@@ -384,6 +384,9 @@ extension DetailContainerViewController: LibraryWindowPresenting {
         }
         pendingWizard = false
         let creationVM = viewModel.makeCreationViewModel()
+        // Started with the wizard rather than on the restore image step, which
+        // cannot be left on "Download Latest" until the lookup answers.
+        creationVM.loadLatestImageDetails()
         let wizard = VMCreationWizardViewController(creationVM: creationVM)
         wizard.onCancel = { [weak self] in self?.wizardPresenter.close() }
         wizard.onCreate = { [weak self, weak wizard] creationVM in

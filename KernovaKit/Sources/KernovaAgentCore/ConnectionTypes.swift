@@ -17,9 +17,11 @@ public struct ConnectionConfiguration: Sendable {
     public var adverts: [(FeatureID, LocalAdvert)]
     /// Host only: the 16 random bytes the runtime drew for this connection.
     public var sessionToken: Data
-    /// Host only: the VM's policy, sent right after the peer's Hello.
+    /// Host only: the VM's policy at accept; it seeds `Connection.currentPolicy`,
+    /// which `setPolicy` replaces and the Hello-time `PolicyUpdate` carries.
     public var hostPolicy: PolicySnapshot
-    /// Host only: the bundles whose offer for the peer goes right after the policy.
+    /// Host only: the bundles at accept; they seed the connection's bundles,
+    /// which `setBundles` replaces and the Hello-time offer comes from.
     public var hostBundles: [BundledPayload]
     /// The receiver policy the far side is judged by.
     public var policy: ReceiverPolicy
@@ -84,17 +86,17 @@ public struct FeatureAdvertValue: Sendable, Equatable {
 public enum ConnectionEvent: Sendable, Equatable {
     /// The far side's Hello was read; the connection is established.
     case helloReceived(RemoteHello)
-    /// The far side's adverts changed (coalesced).
+    /// The far side's adverts changed.
     case remoteAdvertsChanged
-    /// Host: the peer's state changed (coalesced).
+    /// Host: the peer's state changed.
     case peerStateChanged(PeerSessionState)
-    /// Peer: a `PolicyUpdate` arrived (coalesced).
+    /// Peer: a `PolicyUpdate` arrived.
     case policyChanged(PolicySnapshot)
-    /// Peer: an `UpdateAvailable` arrived (coalesced).
+    /// Peer: an `UpdateAvailable` arrived.
     case updateAvailable(UpdateManifestValue?)
     /// A liveness verdict.
     case liveness(LivenessChange)
-    /// The far side opened a stream that passed §3.6's checks.
+    /// The far side opened a stream this side accepted.
     case opened(StreamID, StreamKind, body: Data)
     /// A message arrived on a stream.
     case message(StreamID, Data)
@@ -102,18 +104,22 @@ public enum ConnectionEvent: Sendable, Equatable {
     case data(StreamID, Data)
     /// The far side sent END.
     case remoteEnded(StreamID, body: Data)
-    /// A stream became writable again (§3.4 S4).
+    /// A stream became writable again.
     case writable(StreamID)
     /// A stream ended; nothing more comes for it.
     case streamClosed(StreamID, StreamClosure)
+    /// A stream of this kind that this side opened left the table, freeing the
+    /// concurrency and per-kind slots it held: `canOpen` may now allow what it refused.
+    case slotFreed(StreamKind)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended; nothing more comes.
     case closed(ConnectionClosure)
 }
 
-/// Frames ready for the transport. Write `chunks` in order; after one marked
-/// `isFinal`, close the transport.
+/// Frames ready for the transport. Write `chunks` in order; once one marked
+/// `isFinal` is written, report it with `finalTransmitWritten`, and close the
+/// transport on the turn that finds the connection `finished`.
 public struct Transmit: Sendable, Equatable {
     /// The bytes, as headers and uncopied payloads.
     public var chunks: [Data]
@@ -125,7 +131,7 @@ public struct Transmit: Sendable, Equatable {
 }
 
 /// A connection's current memory and credit, for the simulation's bounds and
-/// conservation checks (§10.3).
+/// conservation checks.
 public struct MemoryFootprint: Sendable, Equatable {
     /// Raw DATA delivered to machines and not yet consumed.
     public var heldRawBytes: Int
@@ -149,7 +155,7 @@ public struct MemoryFootprint: Sendable, Equatable {
     public var unreturnedConnectionCredit: Int
 }
 
-/// The phases of one stream, from this side (§3.2).
+/// The phases of one stream, from this side.
 public enum StreamPhase: Sendable, Equatable {
     /// Both halves open.
     case open

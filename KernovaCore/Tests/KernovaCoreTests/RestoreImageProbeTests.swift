@@ -44,18 +44,17 @@ struct ProbedRestoreImageTests {
         }
     }
 
-    @Test("An off-convention URL gets a generated name, never the shared default")
+    @Test("An off-convention URL gets a name generated for it")
     func suggestedFilenameForOffConventionURL() {
         for urlString in [
             "https://example.com/downloads/",
             "https://example.com/image.zip",
             "https://example.com/restore.ipsw",
         ] {
-            let filename = makeProbedImage(urlString: urlString).suggestedFilename
-            #expect(filename.hasSuffix(".ipsw"), "expected an .ipsw name from '\(urlString)'")
-            // "Download Latest" owns that name; sharing it would let its image
-            // satisfy this one's download.
-            #expect(filename != RestoreImageFilename.fallback)
+            let image = makeProbedImage(urlString: urlString)
+            #expect(
+                image.suggestedFilename.hasSuffix(".ipsw"), "expected an .ipsw name from '\(urlString)'")
+            #expect(image.suggestedFilename == RestoreImageFilename.unique(for: image.url))
         }
     }
 
@@ -120,11 +119,11 @@ struct LatestRestoreImageTests {
                 == "UniversalMac_26.5.2_25F84_Restore.ipsw")
     }
 
-    @Test("An off-convention URL gets a generated name, never the shared fallback")
+    @Test("An off-convention URL gets a name generated for it")
     func suggestedFilenameForOffConventionURL() {
         let image = makeLatestImage(urlString: "https://example.com/restore.ipsw")
         #expect(image.suggestedFilename.hasSuffix(".ipsw"))
-        #expect(image.suggestedFilename != RestoreImageFilename.fallback)
+        #expect(image.suggestedFilename == RestoreImageFilename.unique(for: image.url))
     }
 }
 

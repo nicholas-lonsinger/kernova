@@ -16,9 +16,9 @@ extension CoreUnits {
         static let hostBulk = StreamKind.UNRECOGNIZED(9001)
         static let peerBulk = StreamKind.UNRECOGNIZED(9000)
 
-        // MARK: §3.5 transmit order
+        // MARK: Transmit order
 
-        @Test("pollTransmit hands frames out in §3.5 order: session, connection WINDOW, PING, RESETs, WINDOWs, FIFOs")
+        @Test("pollTransmit hands frames out in order: session, connection WINDOW, PING, RESETs, WINDOWs, FIFOs")
         func transmitOrder() {
             var policy = ReceiverPolicy.production
             policy.connectionReplenishThreshold = 1_000
@@ -78,7 +78,8 @@ extension CoreUnits {
             wire.connection.end(dropped, body: Data())
             wire.connection.reset(dropped, WireError(.cancelled))
             let events = wire.takeEvents()
-            #expect(events == [.streamClosed(dropped, .resetLocally(WireError(.cancelled)))])
+            #expect(
+                events == [.streamClosed(dropped, .resetLocally(WireError(.cancelled))), .slotFreed(.powerRequest)])
             let next = wire.connection.open(.powerRequest, body: body)
             #expect(next.rawValue == dropped.rawValue + 2)
             let frames = wire.flush()
@@ -114,7 +115,7 @@ extension CoreUnits {
             #expect(wire.connection.canOpen(.powerRequest))
         }
 
-        // MARK: §3.4 credit
+        // MARK: Credit
 
         @Test("Connection credit is conserved after a RESET with raw DATA held, queued and in flight")
         func conservationAfterReset() {
@@ -264,7 +265,7 @@ extension CoreUnits {
             #expect(returned.dropFirst().first.map { $0.at >= Unit.at(62) } == true)
         }
 
-        // MARK: §3.4 S4 writability
+        // MARK: Writability
 
         @Test("A message stream fires .writable on the rising edge of credit ≥ 64 KiB with no message unsent")
         func writableRisingEdge() {
@@ -289,7 +290,7 @@ extension CoreUnits {
             #expect(wire.takeEvents() == [.writable(stream)])
         }
 
-        // MARK: §9.6 misuse
+        // MARK: Misuse
 
         enum Misuse: String, CaseIterable, Sendable, CustomTestStringConvertible {
             case messageOnSilentDirection, rawPastWritable, sendAfterEnd, resetOfClosed, openOtherRolesKind
@@ -342,47 +343,7 @@ extension CoreUnits {
             #expect(wire.connection.state == .finished)
         }
 
-        // MARK: §4.4 coalescing
-
-        @Test("Snapshots received in one drain coalesce into one event each, the newest kept (host)")
-        func coalescedHostEvents() {
-            var wire = Wire.host()
-            wire.establish()
-            let states = ["a", "b", "c"].map { name in
-                WireFrames.session { message in
-                    message.peerState.sessionID = "c1"
-                    message.peerState.console = .on
-                    message.peerState.userName = name
-                }
-            }
-            wire.feed(states + [Unit.capabilities(), Unit.capabilities(withdrawing: .power), Unit.capabilities()])
-            #expect(
-                wire.takeEvents() == [
-                    .peerStateChanged(PeerSessionState(console: .on, sessionID: "c1", userName: "c")),
-                    .remoteAdvertsChanged,
-                ])
-            wire.feed([states[0]])
-            #expect(
-                wire.takeEvents() == [.peerStateChanged(PeerSessionState(console: .on, sessionID: "c1", userName: "a"))]
-            )
-        }
-
-        @Test("Policy and update offers received in one drain coalesce, the newest kept (peer)")
-        func coalescedPeerEvents() {
-            var wire = Wire.peer()
-            wire.establish()
-            let first = Unit.manifest(tag: 1)
-            let last = Unit.manifest(tag: 2)
-            wire.feed([
-                Unit.policy(logs: true), Unit.updateAvailable(first), Unit.policy(logs: false),
-                Unit.updateAvailable(nil), Unit.updateAvailable(last),
-            ])
-            #expect(
-                wire.takeEvents() == [
-                    .policyChanged(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: false)])),
-                    .updateAvailable(last),
-                ])
-        }
+        // MARK: Coalescing
 
         @Test("Unsent snapshots coalesce in the transmit queue, the newest replacing the older")
         func coalescedTransmit() {

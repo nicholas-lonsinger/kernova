@@ -20,7 +20,8 @@ struct LinuxImageURLSheetContentViewControllerTests {
         initialChecksum: String? = nil
     ) -> LinuxImageURLSheetContentViewController {
         let vc = LinuxImageURLSheetContentViewController(
-            resolveService: resolve, initialURL: initialURL, initialChecksum: initialChecksum)
+            resolveService: resolve, downloadsDirectory: makeTestDownloadsDirectory(),
+            initialURL: initialURL, initialChecksum: initialChecksum)
         vc.loadViewIfNeeded()
         return vc
     }

@@ -11,7 +11,7 @@ import KernovaWire
 enum IdentityScenarios {
     static let all: [Scenario] = [
         Scenario(
-            name: "identity row 1: the same instance supersedes its own dead connection",
+            name: "identity, same instance: the same instance supersedes its own dead connection",
             script: { world in
                 var first = PeerSpec.session()
                 first.instanceID = Data(repeating: 7, count: 16)
@@ -26,7 +26,7 @@ enum IdentityScenarios {
                     + expectThat(world.liveLinks.count == 1, "one live connection")
             }),
         Scenario(
-            name: "identity row 2: a USER install outranks a SYSTEM-scope session peer",
+            name: "identity, rank: a USER install outranks a SYSTEM-scope session peer",
             end: .sec(70),
             script: { world in
                 world.addPeer(.session(scope: .user))
@@ -42,7 +42,7 @@ enum IdentityScenarios {
                     + expectThat(refused.count <= 2, "the lower rank waits 60 s between attempts: \(refused.count)")
             }),
         Scenario(
-            name: "identity row 2: an incoming USER install displaces a development build",
+            name: "identity, rank: an incoming USER install displaces a development build",
             script: { world in
                 world.addPeer(.session(scope: .unspecified))
                 var higher = PeerSpec.session(scope: .user)
@@ -54,11 +54,11 @@ enum IdentityScenarios {
                     + expectThat(world.liveLinks.first?.peerIndex == 1, "the USER install holds the identity")
             }),
         Scenario(
-            name: "identity row 3: a restart beside a hung predecessor takes over on its retry",
+            name: "identity, unresponsive existing: a restart beside a hung predecessor takes over on its retry",
             end: .sec(60),
-            options: { options, _ in
+            options: { options in
                 options.liveness = .scenarioChecked
-                options.faults = [.peerHang(peer: 0, at: .sec(1), for: .sec(100))]
+                options.faults = [.peerHang(peer: 0, in: .ms(500) ... .sec(2), for: .sec(100))]
             },
             script: { world in
                 world.addPeer(.session())
@@ -73,7 +73,7 @@ enum IdentityScenarios {
                     + expectThat(world.liveLinks.contains { $0.peerIndex == 1 }, "the restart holds the identity")
             }),
         Scenario(
-            name: "identity row 4: two live instances dialing in a loop take no turns",
+            name: "identity, equal rank: two live instances dialing in a loop take no turns",
             end: .sec(120),
             script: { world in
                 world.addPeer(.session())
@@ -90,7 +90,7 @@ enum IdentityScenarios {
         Scenario(
             name: "identity: a guest process claiming the system role with USER scope is refused at Hello",
             end: .sec(10),
-            options: { options, _ in options.hostile = true },
+            options: { options in options.hostile = true },
             script: { world in
                 var spec = PeerSpec.system()
                 spec.claim.scope = .user
@@ -101,7 +101,7 @@ enum IdentityScenarios {
                     + expectThat(world.hub.helloCount == 0, "the hub never sees it")
             }),
         Scenario(
-            name: "identity: a second SYSTEM-scope system peer beside a live one is row 4",
+            name: "identity: a second SYSTEM-scope system peer beside a live one is refused as an equal-rank duplicate",
             end: .sec(30),
             script: { world in
                 world.addPeer(.system())
@@ -126,7 +126,9 @@ enum LogScenarios {
             name: "logs: 10,000 records against a reader stall, then recovery",
             seeds: 30,
             end: .sec(30),
-            options: { options, _ in options.faults = [.readerStall(.host, link: 0, at: .sec(1), for: .sec(5))] },
+            options: { options in
+                options.faults = [.readerStall(.host, link: 0, in: .ms(900) ... .ms(1_200), for: .sec(5))]
+            },
             script: { world in
                 world.addPeer(.session())
                 for burst in 0..<100 {
@@ -177,10 +179,13 @@ enum LogScenarios {
 }
 
 enum StreamScenarios {
+    /// The longest the default power adapter takes from perform to handed off, plus one round trip's slack.
+    static let adapterSteps = PowerScript().steps.reduce(SimTime(0)) { $0 + $1.after.upperBound } + .ms(50)
+
     static let all: [Scenario] = [
         Scenario(
             name: "streams: the 65th concurrent stream is refused locally",
-            options: { options, _ in
+            options: { options in
                 options.testKinds = true
                 options.testBulkBytes = -1
             },
@@ -206,7 +211,7 @@ enum StreamScenarios {
         Scenario(
             name: "streams: two stalled bulk pulls beside a power request",
             seeds: 60,
-            options: { options, _ in
+            options: { options in
                 options.testKinds = true
                 options.testBulkBytes = 40 << 20
             },
@@ -224,12 +229,12 @@ enum StreamScenarios {
             expect: { world in
                 let done = world.hub.routingOutputs.last?.time ?? 0
                 return expectThat(isHandedOff(world.finalRouting), "\(String(describing: world.finalRouting))")
-                    + expectThat(done <= .ms(2_400), "on schedule: at \(done / 1_000_000) ms")
+                    + expectThat(done <= .sec(2) + adapterSteps, "on schedule: at \(done / 1_000_000) ms")
             }),
         Scenario(
             name: "streams: one stalled bulk consumer beside an active bulk stream",
             seeds: 20,
-            options: { options, _ in
+            options: { options in
                 options.testKinds = true
                 options.testBulkBytes = 48 << 20
             },
@@ -255,41 +260,136 @@ enum StreamScenarios {
 }
 
 enum LivenessScenarios {
-    static func quiet(_ name: String, _ faults: [Fault], end: SimTime = .sec(60)) -> Scenario {
+    /// Where an established connection's fault may start: a span of at least
+    /// one PING period, so the seed moves the fault against the PING phase.
+    static let established: SimWindow = .sec(3) ... .sec(8)
+    /// After both peers dialed at 1 ms and before either Hello arrives.
+    static let beforeHello: SimWindow = .us(1_001) ... .us(1_090)
+
+    /// A session peer and a system peer through `faults`: both connections end
+    /// up live, with no liveness verdict, liveness close or Hello timeout.
+    static func quiet(
+        _ name: String, _ faults: [Fault], end: SimTime = .sec(60),
+        options extra: @escaping @Sendable (inout SimOptions) -> Void = { _ in },
+        session: PeerSpec = .session(), script: @escaping @Sendable (SimWorld) -> Void = { _ in },
+        expect: @escaping @Sendable (SimWorld) -> [String] = { _ in [] }
+    ) -> Scenario {
         Scenario(
             name: "liveness: \(name)", seeds: 60, end: end,
-            options: { options, _ in options.faults = faults },
+            options: { options in
+                options.faults = faults
+                extra(&options)
+            },
             script: { world in
-                world.addPeer(.session())
+                world.addPeer(session)
                 world.addPeer(.system())
+                script(world)
             },
             expect: { world in
                 expectThat(world.liveLinks.count == 2, "both connections survive: \(world.liveLinks.count)")
+                    + expect(world)
             })
     }
 
-    static let all: [Scenario] = [
-        quiet("VM pause of 4 s", [.vmFreeze(at: .sec(3), for: .sec(4), guestClockJumps: true)]),
-        quiet("VM pause of 9.9 s, clock leaps", [.vmFreeze(at: .sec(3), for: .ms(9_900), guestClockJumps: true)]),
-        quiet("VM pause of 9.9 s, clock holds", [.vmFreeze(at: .sec(3), for: .ms(9_900), guestClockJumps: false)]),
-        quiet("VM pause of 25 s", [.vmFreeze(at: .sec(3), for: .sec(25), guestClockJumps: true)]),
+    /// `quiet` for a fault that starts before either side has read the other's Hello.
+    static func quietBeforeHello(_ name: String, _ fault: Fault) -> Scenario {
         quiet(
-            "VM pause of 10 minutes", [.vmFreeze(at: .sec(3), for: .sec(600), guestClockJumps: true)], end: .sec(700)),
-        quiet("host sleep of 3 s", [.hostSleep(at: .sec(3), for: .sec(3))]),
-        quiet("host sleep of 1 hour", [.hostSleep(at: .sec(3), for: .sec(3_600))], end: .sec(3_700)),
-        quiet("host clock steps back an hour", [.clockStep(.host, at: .sec(3), by: -3_600_000_000_000)]),
-        quiet("host clock steps forward an hour", [.clockStep(.host, at: .sec(3), by: 3_600_000_000_000)]),
-        quiet("peer clock steps forward 9 s", [.clockStep(.peer(0), at: .sec(3), by: 9_000_000_000)]),
-        quiet("peer clock steps back an hour", [.clockStep(.peer(1), at: .sec(3), by: -3_600_000_000_000)]),
-        quiet("consumer stall", [.consumerStall(peer: 0, at: .sec(2), for: .sec(30))]),
-        quiet("a cut, then a redial", [.cut(.peerToHost(link: 0), afterByte: 5_000)]),
-        quiet("a host reader stall of 10 s", [.readerStall(.host, link: 0, at: .sec(3), for: .sec(10))]),
+            name, [fault],
+            expect: { world in
+                let at = world.faultTime(0) ?? .max
+                return expectThat(
+                    !world.checker.helloReceived.isEmpty && world.checker.helloReceived.allSatisfy { $0.time > at },
+                    "the fault at \(at) ns precedes every Hello read: \(world.checker.helloReceived.map(\.time))")
+            })
+    }
+
+    /// Past the 8 MiB bulk receive window, so a stalled consumer holds the stream at its credit.
+    static let consumerStallBytes = 12 << 20
+    static let bulkBytes = 24 << 20
+
+    static let all: [Scenario] = [
+        quiet("VM pause of 4 s", [.vmFreeze(in: established, for: .sec(4), guestClockJumps: true)]),
+        quiet("VM pause of 9.9 s, clock leaps", [.vmFreeze(in: established, for: .ms(9_900), guestClockJumps: true)]),
+        quiet("VM pause of 9.9 s, clock holds", [.vmFreeze(in: established, for: .ms(9_900), guestClockJumps: false)]),
+        quiet("VM pause of 25 s", [.vmFreeze(in: established, for: .sec(25), guestClockJumps: true)]),
+        quiet(
+            "VM pause of 10 minutes", [.vmFreeze(in: established, for: .sec(600), guestClockJumps: true)],
+            end: .sec(700)),
+        quiet("host sleep of 3 s", [.hostSleep(in: established, for: .sec(3))]),
+        quiet("host sleep of 1 hour", [.hostSleep(in: established, for: .sec(3_600))], end: .sec(3_700)),
+        quiet("host clock steps back an hour", [.clockStep(.host, in: established, by: -3_600_000_000_000)]),
+        quiet("host clock steps forward an hour", [.clockStep(.host, in: established, by: 3_600_000_000_000)]),
+        quiet("peer clock steps forward 9 s", [.clockStep(.peer(0), in: established, by: 9_000_000_000)]),
+        quiet("peer clock steps back an hour", [.clockStep(.peer(1), in: established, by: -3_600_000_000_000)]),
+        quietBeforeHello(
+            "VM pause of 12 s before either Hello arrives",
+            .vmFreeze(in: beforeHello, for: .sec(12), guestClockJumps: true)),
+        quietBeforeHello("host sleep of 12 s before either Hello arrives", .hostSleep(in: beforeHello, for: .sec(12))),
+        quietBeforeHello(
+            "host clock steps back an hour before either Hello arrives",
+            .clockStep(.host, in: beforeHello, by: -3_600_000_000_000)),
+        quiet(
+            "the peer's installer stalls 30 s through a 12 MiB pull",
+            [.consumerStall(.peer, .updatePull, peer: 0, in: established, for: .sec(30))],
+            session: UpdateScenarios.peerWithInstaller(),
+            script: { world in
+                // The offer arrives just after the stall starts, so the pull runs into it.
+                world.at(world.faults[0].start + .ms(1)) { world in
+                    world.hub.setBundles([SimHub.bundle(size: consumerStallBytes, tag: 41)], world: world)
+                }
+            },
+            expect: { world in
+                let release = world.faults[0].start + .sec(30)
+                let staged = world.hub.updateResults.first { $0.result.kind == .staged }
+                return expectThat(
+                    staged.map { $0.time > release } ?? false,
+                    "the pull stages after the release at \(release / 1_000_000) ms: \(world.hub.updateResults.map(\.time))"
+                )
+            }),
+        quiet(
+            "the host's bulk consumer stalls 10 s through a 24 MiB stream",
+            [.consumerStall(.host, .UNRECOGNIZED(9001), peer: 0, in: established, for: .sec(10))],
+            options: { options in
+                options.testKinds = true
+                options.testBulkBytes = bulkBytes
+            },
+            script: { world in
+                // The host opens the stream just before the stall starts, so the stall holds its bytes.
+                world.at(world.faults[0].start - .ms(1)) { world in
+                    guard let link = world.peers[0].link else { return }
+                    let stream = link.host?.openTestBulk(
+                        .UNRECOGNIZED(9001), consumes: true, now: world.localNow(.host))
+                    world.marks["stream"] = stream.map { Int($0.rawValue) }
+                    world.drain(link, .host)
+                }
+            },
+            expect: { world in
+                guard let stream = world.marks["stream"].map(UInt32.init) else { return ["no bulk stream opened"] }
+                let wire = world.links[0].wire.filter { $0.stream == stream }
+                let sent = wire.filter { $0.side == .peer && $0.type == .data }.reduce(0) { $0 + $1.length }
+                let ends = Set(wire.filter { $0.type == .end }.map(\.side))
+                return expectThat(sent == bulkBytes, "the peer sent \(sent) of \(bulkBytes) bytes")
+                    + expectThat(ends == [.host, .peer], "both sides ENDed the stream: \(ends)")
+                    + expectThat(!wire.contains { $0.type == .reset }, "no RESET on the stream")
+            }),
+        quiet(
+            "a cut, then a redial", [.cut(.peerToHost(link: 0), afterByte: 1...150)],
+            expect: { world in
+                let first = world.links[0]
+                return expectThat(first.peerIndex == 0, "link 0 is the session peer's")
+                    + expectThat(
+                        first.state(.host) == .finished || first.state(.host) == nil, "link 0 ended on the host")
+                    + expectThat(
+                        world.links.contains { $0.id > 0 && $0.peerIndex == 0 }, "the session peer dialed again")
+            }),
+        quiet(
+            "a host reader stall of 10 s", [.readerStall(.host, link: 0, in: established, for: .sec(10))]),
         Scenario(
             name: "liveness: a peer hung 22 s is unresponsive once, then responsive",
             seeds: 60, end: .sec(60),
-            options: { options, _ in
+            options: { options in
                 options.liveness = .scenarioChecked
-                options.faults = [.peerHang(peer: 0, at: .sec(3), for: .sec(22))]
+                options.faults = [.peerHang(peer: 0, in: established, for: .sec(22))]
             },
             script: { world in world.addPeer(.session()) },
             expect: { world in
@@ -300,15 +400,16 @@ enum LivenessScenarios {
                 let at = host[0].time
                 // The last frame before the hang left within one PING interval of it.
                 return expectThat(
-                    at >= .sec(3 + 15 - 5) && at <= .sec(3 + 15 + 1) + .ms(500), "unresponsive at \(at / 1_000_000) ms")
+                    at >= world.faults[0].start + .sec(15 - 5) && at <= world.faults[0].start + .sec(15 + 1) + .ms(500),
+                    "unresponsive at \(at / 1_000_000) ms")
                     + expectThat(world.liveLinks.count == 1, "the connection survives")
             }),
         Scenario(
             name: "liveness: a peer hung 60 s is closed LIVENESS_EXPIRED",
             seeds: 60, end: .sec(90),
-            options: { options, _ in
+            options: { options in
                 options.liveness = .scenarioChecked
-                options.faults = [.peerHang(peer: 0, at: .sec(3), for: .sec(60))]
+                options.faults = [.peerHang(peer: 0, in: established, for: .sec(60))]
             },
             script: { world in world.addPeer(.session()) },
             expect: { world in
@@ -316,16 +417,17 @@ enum LivenessScenarios {
                 guard let close = closes.first else { return ["no LIVENESS_EXPIRED close"] }
                 let unresponsive = world.checker.livenessEvents.filter { $0.side == .host }.count
                 return expectThat(
-                    close.time >= .sec(3 + 30 - 5) && close.time <= .sec(3 + 30 + 1) + .ms(500),
+                    close.time >= world.faults[0].start + .sec(30 - 5)
+                        && close.time <= world.faults[0].start + .sec(30 + 1) + .ms(500),
                     "closed at \(close.time / 1_000_000) ms")
                     + expectThat(unresponsive == 1, "one unresponsive verdict first")
             }),
         Scenario(
             name: "liveness: a host reader stalled 20 s judges the peer unresponsive, then responsive",
             seeds: 40, end: .sec(60),
-            options: { options, _ in
+            options: { options in
                 options.liveness = .scenarioChecked
-                options.faults = [.readerStall(.host, link: 0, at: .sec(3), for: .sec(20))]
+                options.faults = [.readerStall(.host, link: 0, in: established, for: .sec(20))]
             },
             script: { world in world.addPeer(.session()) },
             expect: { world in
@@ -336,7 +438,7 @@ enum LivenessScenarios {
             }),
         Scenario(
             name: "liveness: peer death reads as transport lost, no verdict",
-            options: { options, _ in options.faults = [.peerDeath(peer: 0, at: .sec(3))] },
+            options: { options in options.faults = [.peerDeath(peer: 0, in: established)] },
             script: { world in world.addPeer(.session()) },
             expect: { world in
                 expectThat(world.hub.closures.first?.closure == .transportLost, "\(world.hub.closures)")

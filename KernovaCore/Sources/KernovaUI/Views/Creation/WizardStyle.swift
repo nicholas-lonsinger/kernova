@@ -143,6 +143,33 @@ func makeWizardBadge(
 ) -> NSView {
     let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
     icon.contentTintColor = .secondaryLabelColor
+    return makeWizardBadge(
+        leading: icon, text: text, secondaryText: secondaryText,
+        lineBreakMode: lineBreakMode, trailingButton: trailingButton)
+}
+
+/// Builds a wizard badge whose leading slot holds a small spinning progress
+/// indicator, for a badge naming something still being worked out.
+@MainActor
+func makeWizardProgressBadge(text: String, secondaryText: String? = nil) -> NSView {
+    let spinner = NSProgressIndicator()
+    spinner.style = .spinning
+    spinner.controlSize = .small
+    spinner.isIndeterminate = true
+    spinner.startAnimation(nil)
+    return makeWizardBadge(leading: spinner, text: text, secondaryText: secondaryText)
+}
+
+/// The badge layout behind ``makeWizardBadge(symbolName:text:secondaryText:lineBreakMode:trailingButton:)``,
+/// with any view in the leading slot.
+@MainActor
+private func makeWizardBadge(
+    leading icon: NSView,
+    text: String,
+    secondaryText: String?,
+    lineBreakMode: NSLineBreakMode = .byTruncatingTail,
+    trailingButton: NSButton? = nil
+) -> NSView {
     icon.setContentHuggingPriority(.required, for: .horizontal)
 
     let label = NSTextField(labelWithString: text)
@@ -204,9 +231,28 @@ func wizardApproximateSize(_ bytes: UInt64) -> String {
 /// rather than `NSString.abbreviatingWithTildeInPath`, which keys only on
 /// `NSHomeDirectory()`.
 func wizardAbbreviateWithTilde(_ path: String) -> String {
-    let processHome = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
-    for home in [processHome, UserHome.path] where path.hasPrefix(home) {
-        return "~" + path.dropFirst(home.count)
+    wizardAbbreviateWithTilde(
+        path,
+        homes: [
+            FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false),
+            UserHome.path,
+        ])
+}
+
+/// `path` with the first of `homes` it lies under spelled `~`: `"~/"` and the
+/// components below that home, or `"~"` for the home itself.
+///
+/// Matches whole components, so a home spelled with a trailing separator
+/// abbreviates the same as one without, and `/Users/me` never matches
+/// `/Users/mel`. Both are absolute paths, or `path` comes back unchanged.
+func wizardAbbreviateWithTilde(_ path: String, homes: [String]) -> String {
+    guard path.hasPrefix("/") else { return path }
+    let pathComponents = path.split(separator: "/")
+    for home in homes where home.hasPrefix("/") {
+        let homeComponents = home.split(separator: "/")
+        guard !homeComponents.isEmpty, pathComponents.starts(with: homeComponents) else { continue }
+        let below = pathComponents.dropFirst(homeComponents.count)
+        return below.isEmpty ? "~" : "~/" + below.joined(separator: "/")
     }
     return path
 }

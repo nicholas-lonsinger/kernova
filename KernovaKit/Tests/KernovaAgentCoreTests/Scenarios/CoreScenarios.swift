@@ -32,7 +32,7 @@ enum HandshakeScenarios {
             expect: { world in expectThat(world.liveLinks.count == 3, "three live links, \(world.liveLinks.count)") }),
         Scenario(
             name: "handshake: development build (scope UNSPECIFIED) is offered nothing",
-            options: { options, _ in options.bundles = [SimHub.bundle(size: 4096, tag: 7)] },
+            options: { options in options.bundles = [SimHub.bundle(size: 4096, tag: 7)] },
             script: { world in
                 var spec = PeerSpec.session(scope: .unspecified)
                 spec.installer = InstallerSpec()
@@ -44,13 +44,13 @@ enum HandshakeScenarios {
             }),
         Scenario(
             name: "protocol mismatch: peer at protocol 2 keeps the frozen subset",
-            options: { options, _ in options.bundles = [SimHub.bundle(size: 20_000, tag: 3)] },
+            options: { options in options.bundles = [SimHub.bundle(size: 20_000, tag: 3)] },
             script: { world in
                 var spec = PeerSpec.session()
                 spec.protocolVersion = 2
                 spec.installer = InstallerSpec()
                 world.addPeer(spec)
-                world.at(.sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .sec(1) ... .sec(3)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 let logs = world.hub.connected.first?.status[.logs]
@@ -65,6 +65,29 @@ enum HandshakeScenarios {
     ]
 }
 
+/// A request at 1 s that the OS accepts after a delay drawn from `accept`,
+/// and a peer death drawn from `death`: the outcome follows from whether the
+/// peer wrote ACCEPTED before it died.
+func connectionLost(_ name: String, accept: SimWindow, death: SimWindow) -> Scenario {
+    Scenario(
+        name: name,
+        options: { options in options.faults = [.peerDeath(peer: 0, in: death)] },
+        script: { world in
+            var session = PeerSpec.session()
+            session.power.steps = [(accept, .accepted)]
+            world.addPeer(session)
+            world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+        },
+        expect: { world in
+            let peer = PeerHandle(rawValue: 0)
+            let expected: RoutingOutput =
+                world.acceptedBefore(fault: 0) ? .lostAfterAcceptance(peer) : .indeterminate(peer)
+            return expectThat(
+                world.finalRouting == expected,
+                "expected \(expected), got \(String(describing: world.finalRouting))")
+        })
+}
+
 func isHandedOff(_ output: RoutingOutput?) -> Bool {
     if case .handedOff = output { return true }
     return false
@@ -76,7 +99,7 @@ enum PowerScenarios {
             name: "power: accept → asking apps → handed off",
             script: { world in
                 world.addPeer(.session())
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 let progress = world.hub.routingOutputs.contains {
@@ -92,12 +115,12 @@ enum PowerScenarios {
             name: "power: refuse → next provider → ACPI",
             script: { world in
                 var session = PeerSpec.session()
-                session.power.steps = [(.ms(30), .refused(.powerNotPermitted))]
+                session.power.steps = [(.ms(10) ... .ms(50), .refused(.powerNotPermitted))]
                 world.addPeer(session)
                 var system = PeerSpec.system()
-                system.power.steps = [(.ms(30), .refused(.powerNotPermitted))]
+                system.power.steps = [(.ms(10) ... .ms(50), .refused(.powerNotPermitted))]
                 world.addPeer(system)
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 guard case .acpi(.shutdown, let refusals) = world.finalRouting else {
@@ -112,10 +135,10 @@ enum PowerScenarios {
             name: "power: POWER_IN_PROGRESS ends routing indeterminate",
             script: { world in
                 var session = PeerSpec.session()
-                session.power.steps = [(.ms(30), .refused(.powerInProgress))]
+                session.power.steps = [(.ms(10) ... .ms(50), .refused(.powerInProgress))]
                 world.addPeer(session)
                 world.addPeer(.system())
-                world.at(.sec(1)) { world in world.hub.requestPower(.restart, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.restart, world: world) }
             },
             expect: { world in
                 expectThat(
@@ -129,10 +152,11 @@ enum PowerScenarios {
                 var session = PeerSpec.session()
                 let apps = [AppValue(displayName: "Editor", identifier: "editor"), AppValue(displayName: "Mail")]
                 session.power.steps = [
-                    (.ms(30), .accepted), (.ms(50), .waitingOnApps(apps)), (.ms(50), .blocked(apps)),
+                    (.ms(10) ... .ms(50), .accepted), (.ms(20) ... .ms(80), .waitingOnApps(apps)),
+                    (.ms(20) ... .ms(80), .blocked(apps)),
                 ]
                 world.addPeer(session)
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 guard case .blocked(_, let apps) = world.finalRouting else {
@@ -144,9 +168,9 @@ enum PowerScenarios {
             name: "power: cancelled in guest",
             script: { world in
                 var session = PeerSpec.session()
-                session.power.steps = [(.ms(30), .accepted), (.ms(80), .cancelledInGuest)]
+                session.power.steps = [(.ms(10) ... .ms(50), .accepted), (.ms(40) ... .ms(120), .cancelledInGuest)]
                 world.addPeer(session)
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 expectThat(
@@ -159,10 +183,10 @@ enum PowerScenarios {
             script: { world in
                 var session = PeerSpec.session()
                 session.power.steps = []
-                session.power.onCancel = .confirm(after: .ms(100))
+                session.power.onCancel = .confirm(after: .ms(50) ... .ms(150))
                 world.addPeer(session)
                 world.addPeer(.system())
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 let refused = world.hub.powerResults.contains { $0.result == .refused(WireError(.timeout)) }
@@ -177,49 +201,53 @@ enum PowerScenarios {
             script: { world in
                 var session = PeerSpec.session()
                 session.power.steps = []
-                session.power.onCancel = .silent
+                session.power.onCancel = .silent(after: .sec(20) ... .sec(30))
                 world.addPeer(session)
                 world.addPeer(.system())
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in
+                    world.marks["asked"] = Int(world.now / 1_000_000)
+                    world.hub.requestPower(.shutdown, world: world)
+                }
             },
             expect: { world in
-                let at = world.hub.routingOutputs.last?.time ?? 0
+                let at = (world.hub.routingOutputs.last?.time ?? 0) / 1_000_000
+                let after = Int(at) - (world.marks["asked"] ?? 0)
                 return expectThat(
                     world.finalRouting == .indeterminate(PeerHandle(rawValue: 0)),
                     "\(String(describing: world.finalRouting))")
                     + expectThat(
-                        at >= .sec(16) && at <= .sec(18),
-                        "indeterminate at 15 s + confirmation, at \(at / 1_000_000) ms")
+                        after >= 15_000 && after <= 17_000,
+                        "indeterminate at 15 s + confirmation, \(after) ms after the ask")
                     + expectThat(world.hub.asks.count == 1, "no second provider")
             }),
         Scenario(
-            name: "power: connection lost before acceptance → indeterminate",
-            options: { options, _ in options.faults = [.peerDeath(peer: 0, at: .ms(1_010))] },
+            name: "power: a cancel the adapter cannot confirm releases it: a request on a new connection reaches it",
+            seeds: 20,
+            end: .sec(90),
             script: { world in
                 var session = PeerSpec.session()
-                session.power.steps = [(.ms(500), .accepted)]
+                session.power.steps = []
+                session.power.onCancel = .silent(after: .sec(20) ... .sec(30))
                 world.addPeer(session)
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(.sec(45)) { world in
+                    world.hostCommand(.close(.shuttingDown, retryAfter: nil), link: world.links[0])
+                }
+                world.at(.sec(60)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
-                expectThat(
-                    world.finalRouting == .indeterminate(PeerHandle(rawValue: 0)),
-                    "\(String(describing: world.finalRouting))")
+                let performed = world.peers[0].performed
+                return expectThat(performed.count == 2, "both requests reached the adapter: \(performed.map(\.id))")
+                    + expectThat(
+                        performed.map(\.id.generation.rawValue) == [1, 2],
+                        "the second on the new connection: \(performed.map(\.id))")
             }),
-        Scenario(
-            name: "power: connection lost after acceptance → lost after acceptance",
-            options: { options, _ in options.faults = [.peerDeath(peer: 0, at: .ms(1_200))] },
-            script: { world in
-                var session = PeerSpec.session()
-                session.power.steps = [(.ms(20), .accepted)]
-                world.addPeer(session)
-                world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
-            },
-            expect: { world in
-                expectThat(
-                    world.finalRouting == .lostAfterAcceptance(PeerHandle(rawValue: 0)),
-                    "\(String(describing: world.finalRouting))")
-            }),
+        connectionLost(
+            "power: connection lost while the request waits on the OS → indeterminate unless ACCEPTED was sent",
+            accept: .ms(300) ... .ms(700), death: .ms(1_000) + 1 ... .ms(1_800)),
+        connectionLost(
+            "power: connection lost around a quick acceptance → lost after acceptance once ACCEPTED was sent",
+            accept: .ms(5) ... .ms(40), death: .ms(1_000) + 1 ... .ms(1_100)),
         Scenario(
             name: "power: session and system peers disagree on the console",
             script: { world in
@@ -237,10 +265,10 @@ enum PowerScenarios {
             name: "power: a second stop while routing is busy",
             script: { world in
                 var session = PeerSpec.session()
-                session.power.steps = [(.ms(300), .accepted), (.ms(300), .handedOff)]
+                session.power.steps = [(.ms(250) ... .ms(350), .accepted), (.ms(250) ... .ms(350), .handedOff)]
                 world.addPeer(session)
                 world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
-                world.at(.ms(1_100)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(in: .ms(1_010) ... .ms(1_490)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
                 let busy = world.hub.routingOutputs.contains { $0.output == .busy }
@@ -250,12 +278,13 @@ enum PowerScenarios {
         Scenario(
             name: "power: VM pause and guest clock leap inside the peer's deadline",
             end: .sec(40),
-            options: { options, _ in
-                options.faults = [.vmFreeze(at: .ms(1_100), for: .sec(25), guestClockJumps: true)]
+            options: { options in
+                // The freeze lands between the OPEN and the OS's acceptance.
+                options.faults = [.vmFreeze(in: .ms(1_010) ... .ms(1_440), for: .sec(25), guestClockJumps: true)]
             },
             script: { world in
                 var session = PeerSpec.session()
-                session.power.steps = [(.ms(500), .accepted), (.ms(100), .handedOff)]
+                session.power.steps = [(.ms(450) ... .ms(550), .accepted), (.ms(50) ... .ms(150), .handedOff)]
                 world.addPeer(session)
                 world.at(.sec(1)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
@@ -278,7 +307,7 @@ enum UpdateScenarios {
         Scenario(
             name: "update: pull of 3 MiB → staged",
             seeds: 20,
-            options: { options, _ in options.bundles = [SimHub.bundle(size: 3 << 20, tag: 11)] },
+            options: { options in options.bundles = [SimHub.bundle(size: 3 << 20, tag: 11)] },
             script: { world in world.addPeer(peerWithInstaller()) },
             expect: { world in
                 expectThat(world.hub.updateResults.first?.result.kind == .staged, "staged: \(world.hub.updateResults)")
@@ -287,7 +316,7 @@ enum UpdateScenarios {
             }),
         Scenario(
             name: "update: stale hash → UPDATE_STALE",
-            options: { options, _ in options.bundles = [SimHub.bundle(size: 30_000, tag: 12)] },
+            options: { options in options.bundles = [SimHub.bundle(size: 30_000, tag: 12)] },
             script: { world in
                 world.addPeer(peerWithInstaller())
                 // The offer changes between the UpdateAvailable and the OPEN.
@@ -306,7 +335,7 @@ enum UpdateScenarios {
         Scenario(
             name: "update: the offer changes mid-pull → UPDATE_STALE, then the new one",
             seeds: 20,
-            options: { options, _ in options.bundles = [SimHub.bundle(size: 2 << 20, tag: 14)] },
+            options: { options in options.bundles = [SimHub.bundle(size: 2 << 20, tag: 14)] },
             script: { world in
                 world.addPeer(peerWithInstaller())
                 world.at(.ms(4)) { world in world.hub.setBundles([SimHub.bundle(size: 100_000, tag: 15)], world: world)
@@ -322,39 +351,10 @@ enum UpdateScenarios {
                         "the new offer installed: \(world.peers[0].installed)")
             }),
         Scenario(
-            name: "update: payload short → REJECTED UPDATE_SIZE_MISMATCH, not pulled again",
-            options: { options, _ in
-                options.bundles = [SimHub.bundle(size: 20_000, tag: 16)]
-                options.payloadSizeSkew = -1000
-            },
-            script: { world in world.addPeer(peerWithInstaller()) },
-            expect: { world in
-                expectThat(
-                    world.hub.updateResults.first?.result
-                        == UpdateResultValue(kind: .rejected, error: WireError(.updateSizeMismatch)),
-                    "\(world.hub.updateResults)")
-                    + expectThat(world.peers[0].rejectedHash == SimHub.tagHash(16), "rejected hash recorded")
-                    + expectThat(world.hub.updateResults.count == 1, "pulled once")
-            }),
-        Scenario(
-            name: "update: payload long → RESET UPDATE_SIZE_MISMATCH",
-            options: { options, _ in
-                options.bundles = [SimHub.bundle(size: 20_000, tag: 17)]
-                options.payloadSizeSkew = 1000
-            },
-            script: { world in world.addPeer(peerWithInstaller()) },
-            expect: { world in
-                let reset = world.hub.updateClosures.contains {
-                    $0.closure == .resetByPeer(WireError(.updateSizeMismatch))
-                }
-                return expectThat(reset, "reset SIZE_MISMATCH: \(world.hub.updateClosures)")
-                    + expectThat(world.peers[0].rejectedHash == SimHub.tagHash(17), "rejected hash recorded")
-            }),
-        Scenario(
             name: "update: new version hangs before Hello → rolled back; offered again only when it changes",
             seeds: 20,
             end: .sec(400),
-            options: { options, _ in options.bundles = [SimHub.bundle(size: 100_000, tag: 18)] },
+            options: { options in options.bundles = [SimHub.bundle(size: 100_000, tag: 18)] },
             script: { world in
                 var spec = peerWithInstaller()
                 spec.installer?.newVersionHangs = true

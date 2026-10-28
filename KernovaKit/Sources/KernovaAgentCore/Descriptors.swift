@@ -14,13 +14,13 @@ public enum OpenerRole: Sendable, Equatable {
     case peer
 }
 
-/// What one direction of a stream kind carries (§3.6).
+/// What one direction of a stream kind carries.
 public enum StreamDirection: Sendable, Equatable {
     /// Nothing but END and RESET.
     case nothing
     /// MESSAGE DATA only.
     case messages
-    /// Raw DATA only; such a direction is raised to the bulk target (§3.4 R3).
+    /// Raw DATA only; such a direction is raised to the bulk target.
     case rawData
 }
 
@@ -31,7 +31,7 @@ package enum KindOwner: Sendable, Equatable {
     case testBulk
 }
 
-/// One row of the static kind table (§3.6).
+/// One row of the static kind table.
 public struct StreamKindDescriptor: Sendable {
     /// The kind the row describes.
     public var kind: StreamKind
@@ -48,11 +48,13 @@ public struct StreamKindDescriptor: Sendable {
     public var maxPerConnection: Int?
     /// The RESET code for an OPEN past `maxPerConnection`.
     public var duplicateCode: ErrorCode
-    package var owner: KindOwner
+    /// The machine serving accepted streams of the kind; nil only for the
+    /// placeholder row a refused OPEN of an unknown kind carries.
+    package var owner: KindOwner?
     let isValidOpenBody: @Sendable (Data) -> Bool
 
     package init(
-        kind: StreamKind, feature: FeatureID?, owner: KindOwner, openerRole: OpenerRole,
+        kind: StreamKind, feature: FeatureID?, owner: KindOwner?, openerRole: OpenerRole,
         openerToAcceptor: StreamDirection, acceptorToOpener: StreamDirection, maxPerConnection: Int?,
         duplicateCode: ErrorCode = .streamProtocolError, isValidOpenBody: @escaping @Sendable (Data) -> Bool
     ) {
@@ -83,7 +85,7 @@ public struct StreamKindDescriptor: Sendable {
             isValidOpenBody: { (try? Kernova_V2_LogOpen(serializedBytes: $0)) != nil }),
     ]
 
-    /// The simulation's bulk kinds (§10.4): 9000 opened by a peer, 9001 by the
+    /// The simulation's bulk kinds: 9000 opened by a peer, 9001 by the
     /// host, each carrying raw DATA from acceptor to opener, any number at once.
     package static let testBulk: [StreamKindDescriptor] = [
         StreamKindDescriptor(
@@ -104,7 +106,7 @@ public struct StreamKindDescriptor: Sendable {
         asOpener ? acceptorToOpener : openerToAcceptor
     }
 
-    /// The ErrorCode range a received RESET of this kind keeps as sent, past 50–99 (§3.7).
+    /// The ErrorCode range a received RESET of this kind keeps as sent, past 50–99.
     var featureCodeRange: ClosedRange<Int>? {
         switch feature {
         case .power: 100...119
@@ -115,7 +117,7 @@ public struct StreamKindDescriptor: Sendable {
     }
 }
 
-/// The fixed facts about each feature the core implements (§4.2, §4.3).
+/// The fixed facts about each feature the core implements.
 struct FeatureDescriptor: Sendable {
     var feature: FeatureID
     var frozen: Bool
@@ -127,7 +129,7 @@ struct FeatureDescriptor: Sendable {
     static let all: [FeatureDescriptor] = [
         FeatureDescriptor(
             feature: .power, frozen: true, policyGoverned: false, version: 1,
-            paramsDecode: { (try? Kernova_V2_PowerCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { PowerOffer(params: $0) != nil }),
         FeatureDescriptor(
             feature: .update, frozen: true, policyGoverned: false, version: 1,
             paramsDecode: { (try? Kernova_V2_UpdateCapability(serializedBytes: $0)) != nil }),
@@ -141,7 +143,7 @@ struct FeatureDescriptor: Sendable {
     }
 }
 
-/// The receiver policy a connection judges the far side by (§3.3, §3.4, §5.1).
+/// The receiver policy a connection judges the far side by.
 /// Nothing here is frozen; tests shorten it.
 public struct ReceiverPolicy: Sendable, Equatable {
     /// Silence after which the far side is unresponsive.
@@ -150,11 +152,12 @@ public struct ReceiverPolicy: Sendable, Equatable {
     public var closeAfter: CoreDuration
     /// How long the far side's Hello may take.
     public var helloTimeout: CoreDuration
-    /// How often this side sends a PING; never above the frozen 5 s floor.
+    /// How often this side sends a PING, each due one interval after the last was
+    /// due; below the frozen 5 s maximum so timer and write latency stay inside it.
     public var pingInterval: CoreDuration
-    /// A judged deadline found passed fires only this much raw time later (§5.2 rule 4).
+    /// A judged deadline found passed fires only this much raw time later.
     public var expiryConfirmation: CoreDuration
-    /// A step longer than this charges nothing to the far side (§5.2 rule 3).
+    /// A step longer than this charges nothing to the far side.
     public var suspendedStep: CoreDuration
     /// The receive window a raw-DATA direction is raised to.
     public var bulkReceiveTarget: Int
@@ -171,10 +174,10 @@ public struct ReceiverPolicy: Sendable, Equatable {
     /// Diagnostics emitted per minute before the rest are counted.
     public var diagnosticsPerMinute: Int
 
-    /// The values §3–§5 give.
+    /// The values a shipping endpoint runs with.
     public static let production = ReceiverPolicy(
         unresponsiveAfter: .seconds(15), closeAfter: .seconds(30), helloTimeout: .seconds(10),
-        pingInterval: CoreDuration(nanoseconds: WireConstants.maxPingIntervalNanoseconds),
+        pingInterval: .seconds(4),
         expiryConfirmation: .seconds(1), suspendedStep: .seconds(10), bulkReceiveTarget: 8_388_608,
         connectionReplenishThreshold: 4_194_304, senderRawBudget: 2_097_152, openBucketCapacity: 64,
         openBucketRefillPerSecond: 32, closingDeadline: .seconds(1), diagnosticsPerMinute: 20)
@@ -202,7 +205,7 @@ public struct ReceiverPolicy: Sendable, Equatable {
     }
 }
 
-/// The numbers of §3 no configuration changes; all but the low-water mark are frozen.
+/// The protocol's numbers no configuration changes; all but the low-water mark are frozen.
 enum Limits {
     static let initialStreamWindow = 262_144
     static let initialConnectionWindow = 16_777_216

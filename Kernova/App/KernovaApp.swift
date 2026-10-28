@@ -78,9 +78,7 @@ enum KernovaApp {
                 systemWillSleep: hostNotifications.systemWillSleep,
                 systemDidWake: hostNotifications.systemDidWake),
             fileSystem: FileManager.default,
-            downloadsDirectory: FileManager.default.urls(
-                for: .downloadsDirectory, in: .userDomainMask
-            ).first,
+            downloadsDirectory: UserDownloads.url,
             preferences: .shared,
             vmnetNetworks: vmnetNetworks,
             arpTable: HostARPTableReader(),

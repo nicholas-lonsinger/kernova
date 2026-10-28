@@ -16,20 +16,21 @@ public enum InTurnEffect<Input: Sendable>: Sendable {
     case deliver
     /// It is done; nothing follows.
     case consumed
-    /// Feed this input in the same turn.
+    /// Feed this input in the same turn, before the turn takes its transmit.
     case feed(Input)
 }
 
-/// Runs one connection: owns its endpoint, its byte stream and its timer, on one serial queue (§9.5).
+/// Runs one connection: owns its endpoint, its byte stream and its timer, on one serial queue.
 ///
-/// Every turn runs on `queue`: it samples `now`, applies one input to the endpoint under its lock, takes
-/// the next `Transmit` when no write is outstanding, drains events and effects, and then — outside the
-/// lock — issues the write, re-arms the timer and delivers what it drained. The endpoint is touched
-/// only inside those turns.
+/// Every turn runs on `queue`: it samples `now`, applies one input to the endpoint under its lock, drains
+/// events and effects (feeding what `Handlers.inTurn` answers), takes the next `Transmit` when no write is
+/// outstanding, and re-arms the timer to the endpoint's deadline. Then, outside the lock, it issues the write
+/// and delivers what it drained, in order. The endpoint is touched only inside those turns.
 ///
 /// A write error stops writing and ends nothing: later transmits are taken and dropped, as a write into a
-/// transport the far side shut is, and only the read side's `.ended` ends the transport. Bytes the far
-/// side sent before it shut — a RESET(0) above all — are therefore always read.
+/// transport the far side shut is. The transport ends on the read side's `.ended`, or after the final
+/// transmit, written or dropped — so bytes the far side sent before it shut, a RESET(0) above all, are read.
+/// The turn that finds the connection finished shuts the stream down and then calls `Handlers.ended`.
 public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
     /// What the driver hands its owner, all on the driver queue.
     public struct Handlers: Sendable {
@@ -40,16 +41,20 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         public var effect: @Sendable (Endpoint.Effect, ConnectionDriver) -> Void
         /// Receives each event except diagnostics, which the driver logs; it hops to its owner's queue.
         public var event: @Sendable (Endpoint.Event, ConnectionDriver) -> Void
+        /// Runs once, last: the stream is shut down, and nothing more is delivered.
+        public var ended: @Sendable (ConnectionClosure, ConnectionDriver) -> Void
 
         /// Creates the handlers.
         public init(
             inTurn: @escaping @Sendable (Endpoint.Effect) -> InTurnEffect<Endpoint.Input> = { _ in .deliver },
             effect: @escaping @Sendable (Endpoint.Effect, ConnectionDriver) -> Void = { _, _ in },
-            event: @escaping @Sendable (Endpoint.Event, ConnectionDriver) -> Void
+            event: @escaping @Sendable (Endpoint.Event, ConnectionDriver) -> Void,
+            ended: @escaping @Sendable (ConnectionClosure, ConnectionDriver) -> Void = { _, _ in }
         ) {
             self.inTurn = inTurn
             self.effect = effect
             self.event = event
+            self.ended = ended
         }
     }
 
@@ -120,9 +125,8 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
     private struct State: Sendable {
         var endpoint: Endpoint
         var writer = Writer.idle
-        var armedDeadline: CoreInstant?
-        var fire: (any ScheduledFire)?
-        var fireToken: UInt64 = 0
+        var timer = TimerSlot()
+        var closure: ConnectionClosure?
         var isShutDown = false
     }
 
@@ -130,11 +134,10 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
     private struct Outcome: Sendable {
         var write: Transmit?
         var writeFailure: ByteStreamError?
-        var cancelledFire: (any ScheduledFire)?
-        var arm: (deadline: CoreInstant, token: UInt64)?
         var events: [Endpoint.Event] = []
         var effects: [Endpoint.Effect] = []
-        var shutsDown = false
+        /// Set on the turn that shuts the stream down: how the connection ended.
+        var ended: ConnectionClosure?
     }
 
     private func streamEvent(_ event: ByteStreamEvent) {
@@ -154,38 +157,20 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
             guard !state.isShutDown else { return nil }
             var outcome = Outcome()
             apply(step, to: &state, outcome: &outcome, now: now)
-            var progressed = true
-            while progressed {
-                progressed = false
-                takeTransmit(&state, outcome: &outcome, now: now)
-                while let effect = state.endpoint.pollEffect() {
-                    switch handlers.inTurn(effect) {
-                    case .deliver:
-                        outcome.effects.append(effect)
-                    case .consumed:
-                        break
-                    case .feed(let input):
-                        state.endpoint.handle(input, now: now)
-                        progressed = true
-                    }
-                }
-                while let event = state.endpoint.pollEvent() {
-                    outcome.events.append(event)
-                }
+            while true {
+                if drain(&state, outcome: &outcome, now: now) { continue }
+                guard takeTransmit(&state, outcome: &outcome, now: now) else { break }
             }
-            let deadline = state.endpoint.nextDeadline
-            if state.endpoint.state == .finished, state.writer != .inFlight(isFinal: true) {
+            if state.endpoint.state == .finished {
                 state.isShutDown = true
-                outcome.shutsDown = true
-                outcome.cancelledFire = state.fire
-                state.fire = nil
-                state.armedDeadline = nil
-            } else if deadline != state.armedDeadline {
-                outcome.cancelledFire = state.fire
-                state.fire = nil
-                state.armedDeadline = deadline
-                state.fireToken += 1
-                if let deadline { outcome.arm = (deadline, state.fireToken) }
+                state.timer.disarm()
+                // The core emits exactly one `.closed` before it finishes; a transport that ended without
+                // one ended without a RESET(0).
+                outcome.ended = state.closure ?? .transportLost
+            } else {
+                state.timer.arm(state.endpoint.nextDeadline, scheduler: scheduler, queue: queue) { [self] token in
+                    turn(.timeout(token))
+                }
             }
             return outcome
         }
@@ -202,19 +187,19 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         case .ended:
             state.endpoint.transportEnded(now: now)
         case .timeout(let token):
-            guard token == state.fireToken else { return }
-            state.fire = nil
-            state.armedDeadline = nil
+            guard state.timer.take(token) else { return }
             state.endpoint.handleTimeout(now: now)
         case .writeCompleted(let error):
             let wasFinal = state.writer == .inFlight(isFinal: true)
-            if let error {
-                state.writer = .broken
-                outcome.writeFailure = error
-            } else {
-                state.writer = .idle
+            state.writer = error == nil ? .idle : .broken
+            outcome.writeFailure = error
+            if wasFinal {
+                if error == nil {
+                    state.endpoint.finalTransmitWritten(now: now)
+                } else {
+                    state.endpoint.transportEnded(now: now)
+                }
             }
-            if wasFinal { state.endpoint.transportEnded(now: now) }
         case .input(let input):
             state.endpoint.handle(input, now: now)
         case .close(let code):
@@ -222,20 +207,39 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         }
     }
 
-    /// Takes the next transmit for the stream, or every transmit while the writer is broken.
-    private func takeTransmit(_ state: inout State, outcome: inout Outcome, now: CoreInstant) {
-        switch state.writer {
-        case .idle:
-            guard let transmit = state.endpoint.pollTransmit(maxBytes: Self.maxTransmitBytes) else { return }
+    /// Drains effects and events; true when an in-turn answer fed the endpoint, which may have more.
+    private func drain(_ state: inout State, outcome: inout Outcome, now: CoreInstant) -> Bool {
+        var fed = false
+        while let effect = state.endpoint.pollEffect() {
+            switch handlers.inTurn(effect) {
+            case .deliver:
+                outcome.effects.append(effect)
+            case .consumed:
+                break
+            case .feed(let input):
+                state.endpoint.handle(input, now: now)
+                fed = true
+            }
+        }
+        while let event = state.endpoint.pollEvent() {
+            if let closure = Endpoint.closure(in: event) { state.closure = closure }
+            outcome.events.append(event)
+        }
+        return fed
+    }
+
+    /// Takes the next transmit for the stream, or drops it while the writer is broken; true when one was.
+    private func takeTransmit(_ state: inout State, outcome: inout Outcome, now: CoreInstant) -> Bool {
+        guard state.writer != .inFlight(isFinal: false), state.writer != .inFlight(isFinal: true),
+            let transmit = state.endpoint.pollTransmit(maxBytes: Self.maxTransmitBytes)
+        else { return false }
+        if state.writer == .broken {
+            if transmit.isFinal { state.endpoint.transportEnded(now: now) }
+        } else {
             state.writer = .inFlight(isFinal: transmit.isFinal)
             outcome.write = transmit
-        case .broken:
-            while let transmit = state.endpoint.pollTransmit(maxBytes: Self.maxTransmitBytes) {
-                if transmit.isFinal { state.endpoint.transportEnded(now: now) }
-            }
-        case .inFlight:
-            break
         }
+        return true
     }
 
     private func perform(_ outcome: Outcome) {
@@ -248,13 +252,6 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
                 "Connection \(generation.rawValue) stopped writing after a write failed (\(String(describing: failure), privacy: .public)); the read side ends it"
             )
         }
-        outcome.cancelledFire?.cancel()
-        if let arm = outcome.arm {
-            let fire = scheduler.schedule(at: arm.deadline, on: queue) { [self] in turn(.timeout(arm.token)) }
-            state.withLock { state in
-                if state.fireToken == arm.token, !state.isShutDown { state.fire = fire } else { fire.cancel() }
-            }
-        }
         for event in outcome.events {
             if let diagnostic = Endpoint.diagnostic(in: event) {
                 log(diagnostic)
@@ -265,7 +262,10 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         for effect in outcome.effects {
             handlers.effect(effect, self)
         }
-        if outcome.shutsDown { stream.shutdown() }
+        if let closure = outcome.ended {
+            stream.shutdown()
+            handlers.ended(closure, self)
+        }
     }
 
     private func log(_ diagnostic: Diagnostic) {

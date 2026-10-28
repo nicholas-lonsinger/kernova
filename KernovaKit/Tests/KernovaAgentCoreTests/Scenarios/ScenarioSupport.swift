@@ -9,13 +9,15 @@ import KernovaAgentSimulation
 import KernovaWire
 import Testing
 
-/// One §10.4 scenario: options, a script run on the world, an end time and
-/// end-of-run expectations beyond §10.3's properties.
+/// One simulation scenario: options, a script run on the world, an end time
+/// and end-of-run expectations beyond `PropertyChecker`'s properties. What the
+/// seed varies lives in the options' fault windows and the script's windowed
+/// steps, which the world draws from.
 struct Scenario: Sendable, CustomTestStringConvertible {
     var name: String
     var seeds = 200
     var end: SimTime = .sec(20)
-    var options: @Sendable (inout SimOptions, inout SplitMix64) -> Void = { _, _ in }
+    var options: @Sendable (inout SimOptions) -> Void = { _ in }
     var script: @Sendable (SimWorld) -> Void
     var expect: @Sendable (SimWorld) -> [String] = { _ in [] }
 
@@ -33,8 +35,7 @@ struct Scenario: Sendable, CustomTestStringConvertible {
     /// One run; the violations and the transcript hash.
     func run(seed: UInt64, recordsEvents: Bool = false) -> (violations: [String], hash: UInt64, world: SimWorld) {
         var options = SimOptions()
-        var generator = SplitMix64(seed: seed ^ 0x5EED)
-        self.options(&options, &generator)
+        self.options(&options)
         let world = SimWorld(seed: seed, options: options)
         world.recordsEvents = recordsEvents
         script(world)
@@ -105,6 +106,22 @@ extension SimWorld {
 
     var liveLinks: [SimLink] {
         links.filter { $0.state(.host) == .established && $0.state(.peer) == .established }
+    }
+
+    /// When fault `index` took effect.
+    func faultTime(_ index: Int) -> SimTime? { faults[index].tookEffectAt }
+
+    /// Whether the peer wrote an ACCEPTED on link `link`'s power request by the
+    /// time fault `index` took effect: what a lost connection's outcome turns on.
+    func acceptedBefore(fault index: Int, link: Int = 0) -> Bool {
+        guard let at = faultTime(index), link < links.count else { return false }
+        return links[link].wire.contains { record in
+            guard record.side == .peer, record.time <= at, record.stream % 2 == 0, record.type == .data,
+                record.flags.contains(.message),
+                let progress = try? Kernova_V2_PowerProgress(serializedBytes: record.payload)
+            else { return false }
+            return progress.stage == .accepted
+        }
     }
 }
 

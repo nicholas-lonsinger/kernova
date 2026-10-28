@@ -7,8 +7,16 @@ import Foundation
 import KernovaAgentCore
 import KernovaWire
 
-/// The host's hub model (§9.7): one VM, its connections, identity conflicts,
-/// power routing and the update payload source.
+/// What the hub's power routing saw, in order: each output, and each result
+/// from a peer it asked.
+package enum RoutingLogEntry: Sendable, Equatable {
+    case output(RoutingOutput)
+    case result(PeerHandle, PowerRequestResult)
+}
+
+/// The host's hub model: one VM, its connections, identity conflicts, power
+/// routing and the update payload source. It reaches each connection only
+/// through its endpoint's events and asynchronous commands, as the runtime's hub does.
 package final class SimHub {
     package struct Peer {
         package var link: SimLink
@@ -32,6 +40,7 @@ package final class SimHub {
     package var policy: PolicySnapshot
     package var routing = PowerRouting()
     package private(set) var routingOutputs: [(time: SimTime, output: RoutingOutput)] = []
+    package private(set) var routingLog: [RoutingLogEntry] = []
     package private(set) var asks: [Ask] = []
     package private(set) var powerResults: [(time: SimTime, peer: PeerHandle, result: PowerRequestResult)] = []
     package private(set) var logRecords: [LogRecordValue] = []
@@ -45,7 +54,9 @@ package final class SimHub {
     private var order: UInt64 = 0
     private var nextPowerID: UInt64 = 0
     private var pending: [PowerRequestID: PeerHandle] = [:]
-    private var pulls: [UpdatePullID: (manifest: UpdateManifestValue, sent: Int, content: Data)] = [:]
+    /// Every link whose host endpoint this hub made and has not seen close,
+    /// handshaking ones included: each holds a policy and bundles to keep current.
+    private var endpoints: [SimLink] = []
 
     init(options: SimOptions) {
         self.options = options
@@ -67,6 +78,7 @@ package final class SimHub {
         }
         var endpoint = HostEndpoint(configuration, generation: link.generation, now: world.localNow(.host))
         endpoint.testSink.bytesPerStream = options.testBulkBytes
+        endpoints.append(link)
         if peersFrozen { endpoint.handle(.setPeerFrozen(true), now: world.localNow(.host)) }
         return endpoint
     }
@@ -74,11 +86,9 @@ package final class SimHub {
     /// The routing view of every established, open connection.
     package var routingPeers: [RoutingPeer] {
         connected.filter { !$0.closing }.map { peer in
-            let power = peer.status[.power]
-            let actions = power.params.flatMap { try? Kernova_V2_PowerCapability(serializedBytes: $0) }?.actions ?? []
-            return RoutingPeer(
+            RoutingPeer(
                 handle: peer.link.hubHandle, role: peer.claim.role, state: peer.state, connectedOrder: peer.order,
-                powerUsable: power.isAvailable, actions: actions)
+                features: peer.status)
         }
     }
 
@@ -92,21 +102,22 @@ package final class SimHub {
 
     package func setBundles(_ bundles: [BundledPayload], world: SimWorld) {
         self.bundles = bundles
-        for peer in connected where !peer.closing {
-            world.hostCommand(.setBundles(bundles), link: peer.link)
+        for link in endpoints {
+            world.hostCommand(.setBundles(bundles), link: link)
         }
     }
 
     package func setPolicy(_ policy: PolicySnapshot, world: SimWorld) {
         self.policy = policy
-        for peer in connected where !peer.closing {
-            world.hostCommand(.setPolicy(policy), link: peer.link)
+        for link in endpoints {
+            world.hostCommand(.setPolicy(policy), link: link)
         }
     }
 
     private func drainRouting(_ world: SimWorld) {
         while let output = routing.pollOutput() {
             routingOutputs.append((world.now, output))
+            routingLog.append(.output(output))
             world.log("routing: \(output)")
             guard case .ask(let handle, let action) = output,
                 let peer = connected.first(where: { $0.link.hubHandle == handle })
@@ -120,12 +131,15 @@ package final class SimHub {
         }
     }
 
-    /// §6.4's candidate order, restated independently of `PowerRouting` for the checker.
+    /// The order the hub asks power providers in, restated independently of
+    /// `PowerRouting` for the checker: with a system peer that knows the console,
+    /// the session peers on its console session (newest first) when the console
+    /// is on; without one, every session peer on a console; then the system peer.
     static func expectedCandidates(_ action: PowerAction, peers: [RoutingPeer], asked: [PeerHandle]) -> [PeerHandle] {
         var ordered: [RoutingPeer] = []
         let system = peers.first { $0.role == .systemPeer }
         let sessions = peers.filter { $0.role == .sessionPeer }.sorted { $0.connectedOrder > $1.connectedOrder }
-        if let system {
+        if let system, system.state.console != .unknown {
             if system.state.console == .on {
                 ordered += sessions.filter { $0.state.sessionID == system.state.consoleSessionID }
             }
@@ -160,6 +174,7 @@ package final class SimHub {
         case .power(let id, let result):
             powerResults.append((world.now, link.hubHandle, result))
             guard let handle = pending[id] else { return }
+            routingLog.append(.result(handle, result))
             switch result {
             case .accepted, .progress: break
             default: pending[id] = nil
@@ -179,6 +194,7 @@ package final class SimHub {
             closures.append((world.now, link.id, closure))
             world.log("host link \(link.id) closed: \(closure)")
             connected.removeAll { $0.link === link }
+            endpoints.removeAll { $0 === link }
         }
     }
 
@@ -195,15 +211,15 @@ package final class SimHub {
         }
     }
 
-    /// §4.5 as the hub applies it: the incoming connection against each existing one with its key.
+    /// Identity conflicts as the hub applies them: the incoming connection
+    /// against each existing one with its key.
     private func resolveConflicts(_ link: SimLink, world: SimWorld) {
         guard let incoming = connected.last, incoming.link === link else { return }
         let incomingParty = ConflictParty(claim: incoming.claim, state: incoming.state)
         for index in connected.indices.dropLast() where !connected[index].closing {
             let existing = connected[index]
             let party = ConflictParty(
-                claim: existing.claim, state: existing.state,
-                isUnresponsive: existing.link.host?.isPeerUnresponsive ?? false)
+                claim: existing.claim, state: existing.state, isUnresponsive: existing.unresponsive)
             let key = Self.key(incoming.claim, incoming.state)
             switch PeerConflict.resolve(existing: party, incoming: incomingParty) {
             case .noConflict:
@@ -224,34 +240,21 @@ package final class SimHub {
 
     private func handleUpdate(_ event: UpdateServeEvent, link: SimLink, world: SimWorld) {
         switch event {
-        case .pullRequested(let id, let manifest):
-            var content = world.content(of: manifest)
-            if options.payloadSizeSkew > 0 {
-                content.append(Data(repeating: 0x5A, count: options.payloadSizeSkew))
-            } else if options.payloadSizeSkew < 0 {
-                content = content.prefix(max(0, content.count + options.payloadSizeSkew))
-            }
-            pulls[id] = (manifest, 0, content)
-        case .writable(let id, let maxBytes):
-            guard let pull = pulls[id] else { return }
-            let remaining = pull.content.count - pull.sent
-            if remaining == 0 {
-                world.hostCommand(.updateFinished(id), link: link, after: options.payloadSourceDelay)
-                return
-            }
-            let count = min(remaining, maxBytes)
-            let chunk = pull.content.subdata(in: pull.sent..<(pull.sent + count))
-            pulls[id]?.sent += count
-            world.hostCommand(.updateBytes(id, chunk), link: link, after: options.payloadSourceDelay)
-            if pull.sent + count == pull.content.count {
-                world.hostCommand(.updateFinished(id), link: link, after: options.payloadSourceDelay)
-            }
-        case .result(let id, let result):
-            pulls[id] = nil
+        case .pullRequested:
+            break
+        case .result(_, let result):
             updateResults.append((world.now, result))
-        case .closed(let id, let closure):
-            pulls[id] = nil
+        case .closed(_, let closure):
             updateClosures.append((world.now, closure))
+        }
+    }
+
+    /// The payload source: each read is served from the content its manifest names.
+    func handle(_ effect: HostEffect, link: SimLink, world: SimWorld) {
+        switch effect {
+        case .read(let id, let manifest, let offset, let maxBytes):
+            let bytes = FixturePayloadSource.read(world.content(of: manifest), offset: offset, maxBytes: maxBytes)
+            world.hostPayload(.bytes(id, bytes), link: link, after: options.payloadSourceDelay)
         }
     }
 

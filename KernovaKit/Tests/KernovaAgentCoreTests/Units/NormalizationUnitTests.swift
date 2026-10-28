@@ -11,7 +11,7 @@ import SwiftProtobuf
 import Testing
 
 extension CoreUnits {
-    @Suite("Normalization: §4.1 step 4")
+    @Suite("Normalization of received identity and state strings")
     struct NormalizationUnitTests {
         /// `WireFrames.hello(role:)` with `edit` applied to its Hello.
         static func hello(_ role: Kernova_V2_PeerIdentity.Role, _ edit: (inout Kernova_V2_Hello) -> Void) -> Frame {

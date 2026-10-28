@@ -29,6 +29,7 @@ import KernovaSynchronization
 /// `SO_NOSIGPIPE` on the socket, Linux passes `MSG_NOSIGNAL` to each `sendmsg`.
 public final class POSIXByteStream: ByteStream {
     private let descriptor: Int32
+    private let released: (@Sendable () -> Void)?
     private let state: Locked<State>
 
     private struct PendingWrite: Sendable {
@@ -55,20 +56,29 @@ public final class POSIXByteStream: ByteStream {
         var buffer = [UInt8](repeating: 0, count: ByteStreamLimits.maxReceive)
     }
 
-    /// Takes ownership of `descriptor`, a connected stream socket, and puts it in non-blocking mode.
-    /// Throws the OS's error, closing nothing, when the descriptor is not a socket or refuses the mode.
-    public init(adopting descriptor: Int32) throws(ByteStreamError) {
+    /// Takes ownership of `descriptor`, a connected stream socket, and puts it in non-blocking,
+    /// close-on-exec mode, so no child process the agent execs inherits the connection. Throws the OS's
+    /// error, closing nothing, when the descriptor is not a socket or refuses either mode.
+    ///
+    /// `released` runs once the descriptor is closed and the stream holds nothing more: on the start queue
+    /// after `shutdown()`, or inside `shutdown()` when the stream was never started.
+    public init(adopting descriptor: Int32, released: (@Sendable () -> Void)? = nil) throws(ByteStreamError) {
         var type: Int32 = 0
         var length = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &type, &length) == 0 else { throw .system(errno) }
         let flags = fcntl(descriptor, F_GETFL)
         guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else { throw .system(errno) }
+        let descriptorFlags = fcntl(descriptor, F_GETFD)
+        guard descriptorFlags >= 0, fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) == 0 else {
+            throw .system(errno)
+        }
         #if canImport(Darwin)
         var on: Int32 = 1
         guard setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size)) == 0
         else { throw .system(errno) }
         #endif
         self.descriptor = descriptor
+        self.released = released
         state = Locked(State())
     }
 
@@ -83,8 +93,8 @@ public final class POSIXByteStream: ByteStream {
             let write = DispatchSource.makeWriteSource(fileDescriptor: descriptor, queue: queue)
             read.setEventHandler { [self] in readReady() }
             write.setEventHandler { [self] in writeReady() }
-            read.setCancelHandler { [self] in released() }
-            write.setCancelHandler { [self] in released() }
+            read.setCancelHandler { [self] in release() }
+            write.setCancelHandler { [self] in release() }
             state.readSource = read
             state.writeSource = write
             read.activate()
@@ -120,13 +130,13 @@ public final class POSIXByteStream: ByteStream {
     /// Shuts the socket both ways, cancels the sources, and closes the descriptor once both cancel
     /// handlers and the final deliveries have run.
     public func shutdown() {
-        let actions = state.withLock { state -> (DispatchQueue, @Sendable () -> Void)? in
+        let actions = state.withLock { state -> (DispatchQueue?, @Sendable () -> Void)? in
             guard !state.isShutDown else { return nil }
             state.isShutDown = true
             Glue.shutdownSocket(descriptor)
             guard let queue = state.queue, let read = state.readSource, let write = state.writeSource else {
                 close(descriptor)
-                return nil
+                return (nil, { [released] in released?() })
             }
             read.cancel()
             write.cancel()
@@ -148,11 +158,12 @@ public final class POSIXByteStream: ByteStream {
                 { [self] in
                     completion?(.shutDown)
                     handler?(.ended(.failed(.shutDown)))
-                    released()
+                    release()
                 }
             )
         }
-        if let (queue, deliver) = actions { queue.async(execute: deliver) }
+        guard let (queue, deliver) = actions else { return }
+        if let queue { queue.async(execute: deliver) } else { deliver() }
     }
 
     // MARK: Source handlers, on the start queue
@@ -161,16 +172,19 @@ public final class POSIXByteStream: ByteStream {
         let event = state.withLock { state -> (ByteStreamEvent, @Sendable (ByteStreamEvent) -> Void)? in
             guard !state.isShutDown, !state.endDelivered, !state.readSuspended, let handler = state.handler
             else { return nil }
-            let count = state.buffer.withUnsafeMutableBytes { recv(descriptor, $0.baseAddress, $0.count, 0) }
+            let read = state.buffer.withUnsafeMutableBytes { buffer in
+                let count = recv(descriptor, buffer.baseAddress, buffer.count, 0)
+                return (count: count, error: count < 0 ? errno : 0)
+            }
             let event: ByteStreamEvent
-            if count > 0 {
-                event = .received(Data(state.buffer[0..<count]))
-            } else if count == 0 {
+            if read.count > 0 {
+                event = .received(Data(state.buffer[0..<read.count]))
+            } else if read.count == 0 {
                 event = .ended(.eof)
-            } else if errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR {
+            } else if read.error == EAGAIN || read.error == EWOULDBLOCK || read.error == EINTR {
                 return nil
             } else {
-                event = .ended(.failed(.system(errno)))
+                event = .ended(.failed(.system(read.error)))
             }
             state.readSuspended = true
             state.readSource?.suspend()
@@ -187,13 +201,13 @@ public final class POSIXByteStream: ByteStream {
             var failure: ByteStreamError?
             while pending.index < pending.chunks.count {
                 let sent = Glue.send(descriptor, pending.chunks, from: pending.index, offset: pending.offset)
-                if sent < 0 {
-                    if errno == EINTR { continue }
-                    if errno == EAGAIN || errno == EWOULDBLOCK { break }
-                    failure = .system(errno)
+                if sent.count < 0 {
+                    if sent.error == EINTR { continue }
+                    if sent.error == EAGAIN || sent.error == EWOULDBLOCK { break }
+                    failure = .system(sent.error)
                     break
                 }
-                var remaining = sent
+                var remaining = sent.count
                 while remaining > 0 {
                     let left = pending.chunks[pending.index].count - pending.offset
                     if remaining >= left {
@@ -228,16 +242,21 @@ public final class POSIXByteStream: ByteStream {
     }
 
     /// One of the two cancel handlers or the shutdown delivery ran; the last closes the descriptor and
-    /// drops the handler and sources.
-    private func released() {
-        state.withLock { state in
+    /// drops the handler and sources, after the lock is released, then reports the release.
+    private func release() {
+        let dropped = state.withLock { state -> (Any?, Any?, Any?)? in
             state.releasesOutstanding -= 1
-            guard state.releasesOutstanding == 0 else { return }
+            guard state.releasesOutstanding == 0 else { return nil }
             close(descriptor)
-            state.handler = nil
-            state.readSource = nil
-            state.writeSource = nil
+            defer {
+                state.handler = nil
+                state.readSource = nil
+                state.writeSource = nil
+            }
+            return (state.handler, state.readSource, state.writeSource)
         }
+        guard dropped != nil else { return }
+        released?()
     }
 }
 
@@ -247,8 +266,10 @@ private enum Glue {
         _ = shutdown(descriptor, Int32(SHUT_RDWR))
     }
 
-    /// `sendmsg` of up to 64 chunks from `index`, the first from `offset`; never raises SIGPIPE.
-    static func send(_ descriptor: Int32, _ chunks: [Data], from index: Int, offset: Int) -> Int {
+    /// `sendmsg` of up to 64 chunks from `index`, the first from `offset`, and the `errno` it set; never
+    /// raises SIGPIPE.
+    static func send(_ descriptor: Int32, _ chunks: [Data], from index: Int, offset: Int) -> (count: Int, error: Int32)
+    {
         var vectors: [iovec] = []
         vectors.reserveCapacity(64)
         return pin(chunks[index..<min(chunks.count, index + 64)], offset: offset, &vectors) { vectors in
@@ -256,19 +277,20 @@ private enum Glue {
             message.msg_iov = vectors.baseAddress
             message.msg_iovlen = numericCast(vectors.count)
             #if canImport(Darwin)
-            return sendmsg(descriptor, &message, 0)
+            let count = sendmsg(descriptor, &message, 0)
             #else
-            return sendmsg(descriptor, &message, Int32(MSG_NOSIGNAL))
+            let count = sendmsg(descriptor, &message, Int32(MSG_NOSIGNAL))
             #endif
+            return (count, count < 0 ? errno : 0)
         }
     }
 
     /// Calls `body` with one iovec per chunk — non-empty, the first starting at `offset` — each pinned for
     /// the call.
-    private static func pin(
+    private static func pin<Result>(
         _ chunks: ArraySlice<Data>, offset: Int, _ vectors: inout [iovec],
-        _ body: (UnsafeMutableBufferPointer<iovec>) -> Int
-    ) -> Int {
+        _ body: (UnsafeMutableBufferPointer<iovec>) -> Result
+    ) -> Result {
         guard let first = chunks.first else {
             return vectors.withUnsafeMutableBufferPointer { body($0) }
         }

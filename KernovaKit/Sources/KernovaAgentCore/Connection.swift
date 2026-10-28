@@ -24,11 +24,15 @@ public struct Connection: Sendable {
     /// The connection's raw and judged time.
     public internal(set) var clock: JudgedClock
     var closingDeadline: CoreInstant?
+    /// How the connection ended, from its one `.closed` event on.
+    var closure: ConnectionClosure?
     /// RESET(0) to send; set on entering `closing`.
     var closeError: WireError?
     /// Whether the queued session messages and control frames go before RESET(0)
     /// (a local close) or are dropped (a fatal error).
     var closeDrainsQueue = false
+    /// RESET(0) has been handed out; the connection finishes once it is written.
+    var finalHandedOut = false
 
     // MARK: Wire
 
@@ -53,23 +57,31 @@ public struct Connection: Sendable {
 
     // MARK: Credit
 
-    var connectionSendCredit = Limits.initialConnectionWindow
+    // The two halves of the raw-DATA budget every raw sender shares:
+    // any change to either moves each raw stream's S4 predicate, so the writable
+    // refresh lives here rather than at each place that spends or refunds it.
+    var connectionSendCredit = Limits.initialConnectionWindow {
+        didSet { refreshAllWritable() }
+    }
     var connectionReceiveRemaining = Limits.initialConnectionWindow
     var connectionHeldRaw = 0
     var connectionUnreturned = 0
-    var queuedRawTotal = 0
+    var queuedRawTotal = 0 {
+        didSet { refreshAllWritable() }
+    }
 
     // MARK: Session
 
     var localAdverts: [FeatureAdvertValue]
     /// The far side's Hello, once read.
     public internal(set) var remoteHello: RemoteHello?
-    var remoteAdverts: [FeatureAdvertValue] = []
+    var remoteAdverts: [ReceivedAdvert] = []
     var remoteState: PeerSessionState?
-    /// Host: its own policy. Peer: the last `PolicyUpdate` read, nil before the first.
+    /// Host: its own policy, the one source of every `PolicyUpdate` it sends.
+    /// Peer: the last `PolicyUpdate` read, nil before the first.
     public internal(set) var currentPolicy: PolicySnapshot?
-    /// Host: what it offers this peer now.
-    public internal(set) var offeredUpdate: UpdateManifestValue?
+    /// Host: the bundles it holds now, the one source of every offer it sends.
+    var hostBundles: [BundledPayload] = []
     var lastPeerState: PeerSessionState?
 
     // MARK: Liveness
@@ -85,7 +97,6 @@ public struct Connection: Sendable {
 
     var events: [RoutedEvent] = []
     var eventHead = 0
-    var coalescedAt: [Int?] = Array(repeating: nil, count: CoalesceSlot.allCases.count)
     var diagnosticWindowStart: CoreInstant?
     var diagnosticCount = 0
     var diagnosticsSuppressed = 0
@@ -105,6 +116,7 @@ public struct Connection: Sendable {
         localAdverts = Self.sortedAdverts(configuration.adverts)
         if role == .host {
             currentPolicy = configuration.hostPolicy
+            hostBundles = configuration.hostBundles
         }
         lastPeerState = configuration.initialState
         helloDeadline = JudgedDeadline(
@@ -118,11 +130,13 @@ public struct Connection: Sendable {
     public mutating func receive(_ bytes: Data, now: CoreInstant) {
         ingest(bytes, now: now)
         while processNextFrame() {}
+        finishReceive()
     }
 
-    /// Buffers bytes without processing them; `processNextFrame` handles one frame.
+    /// Advances the clocks and buffers bytes without processing them;
+    /// `processNextFrame` handles one frame and `finishReceive` ends the turn.
     package mutating func ingest(_ bytes: Data, now: CoreInstant) {
-        tick(now)
+        clock.advance(to: now)
         guard isAcceptingInput else { return }
         decoder.append(bytes)
     }
@@ -141,6 +155,15 @@ public struct Connection: Sendable {
             finish()
             emit(.closed(.transportLost))
         }
+    }
+
+    /// The transmit marked `isFinal` has been written in full: the connection
+    /// finishes. A closing connection otherwise finishes when the transport ends
+    /// or its closing deadline passes, whether or not the write completed.
+    public mutating func finalTransmitWritten(now: CoreInstant) {
+        tick(now)
+        guard state == .closing, finalHandedOut else { return }
+        finish()
     }
 
     /// The timer `nextDeadline` named fired (or any time: it only evaluates).
@@ -167,23 +190,19 @@ public struct Connection: Sendable {
         tick(now)
         guard isAcceptingInput else { return }
         let error = WireError(code, retryAfter: retryAfter)
-        for index in streams.indices {
-            discardQueue(at: index)
-            streams[index].pendingWindow = 0
-        }
         closeAllStreams(.connectionClosedLocally(error), keepPendingResets: true)
         enterClosing(error, drainsQueue: true)
     }
 
     // MARK: - Queries
 
-    /// The raw DATA a machine may send on `id` now (§3.4 S1), 0 when none.
+    /// The raw DATA a machine may send on `id` now, 0 when none.
     public func writableData(_ id: StreamID) -> Int {
         guard let index = index(of: id) else { return 0 }
         return writableData(at: index)
     }
 
-    /// Whether a message of `byteCount` bytes is sendable on `id` now (§3.4 S2).
+    /// Whether a message of `byteCount` bytes is sendable on `id` now.
     public func canSendMessage(_ byteCount: Int, on id: StreamID) -> Bool {
         guard let index = index(of: id) else { return false }
         let record = streams[index]
@@ -192,18 +211,37 @@ public struct Connection: Sendable {
     }
 
     /// Whether this side may open a stream of `kind` now: its role opens it, its
-    /// feature is usable (§4.3), and the concurrency and per-connection limits allow.
+    /// feature is usable, and the concurrency and per-connection limits allow.
     public func canOpen(_ kind: StreamKind) -> Bool {
-        guard state == .established, let descriptor = descriptor(for: kind), opensAsThisRole(descriptor) else {
-            return false
+        openRefusal(kind) == nil
+    }
+
+    /// Why this side may not open a stream of `kind` now, nil when it may: the
+    /// kind's role, then the connection's phase (before the Hello,
+    /// `FEATURE_UNAVAILABLE`; once closing, the close's own error), the feature's
+    /// usability, the 64-stream limit (`TOO_MANY_STREAMS`) and the kind's
+    /// per-connection limit (its `duplicateCode`).
+    public func openRefusal(_ kind: StreamKind) -> WireError? {
+        guard let descriptor = descriptor(for: kind), opensAsThisRole(descriptor) else {
+            return WireError(.unsupportedKind)
         }
-        if let feature = descriptor.feature, !usability(feature).isAvailable { return false }
-        guard localSlotsInUse < Limits.maxConcurrentStreams else { return false }
+        switch state {
+        case .handshaking:
+            return WireError(.featureUnavailable, debugDetail: "no Hello read yet")
+        case .closing, .finished:
+            return closure?.error ?? WireError(.unspecified, debugDetail: "the connection is closing")
+        case .established:
+            break
+        }
+        if let feature = descriptor.feature, case .absent(let reason, let detail) = usability(feature) {
+            return WireError(.featureUnavailable, absence: reason, debugDetail: detail)
+        }
+        guard localSlotsInUse < Limits.maxConcurrentStreams else { return WireError(.tooManyStreams) }
         if let max = descriptor.maxPerConnection {
-            let open = streams.count(where: { $0.isLocal && $0.kind == kind && $0.phase != .closed })
-            guard open < max else { return false }
+            let open = streams.count(where: { $0.isLocal && $0.kind == kind && $0.holdsSlot })
+            guard open < max else { return WireError(descriptor.duplicateCode) }
         }
-        return true
+        return nil
     }
 
     /// The phase of `id`, nil once the stream is gone or for an unknown id.
@@ -211,7 +249,7 @@ public struct Connection: Sendable {
         index(of: id).map { streams[$0].phase }
     }
 
-    /// Whether `feature` is usable on this connection (§4.3), with the far
+    /// Whether `feature` is usable on this connection, with the far
     /// side's params when it is, or the first failing condition's reason.
     public func usability(_ feature: FeatureID) -> Availability<Data> {
         guard let remoteHello else { return .absent(.unspecified, debugDetail: "no Hello read yet") }
@@ -225,12 +263,13 @@ public struct Connection: Sendable {
             return .absent(.notImplemented, debugDetail: "")
         }
         if case .absent(let reason, let detail) = local.availability { return .absent(reason, debugDetail: detail) }
-        guard let remote = remoteAdverts.first(where: { $0.feature == feature })?.advert else {
+        guard let received = remoteAdverts.first(where: { $0.value.feature == feature }) else {
             return .absent(.notImplemented, debugDetail: "")
         }
+        let remote = received.value.advert
         guard case .available(let params) = remote.availability else { return remote.availability }
         guard remote.version == local.version else { return .absent(.versionMismatch, debugDetail: "") }
-        guard descriptor.paramsDecode(params) else {
+        guard received.paramsDecode else {
             return .absent(.unspecified, debugDetail: "the far side's params do not decode")
         }
         if descriptor.policyGoverned {
@@ -238,6 +277,13 @@ public struct Connection: Sendable {
             guard currentPolicy.isEnabled(feature) else { return .absent(.disabledByPolicy, debugDetail: "") }
         }
         return .available(params)
+    }
+
+    /// Host: what it offers this peer now, from its bundles and the peer's claim;
+    /// nil before the peer's Hello and when no bundle fits.
+    public var offeredUpdate: UpdateManifestValue? {
+        guard role == .host, let claim = remoteHello?.claim else { return nil }
+        return BundledPayload.offer(from: hostBundles, for: claim)
     }
 
     /// Every implemented feature's usability, in feature order.
@@ -295,9 +341,6 @@ public struct Connection: Sendable {
     package mutating func pollRoutedEvent() -> RoutedEvent? {
         guard eventHead < events.count else { return nil }
         let event = events[eventHead]
-        for slot in coalescedAt.indices where coalescedAt[slot] == eventHead {
-            coalescedAt[slot] = nil
-        }
         eventHead += 1
         if eventHead == events.count {
             events.removeAll(keepingCapacity: true)
@@ -382,15 +425,11 @@ public struct Connection: Sendable {
         return kept.sorted { $0.feature.rawValue < $1.feature.rawValue }
     }
 
-    mutating func emit(_ event: ConnectionEvent, owner: KindOwner? = nil, coalescing slot: CoalesceSlot? = nil) {
+    mutating func emit(_ event: ConnectionEvent, owner: KindOwner? = nil) {
         if configuration.recordsTrace {
             trace.append(.event(event))
         }
-        if let slot, let at = coalescedAt[slot.rawValue] {
-            events[at] = RoutedEvent(event: event, owner: owner)
-            return
-        }
-        if let slot { coalescedAt[slot.rawValue] = events.count }
+        if case .closed(let closure) = event { self.closure = closure }
         events.append(RoutedEvent(event: event, owner: owner))
     }
 
@@ -416,7 +455,7 @@ public struct Connection: Sendable {
         diagnosticsSuppressed = 0
     }
 
-    /// A command the core's state forbids (§9.6): a bug in a core machine.
+    /// A command the core's state forbids: a bug in a core machine.
     mutating func misuse(_ what: String) {
         if configuration.assertsOnMisuse {
             assertionFailure("Connection misuse: \(what)")
@@ -426,18 +465,20 @@ public struct Connection: Sendable {
     }
 }
 
+/// One far-side advert, normalized, with whether its params decode as this
+/// build's capability message: decided once, when the advert is read.
+struct ReceivedAdvert: Sendable, Equatable {
+    var value: FeatureAdvertValue
+    var paramsDecode: Bool
+}
+
 /// An event with the machine that owns its stream, for the endpoint's routing.
 package struct RoutedEvent: Sendable, Equatable {
     package var event: ConnectionEvent
     package var owner: KindOwner?
 }
 
-/// The session messages a side sends, each kind but Hello coalescing (§3.5 step 2).
+/// The session messages a side sends, each kind but Hello coalescing.
 enum SessionSlot: Int, CaseIterable, Sendable {
     case hello, peerState, capabilities, policy, updateAvailable
-}
-
-/// The received snapshots whose events coalesce (§4.4).
-enum CoalesceSlot: Int, CaseIterable, Sendable {
-    case remoteAdverts, peerState, policy, updateAvailable
 }

@@ -6,7 +6,7 @@ import Foundation
 
 import KernovaWire
 
-/// What a host endpoint is created with (§9.3).
+/// What a host endpoint is created with.
 public struct HostConfiguration: Sendable {
     /// The host's claim: role HOST, Kernova's version label.
     public var claim: PeerClaim
@@ -41,14 +41,22 @@ public enum HostCommand: Sendable, Equatable {
     case setPolicy(PolicySnapshot)
     /// The bundled payloads changed; re-sends `UpdateAvailable` and resets a pull it makes stale.
     case setBundles([BundledPayload])
-    /// Payload bytes for the outstanding read.
-    case updateBytes(UpdatePullID, Data)
-    /// The payload source has no more bytes.
-    case updateFinished(UpdatePullID)
-    /// The payload source failed.
-    case updateFailed(UpdatePullID, WireError)
     /// Close the connection (`SUPERSEDED`, `DUPLICATE_PEER`, `SHUTTING_DOWN`).
     case close(ErrorCode, retryAfter: CoreDuration?)
+}
+
+/// What a host endpoint asks of its update payload source.
+public enum HostEffect: Sendable, Equatable {
+    /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
+    case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
+}
+
+/// The update payload source's answer to the outstanding `.read`.
+public enum PayloadInput: Sendable, Equatable {
+    /// The bytes read: 1 … `maxBytes` of them. None, short of the payload's size, fails the pull.
+    case bytes(UpdatePullID, Data)
+    /// The read failed.
+    case failed(UpdatePullID, WireError)
 }
 
 /// What a host endpoint tells the hub.
@@ -57,7 +65,7 @@ public enum HostEvent: Sendable, Equatable {
     case helloReceived(PeerClaim, PeerSessionState)
     /// The peer's state changed (coalesced).
     case peerStateChanged(PeerSessionState)
-    /// Some feature's usability changed (coalesced, §4.3).
+    /// Some feature's usability changed (coalesced).
     case featuresChanged(FeatureStatusTable)
     /// A liveness verdict about the peer.
     case liveness(LivenessChange)
@@ -80,12 +88,11 @@ public struct HostEndpoint: Sendable {
     private var logs = LogReceiver()
     private var update: UpdateServer
     package var testSink = TestBulkSink()
-    private var bundles: [BundledPayload]
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
-    private var events: [HostEvent] = []
-    private var eventHead = 0
-    private var coalescedAt: (peerState: Int?, features: Int?) = (nil, nil)
+    private var events = OutputQueue<HostEvent, HostEventSlot>()
+    private var effects: [HostEffect] = []
+    private var effectHead = 0
     private var lastStatus: FeatureStatusTable?
 
     /// Creates the endpoint of a connection just accepted.
@@ -93,7 +100,6 @@ public struct HostEndpoint: Sendable {
         self.generation = generation
         power = PowerRequester(generation: generation)
         update = UpdateServer(generation: generation)
-        bundles = configuration.bundles
         var connectionConfiguration = ConnectionConfiguration(
             claim: configuration.claim, adverts: [], sessionToken: configuration.sessionToken,
             hostPolicy: configuration.policy, hostBundles: configuration.bundles, policy: configuration.receiverPolicy)
@@ -107,13 +113,13 @@ public struct HostEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
-    /// Whether the peer is currently judged unresponsive (§4.5 row 3).
-    public var isPeerUnresponsive: Bool { connection.isUnresponsive }
-
-    /// When the driver must next call `handleTimeout`.
+    /// When the driver must next call `handleTimeout`: the soonest of the
+    /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
-        return [connection.nextDeadline, connection.clock.external(power.nextDeadline)].compactMap { $0 }.min()
+        let clock = connection.clock
+        let machines = [power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock)]
+        return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
     }
 
     // MARK: Inputs
@@ -125,6 +131,14 @@ public struct HostEndpoint: Sendable {
         while connection.processNextFrame() {
             route(now)
         }
+        connection.finishReceive()
+        route(now)
+    }
+
+    /// The transmit marked `isFinal` was written in full.
+    public mutating func finalTransmitWritten(now: CoreInstant) {
+        connection.finalTransmitWritten(now: now)
+        route(now)
     }
 
     /// The transport ended.
@@ -137,7 +151,7 @@ public struct HostEndpoint: Sendable {
     public mutating func handleTimeout(now: CoreInstant) {
         connection.handleTimeout(now: now)
         route(now)
-        power.handle(.deadline, connection: &connection, now: now)
+        notifyAll(.deadline, now)
         route(now)
     }
 
@@ -158,21 +172,28 @@ public struct HostEndpoint: Sendable {
             notifyAll(.usabilityChanged, now)
             refreshStatus()
         case .setBundles(let bundles):
-            self.bundles = bundles
-            offerForPeer()
-        case .updateBytes(let id, let data):
-            if id.generation == generation { update.bytes(id, data, connection: &connection) }
-        case .updateFinished(let id):
-            if id.generation == generation { update.finished(id, connection: &connection) }
-        case .updateFailed(let id, let error):
-            if id.generation == generation { update.failed(id, error, connection: &connection) }
+            connection.setBundles(bundles)
+            update.offerChanged(connection.offeredUpdate, connection: &connection)
         case .close(let code, let retryAfter):
             connection.close(code, retryAfter: retryAfter, now: now)
         }
         route(now)
     }
 
-    /// Opens a bulk test stream (§10.4).
+    /// The payload source's answer; one naming another generation is dropped.
+    public mutating func handle(_ input: PayloadInput, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        switch input {
+        case .bytes(let id, let data):
+            if id.generation == generation { update.bytes(id, data, connection: &connection) }
+        case .failed(let id, let error):
+            if id.generation == generation { update.failed(id, error, connection: &connection) }
+        }
+        route(now)
+    }
+
+    /// Opens a bulk test stream.
     package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
         connection.tick(now)
         route(now)
@@ -198,17 +219,23 @@ public struct HostEndpoint: Sendable {
 
     /// The next event for the hub.
     public mutating func pollEvent() -> HostEvent? {
-        guard eventHead < events.count else { return nil }
-        if coalescedAt.peerState == eventHead { coalescedAt.peerState = nil }
-        if coalescedAt.features == eventHead { coalescedAt.features = nil }
+        events.poll()
+    }
+
+    /// Events not yet polled.
+    package var pendingEventCount: Int { events.count }
+
+    /// The next ask of the payload source.
+    public mutating func pollEffect() -> HostEffect? {
+        guard effectHead < effects.count else { return nil }
         defer {
-            eventHead += 1
-            if eventHead == events.count {
-                events.removeAll(keepingCapacity: true)
-                eventHead = 0
+            effectHead += 1
+            if effectHead == effects.count {
+                effects.removeAll(keepingCapacity: true)
+                effectHead = 0
             }
         }
-        return events[eventHead]
+        return effects[effectHead]
     }
 
     package mutating func takeTrace() -> [ConnectionTrace] {
@@ -216,13 +243,6 @@ public struct HostEndpoint: Sendable {
     }
 
     // MARK: Routing
-
-    private mutating func offerForPeer() {
-        guard let claim = connection.remoteHello?.claim else { return }
-        let offer = BundledPayload.offer(from: bundles, for: claim)
-        connection.setUpdateAvailable(offer)
-        update.offerChanged(offer, connection: &connection)
-    }
 
     private mutating func route(_ now: CoreInstant) {
         while true {
@@ -243,31 +263,20 @@ public struct HostEndpoint: Sendable {
         let status = connection.featureStatus
         guard status != lastStatus else { return }
         lastStatus = status
-        if let at = coalescedAt.features {
-            events[at] = .featuresChanged(status)
-        } else {
-            coalescedAt.features = events.count
-            events.append(.featuresChanged(status))
-        }
+        events.append(.featuresChanged(status), coalescing: .features)
     }
 
     private mutating func dispatch(_ routed: RoutedEvent, _ now: CoreInstant) {
         switch routed.event {
         case .helloReceived(let hello):
             events.append(.helloReceived(hello.claim, hello.state ?? PeerSessionState()))
-            offerForPeer()
             notifyAll(.sessionEstablished, now)
             refreshStatus()
         case .remoteAdvertsChanged:
             notifyAll(.usabilityChanged, now)
             refreshStatus()
         case .peerStateChanged(let state):
-            if let at = coalescedAt.peerState {
-                events[at] = .peerStateChanged(state)
-            } else {
-                coalescedAt.peerState = events.count
-                events.append(.peerStateChanged(state))
-            }
+            events.append(.peerStateChanged(state), coalescing: .peerState)
         case .policyChanged, .updateAvailable:
             break
         case .liveness(let change):
@@ -288,6 +297,9 @@ public struct HostEndpoint: Sendable {
             deliver(.writable(id), to: routed.owner, now)
         case .streamClosed(let id, let closure):
             deliver(.streamClosed(id, closure), to: routed.owner, now)
+        case .slotFreed:
+            // The slots are shared across kinds, so every opener re-checks.
+            notifyAll(.slotFreed, now)
         }
     }
 
@@ -302,11 +314,20 @@ public struct HostEndpoint: Sendable {
     }
 
     private mutating func collect() {
-        for output in [power.takeOutputs(), logs.takeOutputs(), update.takeOutputs()] {
-            events += output.events
+        let served = update.takeOutputs()
+        effects += served.effects
+        for output in [
+            power.takeOutputs(), logs.takeOutputs(), (events: served.events, diagnostics: served.diagnostics),
+        ] {
+            for event in output.events { events.append(event) }
             for diagnostic in output.diagnostics {
                 connection.diagnose(diagnostic)
             }
         }
     }
+}
+
+/// The host's events that coalesce.
+enum HostEventSlot: Hashable, Sendable {
+    case peerState, features
 }

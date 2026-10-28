@@ -32,7 +32,7 @@ public enum LogDelivery: Sendable, Equatable {
 
 // MARK: - Peer
 
-/// The peer's log forwarder (§7.3): at most one LOG_FORWARD per connection.
+/// The peer's log forwarder: at most one LOG_FORWARD per connection.
 public struct LogForwarder: FeatureMachine {
     /// LOGS.
     public static let feature = FeatureID.logs
@@ -40,7 +40,8 @@ public struct LogForwarder: FeatureMachine {
     private var availability: Availability<NoParams>
     private var stream: StreamID?
     private var ending = false
-    /// After a RESET, no reopening until the next policy or usability change.
+    /// After a RESET other than the host's DISABLED_BY_POLICY, no reopening
+    /// until the next policy or usability change.
     private var blocked = false
     private var recordsMayWait = true
     private var modeSent: LogRingMode?
@@ -59,7 +60,7 @@ public struct LogForwarder: FeatureMachine {
     }
 
     /// The forwarder sets no deadlines.
-    public var nextDeadline: CoreInstant? { nil }
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
@@ -82,7 +83,7 @@ public struct LogForwarder: FeatureMachine {
                 }
             }
             reconcile(&connection)
-        case .usabilityChanged:
+        case .usabilityChanged, .slotFreed:
             reconcile(&connection)
         case .writable(let id) where id == stream:
             checkReady(&connection)
@@ -94,6 +95,10 @@ public struct LogForwarder: FeatureMachine {
             ending = false
             switch closure {
             case .completed: reconcile(&connection)
+            // The host's session messages leave before its stream RESETs, so
+            // this side already holds a policy at least as new as the one that
+            // disabled the stream: reconcile reopens only if that policy enables LOGS.
+            case .resetByPeer(let error) where error.code == .disabledByPolicy: reconcile(&connection)
             case .resetByPeer, .resetLocally: blocked = true
             case .connectionClosedLocally, .connectionClosedByPeer, .connectionLost: break
             }
@@ -108,8 +113,11 @@ public struct LogForwarder: FeatureMachine {
         case .recordsAvailable:
             recordsMayWait = true
         case .batch(let batch):
-            recordsMayWait = true
-            guard let stream, !ending, !batch.records.isEmpty || batch.droppedBefore > 0 else { break }
+            // The batch is what the ring held: an empty one says the ring is empty,
+            // so only the sink's next `.recordsAvailable` may ask again.
+            let isEmpty = batch.records.isEmpty && batch.droppedBefore == 0
+            recordsMayWait = !isEmpty
+            guard let stream, !ending, !isEmpty else { break }
             let message = batch.encoded
             if connection.canSendMessage(message.count, on: stream) {
                 connection.send(message: message, on: stream)
@@ -152,7 +160,7 @@ public struct LogForwarder: FeatureMachine {
 
 // MARK: - Host
 
-/// The host's log receiver (§7.4).
+/// The host's log receiver.
 public struct LogReceiver: FeatureMachine {
     /// LOGS.
     public static let feature = FeatureID.logs
@@ -172,7 +180,7 @@ public struct LogReceiver: FeatureMachine {
     }
 
     /// The receiver sets no deadlines; the connection meters the credit return.
-    public var nextDeadline: CoreInstant? { nil }
+    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
         defer {
@@ -216,7 +224,7 @@ public struct LogReceiver: FeatureMachine {
             for id in streams where connection.canReset(id) {
                 connection.reset(id, WireError(.disabledByPolicy))
             }
-        case .sessionEstablished, .data, .writable, .deadline:
+        case .sessionEstablished, .data, .writable, .deadline, .slotFreed:
             break
         }
     }

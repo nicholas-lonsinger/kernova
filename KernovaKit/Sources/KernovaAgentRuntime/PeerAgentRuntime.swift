@@ -6,15 +6,16 @@ import Foundation
 
 import Dispatch
 import KernovaAgentCore
-import KernovaWire
 import KernovaLogging
 import KernovaSynchronization
+import KernovaWire
 
 /// A guest agent's process-wide runtime: the dial schedule, one connection at a time, and the adapters
-/// that outlive every connection (§9.5).
+/// and power ledger that outlive every connection.
 ///
 /// Its state lives on its own serial queue. Each connection runs on a `ConnectionDriver` of its own;
-/// adapter reports reach the current one through this queue, and its events come back through it.
+/// adapter reports reach the current one through this queue, and its events come back through it. A
+/// connection has ended once its driver has shut its stream down: only then does the schedule hear of it.
 public final class PeerAgentRuntime: Sendable {
     /// Where the runtime sends what the shell acts on, on the runtime's queue.
     public struct Handlers: Sendable {
@@ -33,7 +34,8 @@ public final class PeerAgentRuntime: Sendable {
         }
     }
 
-    private let queue = DispatchQueue(label: "app.kernova.peer-agent")
+    /// The runtime's queue: serial, every input to the dial schedule runs on it.
+    package let queue = DispatchQueue(label: "app.kernova.peer-agent")
     private let claim: PeerClaim
     private let registry: PeerFeatureRegistry
     private let dialer: any TransportDialer
@@ -41,6 +43,9 @@ public final class PeerAgentRuntime: Sendable {
     private let logger: KernovaLogger
     private let handlers: Handlers
     private let receiverPolicy: ReceiverPolicy
+    /// The process's power ledger: written on the driver queue for each effect carried out, and on this
+    /// queue for each report.
+    private let ledger = Locked(PowerLedger())
     private let state: Locked<State>
 
     private struct State: Sendable {
@@ -49,11 +54,8 @@ public final class PeerAgentRuntime: Sendable {
         var peerState: PeerSessionState
         var power: Availability<PowerOffer>
         var update: Availability<UpdateOffer>
-        var fire: (any ScheduledFire)?
-        var armedDeadline: CoreInstant?
-        var fireToken: UInt64 = 0
-        var isStopped = false
-        var closeCompletion: (@Sendable () -> Void)?
+        var timer = TimerSlot()
+        var closeCompletions: [@Sendable () -> Void] = []
     }
 
     /// A runtime for a peer claiming `claim`, whose `instanceID` it replaces with 16 bytes it draws once.
@@ -72,13 +74,15 @@ public final class PeerAgentRuntime: Sendable {
         self.logger = logger
         self.receiverPolicy = receiverPolicy
         self.handlers = handlers
-        let unreported = Availability<PowerOffer>.absent(.notImplemented, debugDetail: "no adapter registered")
+        let unregistered = "no adapter registered"
         self.state = Locked(
             State(
                 agent: PeerAgent(now: scheduler.now), peerState: state,
-                power: registry.power == nil ? unreported : .absent(.unspecified, debugDetail: "not yet reported"),
+                power: registry.power == nil
+                    ? .absent(.notImplemented, debugDetail: unregistered)
+                    : .absent(.unspecified, debugDetail: "not yet reported"),
                 update: registry.update == nil
-                    ? .absent(.notImplemented, debugDetail: "no adapter registered")
+                    ? .absent(.notImplemented, debugDetail: unregistered)
                     : .absent(.unspecified, debugDetail: "not yet reported")))
     }
 
@@ -107,16 +111,13 @@ public final class PeerAgentRuntime: Sendable {
         }
     }
 
-    /// Stops dialing and closes the connection with `SHUTTING_DOWN`; `completion` runs on the runtime's
-    /// queue once the connection has ended, or at once when there is none.
+    /// Stops dialing and closes the connection with `SHUTTING_DOWN`. `completion` runs on the runtime's
+    /// queue once the connection has ended — its stream shut down — or at once when there is none.
     public func close(_ completion: @escaping @Sendable () -> Void) {
         queue.async { [self] in
-            let driver = state.withLock { state -> ConnectionDriver<PeerEndpoint>? in
-                state.isStopped = true
-                state.fireToken += 1
-                state.fire?.cancel()
-                state.fire = nil
-                if state.driver != nil { state.closeCompletion = completion }
+            step { agent, now in agent.shutDown(now: now) }
+            let driver = state.withLock { state in
+                if state.driver != nil { state.closeCompletions.append(completion) }
                 return state.driver
             }
             if let driver { driver.close(.shuttingDown) } else { completion() }
@@ -125,44 +126,25 @@ public final class PeerAgentRuntime: Sendable {
 
     // MARK: The dial schedule
 
-    /// Runs one input on the dial schedule, then its effects and timer.
-    private func step(_ body: (inout PeerAgent, CoreInstant) -> Void) {
+    /// Runs one input on the dial schedule — unless it is a fire that is no longer armed — then its
+    /// effects, and re-arms the timer.
+    private func step(firing token: UInt64? = nil, _ body: (inout PeerAgent, CoreInstant) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
         let now = scheduler.now
-        var effects: [AgentEffect] = []
-        var arm: (deadline: CoreInstant, token: UInt64)?
-        var cancelled: (any ScheduledFire)?
-        state.withLock { state in
+        let effects = state.withLock { state -> [AgentEffect] in
+            if let token, !state.timer.take(token) { return [] }
             body(&state.agent, now)
+            var effects: [AgentEffect] = []
             while let effect = state.agent.pollEffect() { effects.append(effect) }
-            let deadline = state.isStopped ? nil : state.agent.nextDeadline
-            guard deadline != state.armedDeadline else { return }
-            cancelled = state.fire
-            state.fire = nil
-            state.armedDeadline = deadline
-            state.fireToken += 1
-            if let deadline { arm = (deadline, state.fireToken) }
-        }
-        cancelled?.cancel()
-        if let arm {
-            let fire = scheduler.schedule(at: arm.deadline, on: queue) { [self] in
-                guard state.withLock({ $0.fireToken == arm.token }) else { return }
-                step { agent, now in
-                    agent.handleTimeout(now: now)
-                }
+            state.timer.arm(state.agent.nextDeadline, scheduler: scheduler, queue: queue) { [self] token in
+                step(firing: token) { agent, now in agent.handleTimeout(now: now) }
             }
-            state.withLock { state in
-                if state.fireToken == arm.token { state.fire = fire } else { fire.cancel() }
-            }
+            return effects
         }
         for effect in effects {
             switch effect {
-            case .dial:
-                guard !state.withLock(\.isStopped) else { continue }
-                dialer.dial { [self] result in queue.async { [self] in dialed(result) } }
-            case .stop(let reason):
-                state.withLock { $0.isStopped = true }
-                handlers.stop(reason)
+            case .dial: dialer.dial { [self] result in queue.async { [self] in dialed(result) } }
+            case .stop(let reason): handlers.stop(reason)
             }
         }
     }
@@ -172,9 +154,10 @@ public final class PeerAgentRuntime: Sendable {
         case .failure(let failure):
             step { agent, now in agent.dialFailed(failure, now: now) }
         case .success(let stream):
-            guard !state.withLock(\.isStopped) else { return stream.shutdown() }
-            var generation = ConnectionGeneration(rawValue: 0)
+            var generation: ConnectionGeneration?
             step { agent, now in generation = agent.dialSucceeded(now: now) }
+            guard let generation else { return stream.shutdown() }
+            let ledger = ledger.withLock { $0 }
             var configuration = state.withLock { state in
                 PeerConfiguration(
                     claim: claim, state: state.peerState, power: state.power,
@@ -182,6 +165,7 @@ public final class PeerAgentRuntime: Sendable {
                         ? .absent(.notImplemented, debugDetail: "no log forwarding") : .available(NoParams()),
                     update: state.update)
             }
+            configuration.powerLedger = ledger
             configuration.receiverPolicy = receiverPolicy
             let driver = ConnectionDriver(
                 endpoint: PeerEndpoint(configuration, generation: generation, now: scheduler.now), stream: stream,
@@ -207,10 +191,14 @@ public final class PeerAgentRuntime: Sendable {
                     return .feed(.logs(.batch(batch)))
                 }
             },
-            effect: { [registry] effect, _ in
+            effect: { [registry, ledger] effect, _ in
                 switch effect {
-                case .power(.perform(let id, let action)): registry.power?.perform(id, action)
-                case .power(.cancel(let id)): registry.power?.cancel(id)
+                case .power(let effect):
+                    ledger.withLock { $0.record(effect) }
+                    switch effect {
+                    case .perform(let id, let action): registry.power?.perform(id, action)
+                    case .cancel(let id): registry.power?.cancel(id)
+                    }
                 case .update(.payload(let id, let bytes)): registry.update?.write(id, bytes)
                 case .update(.complete(let id, let manifest)): registry.update?.complete(id, manifest)
                 case .update(.abort(let id)): registry.update?.abort(id)
@@ -221,30 +209,35 @@ public final class PeerAgentRuntime: Sendable {
             },
             event: { [self] event, _ in
                 queue.async { [self] in connectionEvent(event, generation) }
+            },
+            ended: { [self] closure, _ in
+                queue.async { [self] in connectionEnded(generation, closure) }
             })
     }
 
     private func connectionEvent(_ event: PeerEvent, _ generation: ConnectionGeneration) {
-        switch event {
-        case .policyReceived:
+        if event == .policyReceived {
             step { agent, now in agent.policyReceived(generation, now: now) }
-        case .closed(let closure):
-            let completion = state.withLock { state -> (@Sendable () -> Void)? in
-                guard state.driver?.generation == generation else { return nil }
-                state.driver = nil
-                defer { state.closeCompletion = nil }
-                return state.closeCompletion
-            }
-            step { agent, now in agent.connectionEnded(generation, closure, now: now) }
-            completion?()
-        case .established, .hostLiveness, .updateAvailable, .diagnostic:
-            break
         }
         handlers.event(event)
     }
 
-    /// An adapter's report: remembered for the next connection's configuration, and fed to the current one.
+    /// The connection's stream is shut down: the schedule hears of its end, and `close` completes.
+    private func connectionEnded(_ generation: ConnectionGeneration, _ closure: ConnectionClosure) {
+        let completions = state.withLock { state -> [@Sendable () -> Void] in
+            guard state.driver?.generation == generation else { return [] }
+            state.driver = nil
+            defer { state.closeCompletions.removeAll() }
+            return state.closeCompletions
+        }
+        step { agent, now in agent.connectionEnded(generation, closure, now: now) }
+        for completion in completions { completion() }
+    }
+
+    /// An adapter's report: remembered for the next connection's configuration and ledger, and fed to the
+    /// current one.
     private func report(_ input: PeerInput) {
+        if case .power(let report) = input { ledger.withLock { $0.record(report) } }
         queue.async { [self] in
             let driver = state.withLock { state in
                 switch input {

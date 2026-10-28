@@ -38,28 +38,33 @@ struct IPSWSelectionContentViewControllerTests {
             } == nil)
     }
 
-    @Test("Defaults to Download Latest with the default destination shown")
+    @Test("Until the lookup answers, Download Latest shows progress and the Downloads folder, and no file")
     func defaultDownloadSelected() {
-        let vm = VMCreationViewModel.overEngine()  // macOS + downloadLatest, default download path
+        let vm = VMCreationViewModel.overEngine(downloadsDirectory: scratch.url)
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
         #expect(findButton(titled: "Download Latest", in: vc.view)?.state == .on)
         #expect(findButton(titled: "Choose a Version…", in: vc.view)?.state == .off)
         #expect(findButton(titled: "Choose Local File…", in: vc.view)?.state == .off)
+        #expect(firstSubview(NSProgressIndicator.self, in: vc.view) != nil)
+        #expect(findLabel(withText: "Looking up the latest macOS\u{2026}", in: vc.view) != nil)
         #expect(
-            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+            findLabel(
+                withText: wizardAbbreviateWithTilde(scratch.url.path(percentEncoded: false)),
+                in: vc.view) != nil)
+        #expect(findLabel(containing: ".ipsw", in: vc.view) == nil)
     }
 
     @Test("Download Latest names the image it will fetch, the way a pinned pick does")
-    func downloadLatestShowsLookedUpImage() async {
+    func downloadLatestShowsLookedUpImage() async throws {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
         let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
-        // Mounting the step is what asks; the badge upgrades when it answers.
+        // Mounting the step joins the lookup; the badge upgrades when it answers.
         vc.viewDidAppear()
         await vc.latestImageTaskForTesting?.value
 
@@ -68,8 +73,10 @@ struct IPSWSelectionContentViewControllerTests {
                 containing: "macOS 26.5.2  ·  Build 25F84  ·  \(DataFormatters.formatBytes(19_772_077_142))",
                 in: vc.view) != nil)
         // The destination stays on the badge's second line.
-        #expect(
-            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+        let destination = try #require(vm.ipswDownloadPath)
+        #expect(destination.hasSuffix("/UniversalMac_26.5.2_25F84_Restore.ipsw"))
+        #expect(findLabel(withText: wizardAbbreviateWithTilde(destination), in: vc.view) != nil)
+        #expect(firstSubview(NSProgressIndicator.self, in: vc.view) == nil)
         // Nothing about "latest" is the user's to change.
         #expect(findButton(titled: "Change…", in: vc.view) == nil)
     }
@@ -88,20 +95,83 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findLabel(containing: "macOS 26.5.2  ·  Build 25F84", in: vc.view) != nil)
     }
 
-    @Test("A failed lookup leaves the destination-only badge the step always had")
-    func downloadLatestFallsBackToThePathBadge() async {
+    @Test("A failed lookup says so, names the Downloads folder and no file, and Try Again looks it up again")
+    func failedLookupOffersTryAgain() async throws {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
-        let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService,
+            downloadsDirectory: scratch.url)
+        // Whatever already sits in Downloads is no file this download names.
+        makeIPSW(at: scratch.url.appendingPathComponent("RestoreImage.ipsw").path(percentEncoded: false))
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         await vc.latestImageTaskForTesting?.value
 
+        #expect(findLabel(withText: "Couldn\u{2019}t look up the latest macOS", in: vc.view) != nil)
         #expect(
-            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+            findLabel(
+                withText: wizardAbbreviateWithTilde(scratch.url.path(percentEncoded: false)),
+                in: vc.view) != nil)
+        #expect(findLabel(containing: ".ipsw", in: vc.view) == nil)
         #expect(findLabel(containing: "Build", in: vc.view) == nil)
+        #expect(findButton(titled: "Use Existing File", in: vc.view) == nil)
+        #expect(firstSubview(NSProgressIndicator.self, in: vc.view) == nil)
+
+        // Back online: Try Again starts a new lookup and shows progress until
+        // it answers.
+        ipswService.fetchError = nil
+        try #require(findButton(titled: "Try Again", in: vc.view)).performClick(nil)
+        #expect(vm.latestImageLookup == .unanswered)
+        #expect(firstSubview(NSProgressIndicator.self, in: vc.view) != nil)
+        await vc.latestImageTaskForTesting?.value
+
+        #expect(ipswService.fetchCallCount == 2)
+        #expect(findLabel(containing: "macOS 26.5.2  ·  Build 25F84", in: vc.view) != nil)
+        #expect(findButton(titled: "Try Again", in: vc.view) == nil)
+    }
+
+    @Test("The image badge spans the step's width however the step was built")
+    func imageBadgeSpansTheStepWidth() async throws {
+        // A short destination, so the badge's own content is far narrower than
+        // the step and only the layout can make it span.
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService(),
+            downloadsDirectory: URL(fileURLWithPath: "/D", isDirectory: true))
+
+        // Mounted before the lookup answers, so the badge is rebuilt in place.
+        let rebuilt = IPSWSelectionContentViewController(creationVM: vm)
+        rebuilt.loadViewIfNeeded()
+        rebuilt.viewDidAppear()
+        await rebuilt.latestImageTaskForTesting?.value
+        // Mounted after it answered, so the badge is built with the view.
+        let built = IPSWSelectionContentViewController(creationVM: vm)
+        built.loadViewIfNeeded()
+
+        for vc in [rebuilt, built] {
+            vc.view.frame = NSRect(x: 0, y: 0, width: WizardStyle.width, height: 460)
+            vc.view.layoutSubtreeIfNeeded()
+            let subtitle = try #require(
+                findLabel(
+                    withText: "Choose how to obtain the macOS restore image (IPSW) for installation.",
+                    in: vc.view))
+            let step = try #require(subtitle.superview as? NSStackView)
+            let conditional = try #require(step.arrangedSubviews.last as? NSStackView)
+            let badge = try #require(conditional.arrangedSubviews.first)
+            // Held to the step's width by a constraint, rather than left to
+            // whichever width a `.leading` stack settles on for it — which a
+            // headless layout does not reproduce, so the frame alone can't
+            // tell the two apart.
+            #expect(
+                conditional.constraints.contains {
+                    $0.isActive && $0.firstItem === badge && $0.firstAttribute == .width
+                        && $0.relation == .equal && $0.secondItem === conditional
+                        && $0.secondAttribute == .width && $0.multiplier == 1 && $0.constant == 0
+                })
+            #expect(badge.frame.width == conditional.frame.width)
+        }
     }
 
     @Test("Overwrite warning shows when a file exists; Use Existing switches to local file")
@@ -109,8 +179,9 @@ struct IPSWSelectionContentViewControllerTests {
         let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
-        vm.ipswDownloadPath = path
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "26.5.2", build: "25F84", isSupportedOnThisHost: true, sizeBytes: 15_500_000_000)
+        let vm = await makeLookedUpWizard(localImageInspector: inspector)
         #expect(vm.shouldShowOverwriteWarning == true)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -128,21 +199,20 @@ struct IPSWSelectionContentViewControllerTests {
         // The badge upgrades to the file's own metadata, not just its path.
         #expect(
             findLabel(
-                containing: "macOS 15.6.1  ·  Build 24G90  ·  \(DataFormatters.formatBytes(15_500_000_000))",
+                containing: "macOS 26.5.2  ·  Build 25F84  ·  \(DataFormatters.formatBytes(15_500_000_000))",
                 in: vc.view) != nil)
     }
 
     @Test("A file of a different build is named, and not adopted until confirmed")
     func mismatchedExistingFileIsNotAdopted() async {
-        let path = makeIPSW()
-
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true, sizeBytes: 8_500_000_000)
-        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(
+            localImageInspector: inspector, downloadsDirectory: scratch.url)
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
-        vm.ipswDownloadPath = path
+        let path = makeIPSW(at: vm.ipswDownloadPath)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -168,12 +238,11 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("An unreadable file offers only a re-download")
     func unreadableExistingFileOffersReplace() async {
-        let path = makeIPSW()
+        makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
-        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
-        vm.ipswDownloadPath = path
+        let vm = await makeLookedUpWizard(localImageInspector: inspector)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -188,11 +257,10 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Leaving the step mid-check adopts nothing")
     func cancelledInspectionCommitsNothing() async throws {
-        let path = makeIPSW()
+        makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
-        vm.ipswDownloadPath = path
+        let vm = await makeLookedUpWizard(localImageInspector: inspector)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -277,11 +345,10 @@ struct IPSWSelectionContentViewControllerTests {
     }
 
     @Test("Download & Replace confirms the overwrite and dismisses the banner")
-    func overwriteConfirm() {
-        let path = makeIPSW()
+    func overwriteConfirm() async {
+        makeIPSW()
 
-        let vm = VMCreationViewModel.overEngine()
-        vm.ipswDownloadPath = path
+        let vm = await makeLookedUpWizard()
         #expect(vm.shouldShowOverwriteWarning == true)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -295,15 +362,14 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Switching install source clears a stale mismatch banner")
     func sourceSwitchClearsMismatchBanner() async {
-        let path = makeIPSW()
-
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
-        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
+        let vm = VMCreationViewModel.overEngine(
+            localImageInspector: inspector, downloadsDirectory: scratch.url)
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
-        vm.ipswDownloadPath = path
+        makeIPSW(at: vm.ipswDownloadPath)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -323,11 +389,10 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Switching install source clears a stale checking banner")
     func sourceSwitchClearsCheckingBanner() async throws {
-        let path = makeIPSW()
+        makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
-        vm.ipswDownloadPath = path
+        let vm = await makeLookedUpWizard(localImageInspector: inspector)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -402,15 +467,12 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(!vm.unattendedSetupActive)
     }
 
-    @Test("Double-clicking Download Latest selects it and advances to the next step")
-    func doubleClickDownloadLatestAdvances() throws {
+    @Test("Double-clicking Download Latest selects it and advances once the lookup has answered")
+    func doubleClickDownloadLatestAdvances() async throws {
         let vm = VMCreationViewModel.overEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+        vm.selectCatalogEntry(makeCatalogEntry())
         vm.currentStep = .bootConfig
-        // The destination is the real Downloads folder, so whatever already sits
-        // there must not raise the overwrite warning that blocks the step.
-        vm.confirmOverwrite()
-        #expect(!vm.shouldShowOverwriteWarning)
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         // A plain NSButton would start a tracking loop waiting for a real mouse-up.
@@ -421,18 +483,38 @@ struct IPSWSelectionContentViewControllerTests {
                 with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
                 windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
 
+        // Before the answer the source is chosen, but the step holds.
         radio.mouseDown(with: doubleClick)
-
         #expect(vm.ipswSource == .downloadLatest)
+        #expect(vm.currentStep == .bootConfig)
+
+        await vc.latestImageTaskForTesting?.value
+        radio.mouseDown(with: doubleClick)
         #expect(vm.currentStep == .resources)
     }
 
     // MARK: - Helpers
 
-    @MainActor
-    private func makeIPSW() -> String {
-        let path = scratch.url
-            .appendingPathComponent("RestoreImage.ipsw")
+    /// A wizard on Download Latest whose lookup found `makeLatestImage()`, so its
+    /// destination is that image's file in this test's Downloads folder — the
+    /// one ``makeIPSW(at:)`` writes by default.
+    private func makeLookedUpWizard(
+        localImageInspector: any LocalRestoreImageInspecting = MockLocalRestoreImageInspector()
+    ) async -> VMCreationViewModel {
+        let vm = VMCreationViewModel.overEngine(
+            probeService: MockRestoreImageProbeService(), localImageInspector: localImageInspector,
+            ipswService: MockIPSWService(), downloadsDirectory: scratch.url)
+        await vm.loadLatestImageDetails()?.value
+        return vm
+    }
+
+    /// Puts an empty IPSW at `path`, the looked-up image's destination in this
+    /// test's Downloads folder unless named.
+    @discardableResult
+    private func makeIPSW(at path: String? = nil) -> String {
+        let path =
+            path
+            ?? scratch.url.appendingPathComponent(makeLatestImage().suggestedFilename)
             .path(percentEncoded: false)
         FileManager.default.createFile(atPath: path, contents: Data())
         return path

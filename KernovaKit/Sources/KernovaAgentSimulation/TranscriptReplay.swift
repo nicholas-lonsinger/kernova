@@ -7,7 +7,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaWire
 
-/// A parsed transcript file (§10.5).
+/// A parsed transcript file.
 package struct Transcript: Sendable {
     package enum Line: Sendable {
         /// The pinned side's bytes, fed at `time`.
@@ -121,8 +121,10 @@ package enum TranscriptError: Error, Equatable {
 }
 
 /// Replays a frozen transcript solo against the current implementation of the
-/// other role (§10.5): pinned bytes in, frozen fields of the current side's
-/// frames compared, everything else skipped.
+/// other role: the pinned side's bytes in, the frozen fields of the current
+/// side's frames compared. A strict frame must come exactly where the transcript
+/// expects it and none may be left over; a tolerant one is skipped when not
+/// expected next. Frames of non-frozen kinds are never compared.
 package final class SoloReplay {
     let transcript: Transcript
     private var host: HostEndpoint?
@@ -133,7 +135,7 @@ package final class SoloReplay {
     private var pinnedDecoder = FrameDecoder()
     private var preambleSeen = false
     private var kinds: [UInt32: StreamKind] = [:]
-    private var produced: [String] = []
+    private var produced: [FrozenLine] = []
     private var cursor = 0
     private var events: [String] = []
     private var eventCursor = 0
@@ -144,6 +146,7 @@ package final class SoloReplay {
     private var closedCount = 0
     private var source = FixturePayloadSource()
     private var finishedAt: UInt64?
+    private var localFaults: [String] = []
 
     package init(_ transcript: Transcript) throws(TranscriptError) {
         self.transcript = transcript
@@ -165,40 +168,55 @@ package final class SoloReplay {
 
     var instant: CoreInstant { CoreInstant(nanoseconds: Duet.base + now * 1_000_000) }
 
+    /// The lines in the order the duet ran them. A wire line carries the time its
+    /// bytes were written, and the duet's hop delivers them a millisecond later; at
+    /// one instant the duet delivers, then applies inputs, and the checks follow both.
+    private var timeline: [(time: UInt64, line: Transcript.Line)] {
+        let keyed = transcript.lines.enumerated().map { index, line -> (time: UInt64, rank: Int, index: Int) in
+            switch line {
+            case .wire(let time, _): (time + 1, 0, index)
+            case .input(let time, _): (time, 1, index)
+            case .expect(let time, _), .event(let time, _): (time, 2, index)
+            }
+        }
+        return keyed.sorted { ($0.time, $0.rank, $0.index) < ($1.time, $1.rank, $1.index) }.map {
+            ($0.time, transcript.lines[$0.index])
+        }
+    }
+
     /// Replays every line and checks the frozen frames, the events and the PING floor.
     package func run() {
         drain()
-        for line in transcript.lines {
+        for (time, line) in timeline {
+            advance(to: time)
             switch line {
-            case .wire(let time, let bytes):
-                advance(to: time)
-                receive(bytes)
-            case .input(let time, let input):
-                advance(to: time)
-                apply(input)
-            case .expect(let time, let spec):
-                advance(to: time)
-                match(spec, time: time)
-            case .event(let time, let text):
-                advance(to: time)
-                matchEvent(text, time: time)
+            case .wire(_, let bytes): receive(bytes)
+            case .input(_, let input): apply(input)
+            case .expect(_, let spec): match(spec, time: time)
+            case .event(_, let text): matchEvent(text, time: time)
             }
         }
         advance(to: transcript.end)
+        for line in produced[cursor...] where line.match == .strict {
+            failures.append("produced `\(line.text)`, which the transcript does not expect")
+        }
+        for text in events[eventCursor...] {
+            failures.append("emitted event `\(text)`, which the transcript does not expect")
+        }
         checkPingFloor()
     }
 
     /// Feeds the pinned bytes only up to `offset`, then ends the transport, and
-    /// runs on to the transcript's end: what must hold is that every stream and
-    /// the connection end exactly once.
+    /// runs on to the transcript's end: every stream and the connection must end
+    /// exactly once, which the trace checker and the `.closed` count assert.
     package func runCut(at offset: Int) {
         drain()
         var fed = 0
         var ended = false
-        for line in transcript.lines {
+        for (time, line) in timeline {
             guard !ended else { break }
             switch line {
-            case .wire(let time, let bytes):
+            case .wire(_, let bytes):
                 advance(to: time)
                 let take = min(bytes.count, offset - fed)
                 if take > 0 { receive(Data(bytes.prefix(take))) }
@@ -209,7 +227,7 @@ package final class SoloReplay {
                     drain()
                     ended = true
                 }
-            case .input(let time, let input):
+            case .input(_, let input):
                 advance(to: time)
                 apply(input)
             case .expect, .event:
@@ -222,6 +240,7 @@ package final class SoloReplay {
             drain()
         }
         advance(to: transcript.end + 2_000)
+        for violation in TraceChecker.violations(trace) { failures.append("cut at \(offset): \(violation)") }
         if closedCount != 1 { failures.append("cut at \(offset): \(closedCount) .closed events") }
         if (host?.state ?? peer?.state) != .finished { failures.append("cut at \(offset): not finished") }
     }
@@ -254,12 +273,25 @@ package final class SoloReplay {
     }
 
     private func apply(_ input: TranscriptInput) {
+        let faultsBefore = localFaults.count
         switch input {
         case .host(let command): host?.handle(command, now: instant)
         case .peer(let input): peer?.handle(input, now: instant)
+        case .pull(let report):
+            guard peer != nil else { break }
+            guard let stream = kinds.filter({ $0.value == .updatePull && $0.key % 2 == 1 }).keys.max() else {
+                failures.append("t=\(now): `\(input.text)` with no UPDATE_PULL opened")
+                break
+            }
+            peer?.handle(
+                report.input(UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: stream))),
+                now: instant)
         case .peerLogs: break
         }
         drain()
+        for fault in localFaults[faultsBefore...] {
+            failures.append("t=\(now): `\(input.text)` raised a local fault: \(fault)")
+        }
     }
 
     private func drain() {
@@ -268,12 +300,16 @@ package final class SoloReplay {
             progressed = false
             while let event = host?.pollEvent() {
                 progressed = true
+                if case .diagnostic(.localFault(let text)) = event { localFaults.append("host: \(text)") }
                 if case .closed = event {
                     closedCount += 1
                     finishedAt = finishedAt ?? now
                 }
                 if let text = TranscriptEvents.describe(event) { events.append(text) }
-                for command in source.answer(event) { host?.handle(command, now: instant) }
+            }
+            while let effect = host?.pollEffect() {
+                progressed = true
+                host?.handle(source.answer(effect), now: instant)
             }
             while let effect = peer?.pollEffect() {
                 progressed = true
@@ -284,6 +320,7 @@ package final class SoloReplay {
             }
             while let event = peer?.pollEvent() {
                 progressed = true
+                if case .diagnostic(.localFault(let text)) = event { localFaults.append("peer: \(text)") }
                 if case .closed = event {
                     closedCount += 1
                     finishedAt = finishedAt ?? now
@@ -295,6 +332,10 @@ package final class SoloReplay {
             {
                 progressed = true
                 written(transmit)
+                if transmit.isFinal {
+                    host?.finalTransmitWritten(now: instant)
+                    peer?.finalTransmitWritten(now: instant)
+                }
             }
         }
         trace += host?.takeTrace() ?? []
@@ -306,7 +347,7 @@ package final class SoloReplay {
         for chunk in transmit.chunks { bytes.append(chunk) }
         if !preambleSeen {
             preambleSeen = true
-            if bytes.prefix(4) == WireConstants.preamble { produced.append("preamble") }
+            if bytes.prefix(4) == WireConstants.preamble { produced.append(FrozenLine("preamble")) }
         }
         decoder.append(bytes)
         while let frame = try? decoder.nextFrame() {
@@ -323,28 +364,38 @@ package final class SoloReplay {
             }
             if frame.type == .end, let total = rawTotals[id] {
                 produced.append(
-                    "s=\(id) DATA-TOTAL bytes=\(total.bytes) crc32c=\(FrozenFields.hex(Duet.bigEndian(total.crc.value)))"
-                )
+                    FrozenLine(
+                        "s=\(id) DATA-TOTAL bytes=\(total.bytes) crc32c=\(FrozenFields.hex(Duet.bigEndian(total.crc.value)))"
+                    ))
             }
             if let described = FrozenFields.describe(frame, kinds: kinds) { produced.append(described) }
         }
     }
 
-    /// The next produced frozen frame equal to `spec`; extra frames are skipped.
+    /// Consumes the next produced frozen frame, which must equal `spec`; only tolerant frames are skipped.
     private func match(_ spec: String, time: UInt64) {
         while cursor < produced.count {
-            defer { cursor += 1 }
-            if produced[cursor] == spec { return }
+            let line = produced[cursor]
+            cursor += 1
+            if line.text == spec { return }
+            if line.match == .strict {
+                failures.append("t=\(time): expected `\(spec)`; produced `\(line.text)`")
+                return
+            }
         }
-        failures.append("t=\(time): expected `\(spec)`; produced since: \(produced.suffix(4))")
+        failures.append("t=\(time): expected `\(spec)`; produced nothing more")
     }
 
+    /// Consumes the next emitted event, which must equal `text`: every event a
+    /// transcript names reports a frozen frame's outcome, so none is skipped.
     private func matchEvent(_ text: String, time: UInt64) {
-        while eventCursor < events.count {
-            defer { eventCursor += 1 }
-            if events[eventCursor] == text { return }
+        guard eventCursor < events.count else {
+            failures.append("t=\(time): expected event `\(text)`; emitted nothing more")
+            return
         }
-        failures.append("t=\(time): expected event `\(text)`; emitted: \(events.suffix(4))")
+        let emitted = events[eventCursor]
+        eventCursor += 1
+        if emitted != text { failures.append("t=\(time): expected event `\(text)`; emitted `\(emitted)`") }
     }
 
     /// The frozen floor: a PING at least every 5 s from connect until the connection ends.

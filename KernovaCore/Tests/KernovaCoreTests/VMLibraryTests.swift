@@ -24,7 +24,7 @@ struct VMLibraryTests {
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
-        downloadsDirectory: URL? = nil,
+        downloadsDirectory: URL = makeTestDownloadsDirectory(),
         vmnetNetworks: VmnetNetworkService = .scripted(),
         arpTable: ScriptedARPTable = ScriptedARPTable(),
         appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive

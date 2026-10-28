@@ -8,7 +8,7 @@ import KernovaWire
 import SwiftProtobuf
 
 // Generated messages stay inside the core: these convert at its edge, applying
-// the receiver's normalization (§4.1) on the way in.
+// the receiver's normalization on the way in.
 
 extension SwiftProtobuf.Message {
     /// The message's encoding; the generated messages hold no maps and no
@@ -67,6 +67,15 @@ extension WireError {
         case .UNRECOGNIZED: .unspecified
         default: reason
         }
+    }
+}
+
+extension ErrorCode {
+    /// Whether this build's schema assigns the code: the generated
+    /// `init(rawValue:)` never fails, mapping every other value to `.UNRECOGNIZED`.
+    var isAssigned: Bool {
+        if case .UNRECOGNIZED = self { return false }
+        return true
     }
 }
 
@@ -160,19 +169,33 @@ extension UpdateManifestValue {
 
 extension AppValue {
     static let maxCount = 32
+    static let displayNameBytes = 128
+    static let identifierBytes = 256
+
+    /// The app within the wire's bounds, as the receiver normalizes it; the
+    /// sender applies it too, so `maxCount` apps always fit one message.
+    var normalized: AppValue {
+        AppValue(
+            displayName: Normalize.display(displayName, maxBytes: Self.displayNameBytes),
+            identifier: Normalize.display(identifier, maxBytes: Self.identifierBytes), processID: processID)
+    }
 
     var proto: Kernova_V2_BlockingApp {
+        let normalized = normalized
         var app = Kernova_V2_BlockingApp()
-        app.displayName = displayName
-        app.identifier = identifier
-        app.processID = processID
+        app.displayName = normalized.displayName
+        app.identifier = normalized.identifier
+        app.processID = normalized.processID
         return app
     }
 
     init(received app: Kernova_V2_BlockingApp) {
-        self.init(
-            displayName: Normalize.display(app.displayName, maxBytes: 128),
-            identifier: Normalize.display(app.identifier, maxBytes: 256), processID: app.processID)
+        self = AppValue(displayName: app.displayName, identifier: app.identifier, processID: app.processID).normalized
+    }
+
+    /// An apps list as sent: at most `maxCount`, each normalized.
+    static func wire(_ apps: [AppValue]) -> [Kernova_V2_BlockingApp] {
+        apps.prefix(maxCount).map(\.proto)
     }
 
     static func received(_ apps: [Kernova_V2_BlockingApp]) -> [AppValue] {
@@ -188,7 +211,8 @@ extension PowerOffer {
         return capability.encoded
     }
 
-    init?(params: Data) {
+    /// Decodes a far side's `PowerCapability` params; nil when they do not decode.
+    public init?(params: Data) {
         guard let capability = try? Kernova_V2_PowerCapability(serializedBytes: params) else { return nil }
         self.init(actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit)
     }

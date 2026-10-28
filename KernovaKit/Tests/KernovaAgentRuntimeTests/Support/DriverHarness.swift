@@ -42,8 +42,10 @@ final class ScriptedStream: ByteStream {
 
     private let state = Locked(State())
     private let journal: Journal
+    /// Each call the stream took: `start`, `write`, `readMore`, `shutdown`.
+    let calls = Recorder<String>()
 
-    init(journal: Journal) {
+    init(journal: Journal = Journal()) {
         self.journal = journal
     }
 
@@ -52,12 +54,12 @@ final class ScriptedStream: ByteStream {
             $0.queue = queue
             $0.handler = handler
         }
-        journal.add("start")
+        note("start")
     }
 
     func readMore() {
         state.withLock { $0.readMores += 1 }
-        journal.add("readMore")
+        note("readMore")
     }
 
     func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void) {
@@ -66,7 +68,7 @@ final class ScriptedStream: ByteStream {
             state.pending = completion
             state.writes.append(chunks.reduce(into: Data()) { $0.append($1) })
         }
-        journal.add("write")
+        note("write")
     }
 
     func shutdown() {
@@ -75,11 +77,19 @@ final class ScriptedStream: ByteStream {
             defer { state.pending = nil }
             return (state.queue, state.pending)
         }
-        journal.add("shutdown")
+        note("shutdown")
         if let queue = pending.0, let completion = pending.1 { queue.async { completion(.shutDown) } }
     }
 
+    private func note(_ call: String) {
+        journal.add(call)
+        calls.record(call)
+    }
+
     // MARK: The script
+
+    /// The start queue, once started.
+    var queue: DispatchQueue? { state.withLock(\.queue) }
 
     /// Delivers `event` on the start queue.
     func deliver(_ event: ByteStreamEvent) {
@@ -135,6 +145,8 @@ final class ManualScheduler: RuntimeScheduler {
 
     private let state: Locked<State>
     private let journal: Journal?
+    /// Each deadline armed, in order.
+    let arms = Recorder<CoreInstant>()
 
     init(now: CoreInstant, journal: Journal? = nil) {
         state = Locked(State(now: now))
@@ -152,13 +164,14 @@ final class ManualScheduler: RuntimeScheduler {
             return state.nextID
         }
         journal?.add("arm")
+        arms.record(at)
         return Fire { [state] in state.withLock { $0.entries.removeAll { $0.id == id } } }
     }
 
     /// The deadlines armed and not yet fired or cancelled, earliest first.
     var armed: [CoreInstant] { state.withLock { $0.entries.map(\.at).sorted() } }
 
-    /// Moves the clock to `instant` and runs every fire now due, each on its queue.
+    /// Moves the clock to `instant` and queues every fire now due, each on its queue.
     func advance(to instant: CoreInstant) {
         let due = state.withLock { state -> [Entry] in
             state.now = instant
@@ -167,6 +180,21 @@ final class ManualScheduler: RuntimeScheduler {
             return due
         }
         for entry in due { entry.queue.async(execute: entry.fire) }
+    }
+
+    /// Moves the clock to `instant` without running any fire.
+    func set(now instant: CoreInstant) {
+        state.withLock { $0.now = instant }
+    }
+
+    /// Queues the earliest armed fire now, whatever its deadline: a timer that fires early.
+    func fireEarliestEarly() {
+        let entry = state.withLock { state -> Entry? in
+            guard let earliest = state.entries.min(by: { $0.at < $1.at }) else { return nil }
+            state.entries.removeAll { $0.id == earliest.id }
+            return earliest
+        }
+        if let entry { entry.queue.async(execute: entry.fire) }
     }
 }
 
@@ -182,6 +210,9 @@ enum Fixture {
     static func at(milliseconds: Int64) -> CoreInstant {
         t0.advanced(by: .milliseconds(milliseconds))
     }
+
+    /// When a connection made at `t0` first sends a PING.
+    static let firstPing = t0.advanced(by: ReceiverPolicy.production.pingInterval)
 
     static let hostClaim = PeerClaim(role: .host, versionLabel: "host")
 
@@ -209,6 +240,81 @@ enum Fixture {
     }
 
     static let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "AgentRuntime") { _, _, _, _ in }
+
+    /// A logger whose every emission is recorded as its level and text.
+    static func recordingLogger() -> (KernovaLogger, Recorder<(KernovaLogLevel, String)>) {
+        let records = Recorder<(KernovaLogLevel, String)>()
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "AgentRuntime") { level, _, _, segments in
+            records.record((level, segments.map(\.text).joined()))
+        }
+        return (logger, records)
+    }
+
+    /// The frames `bytes` holds: whole frames written after the preamble.
+    static func frames(_ bytes: Data) -> [Frame] {
+        var decoder = FrameDecoder()
+        decoder.append(WireConstants.preamble)
+        decoder.append(bytes)
+        var frames: [Frame] = []
+        while let frame = try? decoder.nextFrame() { frames.append(frame) }
+        return frames
+    }
+}
+
+/// A host endpoint the test runs by hand as the far side of a scripted stream.
+final class FarHost: Sendable {
+    private let endpoint: Locked<HostEndpoint>
+    private let clock: ManualScheduler
+    /// Everything the host endpoint told its hub.
+    let events = Recorder<HostEvent>()
+
+    init(
+        clock: ManualScheduler, configuration: HostConfiguration = Fixture.hostConfiguration(),
+        generation: ConnectionGeneration = ConnectionGeneration(rawValue: 1)
+    ) {
+        self.clock = clock
+        endpoint = Locked(HostEndpoint(configuration, generation: generation, now: clock.now))
+    }
+
+    /// Feeds the host endpoint what the peer wrote.
+    func read(_ bytes: Data) {
+        let now = clock.now
+        let events = endpoint.withLock { endpoint in
+            endpoint.receive(bytes, now: now)
+            return Self.drain(&endpoint)
+        }
+        events.forEach(self.events.record)
+    }
+
+    /// Runs a hub command on the host endpoint.
+    func command(_ command: HostCommand) {
+        let now = clock.now
+        let events = endpoint.withLock { endpoint in
+            endpoint.handle(command, now: now)
+            return Self.drain(&endpoint)
+        }
+        events.forEach(self.events.record)
+    }
+
+    /// Everything the host endpoint has to send.
+    func output() -> Data {
+        let (bytes, events) = endpoint.withLock { endpoint in
+            var bytes = Data()
+            while let transmit = endpoint.pollTransmit(maxBytes: 1 << 20) {
+                for chunk in transmit.chunks { bytes.append(chunk) }
+            }
+            return (bytes, Self.drain(&endpoint))
+        }
+        events.forEach(self.events.record)
+        return bytes
+    }
+
+    private static func drain(_ endpoint: inout HostEndpoint) -> [HostEvent] {
+        var events: [HostEvent] = []
+        while let event = endpoint.pollEvent() { events.append(event) }
+        while endpoint.pollEffect() != nil {}
+        return events
+    }
 }
 
 /// A peer `ConnectionDriver` over a `ScriptedStream`, with a host endpoint the test runs by hand as the
@@ -218,25 +324,37 @@ final class PeerDriverHarness: Sendable {
     let scheduler: ManualScheduler
     let stream: ScriptedStream
     let driver: ConnectionDriver<PeerEndpoint>
+    let far: FarHost
+    /// Each `Handlers.ended` call's closure.
+    let ended = Recorder<ConnectionClosure>()
     private let events = Locked<[PeerEvent]>([])
-    private let far: Locked<HostEndpoint>
 
-    init(power: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown]))) {
+    init(
+        power: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown])),
+        policy: PolicySnapshot = PolicySnapshot(), logger: KernovaLogger = Fixture.logger,
+        inTurn: @escaping @Sendable (PeerEffect) -> InTurnEffect<PeerInput> = { _ in .deliver }
+    ) {
         let journal = journal
         let events = events
+        let ended = ended
         scheduler = ManualScheduler(now: Fixture.t0, journal: journal)
         stream = ScriptedStream(journal: journal)
         let generation = ConnectionGeneration(rawValue: 1)
         driver = ConnectionDriver(
             endpoint: PeerEndpoint(Fixture.peerConfiguration(power: power), generation: generation, now: Fixture.t0),
-            stream: stream, scheduler: scheduler, logger: Fixture.logger,
+            stream: stream, scheduler: scheduler, logger: logger,
             handlers: ConnectionDriver<PeerEndpoint>.Handlers(
+                inTurn: inTurn,
                 effect: { effect, _ in journal.add("effect \(effect)") },
                 event: { event, _ in
                     events.withLock { $0.append(event) }
                     journal.add("event \(Self.name(event))")
+                },
+                ended: { closure, _ in
+                    journal.add("ended")
+                    ended.record(closure)
                 }))
-        far = Locked(HostEndpoint(Fixture.hostConfiguration(), generation: generation, now: Fixture.t0))
+        far = FarHost(clock: scheduler, configuration: Fixture.hostConfiguration(policy: policy))
     }
 
     static func name(_ event: PeerEvent) -> String {
@@ -265,26 +383,7 @@ final class PeerDriverHarness: Sendable {
 
     /// Feeds the peer's written bytes to the host endpoint.
     func hostReads() {
-        let bytes = stream.takeWritten()
-        let now = scheduler.now
-        far.withLock { $0.receive(bytes, now: now) }
-    }
-
-    /// Runs `command` on the host endpoint.
-    func host(_ command: HostCommand) {
-        let now = scheduler.now
-        far.withLock { $0.handle(command, now: now) }
-    }
-
-    /// Everything the host endpoint has to send.
-    func hostOutput() -> Data {
-        far.withLock { far in
-            var bytes = Data()
-            while let transmit = far.pollTransmit(maxBytes: 1 << 20) {
-                for chunk in transmit.chunks { bytes.append(chunk) }
-            }
-            return bytes
-        }
+        far.read(stream.takeWritten())
     }
 
     /// Starts the driver, completes its first write, and delivers the host's Hello and what follows it.
@@ -294,7 +393,7 @@ final class PeerDriverHarness: Sendable {
         stream.completeWrite()
         await settle()
         hostReads()
-        stream.deliver(.received(hostOutput()))
+        stream.deliver(.received(far.output()))
         await settle()
     }
 }

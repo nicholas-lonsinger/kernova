@@ -10,7 +10,7 @@ import KernovaWire
 import Testing
 
 extension CoreUnits {
-    @Suite("JudgedClock and JudgedDeadline: §5.2 rules 1–4")
+    @Suite("JudgedClock and JudgedDeadline")
     struct JudgedClockUnitTests {
         static func clock() -> JudgedClock {
             JudgedClock(now: Unit.t0, suspendedStep: .seconds(10))
@@ -26,9 +26,9 @@ extension CoreUnits {
             }
         }
 
-        // MARK: Rule 1
+        // MARK: Backward steps
 
-        @Test("Rule 1: a step backwards charges nothing and moves neither clock")
+        @Test("A step backwards charges nothing and moves neither clock")
         func backwardStepChargesNothing() {
             var clock = Self.clock()
             clock.advance(to: Unit.at(2_000))
@@ -38,7 +38,7 @@ extension CoreUnits {
             #expect(clock.lastInput == Unit.at(1_000))
         }
 
-        @Test("Rule 1: after a step backwards, both clocks advance by each forward step from the caller's latest now")
+        @Test("After a step backwards, both clocks advance by each forward step from the caller's latest now")
         func forwardAfterBackward() {
             var clock = Self.clock()
             clock.advance(to: Unit.at(2_000))
@@ -58,9 +58,9 @@ extension CoreUnits {
             #expect(clock.external(nil) == nil)
         }
 
-        // MARK: Rule 2
+        // MARK: A frozen far side
 
-        @Test("Rule 2: while the far side is frozen judged time does not advance; raw time does")
+        @Test("While the far side is frozen judged time does not advance; raw time does")
         func frozenJudgesNothing() {
             var clock = Self.clock()
             clock.setFrozen(true)
@@ -72,7 +72,7 @@ extension CoreUnits {
             #expect(clock.judged == Unit.at(1_000))
         }
 
-        @Test("Rule 2: a frozen clock evaluates no deadline, needs no wake, and restarts a confirmation")
+        @Test("A frozen clock evaluates no deadline, needs no wake, and restarts a confirmation")
         func frozenDeadline() {
             var clock = Self.clock()
             var deadline = JudgedDeadline(after: .seconds(3), on: clock, confirmation: .seconds(1))
@@ -88,9 +88,9 @@ extension CoreUnits {
             #expect(fired == [false, false, false, false, false, true])
         }
 
-        // MARK: Rule 3
+        // MARK: Suspension
 
-        @Test("Rule 3: a step of at most 10 s is charged; a longer one charges 0 (this side was suspended)")
+        @Test("A forward step of at most 10 s is charged; a longer one charges 0 (this side was suspended)")
         func suspendedStep() {
             var clock = Self.clock()
             clock.advance(to: Unit.at(10_000))
@@ -102,9 +102,9 @@ extension CoreUnits {
             #expect(clock.judged == Unit.at(11_000))
         }
 
-        // MARK: Rule 4
+        // MARK: Confirmation
 
-        @Test("Rule 4: a passed deadline fires only at a later evaluation at least 1 s of raw time on")
+        @Test("A passed deadline fires only at a later evaluation at least 1 s of raw time on")
         func confirmedExpiry() {
             var clock = Self.clock()
             var deadline = JudgedDeadline(after: .seconds(3), on: clock, confirmation: .seconds(1))
@@ -116,7 +116,7 @@ extension CoreUnits {
             #expect(fired == [false, false, false, true])
         }
 
-        @Test("Rule 4: the confirmation runs on raw time, so it completes across a suspended step")
+        @Test("The confirmation runs on raw time, so it completes across a suspended step")
         func confirmationOnRawTime() {
             var clock = Self.clock()
             var deadline = JudgedDeadline(after: .seconds(3), on: clock, confirmation: .seconds(1))
@@ -167,13 +167,13 @@ extension CoreUnits {
         func backwardStepKeepsPinging() {
             var wire = Wire.host()
             wire.establish()
-            wire.advance(to: Unit.at(4_000))
-            #expect(wire.flush().isEmpty)
             wire.advance(to: Unit.at(3_000))
-            #expect(wire.connection.nextDeadline == Unit.at(4_000))
-            wire.advance(to: Unit.at(4_000))
+            #expect(wire.flush().isEmpty)
+            wire.advance(to: Unit.at(2_000))
+            #expect(wire.connection.nextDeadline == Unit.at(3_000))
+            wire.advance(to: Unit.at(3_000))
             #expect(wire.flush().shape == ["0:ping"])
-            #expect(wire.connection.clock.judged == Unit.at(5_000))
+            #expect(wire.connection.clock.judged == Unit.at(4_000))
         }
 
         @Test("Freezing the far side queues no PING and judges nothing; unfreezing queues a PING at once")

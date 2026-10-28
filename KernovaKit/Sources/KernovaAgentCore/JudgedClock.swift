@@ -1,4 +1,4 @@
-/// The connection's two clocks (§5.2). Raw time is the core's own monotonic
+/// The connection's two clocks. Raw time is the core's own monotonic
 /// timeline: it advances by each input's step forward and by nothing for a step
 /// backwards, so a clock that steps back neither charges the far side nor stops
 /// the core's timers. Judged time advances only while the far side is running
@@ -50,7 +50,7 @@ public struct JudgedClock: Sendable, Equatable {
     }
 }
 
-/// A deadline on judged time whose expiry is confirmed (§5.2 rule 4): found
+/// A deadline on judged time whose expiry is confirmed: found
 /// passed, it fires only at a later evaluation at least `confirmation` of raw
 /// time on that still finds it passed. Whatever ends the judgment replaces it.
 public struct JudgedDeadline: Sendable, Equatable {

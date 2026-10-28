@@ -43,9 +43,10 @@ final class SocketPair: Sendable {
     private let hub = DispatchQueue(label: "app.kernova.tests.hub")
 
     /// A pair whose host offers `manifest` unless `offersUpdate` is false.
-    init(peerSendBuffer: Int32? = nil, offersUpdate: Bool = true, handsOff: Bool = true, stallAfter: Int? = nil)
-        throws
-    {
+    init(
+        peerSendBuffer: Int32? = nil, offersUpdate: Bool = true, handsOff: Bool = true, stallAfter: Int? = nil,
+        sourceShortBy: Int = 0
+    ) throws {
         var descriptors: [Int32] = [0, 0]
         #if canImport(Darwin)
         let paired = socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors)
@@ -62,7 +63,8 @@ final class SocketPair: Sendable {
         power = FakePowerAdapter(handsOff: handsOff)
         let content = FakePayloadSource.payload(Self.payloadSize)
         installer = FakeInstaller(expected: content)
-        source = FakePayloadSource(content: content, stallAfter: stallAfter)
+        source = FakePayloadSource(
+            content: Data(content.prefix(Self.payloadSize - sourceShortBy)), stallAfter: stallAfter)
 
         let hostEvents = hostEvents
         let peerEvents = peerEvents
@@ -154,6 +156,7 @@ struct SocketPairTests {
         }
         #expect(claim.role == .sessionPeer)
         #expect(claim.instanceID.count == 16)
+        #expect(claim.instanceID != Fixture.peerClaim.instanceID)
         #expect(state.sessionID == "1")
         let established = await peer.next {
             if case .established = $0 { return true }
@@ -194,9 +197,7 @@ struct SocketPairTests {
         await pair.finish()
     }
 
-    @Test(
-        "An update offer is pulled, written and installed",
-        .disabled("waits on the base branch's UpdateServer, which ends a pull once payload_size bytes are sent"))
+    @Test("An update offer is pulled, written and installed")
     func updatePull() async throws {
         let pair = try SocketPair()
         var host = pair.hostEvents.waiter()
@@ -210,7 +211,23 @@ struct SocketPairTests {
         await pair.finish()
     }
 
-    @Test("A close ends every open stream exactly once on both sides")
+    @Test("A payload source that runs out short of the size fails the pull READ_FAILED, and the peer aborts")
+    func updatePullShortSource() async throws {
+        let pair = try SocketPair(sourceShortBy: 1_000)
+        var host = pair.hostEvents.waiter()
+        let closed = await host.next(where: \.isUpdateClosed)
+        guard case .update(.closed(_, .resetLocally(let error))) = closed else {
+            Issue.record("the pull ended \(closed)")
+            return
+        }
+        #expect(error.code == .readFailed)
+        var calls = pair.installer.calls.waiter()
+        _ = await calls.next { $0 == "abort" }
+        #expect(!pair.installer.calls.elements.contains { $0.hasPrefix("complete") })
+        await pair.finish()
+    }
+
+    @Test("A close ends an accepted power request and a stalled pull exactly once on both sides")
     func closeEndsEveryStreamOnce() async throws {
         let pair = try SocketPair(handsOff: false, stallAfter: 1_048_576)
         var host = pair.hostEvents.waiter()
@@ -225,6 +242,8 @@ struct SocketPairTests {
         _ = await host.next { $0.isClosed }
         var peer = pair.peerEvents.waiter()
         _ = await peer.next { $0.isClosed }
+        var calls = pair.installer.calls.waiter()
+        _ = await calls.next { $0 == "abort" }
         var stops = pair.stops.waiter()
         _ = await stops.next { _ in true }
 

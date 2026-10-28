@@ -30,6 +30,8 @@ final class SimPipe {
     var readScheduled = false
     /// Deliver exactly this many bytes, then end the transport both ways.
     var cutAfter: Int?
+    /// The cut fault that set `cutAfter`.
+    var cutFault: Int?
     private(set) var accepted = 0
     private(set) var delivered = 0
     /// The writer shut down: the reader sees EOF once the pipe is empty.

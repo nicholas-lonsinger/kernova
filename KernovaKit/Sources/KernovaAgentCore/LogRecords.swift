@@ -38,7 +38,7 @@ public struct LogSegmentValue: Sendable, Equatable {
     }
 }
 
-/// One guest log record (§7.1), bounded when it is created.
+/// One guest log record, bounded when it is created.
 public struct LogRecordValue: Sendable, Equatable {
     /// Subsystem and category: at most this many UTF-8 bytes each.
     public static let maxLabelBytes = 128
@@ -48,19 +48,19 @@ public struct LogRecordValue: Sendable, Equatable {
     public static let maxTextBytes = 16_384
 
     /// Wall clock at emission, milliseconds since the Unix epoch.
-    public var timestampMilliseconds: Int64
+    public private(set) var timestampMilliseconds: Int64
     /// The record's level.
-    public var level: LogLevelValue
+    public private(set) var level: LogLevelValue
     /// An opaque subsystem label.
-    public var subsystem: String
+    public private(set) var subsystem: String
     /// An opaque category label.
-    public var category: String
+    public private(set) var category: String
     /// The message's runs, in emission order.
-    public var segments: [LogSegmentValue]
+    public private(set) var segments: [LogSegmentValue]
     /// A bound cut the record.
-    public var truncated: Bool
+    public private(set) var truncated: Bool
 
-    /// Creates a record, applying §7.1's bounds.
+    /// Creates a record clipped to the type's bounds, `truncated` when one cut it.
     public init(
         timestampMilliseconds: Int64, level: LogLevelValue, subsystem: String, category: String,
         segments: [LogSegmentValue], truncated: Bool = false
@@ -153,7 +153,7 @@ public struct LogBatchValue: Sendable, Equatable {
     }
 }
 
-/// What a peer's ring does with appends (§7.2).
+/// What a peer's ring does with appends.
 public enum LogRingMode: Sendable, Equatable {
     /// Hold records until the host decides.
     case buffering
@@ -163,7 +163,7 @@ public enum LogRingMode: Sendable, Equatable {
     case discarding
 }
 
-/// The peer's process-wide ring between the logger and the wire (§7.2).
+/// The peer's process-wide ring between the logger and the wire.
 public struct LogRing: Sendable, Equatable {
     /// Records held at most.
     public static let capacity = 256

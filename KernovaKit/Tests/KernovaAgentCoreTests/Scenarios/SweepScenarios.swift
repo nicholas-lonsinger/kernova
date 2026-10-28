@@ -15,23 +15,33 @@ struct SweepSuite {
     /// enough that every 4 KiB boundary runs in CI.
     static let pullSize = 512 << 10
 
-    /// The cut offsets §10.2 asks of a bulk scenario: every 4 KiB boundary of the
-    /// pull's direction, plus 100 seeded offsets.
+    static func pullWorld(seed: UInt64, faults: [Fault]) -> SimWorld {
+        var options = SimOptions()
+        options.bundles = [SimHub.bundle(size: pullSize, tag: 31)]
+        options.faults = faults
+        let world = SimWorld(seed: seed, options: options)
+        world.addPeer(UpdateScenarios.peerWithInstaller())
+        world.run(until: .sec(30))
+        return world
+    }
+
+    /// The cut offsets a bulk scenario takes: every 4 KiB boundary of the bytes
+    /// the host writes on the pull's link, plus 100 seeded offsets, all short of
+    /// the link's end so that every cut lands.
     static var cutOffsets: [Int] {
+        let written = pullWorld(seed: 0, faults: []).links[0].bytesWritten(by: .host)
         var generator = SplitMix64(seed: 0xC07)
-        let boundaries = Array(stride(from: 0, through: pullSize + 8192, by: 4096))
-        return boundaries + (0..<100).map { _ in generator.int(in: 1...(pullSize + 8192)) }
+        // The seeds move the link's length by a few control frames; the margin keeps every cut short of it.
+        let limit = written - 256
+        let boundaries = Array(stride(from: 0, to: limit, by: 4096))
+        return boundaries + (0..<100).map { _ in generator.int(in: 1...limit) }
     }
 
     @Test("A 512 KiB pull cut anywhere ends every stream once and stages on a later connection")
     func pullCuts() {
         for (index, offset) in Self.cutOffsets.enumerated() {
-            var options = SimOptions()
-            options.bundles = [SimHub.bundle(size: Self.pullSize, tag: 31)]
-            options.faults = [.cut(.hostToPeer(link: 0), afterByte: offset)]
-            let world = SimWorld(seed: UInt64(index), options: options)
-            world.addPeer(UpdateScenarios.peerWithInstaller())
-            world.run(until: .sec(30))
+            let world = Self.pullWorld(
+                seed: UInt64(index), faults: [.cut(.hostToPeer(link: 0), afterByte: offset...offset)])
             var failures = world.violations
             if world.hub.updateResults.last?.result.kind != .staged {
                 failures.append("no staged result: \(world.hub.updateResults) closures \(world.hub.updateClosures)")
@@ -97,8 +107,9 @@ struct SweepSuite {
         }
     }
 
-    @Test("A RESET queued before its OPEN was handed out sends nothing for that id")
-    func resetBeforeOpen() {
+    @Test(
+        "A RESET queued before its OPEN was handed out sends nothing for that id, and the next OPEN takes the next id")
+    func resetBeforeOpen() throws {
         var options = SimOptions()
         options.testKinds = true
         options.testBulkBytes = 1 << 20
@@ -109,12 +120,21 @@ struct SweepSuite {
             let now = world.localNow(.peer(0))
             guard let first = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: true, now: now) else { return }
             link.peer?.resetTestStream(first, now: now)
-            _ = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: true, now: now)
+            let second = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: true, now: now)
             world.drain(link, .peer)
             world.marks["skipped"] = Int(first.rawValue)
+            world.marks["second"] = second.map { Int($0.rawValue) }
         }
         world.run(until: .sec(5))
         #expect(world.violations.isEmpty, "\(world.violations)")
-        #expect(world.marks["skipped"] != nil)
+        let skipped = try #require(world.marks["skipped"].map(UInt32.init))
+        let second = try #require(world.marks["second"].map(UInt32.init))
+        let wire = world.links[0].wire
+        #expect(
+            !wire.contains { $0.stream == skipped }, "frames on the skipped id: \(wire.filter { $0.stream == skipped })"
+        )
+        #expect(second == skipped + 2)
+        let peerOpens = wire.filter { $0.side == .peer && $0.type == .open }.map(\.stream)
+        #expect(peerOpens.last == second, "the peer's OPENs: \(peerOpens)")
     }
 }

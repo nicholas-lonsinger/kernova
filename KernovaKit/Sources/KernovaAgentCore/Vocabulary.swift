@@ -363,7 +363,7 @@ public struct BundledPayload: Sendable, Equatable {
         self.manifest = manifest
     }
 
-    /// What the host offers a peer claiming `claim` (§8.1): a session peer of USER
+    /// What the host offers a peer claiming `claim`: a session peer of USER
     /// scope its os and architecture's USER bundle, a system peer the SYSTEM bundle,
     /// anything else nothing. The first matching bundle wins.
     public static func offer(from bundles: [BundledPayload], for claim: PeerClaim) -> UpdateManifestValue? {
@@ -423,7 +423,7 @@ public struct UpdateOffer: Sendable, Equatable {
     }
 }
 
-/// A liveness verdict about the far side (§5.1), edge-triggered.
+/// A liveness verdict about the far side, edge-triggered.
 public enum LivenessChange: Sendable, Equatable {
     /// Silence crossed the unresponsive threshold.
     case unresponsive(silentFor: CoreDuration)
@@ -431,7 +431,7 @@ public enum LivenessChange: Sendable, Equatable {
     case responsive
 }
 
-/// How a stream ended (§3.2).
+/// How a stream ended.
 public enum StreamClosure: Sendable, Equatable {
     /// Both sides sent END; the far side's END body.
     case completed(remoteEndBody: Data)
@@ -457,6 +457,17 @@ public enum ConnectionClosure: Sendable, Equatable {
     case transportLost
     /// The far side's first bytes were not the preamble; closed with no RESET.
     case notThisProtocol
+}
+
+extension ConnectionClosure {
+    /// The RESET(0)'s error, or what ended the connection without one.
+    var error: WireError {
+        switch self {
+        case .closedLocally(let error), .closedByPeer(let error): error
+        case .transportLost: WireError(.unspecified, debugDetail: "the transport ended")
+        case .notThisProtocol: WireError(.unspecified, debugDetail: "the far side does not speak this protocol")
+        }
+    }
 }
 
 /// A connection's phase.

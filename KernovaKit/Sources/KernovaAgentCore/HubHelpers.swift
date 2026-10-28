@@ -22,7 +22,7 @@ public struct PeerHandle: Hashable, Comparable, Sendable {
     }
 }
 
-// MARK: - Identity conflicts (§4.5)
+// MARK: - Identity conflicts
 
 /// The parts of a connection the conflict rule reads.
 public struct ConflictParty: Sendable, Equatable {
@@ -51,7 +51,7 @@ public enum ConflictResolution: Sendable, Equatable {
     case closeIncoming(ErrorCode, retryAfter: CoreDuration?)
 }
 
-/// The host's rule for two connections claiming one identity (§4.5).
+/// The host's rule for two connections claiming one identity.
 public enum PeerConflict {
     /// A lower-rank install stays quiet this long.
     public static let lowerRankRetry = CoreDuration.milliseconds(60_000)
@@ -65,7 +65,7 @@ public enum PeerConflict {
         return a.claim.role != .sessionPeer || a.state.sessionID == b.state.sessionID
     }
 
-    /// The first matching row of §4.5's table.
+    /// How a second connection claiming `existing`'s identity is resolved.
     public static func resolve(existing: ConflictParty, incoming: ConflictParty) -> ConflictResolution {
         guard sameKey(existing, incoming) else { return .noConflict }
         if !existing.claim.instanceID.isEmpty, existing.claim.instanceID == incoming.claim.instanceID {
@@ -95,21 +95,44 @@ public enum PeerConflict {
 /// One status per feature across a VM's peers.
 public enum FeatureStatus {
     /// Each feature available from the first peer offering it, in the tables'
-    /// order; else the first peer's absence; `NO_AGENT` with no peer at all.
+    /// order; else the peers' absence that `absencePrecedence` ranks first,
+    /// whatever the order (equal reasons: the least debug detail);
+    /// `NO_AGENT` with no peer at all.
     public static func merge(_ tables: [FeatureStatusTable]) -> FeatureStatusTable {
         let features = FeatureDescriptor.all.map(\.feature)
         return FeatureStatusTable(
             features.map { feature in
-                guard let first = tables.first else {
+                guard !tables.isEmpty else {
                     return (feature: feature, status: .absent(.noAgent, debugDetail: ""))
                 }
-                let available = tables.lazy.map { $0[feature] }.first { $0.isAvailable }
-                return (feature: feature, status: available ?? first[feature])
+                let statuses = tables.map { $0[feature] }
+                if let available = statuses.first(where: \.isAvailable) {
+                    return (feature: feature, status: available)
+                }
+                let absences = statuses.compactMap { status -> (rank: Int, reason: AbsenceReason, detail: String)? in
+                    guard case .absent(let reason, let detail) = status else { return nil }
+                    return (rank(reason), reason, detail)
+                }
+                let chosen = absences.min { ($0.rank, $0.detail) < ($1.rank, $1.detail) }
+                return (
+                    feature: feature, status: chosen.map { .absent($0.reason, debugDetail: $0.detail) } ?? statuses[0]
+                )
             })
+    }
+
+    /// The order an absence wins the merge in: what an update fixes, then what
+    /// the user can change, the nearest fix first; reasons that name no fix last.
+    public static let absencePrecedence: [AbsenceReason] = [
+        .protocolMismatch, .versionMismatch, .disabledByPolicy, .turnedOffInGuest, .notPermitted, .notOnConsole,
+        .noUserSession, .missingOsComponent, .notServedByRole, .notImplemented, .unspecified, .noAgent,
+    ]
+
+    static func rank(_ reason: AbsenceReason) -> Int {
+        absencePrecedence.firstIndex(of: reason) ?? absencePrecedence.count
     }
 }
 
-// MARK: - Power routing (§6.4)
+// MARK: - Power routing
 
 /// The hub's view of one connected peer, for routing.
 public struct RoutingPeer: Sendable, Equatable {
@@ -125,6 +148,18 @@ public struct RoutingPeer: Sendable, Equatable {
     public var powerUsable: Bool
     /// The actions its `PowerCapability` lists.
     public var actions: [PowerAction]
+
+    /// The view of a peer from its latest `featuresChanged` table: POWER usable
+    /// when the table says so, the actions its `PowerCapability` lists.
+    public init(
+        handle: PeerHandle, role: PeerRole, state: PeerSessionState, connectedOrder: UInt64,
+        features: FeatureStatusTable
+    ) {
+        let power = features[.power]
+        self.init(
+            handle: handle, role: role, state: state, connectedOrder: connectedOrder, powerUsable: power.isAvailable,
+            actions: power.params.flatMap(PowerOffer.init(params:))?.actions ?? [])
+    }
 
     /// Creates a view.
     public init(
@@ -178,7 +213,7 @@ public struct PeerRefusal: Sendable, Equatable {
     }
 }
 
-/// Routes one power action per VM across its peers (§6.4).
+/// Routes one power action per VM across its peers.
 public struct PowerRouting: Sendable {
     private struct Active: Sendable {
         var action: PowerAction
@@ -238,18 +273,21 @@ public struct PowerRouting: Sendable {
         outputs.isEmpty ? nil : outputs.removeFirst()
     }
 
-    /// The candidates for `action` in order (§6.4), excluding `asked`.
+    /// The candidates for `action` in order, excluding `asked`.
     public static func candidates(for action: PowerAction, peers: [RoutingPeer], excluding asked: [PeerHandle])
         -> [PeerHandle]
     {
         let eligible = peers.filter { $0.powerUsable && $0.actions.contains(action) && !asked.contains($0.handle) }
         let sessions = peers.filter { $0.role == .sessionPeer }
         let consoleOwners: [RoutingPeer]
-        if let system = peers.first(where: { $0.role == .systemPeer }) {
-            consoleOwners =
-                system.state.console == .on
-                ? sessions.filter { $0.state.sessionID == system.state.consoleSessionID } : []
-        } else {
+        switch peers.first(where: { $0.role == .systemPeer })?.state {
+        case let system? where system.console == .on:
+            consoleOwners = sessions.filter { $0.state.sessionID == system.consoleSessionID }
+        case let system? where system.console == .off:
+            consoleOwners = []
+        default:
+            // No system peer, or one that does not know: no console authority, so
+            // each session peer's own report decides.
             consoleOwners = sessions.filter { $0.state.console == .on }
         }
         let consoleHandles = consoleOwners.sorted { $0.connectedOrder > $1.connectedOrder }.map(\.handle)

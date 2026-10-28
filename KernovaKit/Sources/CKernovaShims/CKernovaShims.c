@@ -67,7 +67,7 @@ uint64_t kernova_monotonic_nanoseconds(void) {
 
 uint64_t kernova_monotonic_nanoseconds(void) {
     ULONGLONG hundreds;
-    QueryInterruptTime(&hundreds);
+    QueryInterruptTimePrecise(&hundreds);
     return (uint64_t)hundreds * 100;
 }
 

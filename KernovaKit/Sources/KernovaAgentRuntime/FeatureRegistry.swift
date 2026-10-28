@@ -33,9 +33,12 @@ public struct PeerFeatureRegistry: Sendable {
 public protocol PowerAdapter: Sendable {
     /// Called once, before the first connection. Reports `.availability` at once and on every change.
     func start(reporter: PowerReporter)
-    /// Reports `.accepted` or `.refused`, then the rest of §6.2's table.
+    /// Ends in exactly one terminal report — `.refused`, `.cancelled`, `.unconfirmed`, `.handedOff`,
+    /// `.blocked`, `.cancelledInGuest` or `.failed` — after `.accepted` and the stages it reaches, if any.
+    /// Until then the process performs no other request.
     func perform(_ id: PowerRequestID, _ action: PowerAction)
-    /// Reports `.cancelled` only when the OS confirms the request did not start.
+    /// Reports `.cancelled` when the OS confirms the request did not start, and `.unconfirmed` when it
+    /// cannot tell.
     func cancel(_ id: PowerRequestID)
 }
 
@@ -58,11 +61,12 @@ public protocol UpdateInstaller: Sendable {
 
 /// Serves the host's update payloads.
 public protocol UpdatePayloadSource: Sendable {
-    /// Reads the pull's next `maxBytes` bytes — exactly that many, or an error — and calls `completion` on
-    /// any thread. Reads of one pull are sequential and never ask past the manifest's size; fewer bytes
-    /// fail the pull with `READ_FAILED`.
+    /// Reads 1 … `count` bytes of `manifest`'s payload from `offset`, as `pread` does, and calls
+    /// `completion` on any thread. It keeps no state between reads: the endpoint asks for each read's
+    /// position and never past the manifest's size, so a read that returns no bytes fails the pull with
+    /// `READ_FAILED`.
     func read(
-        _ id: UpdatePullID, manifest: UpdateManifestValue, maxBytes: Int,
+        manifest: UpdateManifestValue, offset: UInt64, count: Int,
         _ completion: @escaping @Sendable (Result<Data, WireError>) -> Void)
 }
 
@@ -86,11 +90,11 @@ public struct UpdateReporter: Sendable {
     }
 }
 
-/// The peer's process-wide log ring and the sink that fills it (§7.2). The ring outlives every
-/// connection; the runtime takes batches from it inside driver turns.
+/// The peer's process-wide log ring and the sink that fills it. The ring outlives every connection; only
+/// the runtime sets its mode and takes batches from it, inside driver turns.
 public final class LogForwarding: Sendable {
     /// The records between the logger and the wire.
-    public let ring = Locked(LogRing())
+    let ring = Locked(LogRing())
     /// Posts `.logs(.recordsAvailable)` to the current connection; never calls a driver synchronously.
     let recordsAvailable = Locked<(@Sendable () -> Void)?>(nil)
 

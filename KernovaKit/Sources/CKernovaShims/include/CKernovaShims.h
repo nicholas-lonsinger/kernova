@@ -14,7 +14,7 @@ uint32_t kernova_crc32c_hardware_update(uint32_t crc, const uint8_t *bytes, size
 
 /// Nanoseconds on a monotonic clock that keeps counting while the machine
 /// sleeps: Darwin `CLOCK_MONOTONIC`, Linux `CLOCK_BOOTTIME`, Windows
-/// `QueryInterruptTime`. The origin is arbitrary.
+/// `QueryInterruptTimePrecise`. The origin is arbitrary.
 uint64_t kernova_monotonic_nanoseconds(void);
 
 #endif
