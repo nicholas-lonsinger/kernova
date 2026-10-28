@@ -20,10 +20,12 @@ public struct ISO9660Writer: Sendable {
         self.date = date
     }
 
-    /// Writes the image holding `entries` to `sink`, one sector or more at a time.
+    /// Writes the image holding `entries` to `sink`: every sector before the files' data whole, then each
+    /// file's bytes in the pieces its ``ISO9660Entry/contents`` writes, padded to a whole sector.
     ///
-    /// Throws ``ISO9660Error`` for inputs it cannot write, before writing anything, and whatever `sink` or
-    /// an entry's `contents` throws, where it is thrown.
+    /// Every ``ISO9660Error`` but ``ISO9660Error/sizeMismatch(name:declared:written:)`` comes before any
+    /// byte reaches `sink`. That one, and whatever `sink` or an entry's `contents` throws, can come after
+    /// part of the image is written, so a caller discards what it received.
     public func write(_ entries: [ISO9660Entry], to sink: ISO9660Entry.Sink) throws {
         let layout = try Layout(volumeIdentifier: volumeIdentifier, date: date, entries: entries)
         let zeros = [UInt8](repeating: 0, count: Self.blockSize)
@@ -32,8 +34,8 @@ public struct ISO9660Writer: Sendable {
         try sink(layout.terminator())
         try sink(layout.pathTable(bigEndian: false))
         try sink(layout.pathTable(bigEndian: true))
-        try sink(layout.rootDirectory())
         try sink(layout.continuationArea())
+        try sink(layout.rootDirectory())
         for file in layout.files {
             var written: UInt64 = 0
             try file.entry.contents { bytes in
@@ -51,27 +53,42 @@ public struct ISO9660Writer: Sendable {
 }
 
 /// Where everything in one image goes, and the bytes of every structure that is not file data.
+///
+/// Every directory record's system use area is built once, here, before anything is placed: none of it
+/// depends on where the root directory or a file lands, because the continuation area its `CE` names
+/// comes before the directory at a fixed sector. The directory is packed from those records' own lengths,
+/// and emitted from the same records.
 private struct Layout {
     static let systemAreaSectors = 16
-    static let primaryVolumeDescriptorSector: UInt32 = 16
     static let lPathTableSector: UInt32 = 18
     static let mPathTableSector: UInt32 = 19
-    static let rootSector: UInt32 = 20
+    static let continuationSector: UInt32 = 20
+    static let rootSector: UInt32 = 21
     static let blockSize = ISO9660Writer.blockSize
 
     struct File {
         var entry: ISO9660Entry
-        var identifier: [UInt8]
         var extent: UInt32
-        var serial: UInt32
+    }
+
+    /// One root-directory record: everything but its extent and data length, which ``files`` gives.
+    struct Record {
+        var identifier: [UInt8]
+        var systemUse: [UInt8]
+        /// The file it names, as an index into ``files``; nil for `.` and `..`.
+        var file: Int?
+        /// Where in the directory it starts.
+        var offset: Int
+
+        var length: Int { Layout.recordLength(identifierLength: identifier.count, systemUseLength: systemUse.count) }
     }
 
     let volumeIdentifier: [UInt8]
     let date: ISO9660Date
     /// The files in directory order: by ECMA-119 identifier.
     let files: [File]
+    let records: [Record]
     let rootSectors: UInt32
-    let continuationSector: UInt32
     let totalSectors: UInt32
 
     init(volumeIdentifier: String, date: ISO9660Date, entries: [ISO9660Entry]) throws {
@@ -83,8 +100,6 @@ private struct Layout {
         self.volumeIdentifier = volume
         self.date = date
 
-        // Identifiers are assigned in name order, so the one a collision renames does not depend on the
-        // order the entries came in.
         var seen = Set<String>()
         for entry in entries {
             let bytes = Array(entry.name.utf8)
@@ -99,6 +114,8 @@ private struct Layout {
             }
             guard seen.insert(entry.name).inserted else { throw ISO9660Error.duplicateName(entry.name) }
         }
+        // Identifiers are assigned in name order, so the one a collision renames does not depend on the
+        // order the entries came in.
         var taken = Set<[UInt8]>()
         var named: [(entry: ISO9660Entry, identifier: [UInt8])] = []
         for entry in entries.sorted(by: { Array($0.name.utf8).lexicographicallyPrecedes(Array($1.name.utf8)) }) {
@@ -108,22 +125,42 @@ private struct Layout {
         }
         named.sort { Self.identifierPrecedes($0.identifier, $1.identifier) }
 
-        // The directory's size depends on no extent, so it is packed before any file is placed.
-        let recordLengths =
-            [Self.dotRecordLength, Self.dotDotRecordLength]
-            + named.map { Self.fileRecordLength(identifier: $0.identifier, name: $0.entry.name) }
-        rootSectors = Self.sectorsPacking(recordLengths)
-        continuationSector = Self.rootSector + rootSectors
-        var next = UInt64(continuationSector) + 1
-        var files: [File] = []
+        let stamp = Self.tf(date)
+        let directoryUse = Self.px(mode: 0o040755, links: 2, serial: 1) + stamp
+        var records = [
+            Record(
+                identifier: [0],
+                systemUse: Self.sp + Self.ce(block: Self.continuationSector, length: UInt32(Self.er.count))
+                    + directoryUse, file: nil, offset: 0),
+            Record(identifier: [1], systemUse: directoryUse, file: nil, offset: 0),
+        ]
         for (index, item) in named.enumerated() {
-            files.append(
-                File(
-                    entry: item.entry, identifier: item.identifier, extent: UInt32(truncatingIfNeeded: next),
-                    serial: UInt32(index + 2)))
-            next += (item.entry.size + UInt64(Self.blockSize) - 1) / UInt64(Self.blockSize)
-            guard next <= UInt64(UInt32.max) else { throw ISO9660Error.imageTooLarge }
+            records.append(
+                Record(
+                    identifier: item.identifier,
+                    systemUse: Self.px(
+                        mode: 0o100000 | UInt32(item.entry.permissions), links: 1, serial: UInt32(index + 2))
+                        + stamp + Self.nm(item.entry.name), file: index, offset: 0))
         }
+        // ECMA-119 9.1: no record crosses a sector boundary.
+        var end = 0
+        for index in records.indices {
+            let length = records[index].length
+            if end % Self.blockSize + length > Self.blockSize { end += Self.blockSize - end % Self.blockSize }
+            records[index].offset = end
+            end += length
+        }
+        self.records = records
+        rootSectors = UInt32((end + Self.blockSize - 1) / Self.blockSize)
+
+        var next = UInt64(Self.rootSector + rootSectors)
+        var files: [File] = []
+        for item in named {
+            guard next <= UInt64(UInt32.max) else { throw ISO9660Error.imageTooLarge }
+            files.append(File(entry: item.entry, extent: UInt32(next)))
+            next += (item.entry.size + UInt64(Self.blockSize) - 1) / UInt64(Self.blockSize)
+        }
+        guard next <= UInt64(UInt32.max) else { throw ISO9660Error.imageTooLarge }
         self.files = files
         totalSectors = UInt32(next)
     }
@@ -182,71 +219,28 @@ private struct Layout {
 
     // MARK: The root directory
 
-    func rootDirectory() -> [UInt8] {
-        let length = rootSectors * UInt32(Self.blockSize)
-        let directoryUse = Self.px(mode: 0o040755, links: 2, serial: 1) + tf()
-        var records = [
-            Self.directoryRecord(
-                extent: Self.rootSector, length: length, isDirectory: true, identifier: [0],
-                systemUse: Self.sp + Self.ce(block: continuationSector, length: UInt32(Self.er.count))
-                    + directoryUse, date: date),
-            Self.directoryRecord(
-                extent: Self.rootSector, length: length, isDirectory: true, identifier: [1],
-                systemUse: directoryUse, date: date),
-        ]
-        for file in files {
-            records.append(
-                Self.directoryRecord(
-                    extent: file.extent, length: UInt32(file.entry.size), isDirectory: false,
-                    identifier: file.identifier,
-                    systemUse: Self.px(mode: 0o100000 | UInt32(file.entry.permissions), links: 1, serial: file.serial)
-                        + tf() + Self.nm(file.entry.name), date: date))
-        }
-        var bytes: [UInt8] = []
-        var used = 0
-        for record in records {
-            // ECMA-119 9.1: no record crosses a sector boundary.
-            if used + record.count > Self.blockSize {
-                bytes += [UInt8](repeating: 0, count: Self.blockSize - used)
-                used = 0
-            }
-            bytes += record
-            used += record.count
-        }
-        bytes += [UInt8](repeating: 0, count: Int(length) - bytes.count)
-        return bytes
-    }
-
     /// The root `.` record's continuation area, holding the `ER` entry no record has room for.
     func continuationArea() -> [UInt8] {
         Self.er + [UInt8](repeating: 0, count: Self.blockSize - Self.er.count)
     }
 
-    static var dotRecordLength: Int {
-        recordLength(identifierLength: 1, systemUseLength: sp.count + 28 + 44 + 26)
-    }
-    static var dotDotRecordLength: Int { recordLength(identifierLength: 1, systemUseLength: 44 + 26) }
-
-    static func fileRecordLength(identifier: [UInt8], name: String) -> Int {
-        recordLength(identifierLength: identifier.count, systemUseLength: 44 + 26 + 5 + name.utf8.count)
+    func rootDirectory() -> [UInt8] {
+        let length = rootSectors * UInt32(Self.blockSize)
+        var bytes = [UInt8](repeating: 0, count: Int(length))
+        for record in records {
+            let file = record.file.map { files[$0] }
+            bytes.replace(
+                at: record.offset,
+                with: Self.directoryRecord(
+                    extent: file?.extent ?? Self.rootSector, length: file.map { UInt32($0.entry.size) } ?? length,
+                    isDirectory: file == nil, identifier: record.identifier, systemUse: record.systemUse, date: date))
+        }
+        return bytes
     }
 
     static func recordLength(identifierLength: Int, systemUseLength: Int) -> Int {
         let length = 33 + identifierLength + (identifierLength % 2 == 0 ? 1 : 0) + systemUseLength
         return length + length % 2
-    }
-
-    static func sectorsPacking(_ lengths: [Int]) -> UInt32 {
-        var sectors: UInt32 = 1
-        var used = 0
-        for length in lengths {
-            if used + length > blockSize {
-                sectors += 1
-                used = 0
-            }
-            used += length
-        }
-        return sectors
     }
 
     /// An ECMA-119 9.1 directory record, padded to an even length.
@@ -303,9 +297,9 @@ private struct Layout {
         return [0x4E, 0x4D, UInt8(5 + bytes.count), 1, 0] + bytes
     }
 
-    /// RRIP's `TF`: modification, access and attribute-change times, all the image's date.
-    func tf() -> [UInt8] {
-        let stamp = Self.recordingDate(date)
+    /// RRIP's `TF`: modification, access and attribute-change times, all `date`.
+    static func tf(_ date: ISO9660Date) -> [UInt8] {
+        let stamp = recordingDate(date)
         return [0x54, 0x46, 26, 1, 0x0E] + stamp + stamp + stamp
     }
 

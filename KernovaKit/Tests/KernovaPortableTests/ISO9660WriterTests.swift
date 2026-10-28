@@ -117,6 +117,16 @@ struct ISO9660WriterTests {
             ([], "kernova", .invalidVolumeIdentifier("kernova")),
             ([], "", .invalidVolumeIdentifier("")),
             ([], String(repeating: "A", count: 33), .invalidVolumeIdentifier(String(repeating: "A", count: 33))),
+            ([ISO9660Entry(name: "a\u{0}b", permissions: 0o644, bytes: [])], "KERNOVA", .invalidName("a\u{0}b")),
+            (
+                [ISO9660Entry(name: String(repeating: "n", count: 129), permissions: 0o644, bytes: [])], "KERNOVA",
+                .invalidName(String(repeating: "n", count: 129))
+            ),
+            // The declared size is refused before `contents` would run.
+            (
+                [ISO9660Entry(name: "huge", permissions: 0o644, size: 1 << 32) { _ in }], "KERNOVA",
+                .fileTooLarge(name: "huge", size: 1 << 32)
+            ),
         ])
     func refused(entries: [ISO9660Entry], volume: String, error: ISO9660Error) {
         var written = 0
@@ -124,6 +134,25 @@ struct ISO9660WriterTests {
             try ISO9660Writer(volumeIdentifier: volume, date: Self.date).write(entries) { written += $0.count }
         }
         #expect(written == 0)
+    }
+
+    @Test(
+        "A date the records cannot hold is refused before anything is written",
+        arguments: [ISO9660Date(year: 2025, month: 2, day: 29), ISO9660Date(year: 2156, month: 1, day: 1)])
+    func refusedDate(date: ISO9660Date) {
+        var written = 0
+        #expect(throws: ISO9660Error.invalidDate(date)) {
+            try ISO9660Writer(volumeIdentifier: "KERNOVA", date: date).write(Self.entries()) { written += $0.count }
+        }
+        #expect(written == 0)
+    }
+
+    @Test("A name of the longest length reads back whole")
+    func longestName() throws {
+        let name = String(repeating: "n", count: ISO9660Entry.maximumNameLength)
+        let reader = try ISO9660Reader(try Self.write([ISO9660Entry(name: name, permissions: 0o644, bytes: [7])]))
+        #expect(reader.files.map(\.name) == [name])
+        #expect(reader.files.map(\.bytes) == [[7]])
     }
 
     @Test("A file whose contents write other than its declared size fails the write")
