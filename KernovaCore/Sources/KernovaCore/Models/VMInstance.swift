@@ -1,7 +1,10 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
+import KernovaWire
 
 /// The VM display's current hosting location.
 package enum VMDisplayMode: Sendable {
@@ -224,28 +227,48 @@ package final class VMInstance {
         return config
     }
 
-    /// The guest agent's install/version/liveness state in this VM's session,
-    /// `nil` when the VM has no agent channel: it has no session, or it is a
-    /// Linux session without clipboard sharing.
+    /// What every surface shows of the guest agent in this VM's session, `nil`
+    /// with no session.
     ///
-    /// The single read site for the UI. macOS guests source it from the
-    /// always-on `VsockControlService`, so it is meaningful whether or not
-    /// clipboard sharing is enabled; `.expectedMissing` and `.connecting` are
-    /// synthesized here because that service has no access to persisted host
-    /// state. Linux guests source it from `SpiceClipboardService`, which only
-    /// ever reaches `.waiting` / `.current`.
-    package var agentStatus: AgentStatus? {
+    /// The single read site for the UI and automation. A macOS guest's comes
+    /// from its always-on `VsockControlService`, with `.expectedMissing` and
+    /// `.connecting` synthesized here because that service has no access to
+    /// persisted host state. A Linux guest's comes from ``agentHub``'s
+    /// snapshot: the Kernova agents, never the SPICE clipboard's own agent.
+    package var agentPresentation: GuestAgentPresentation? {
         guard let context = sessionContext else { return nil }
         switch configuration.guestOS {
         case .macOS:
-            return AgentStatus.synthesize(
-                upstream: context.vsock.control?.agentStatus ?? .waiting,
-                lastSeenAgentVersion: lastSeenAgentVersion,
-                agentExpectedButMissing: context.agentExpectedButMissing
-            )
+            return GuestAgentPresentation(
+                macOSAgent: AgentStatus.synthesize(
+                    upstream: context.vsock.control?.agentStatus ?? .waiting,
+                    lastSeenAgentVersion: lastSeenAgentVersion,
+                    agentExpectedButMissing: context.agentExpectedButMissing))
         case .linux:
-            return (context.clipboardService as? SpiceClipboardService)?.agentStatus
+            return GuestAgentPresentation(hub: agentHubSnapshot)
         }
+    }
+
+    /// The status of whatever carries the Clipboard window's clipboard: the
+    /// SPICE agent's own while it does, and the guest agent's otherwise.
+    package var clipboardChannelStatus: AgentStatus? {
+        if let spice = sessionContext?.clipboardService as? SpiceClipboardService { return spice.agentStatus }
+        return agentPresentation?.status
+    }
+
+    // MARK: - Agent Hub
+
+    /// This VM's agent hub, for the instance's whole life: each session with a
+    /// socket device attaches its transport, and the hub's peers outlive none.
+    @ObservationIgnored package let agentHub: AgentHub
+
+    /// The hub's latest snapshot, as it publishes it to the main actor.
+    package private(set) var agentHubSnapshot = AgentHubSnapshot.empty
+
+    /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
+    /// forwards guest logs.
+    static func agentHubPolicy(for configuration: VMConfiguration) -> PolicySnapshot {
+        PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled)])
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
@@ -311,10 +334,22 @@ package final class VMInstance {
         self.preferences = preferences
         self.hostClipboardPublisher = HostClipboardPublisher(
             pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)
+        let snapshots = AgentHubSnapshotRelay()
+        agentHub = AgentHub(
+            claim: PeerClaim(role: .host, versionLabel: bundleProducts.hostVersion),
+            policy: Self.agentHubPolicy(for: bundle.configuration), payloads: NoBundledPayloads()
+        ) { snapshot in
+            MainActor.assumeIsolated { snapshots.instance?.agentHubSnapshot = snapshot }
+        }
         activity.owner = self
+        snapshots.instance = self
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
         }
+    }
+
+    deinit {
+        agentHub.close()
     }
 
     /// Points this VM at `bundle`, read from where its bundle now lives.
@@ -730,7 +765,8 @@ package final class VMInstance {
                 instance: self,
                 admissionGate: vsockAdmissionGate,
                 clipboardDataSink: clipboardDataSink,
-                dropDataSink: dropDataSink))
+                dropDataSink: dropDataSink),
+            agentHub: agentHub)
         openRuntimeFileAccess(into: context)
         return context
     }
@@ -744,6 +780,13 @@ package final class VMInstance {
         // (headless) has no window whose close would say so.
         displayMode = .inline
         if afterRunning { recordLastRun(at: Date()) }
+    }
+
+    /// Called by ``activity`` when the presented phase enters or leaves a live
+    /// pause, host-sleep auto-pause included: a paused guest cannot run its
+    /// agents, so their silence is not judged.
+    func livePauseDidChange(_ isLivePaused: Bool) {
+        agentHub.setGuestFrozen(isLivePaused)
     }
 
     /// Called by ``activity`` once a power-off has rested the VM, before the
@@ -897,7 +940,8 @@ package final class VMInstance {
 
     // MARK: - Vsock Service Lifecycle
 
-    /// Installs vsock listeners on the live session's `VZVirtioSocketDevice`.
+    /// Installs vsock listeners on the live session's `VZVirtioSocketDevice`,
+    /// and attaches the agent hub's transport beside them.
     ///
     /// A no-op when no socket device is present. Idempotent: any previously
     /// installed listeners are torn down first. The control listener is always
@@ -916,6 +960,11 @@ package final class VMInstance {
         // the teardown already walked — and there is no start to announce.
         guard self.session === session else { return }
 
+        if let transport = session.makeAgentTransport() {
+            agentHub.attach(
+                transport, policy: Self.agentHubPolicy(for: configuration),
+                republisher: GuestLogRepublisher(vmLabel: name))
+        }
         Self.logger.log(.info, "Vsock services started for '\(self.name, privacy: .public)'")
     }
 
@@ -1201,6 +1250,9 @@ package final class VMInstance {
             session.hasVirtioSocketDevice
         else { return }
 
+        if oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled {
+            agentHub.setPolicy(Self.agentHubPolicy(for: newConfig))
+        }
         context.vsock.applyLivePolicy(
             oldConfig: oldConfig, newConfig: newConfig, on: session)
     }
@@ -1239,4 +1291,11 @@ enum VMSavedStateDiscard: Equatable {
             baseline.kind == .warm ? (.suspended, true) : (.stopped, false)
         }
     }
+}
+
+/// Where the agent hub's snapshots land: the instance, once it exists, which
+/// its hub is built before.
+@MainActor
+private final class AgentHubSnapshotRelay {
+    weak var instance: VMInstance?
 }

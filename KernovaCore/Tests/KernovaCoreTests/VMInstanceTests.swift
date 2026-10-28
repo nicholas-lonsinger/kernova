@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaAgentHost
 import KernovaKit
 import KernovaTestSupport
 import SwiftProtobuf
@@ -803,32 +804,29 @@ struct VMInstanceTests {
         #expect(VMArrival.Kind.importing.displayNoun == "Import")
     }
 
-    // MARK: - agentStatus dispatch
+    // MARK: - agentPresentation dispatch
     //
-    // `VMInstance.agentStatus` is the single read site for the UI; it must
-    // dispatch by `configuration.guestOS`:
+    // `VMInstance.agentPresentation` is the single read site for the UI; it
+    // dispatches by `configuration.guestOS`:
     //   - macOS guests source it from `vsockControlService` (the always-on
     //     control channel, independent of clipboard sharing).
-    //   - Linux guests source it from `clipboardService` cast to
-    //     `SpiceClipboardService` (`spice-vdagent` is user-installed; only
-    //     `.waiting` / `.current` are reachable).
-    //
-    // These tests lock in the switch so a future refactor can't accidentally
-    // fall through to the wrong service per OS.
+    //   - Linux guests source it from the agent hub's snapshot, never from the
+    //     SPICE clipboard's agent.
 
     @Test("agentStatus is nil on a Linux instance with no session")
     func agentStatusLinuxWithoutSessionIsNil() {
         let instance = VMInstanceFixture.make(guestOS: .linux)
         #expect(instance.sessionContext == nil)
-        #expect(instance.agentStatus == nil)
+        #expect(instance.agentPresentation?.status == nil)
     }
 
-    @Test("agentStatus is nil on a Linux session without a SPICE clipboard service")
-    func agentStatusLinuxSessionWithoutSpiceIsNil() {
+    @Test("A Linux session with no agent connected presents the hub's empty snapshot")
+    func agentPresentationLinuxSessionReadsTheHub() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        #expect(instance.clipboardService == nil)
-        #expect(instance.agentStatus == nil)
+        #expect(instance.agentHubSnapshot == .empty)
+        #expect(instance.agentPresentation == GuestAgentPresentation(hub: .empty))
+        #expect(instance.agentPresentation?.status == .waiting)
     }
 
     @Test("agentStatus is nil on a macOS VM with no session, even one that has seen an agent")
@@ -836,7 +834,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(
             guestOS: .macOS, mutate: { $0.lastSeenAgentVersion = "0.9.2" })
         #expect(instance.sessionContext == nil)
-        #expect(instance.agentStatus == nil)
+        #expect(instance.agentPresentation?.status == nil)
     }
 
     @Test("A macOS session with no control channel reports .connecting for a VM that has seen an agent")
@@ -846,7 +844,7 @@ struct VMInstanceTests {
             mutate: { $0.lastSeenAgentVersion = "0.9.2" })
         instance.beginSessionContextForTesting()
         #expect(instance.vsockControlService == nil)
-        #expect(instance.agentStatus == .connecting(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
     }
 
     @Test("A macOS session with no control channel reports .waiting for a VM that has never seen an agent")
@@ -854,18 +852,18 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
         #expect(instance.vsockControlService == nil)
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.status == .waiting)
     }
 
     @Test("agentStatus returns to nil once the session ends")
     func agentStatusIsNilAfterTheSessionEnds() {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        #expect(instance.agentStatus == .connecting(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
 
         instance.handleSessionEvent(.guestDidStop)
 
         #expect(instance.sessionContext == nil)
-        #expect(instance.agentStatus == nil)
+        #expect(instance.agentPresentation?.status == nil)
     }
 
     @Test("agentStatus on macOS does NOT fall through to clipboardService — control is the only source")
@@ -882,18 +880,17 @@ struct VMInstanceTests {
             outputPipe: Pipe()
         )
         #expect(instance.vsockControlService == nil)
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.status == .waiting)
     }
 
-    @Test("agentStatus on Linux dispatches to clipboardService cast as SpiceClipboardService")
-    func agentStatusLinuxDispatchesToSpice() {
+    @Test("A Linux session's agent status ignores the SPICE agent, which only the Clipboard window's line reads")
+    func agentPresentationLinuxIgnoresSpice() {
         let instance = VMInstanceFixture.make(guestOS: .linux)
         let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
         instance.beginSessionContextForTesting().clipboardService = spice
-        // Newly-constructed SPICE service is `.waiting` (no handshake yet) —
-        // dispatch returns that same value, proving the cast + access path runs.
-        #expect(spice.agentStatus == .waiting)
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.hub != nil)
+        #expect(instance.agentPresentation?.status == .waiting)
+        #expect(instance.clipboardChannelStatus == spice.agentStatus)
     }
 
     // MARK: - An operation's ending
@@ -1296,7 +1293,7 @@ struct VMInstanceTests {
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(storage.saveConfigurationCallCount == 0)
         #expect(storage.saveHostStateCallCount == 0)
     }
@@ -1321,7 +1318,7 @@ struct VMInstanceTests {
         #expect(instance.settings == held)
         #expect(storage.bundles[instance.bundleURL] == held.configuration)
         #expect(storage.hostStates[instance.bundleURL] == held.hostState)
-        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(instance.guestOSVersionDisplay == nil)
         #expect(instance.effectiveConfiguration.effectiveGuestMacOSVersion == nil)
     }
@@ -1351,7 +1348,7 @@ struct VMInstanceTests {
 
         // The badge still escalates — that is the whole point of #706.
         #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(instance.hostState.agentInstallNudgeDismissed == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(storage.saveConfigurationCallCount == persistsAfterHello)
@@ -1419,7 +1416,7 @@ struct VMInstanceTests {
         await stale?.value
 
         #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.agentStatus != .expectedMissing(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status != .expectedMissing(expected: "0.9.2"))
         // And it must not have cleared the successor's slot on the way out —
         // an emptied slot is what would let the next arm site double-arm.
         #expect(instance.agentPostStartTaskForTesting != nil)
@@ -1433,12 +1430,12 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(in: library)
         // Flag alone but version present → .expectedMissing
         instance.sessionContext?.agentExpectedButMissing = true
-        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
 
         // Wipe the persisted version: the synthesizer guard falls back to
         // .waiting rather than producing .expectedMissing(expected: "").
         library.editConfiguration(of: instance, as: .observations) { $0.lastSeenAgentVersion = nil }
-        #expect(instance.agentStatus == .waiting)
+        #expect(instance.agentPresentation?.status == .waiting)
     }
 
     // MARK: - VMEditPermit.updateConfiguration

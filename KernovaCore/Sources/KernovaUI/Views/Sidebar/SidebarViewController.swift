@@ -540,7 +540,7 @@ final class SidebarViewController: NSViewController {
         case .vm(let instance):
             return SidebarVMRowCellView.contentWidth(
                 forName: instance.name, detail: detail,
-                showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
+                showsAgentAccessory: SidebarVMRowCellView.visibleAgentPresentation(
                     for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
                 showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled,
                 showsUnreadableWarning: !instance.unreadableFiles.isEmpty,

@@ -22,6 +22,11 @@
 #
 # Reports every violation before failing, so one run fixes them all, and fails
 # when a file cannot be parsed rather than passing it unread.
+#
+# The agent hub KernovaCore drives, `KernovaAgentHost`, is held to spec §9.7
+# the same way: its state lives on its own queue and every hop is `async`, so
+# no `.sync(` and no `@MainActor` appears in its code. Line comments are
+# stripped first, so prose may name what it forbids.
 
 set -uo pipefail
 
@@ -31,7 +36,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-core_modules='Foundation KernovaCommandModel KernovaKit KernovaLogging AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
+core_modules='Foundation KernovaAgentCore KernovaAgentHost KernovaCommandModel KernovaKit KernovaLogging KernovaWire AppIntents AVFoundation CoreServices CoreSpotlight CryptoKit ImageIO IOKit Security ServiceManagement Synchronization System UniformTypeIdentifiers'
 test_modules='Testing KernovaCore KernovaCoreTestSupport KernovaTestSupport KernovaSynchronization SwiftProtobuf CoreGraphics Observation'
 support_modules='Testing KernovaCore KernovaTestSupport KernovaSynchronization CoreGraphics Observation'
 
@@ -96,6 +101,22 @@ if [ -n "$violations" ]; then
     printf '%s' "$violations" | sort -u >&2
     echo "  allowed in $sources_root: $core_modules; in $support_root, also: $support_modules;" \
         "in $tests_root, also: $test_modules" >&2
+    failed=1
+fi
+
+hub_root='KernovaKit/Sources/KernovaAgentHost'
+hub_files=()
+while IFS= read -r file; do hub_files+=("$file"); done < <(git ls-files "$hub_root/*.swift")
+if [ "${#hub_files[@]}" -eq 0 ]; then
+    echo "check-core-imports: no tracked Swift files under $hub_root" >&2
+    failed=1
+elif ! hub_findings=$(perl -ne 's{//.*}{}; print "  $ARGV:$.: $_" if /\.sync\(|\@MainActor/; close ARGV if eof' \
+    "${hub_files[@]}"); then
+    echo "check-core-imports: could not read $hub_root" >&2
+    failed=1
+elif [ -n "$hub_findings" ]; then
+    echo "check-core-imports: $hub_root waits on a queue or runs on the main actor (spec §9.7):" >&2
+    printf '%s' "$hub_findings" >&2
     failed=1
 fi
 

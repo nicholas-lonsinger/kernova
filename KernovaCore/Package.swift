@@ -40,6 +40,7 @@ let package = Package(
             name: "KernovaCore",
             dependencies: [
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentHost", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
             ],
@@ -58,6 +59,7 @@ let package = Package(
             dependencies: [
                 "KernovaCore",
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentHost", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
             ],
@@ -72,6 +74,7 @@ let package = Package(
                 "KernovaCore",
                 "KernovaVirtualization",
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentHost", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaAppKitShared", package: "KernovaKit"),
                 .product(name: "KernovaAppRegistry", package: "KernovaKit"),
@@ -113,6 +116,7 @@ let package = Package(
                 "KernovaCore",
                 "KernovaCoreTestSupport",
                 .product(name: "KernovaKit", package: "KernovaKit"),
+                .product(name: "KernovaAgentHost", package: "KernovaKit"),
                 .product(name: "KernovaCommandModel", package: "KernovaKit"),
                 .product(name: "KernovaLogging", package: "KernovaKit"),
                 .product(name: "KernovaTestSupport", package: "KernovaKit"),

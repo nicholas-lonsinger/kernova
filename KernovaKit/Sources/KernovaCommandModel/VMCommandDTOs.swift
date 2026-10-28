@@ -119,7 +119,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// What the guest's address resolves to on the network its mode joins.
     public let ipAddress: GuestIPAddress
     /// The guest-agent install and connectivity state, as its wire name, `nil`
-    /// when the VM has no agent channel.
+    /// when the VM has no session.
     public let agentStatus: String?
     /// Whether the bundle holds a suspended session.
     public let hasSavedState: Bool

@@ -52,7 +52,7 @@ package enum GuestAgentDiskControl {
             return withheld
         }
         return model(
-            status: instance.agentStatus,
+            status: instance.agentPresentation?.status,
             isInstallerMounted: instance.hasGuestAgentInstallerMounted)
     }
 

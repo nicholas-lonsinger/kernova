@@ -3,12 +3,22 @@ import KernovaCore
 import KernovaLogging
 import Virtualization
 
+/// A delegate bound to one port of a VM's socket device, which the session
+/// retains for as long as it is bound.
+protocol VsockPortListening: AnyObject {
+    var port: UInt32 { get }
+    /// Binds the listener to `socketDevice`, replacing what held its port.
+    func attach(to socketDevice: VZVirtioSocketDevice)
+    /// Unbinds whatever holds this port of `socketDevice`.
+    func detach(from socketDevice: VZVirtioSocketDevice)
+}
+
 /// Hosts one ``VsockListener`` as a `VZVirtioSocketListener`, handing each
 /// accepted connection to it.
 ///
 /// One instance handles one port; pair several with one `VZVirtioSocketDevice`
 /// to run multiple services side-by-side.
-final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
+final class VsockListenerHost: NSObject, VsockPortListening, VZVirtioSocketListenerDelegate {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockListenerHost")
 
     let listener: VsockListener
@@ -48,8 +58,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
         shouldAcceptNewConnection connection: VZVirtioSocketConnection,
         from socketDevice: VZVirtioSocketDevice
     ) -> Bool {
-        let dupedFd = dup(connection.fileDescriptor)
-        let dupErrno: Int32 = dupedFd < 0 ? errno : 0
-        return self.listener.acceptDuplicatedFd(dupedFd, dupErrno: dupErrno)
+        let accepted = AcceptedVsockSocket.duplicate(connection.fileDescriptor)
+        return self.listener.acceptDuplicatedFd(accepted.fd, dupErrno: accepted.errno)
     }
 }

@@ -302,7 +302,7 @@ struct VMSessionContextTests {
                 context.networkAttachmentPending = true
             })
         #expect(
-            observationFires(reading: { _ = instance.agentStatus }) {
+            observationFires(reading: { _ = instance.agentPresentation?.status }) {
                 context.agentExpectedButMissing = true
             })
         #expect(
@@ -327,7 +327,7 @@ struct VMSessionContextTests {
         // dependency registered — and opening one has to be enough.
         for track in [
             { @MainActor (instance: VMInstance) in _ = instance.networkAttachmentPending },
-            { @MainActor (instance: VMInstance) in _ = instance.agentStatus },
+            { @MainActor (instance: VMInstance) in _ = instance.agentPresentation?.status },
             { @MainActor (instance: VMInstance) in _ = instance.displayDropAvailability },
             { @MainActor (instance: VMInstance) in _ = instance.clipboardService },
             { @MainActor (instance: VMInstance) in _ = instance.liveRemovableMedia },
@@ -344,7 +344,7 @@ struct VMSessionContextTests {
     func releasingTheContextWakesTheObserver() {
         for track in [
             { @MainActor (instance: VMInstance) in _ = instance.networkAttachmentPending },
-            { @MainActor (instance: VMInstance) in _ = instance.agentStatus },
+            { @MainActor (instance: VMInstance) in _ = instance.agentPresentation?.status },
             { @MainActor (instance: VMInstance) in _ = instance.displayDropAvailability },
             { @MainActor (instance: VMInstance) in _ = instance.clipboardService },
             { @MainActor (instance: VMInstance) in _ = instance.liveRemovableMedia },

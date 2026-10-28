@@ -18,7 +18,8 @@ struct AgentStatusPopoverContentViewControllerTests {
     func defaultState() {
         let vc = AgentStatusPopoverContentViewController()
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: true)
         vc.loadViewIfNeeded()
 
@@ -43,7 +44,8 @@ struct AgentStatusPopoverContentViewControllerTests {
 
         for testCase in cases {
             vc.update(
-                status: testCase.status, isInstallerMounted: false, diskControl: Self.install,
+                presentation: GuestAgentPresentation(macOSAgent: testCase.status), isInstallerMounted: false,
+                diskControl: Self.install,
                 vmName: "TestVM", hasDismissAction: false)
             #expect(titleLabel(in: vc.view)?.stringValue == testCase.title)
             #expect(bodyLabel(in: vc.view)?.stringValue.contains(testCase.bodyContains) == true)
@@ -62,7 +64,8 @@ struct AgentStatusPopoverContentViewControllerTests {
         ]
         for (control, title) in cases {
             vc.update(
-                status: .waiting, isInstallerMounted: false, diskControl: control, vmName: "TestVM",
+                presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+                diskControl: control, vmName: "TestVM",
                 hasDismissAction: false)
             #expect(actionButton(in: vc.view)?.title == title)
         }
@@ -89,12 +92,14 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: true)
         #expect(dismissButton(in: vc.view)?.isHidden == false)
 
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: false)
         #expect(dismissButton(in: vc.view)?.isHidden == true)
     }
@@ -110,7 +115,8 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.onDiskControl = { diskControlCount += 1 }
         vc.onDone = { doneCount += 1 }
         vc.update(
-            status: .waiting, isInstallerMounted: diskControl.action == .eject,
+            presentation: GuestAgentPresentation(macOSAgent: .waiting),
+            isInstallerMounted: diskControl.action == .eject,
             diskControl: diskControl, vmName: "TestVM", hasDismissAction: false)
         vc.loadViewIfNeeded()
         let button = actionButton(in: vc.view)
@@ -159,7 +165,8 @@ struct AgentStatusPopoverContentViewControllerTests {
         vc.onDone = { doneCount += 1 }
         vc.onDismiss = { dismissCount += 1 }
         vc.update(
-            status: .waiting, isInstallerMounted: false, diskControl: Self.install, vmName: "TestVM",
+            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
+            diskControl: Self.install, vmName: "TestVM",
             hasDismissAction: true)
         vc.loadViewIfNeeded()
 

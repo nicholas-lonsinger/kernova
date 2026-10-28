@@ -113,6 +113,10 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   per session, `VsockFeatureCoordinator` (held by `VMSessionContext`) over
   `VsockFeatureDescriptor.all` — `VsockControlService`, `VsockGuestLogService`,
   `VsockClipboardService`, `VsockDropService`.
+- Agent hub, every VM with a socket device: one `AgentHub` (KernovaKit's
+  `KernovaAgentHost`) per `VMInstance`, beside the macOS ports above; each
+  session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`
+  is what every agent-status surface reads.
 - Clipboard: `ClipboardServicing` unifies `VsockClipboardService` and
   `SpiceClipboardService` (Linux) behind `VMInstance.clipboardService`;
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host

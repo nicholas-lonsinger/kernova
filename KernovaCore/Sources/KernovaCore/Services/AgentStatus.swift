@@ -27,7 +27,7 @@ package enum AgentStatus: Equatable, Sendable {
     /// elapsed with no `Hello` — after the VM started or resumed, or after the
     /// control channel died mid-session.
     ///
-    /// Synthesized only at `VMInstance.agentStatus`; `VsockControlService`,
+    /// Synthesized only at `VMInstance.agentPresentation`; `VsockControlService`,
     /// which has no access to persisted state, never returns it.
     case expectedMissing(expected: String)
 
@@ -38,7 +38,7 @@ package enum AgentStatus: Equatable, Sendable {
     ///
     /// Resolves to `.current` once a handshake completes, or to
     /// `.expectedMissing` if the agent-arrival watchdog fires. Synthesized only
-    /// at `VMInstance.agentStatus`; `VsockControlService` never returns it.
+    /// at `VMInstance.agentPresentation`; `VsockControlService` never returns it.
     case connecting(expected: String)
 
     package var isConnecting: Bool {

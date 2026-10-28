@@ -249,7 +249,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.hasLiveVirtualMachine
                 _ = instance.statusToolTip
                 _ = instance.statusDisplayNSColor
-                _ = instance.agentStatus
+                _ = instance.agentPresentation
                 _ = instance.hasGuestAgentInstallerMounted
                 _ = instance.setupState
                 _ = instance.hostState.agentInstallNudgeDismissed
@@ -303,14 +303,14 @@ final class SidebarVMRowCellView: NSTableCellView {
         unreadableWarning.toolTip = unreadableNotice
         unreadableWarning.isHidden = unreadableNotice == nil
 
-        if let agentStatus = Self.visibleAgentStatus(
+        if let presentation = Self.visibleAgentPresentation(
             for: instance, installPromptDisabled: installPromptDisabled?() ?? false),
             let diskControl = agentDiskControl?()
         {
             agentButton.isHidden = false
-            let dismissible = agentStatus == .waiting && (agentNudgeDismissible?() ?? false)
+            let dismissible = presentation.status == .waiting && (agentNudgeDismissible?() ?? false)
             agentButton.configure(
-                status: agentStatus,
+                presentation: presentation,
                 isInstallerMounted: instance.hasGuestAgentInstallerMounted,
                 diskControl: diskControl,
                 vmName: instance.name, hasDismissAction: dismissible
@@ -535,23 +535,26 @@ final class SidebarVMRowCellView: NSTableCellView {
 
     // MARK: - Agent visibility
 
-    /// The agent status to surface as a sidebar indicator, or `nil` to hide.
+    /// The agent presentation to surface as a sidebar indicator, or `nil` to
+    /// hide.
     ///
-    /// Hidden for Linux guests, during macOS install, for a VM with no session
-    /// (`agentStatus` is `nil`), when `.current`, and when `.waiting` was
-    /// dismissed for this VM or turned off app-wide by `installPromptDisabled`.
-    static func visibleAgentStatus(
+    /// Hidden during macOS install and for a VM with no session
+    /// (`agentPresentation` is `nil`). The hub's agents show while any is
+    /// connected. The macOS agent hides when `.current`, and when `.waiting`
+    /// was dismissed for this VM or turned off app-wide by
+    /// `installPromptDisabled`.
+    static func visibleAgentPresentation(
         for instance: VMInstance, installPromptDisabled: Bool
-    ) -> AgentStatus? {
-        guard instance.configuration.guestOS == .macOS else { return nil }
+    ) -> GuestAgentPresentation? {
         guard instance.setupState == nil else { return nil }
-        guard let status = instance.agentStatus else { return nil }
-        if case .current = status { return nil }
-        if case .waiting = status,
+        guard let presentation = instance.agentPresentation else { return nil }
+        if let hub = presentation.hub { return hub.peers.isEmpty ? nil : presentation }
+        if case .current = presentation.status { return nil }
+        if case .waiting = presentation.status,
             installPromptDisabled || instance.hostState.agentInstallNudgeDismissed
         {
             return nil
         }
-        return status
+        return presentation
     }
 }
