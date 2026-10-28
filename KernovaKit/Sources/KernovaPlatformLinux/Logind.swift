@@ -287,6 +287,13 @@ public struct LogindSessionProperties: Sendable, Hashable {
     public var state: LogindSessionState
     /// The session's class.
     public var sessionClass: LogindSessionClass
+
+    /// Properties of these values.
+    public init(active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass) {
+        self.active = active
+        self.state = state
+        self.sessionClass = sessionClass
+    }
 }
 
 /// What one `PropertiesChanged` says of `Active`, `State` and `Class`: the
