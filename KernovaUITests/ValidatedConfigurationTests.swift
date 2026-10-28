@@ -61,13 +61,33 @@ struct ValidatedConfigurationTests {
         config.networkEnabled = networkEnabled
         let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
 
-        let builtWithSocket = !result.configuration.socketDevices.isEmpty
-
         let session = await VMSession.make(
             configuration: result.configuration, events: VMSessionEvents(handle: { _, _ in }))
 
         #expect(session.hasNetworkDevice == networkEnabled)
         #expect(session.hasUSBController)
-        #expect(session.hasVirtioSocketDevice == builtWithSocket)
+        #expect(session.hasVirtioSocketDevice)
+    }
+
+    @Test(
+        "A Linux session's vsock services attach the agent hub a transport",
+        .enabled(if: VZVirtualMachine.isSupported)
+    )
+    @MainActor
+    func linuxSessionAttachesTheAgentHub() async throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        let result = try await ConfigurationBuilder.testing().build(
+            from: VMConfiguration.testLinux(), bundleURL: bundleURL)
+        let session = await VMSession.make(
+            configuration: result.configuration, events: VMSessionEvents(handle: { _, _ in }))
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: session.id))
+        let context = instance.beginSessionContextForTesting()
+        context.session = session
+
+        await instance.startVsockServices()
+
+        #expect(context.hasAgentTransport)
+        #expect(instance.agentPresentation?.hub != nil)
+        context.tearDown()
     }
 }

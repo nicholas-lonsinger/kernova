@@ -102,11 +102,7 @@ struct ConfigurationBuilder: Sendable {
 
         let clipboardPipes = configureClipboardSharing(vzConfig, config: config)
 
-        // The Kernova guest <-> host channel is macOS-only; Linux guests keep the
-        // SPICE/virtio-console transport.
-        if config.bootMode == .macOS {
-            configureVsockDevice(vzConfig)
-        }
+        configureVsockDevice(vzConfig)
 
         if validate {
             try validateConfiguration(
