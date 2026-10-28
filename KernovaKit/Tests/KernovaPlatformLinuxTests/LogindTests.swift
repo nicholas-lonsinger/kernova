@@ -33,6 +33,8 @@ final class FakeLogind: Sendable {
         let display = Mutex<LogindSessionReference?>(FakeLogind.userSession)
         /// The user session's `Active`.
         let userSessionActive = Mutex(false)
+        /// The user session's `Seat` ID; nil for a session on no seat.
+        let userSessionSeat = Mutex<String?>("seat0")
     }
 
     static let inhibitors: [DBusValue] = [
@@ -46,6 +48,11 @@ final class FakeLogind: Sendable {
         _ what: String, _ who: String, _ why: String, _ mode: String, _ uid: UInt32, _ pid: UInt32
     ) -> DBusValue {
         .struct([.string(what), .string(who), .string(why), .string(mode), .uint32(uid), .uint32(pid)])
+    }
+
+    /// A `(so)` reference to seat `seat`, which the fake keeps at seat0's object; `("", "/")` for none.
+    static func seatReference(_ seat: String?) -> DBusValue {
+        .struct([.string(seat ?? ""), .objectPath(seat == nil ? .root : seatPath)])
     }
 
     /// A `(so)` session reference; `("", "/")` for none, as logind holds it.
@@ -98,10 +105,14 @@ final class FakeLogind: Sendable {
             [
                 "Id": .string("2"), "Active": .boolean(recorder.userSessionActive.withLock { $0 }),
                 "State": .string("online"), "Class": .string("user"),
+                "Seat": seatReference(recorder.userSessionSeat.withLock { $0 }),
                 "Type": .string("wayland"),
             ]
         case (greeterSession.path, .string(Logind.sessionInterface)?):
-            ["Id": .string("c1"), "Active": .boolean(true), "State": .string("active"), "Class": .string("greeter")]
+            [
+                "Id": .string("c1"), "Active": .boolean(true), "State": .string("active"),
+                "Class": .string("greeter"), "Seat": seatReference("seat0"),
+            ]
         default:
             nil
         }
@@ -219,7 +230,7 @@ struct LogindTests {
         #expect(session == FakeLogind.userSession)
         #expect(
             try logind.sessionProperties(session.path)
-                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user))
+                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user, seat: "seat0"))
     }
 
     @Test("A user in no graphical session has no display session, and a user not logged in is an error")
@@ -249,7 +260,7 @@ struct LogindTests {
         #expect(greeter == FakeLogind.greeterSession)
         #expect(
             try logind.sessionProperties(greeter.path)
-                == LogindSessionProperties(id: "c1", active: true, state: .active, sessionClass: .greeter))
+                == LogindSessionProperties(id: "c1", active: true, state: .active, sessionClass: .greeter, seat: "seat0"))
 
         fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
         #expect(try logind.activeSession(onSeat: seat) == FakeLogind.userSession)

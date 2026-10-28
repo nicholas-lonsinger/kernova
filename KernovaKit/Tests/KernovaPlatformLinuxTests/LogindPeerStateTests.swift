@@ -22,6 +22,18 @@ struct LogindPeerStateTests {
                 == PeerSessionState(console: .on, sessionID: "2", userName: "user"))
     }
 
+    @Test("A display session on no seat, which logind reports as always active, never holds the console")
+    func seatless() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        fake.recorder.userSessionActive.withLock { $0 = true }
+        fake.recorder.userSessionSeat.withLock { $0 = nil }
+        #expect(
+            try LogindPeerState.sessionPeer(logind, uid: FakeLogind.displayUID)
+                == PeerSessionState(console: .off, sessionID: "2", userName: "user"))
+    }
+
     @Test("A user with no display session has no session peer state")
     func sessionless() throws {
         let bus = try PrivateBus()
@@ -66,7 +78,7 @@ struct LogindPeerStateTests {
         #expect(inbox.isEmpty)
     }
 
-    @Test("The system peer reports the console OFF at the greeter and with no foreground session")
+    @Test("The system peer reports the console OFF at the greeter and with no foreground session, as headless")
     func systemPeerOff() throws {
         let bus = try PrivateBus()
         let fake = try FakeLogind(on: bus)
@@ -86,18 +98,18 @@ struct LogindPeerStateTests {
         #expect(try LogindPeerState.systemPeer(logind) == PeerSessionState(console: .on, consoleSessionID: "2"))
     }
 
-    @Test("A guest with no seat0 has the console OFF")
-    func headless() throws {
+    @Test("A logind that answers NoSuchSeat for seat0 reads the console OFF")
+    func noSuchSeat() throws {
         let bus = try PrivateBus()
-        let fake = try NoSeatLogind(on: bus)
+        let fake = try NoSuchSeatLogind(on: bus)
         defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
         #expect(try LogindPeerState.systemPeer(logind) == PeerSessionState(console: .off))
     }
 }
 
-/// A logind with no seats: every `GetSeat` is `NoSuchSeat`, as on a guest with no console.
-private final class NoSeatLogind: Sendable {
+/// A logind that answers every call `NoSuchSeat`.
+private final class NoSuchSeatLogind: Sendable {
     let connection: DBusBusConnection
 
     init(on bus: PrivateBus) throws {

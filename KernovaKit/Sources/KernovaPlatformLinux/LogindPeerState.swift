@@ -13,8 +13,8 @@ import KernovaSynchronization
 /// peer reads its user's `Display` session instead, and the system peer seat0's `ActiveSession`.
 public enum LogindPeerState {
     /// The session peer's state: its user's display session's `Id`, the console ON while that session is
-    /// active and of class `user`, and the user's login name. Nil when the user has no display session,
-    /// as one reached over SSH or lingering has none.
+    /// active, of class `user` and on a seat, and the user's login name. Nil when logind can elect no
+    /// display session for the user, as for a lingering user with no session at all.
     public static func sessionPeer(_ logind: Logind, uid: UInt32) throws(LogindError) -> PeerSessionState? {
         let user = try logind.user(uid)
         guard let display = try logind.displaySession(ofUser: user) else { return nil }
@@ -25,8 +25,9 @@ public enum LogindPeerState {
     }
 
     /// The system peer's state: the console ON, naming the session, while seat0's foreground session is
-    /// a user's; OFF at the greeter, with no foreground session, or with no seat0 (a headless guest). It is
-    /// never UNKNOWN, which would make the host pass over every session peer.
+    /// a user's; OFF at the greeter, and OFF when seat0 has no foreground session, as on a headless guest.
+    /// logind always has seat0; an answer that it has none reads OFF too. It is never UNKNOWN, which
+    /// would make the host pass over every session peer.
     public static func systemPeer(_ logind: Logind) throws(LogindError) -> PeerSessionState {
         let seat: DBusObjectPath
         do throws(LogindError) {
@@ -110,10 +111,11 @@ private final class SessionWait: Sendable {
 }
 
 extension LogindSessionProperties {
-    /// Whether the session holds the guest's screen: in the foreground, and a user's rather than a
-    /// greeter's or a lock screen's.
+    /// Whether the session holds the guest's screen: on a seat, in the foreground there, and a user's
+    /// rather than a greeter's or a lock screen's. A seatless session, which logind reports as always
+    /// active, holds no screen.
     var ownsConsole: Bool {
-        active && sessionClass == .user
+        seat != nil && active && sessionClass == .user
     }
 }
 #endif

@@ -136,7 +136,7 @@ public struct Logind: Sendable {
         try LogindSessionReference(try property("ActiveSession", of: seat, Self.seatInterface))
     }
 
-    /// The session's `Id`, `Active`, `State` and `Class`.
+    /// The session's `Id`, `Active`, `State`, `Class` and `Seat`.
     public func sessionProperties(_ session: DBusObjectPath) throws(LogindError) -> LogindSessionProperties {
         let body = try call(
             session, Self.propertiesInterface, "GetAll", [.string(Self.sessionInterface)], expecting: "a{sv}")
@@ -150,9 +150,13 @@ public struct Logind: Sendable {
             guard let value = properties[name] else { throw .missingProperty(name) }
             return try Self.read { () throws(DBusValueMismatch) in try value.variantContent().string() }
         }
+        guard let seat = properties["Seat"] else { throw .missingProperty("Seat") }
+        // The `(so)` logind holds for a seat has the shape of a session reference, the empty ID for none.
+        let seatReference = try LogindSessionReference(
+            try Self.read { () throws(DBusValueMismatch) in try seat.variantContent() })
         return LogindSessionProperties(
             id: try string("Id"), active: active, state: LogindSessionState(rawValue: try string("State")),
-            sessionClass: sessionClass)
+            sessionClass: sessionClass, seat: seatReference?.id)
     }
 
     /// Calls `onChange` for each `PropertiesChanged` logind emits for the
@@ -403,13 +407,19 @@ public struct LogindSessionProperties: Sendable, Hashable {
     public var state: LogindSessionState
     /// The session's class.
     public var sessionClass: LogindSessionClass
+    /// The seat the session is attached to, as `seat0`; nil for a session on no seat, as one over SSH is.
+    /// logind reports a seatless session as always active.
+    public var seat: String?
 
     /// Properties of these values.
-    public init(id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass) {
+    public init(
+        id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass, seat: String?
+    ) {
         self.id = id
         self.active = active
         self.state = state
         self.sessionClass = sessionClass
+        self.seat = seat
     }
 }
 
