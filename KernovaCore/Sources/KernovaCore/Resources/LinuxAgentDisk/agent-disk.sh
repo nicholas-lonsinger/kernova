@@ -9,7 +9,8 @@
 #
 # kernova-agent does the work. This copies it off the disk, which Kernova
 # ejects once an agent it bundles connects, and runs it from the copy. The
-# --system step is the one that runs as root, and sudo asks for it here.
+# --system step is the one that runs as root: sudo asks for it here, and a
+# root shell runs it, and only it, without sudo.
 
 set -eu
 
@@ -33,15 +34,29 @@ main() {
         exit 1
     fi
 
+    if [ "$(id -u)" -eq 0 ]; then
+        if [ -z "$system" ]; then
+            echo "$script: as root, only --system applies; run it as the user the agent is for without it" >&2
+            exit 64
+        fi
+    elif [ -n "$system" ] && ! command -v sudo >/dev/null 2>&1; then
+        echo "$script: --system needs sudo, which this system lacks; run sh $script --system as root" >&2
+        exit 1
+    fi
+
     disk=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
     staged=$(mktemp -d)
     trap 'rm -rf "$staged"' EXIT
     cp "$disk/kernova-agent" "$staged/kernova-agent"
     chmod 0755 "$staged/kernova-agent"
 
-    "$staged/kernova-agent" "$verb"
-    if [ -n "$system" ]; then
-        sudo "$staged/kernova-agent" "$verb" --system
+    if [ "$(id -u)" -eq 0 ]; then
+        "$staged/kernova-agent" "$verb" --system
+    else
+        "$staged/kernova-agent" "$verb"
+        if [ -n "$system" ]; then
+            sudo "$staged/kernova-agent" "$verb" --system
+        fi
     fi
 }
 

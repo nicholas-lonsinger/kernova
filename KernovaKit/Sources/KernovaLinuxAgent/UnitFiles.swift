@@ -4,7 +4,9 @@
 /// Every unit runs the agent through `current`, so an update that switches slots rewrites none of them.
 /// systemd restarts a peer that fails, and one that relaunches by exiting 75 (`RestartForceExitStatus=`),
 /// never one that exits 0, which stays stopped until the next login or boot; `StartLimitIntervalSec=0`
-/// keeps restarts from ever running out. The rollback timer fires every 30 s, `AccuracySec=1s` because
+/// keeps restarts from ever running out. `Type=exec` makes a start fail when the binary cannot be executed,
+/// so the installer's `restart` reports it rather than the restart loop hiding it. The rollback check is
+/// `Type=oneshot`, whose start already waits for it to exit. The rollback timer fires every 30 s, `AccuracySec=1s` because
 /// systemd's default of one minute coarsens it; its service runs only while `switch-pending` exists.
 enum UnitFiles {
     /// The service that runs the peer of `layout`'s scope.
@@ -20,6 +22,7 @@ enum UnitFiles {
                 StartLimitIntervalSec=0
 
                 [Service]
+                Type=exec
                 User=\(InstallLayout.systemAccount)
                 ExecStart=\(binary) system
                 StateDirectory=kernova-agent
@@ -46,6 +49,7 @@ enum UnitFiles {
                 StartLimitIntervalSec=0
 
                 [Service]
+                Type=exec
                 ExecStart=\(binary) session
                 Restart=on-failure
                 RestartForceExitStatus=75
@@ -131,9 +135,14 @@ enum UnitFiles {
     static func sysusers(_ layout: InstallLayout) -> String {
         """
         # Written by kernova-agent install --system.
-        u \(InstallLayout.systemAccount) - "Kernova guest agent" \(layout.root) -
+        \(sysusersLine(layout))
 
         """
+    }
+
+    /// The one sysusers.d(5) line ``sysusers(_:)`` holds.
+    static func sysusersLine(_ layout: InstallLayout) -> String {
+        #"u \#(InstallLayout.systemAccount) - "Kernova guest agent" \#(layout.root) -"#
     }
 
     /// The polkit rule granting the system peer's account the four power actions and nothing else: no

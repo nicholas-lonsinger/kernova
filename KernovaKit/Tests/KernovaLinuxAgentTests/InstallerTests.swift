@@ -8,9 +8,14 @@ import Testing
 @testable import KernovaLinuxAgent
 
 /// `kernova-agent install --root <dir> --no-systemctl`, carried out in a scratch directory: exactly the
-/// files the plan names, with their modes, owned by whoever ran it, and nothing else.
+/// files the plan names, with their modes and owners, and nothing else.
 @Suite("The installer on disk")
 struct InstallerTests {
+    /// The account the system tests hand the agent's root to: one every Linux system has.
+    static let account = "nobody"
+    /// Switching to it needs root, which the CI container runs as.
+    static let runsAsRoot = geteuid() == 0
+
     /// A scratch staging root and a stand-in payload, removed at the end.
     final class Scratch {
         let directory: PortableScratchDirectory
@@ -26,20 +31,22 @@ struct InstallerTests {
             try Data(payloadBytes).write(to: URL(filePath: payload))
         }
 
-        func installer() -> Installer {
-            Installer(stagingRoot: root, runsSystemd: false, payloadSource: payload, versionLabel: "9.9 (99)")
+        func installer(account: String? = nil) -> Installer {
+            Installer(
+                stagingRoot: root, runsSystemd: false, payloadSource: payload, versionLabel: "9.9 (99)",
+                account: account)
         }
 
         /// Every path under the staging root: `d0755` for a directory, `f0644` for a file, `l<target>`
-        /// for a link; each must be owned by this process's user and group.
-        func tree() throws -> [String: String] {
+        /// for a link; each owned by `owner(path)`.
+        func tree(owner: (String) -> uid_t = { _ in getuid() }) throws -> [String: String] {
             var entries: [String: String] = [:]
             // By hand, never following a link.
             var pending = try FileManager.default.contentsOfDirectory(atPath: root).map { "/" + $0 }
             while let path = pending.popLast() {
                 var info = stat()
                 guard lstat(root + path, &info) == 0 else { throw CocoaError(.fileReadUnknown) }
-                #expect(info.st_uid == getuid() && info.st_gid == getgid(), "\(path) is owned by another user")
+                #expect(info.st_uid == owner(path), "\(path) is owned by uid \(info.st_uid)")
                 let mode = String(info.st_mode & 0o7777, radix: 8)
                 switch info.st_mode & S_IFMT {
                 case S_IFDIR:
@@ -65,6 +72,12 @@ struct InstallerTests {
         try Installer.layout(
             for: AgentCommand.InstallRequest(scope: scope, root: "/stage", runsSystemd: false),
             environment: environment, effectiveUID: getuid())
+    }
+
+    /// The account's uid for a path in the system root, the invoker's for every other.
+    static func systemOwner(_ path: String) -> uid_t {
+        let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
+        return path == "/var/lib/kernova-agent" || path.hasPrefix("/var/lib/kernova-agent/") ? account : getuid()
     }
 
     static let userDirectories = [
@@ -107,15 +120,7 @@ struct InstallerTests {
         "/etc/polkit-1/rules.d/50-kernova-agent.rules": "f0644",
     ]) { $1 }
 
-    @Test(
-        "An install writes exactly the planned files with their modes, and the payload and state they name",
-        arguments: [(InstallScope.user, userInstall), (.system, systemInstall)])
-    func install(scope: InstallScope, expected: [String: String]) throws {
-        let scratch = try Scratch()
-        let layout = try Self.layout(scope)
-        try scratch.installer().run(.install(layout))
-        #expect(try scratch.tree() == expected)
-
+    private static func checkFiles(_ scratch: Scratch, _ layout: InstallLayout) throws {
         let binary = FileManager.default.contents(atPath: scratch.root + layout.installSlot + "/kernova-agent")
         #expect(binary.map(Array.init) == scratch.payloadBytes)
         let state = try JSONDecoder().decode(
@@ -125,19 +130,74 @@ struct InstallerTests {
         #expect(state.slots["a"]?.payloadSHA256.count == 64)
         #expect(scratch.contents(layout.unitDirectory + "/" + layout.serviceName) == UnitFiles.service(layout))
         #expect(
-            scratch.contents(layout.unitDirectory + "/kernova-agent-rollback.timer")
-                == UnitFiles.rollbackTimer(layout))
+            scratch.contents(layout.unitDirectory + "/kernova-agent-rollback.timer") == UnitFiles.rollbackTimer(layout))
         #expect(
             scratch.contents(layout.unitDirectory + "/kernova-agent-rollback.service")
                 == UnitFiles.rollbackService(layout))
     }
 
-    @Test(
-        "A reinstall over a pending switch leaves the same files, the switch cleared",
-        arguments: [InstallScope.user, .system])
-    func reinstall(scope: InstallScope) throws {
+    @Test("A user install writes exactly the planned files with their modes, and the payload and state they name")
+    func userInstall() throws {
         let scratch = try Scratch()
-        let layout = try Self.layout(scope)
+        let layout = try Self.layout(.user)
+        try scratch.installer().run(.install(layout))
+        #expect(try scratch.tree() == Self.userInstall)
+        try Self.checkFiles(scratch, layout)
+    }
+
+    @Test(
+        "A system install writes the same, everything in the agent's root as its account",
+        .enabled(if: runsAsRoot, "switching to another account needs root"))
+    func systemInstall() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.system)
+        try scratch.installer(account: Self.account).run(.install(layout))
+        #expect(try scratch.tree(owner: Self.systemOwner) == Self.systemInstall)
+        try Self.checkFiles(scratch, layout)
+    }
+
+    @Test(
+        "A link the account planted where a slot belongs takes the install nowhere the account cannot write",
+        .enabled(if: runsAsRoot, "switching to another account needs root"))
+    func plantedLink() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.system)
+        try scratch.installer(account: Self.account).run(.install(layout))
+        // A directory only root may write, as /etc is.
+        let outside = scratch.directory.path + "/outside"
+        try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: false)
+        let slot = scratch.root + layout.installSlot
+        try FileManager.default.removeItem(atPath: slot)
+        try FileManager.default.createSymbolicLink(atPath: slot, withDestinationPath: outside)
+        let planted = try #require(getpwnam(Self.account)?.pointee)
+        #expect(lchown(slot, planted.pw_uid, planted.pw_gid) == 0)
+
+        #expect(throws: Installer.Failure.self) { try scratch.installer(account: Self.account).run(.install(layout)) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outside) == [])
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: slot) == outside)
+    }
+
+    @Test("Above the agent's root, a symlinked directory is a directory, as mkdir -p takes it")
+    func symlinkedAncestor() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.user)
+        let dotfiles = scratch.root + "/home/pbear/dotfiles/systemd"
+        try FileManager.default.createDirectory(atPath: dotfiles, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            atPath: scratch.root + "/home/pbear/.config", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: scratch.root + "/home/pbear/.config/systemd", withDestinationPath: dotfiles)
+
+        try scratch.installer().run(.install(layout))
+        #expect(
+            scratch.contents(layout.unitDirectory + "/" + layout.serviceName) == UnitFiles.service(layout))
+        #expect(FileManager.default.fileExists(atPath: dotfiles + "/user/kernova-agent.service"))
+    }
+
+    @Test("A reinstall over a pending switch leaves the same files, the switch cleared")
+    func reinstallUser() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.user)
         try scratch.installer().run(.install(layout))
         let first = try scratch.tree()
         #expect(FileManager.default.createFile(atPath: scratch.root + layout.switchPending, contents: Data()))
@@ -146,16 +206,50 @@ struct InstallerTests {
     }
 
     @Test(
-        "An uninstall removes every file the install wrote, leaving only the shared directories",
-        arguments: [(InstallScope.user, userDirectories), (.system, systemDirectories)])
-    func uninstall(scope: InstallScope, remaining: [String]) throws {
+        "A system reinstall over a pending switch leaves the same files and owners, the switch cleared",
+        .enabled(if: runsAsRoot, "switching to another account needs root"))
+    func reinstallSystem() throws {
         let scratch = try Scratch()
-        let layout = try Self.layout(scope)
+        let layout = try Self.layout(.system)
+        try scratch.installer(account: Self.account).run(.install(layout))
+        let first = try scratch.tree(owner: Self.systemOwner)
+        #expect(FileManager.default.createFile(atPath: scratch.root + layout.switchPending, contents: Data()))
+        try scratch.installer(account: Self.account).run(.install(layout))
+        #expect(try scratch.tree(owner: Self.systemOwner) == first)
+    }
+
+    @Test("A user uninstall removes every file the install wrote, leaving only the shared directories")
+    func uninstallUser() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.user)
         try scratch.installer().run(.install(layout))
         try scratch.installer().run(.uninstall(layout))
-        #expect(try scratch.tree() == Dictionary(uniqueKeysWithValues: remaining.map { ($0, "d0755") }))
+        #expect(try scratch.tree() == Dictionary(uniqueKeysWithValues: Self.userDirectories.map { ($0, "d0755") }))
         // Nothing left to remove is not a failure.
         try scratch.installer().run(.uninstall(layout))
+    }
+
+    @Test(
+        "A system uninstall empties the root as its account, then removes it",
+        .enabled(if: runsAsRoot, "switching to another account needs root"))
+    func uninstallSystem() throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.system)
+        try scratch.installer(account: Self.account).run(.install(layout))
+        try scratch.installer(account: Self.account).run(.uninstall(layout))
+        #expect(try scratch.tree() == Dictionary(uniqueKeysWithValues: Self.systemDirectories.map { ($0, "d0755") }))
+        try scratch.installer(account: Self.account).run(.uninstall(layout))
+    }
+
+    @Test("A system the installer finds no systemd on is refused before anything is written")
+    func needsSystemd() throws {
+        let scratch = try Scratch()
+        #expect(throws: Installer.Failure.self) {
+            try Installer.requireSystemd(runDirectory: scratch.directory.path + "/run/systemd/system")
+        }
+        try FileManager.default.createDirectory(
+            atPath: scratch.directory.path + "/run/systemd/system", withIntermediateDirectories: true)
+        try Installer.requireSystemd(runDirectory: scratch.directory.path + "/run/systemd/system")
     }
 
     @Test("User scope refuses root and system scope needs it, on the live system")

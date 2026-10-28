@@ -17,11 +17,18 @@ extension AgentShell {
     static func runInstaller(_ request: AgentCommand.InstallRequest, uninstalling: Bool, label: String) -> Never {
         let scope = request.scope == .system ? "the system service" : "the session agent for this user"
         do throws(Installer.Failure) {
-            let layout = try Installer.layout(
-                for: request, environment: ProcessInfo.processInfo.environment, effectiveUID: geteuid())
+            if request.runsSystemd { try Installer.requireSystemd() }
+            // The user manager's own environment says where it looks for units; a root shell's would not, and
+            // the layout refuses root for the user scope.
+            let environment =
+                request.scope == .user && request.runsSystemd && geteuid() != 0
+                ? try Installer.managerEnvironment() : ProcessInfo.processInfo.environment
+            let layout = try Installer.layout(for: request, environment: environment, effectiveUID: geteuid())
+            // A staging root is not the live tree the account owns, and the account need not exist there.
+            let account = request.scope == .system && request.root == nil ? InstallLayout.systemAccount : nil
             let installer = Installer(
                 stagingRoot: request.root ?? "", runsSystemd: request.runsSystemd, payloadSource: "/proc/self/exe",
-                versionLabel: label)
+                versionLabel: label, account: account)
             try installer.run(uninstalling ? .uninstall(layout) : .install(layout))
             print(uninstalling ? "kernova-agent: removed \(scope)." : "kernova-agent: installed \(scope), \(label).")
             exit(0)

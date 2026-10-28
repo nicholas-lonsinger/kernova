@@ -33,6 +33,39 @@ struct InstallLayout: Equatable, Sendable {
         return home + "/.config"
     }
 
+    /// The variables `systemctl --user show-environment` prints, one `NAME=value` a line, a value holding
+    /// anything but printable ASCII written as a `$'…'` string with backslash escapes.
+    static func environment(parsingShowEnvironment text: String) -> [String: String] {
+        var environment: [String: String] = [:]
+        for line in text.split(separator: "\n") {
+            guard let equals = line.firstIndex(of: "=") else { continue }
+            var value = line[line.index(after: equals)...]
+            if value.hasPrefix("$'"), value.hasSuffix("'"), value.count >= 3 {
+                value = value.dropFirst(2).dropLast()
+                var unescaped = ""
+                var escaping = false
+                for character in value {
+                    if escaping {
+                        switch character {
+                        case "n": unescaped.append("\n")
+                        case "t": unescaped.append("\t")
+                        default: unescaped.append(character)
+                        }
+                        escaping = false
+                    } else if character == "\\" {
+                        escaping = true
+                    } else {
+                        unescaped.append(character)
+                    }
+                }
+                environment[String(line[..<equals])] = unescaped
+            } else {
+                environment[String(line[..<equals])] = String(value)
+            }
+        }
+        return environment
+    }
+
     /// The system peer's account.
     static let systemAccount = "kernova-agent"
     /// Declares ``systemAccount`` to systemd-sysusers.

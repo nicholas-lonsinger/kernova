@@ -7,7 +7,12 @@ import Foundation
 import KernovaAgentCore
 
 /// Everything `kernova-agent install` or `uninstall` does in one scope, as data: what it writes and removes,
-/// and the commands it runs, in order. ``Installer`` carries it out.
+/// and the commands it runs. ``Installer`` carries it out in this order: ``before``, ``treeRemovals``, the
+/// agent's own ``root`` made, ``treeWrites``, ``writes``, ``removals``, the root emptied and removed when
+/// ``removesRoot``, then ``after``.
+///
+/// The tree under ``root`` is the one the system scope's account owns, so the system installer works in it
+/// as that account (``Installer``); everything else is written by whoever runs the installer.
 struct InstallPlan: Equatable {
     /// One thing written.
     enum Write: Equatable {
@@ -34,28 +39,44 @@ struct InstallPlan: Equatable {
         }
     }
 
+    /// The agent's own root, which ``treeRemovals`` and ``treeWrites`` stay inside.
+    var root: String
     /// Commands run before anything is written or removed.
     var before: [Command] = []
-    /// What is written, in order.
+    /// What is removed under ``root`` before anything is written.
+    var treeRemovals: [String] = []
+    /// What is written under ``root``, in order.
+    var treeWrites: [Write] = []
+    /// What is written outside ``root``, in order.
     var writes: [Write] = []
-    /// What is removed, files and links singly and directories whole; a missing one is skipped.
+    /// What is removed outside ``root``, files and links singly; a missing one is skipped.
     var removals: [String] = []
+    /// Whether ``root`` is emptied and removed.
+    var removesRoot = false
     /// Commands run after.
     var after: [Command] = []
 
     /// The install of `layout`'s scope.
     ///
-    /// A fresh install fills slot `a` and points `current` at it, clearing any switch an update left
-    /// pending, so the rollback check never judges it.
+    /// A fresh install fills slot `a` and points `current` at it. Before it writes anything it stops the
+    /// rollback check and clears any switch an update left pending, so no check judges a half-written root
+    /// or the fresh install; it starts the check again at the end.
     static func install(_ layout: InstallLayout) -> InstallPlan {
-        var plan = InstallPlan()
+        var plan = InstallPlan(root: layout.root)
         let systemctl = systemctlPrefix(layout)
-        plan.writes = [
-            .directory(path: layout.root, mode: 0o755),
+        plan.before = [
+            Command(
+                systemctl + ["stop", InstallLayout.rollbackTimerName, InstallLayout.rollbackServiceName],
+                onlyIfPresent: unit(layout, InstallLayout.rollbackTimerName))
+        ]
+        plan.treeRemovals = [layout.switchPending]
+        plan.treeWrites = [
             .directory(path: layout.root + "/slots", mode: 0o755),
             .directory(path: layout.installSlot, mode: 0o755),
             .payload(binary: layout.installSlot + "/" + InstallLayout.binaryName, state: layout.state),
             .link(path: layout.current, target: InstallLayout.installSlotLink),
+        ]
+        plan.writes = [
             .directory(path: layout.unitDirectory, mode: 0o755),
             .file(path: unit(layout, layout.serviceName), mode: 0o644, text: UnitFiles.service(layout)),
             .file(
@@ -65,9 +86,10 @@ struct InstallPlan: Equatable {
                 path: unit(layout, InstallLayout.rollbackServiceName), mode: 0o644,
                 text: UnitFiles.rollbackService(layout)),
         ]
-        plan.removals = [layout.switchPending]
         switch layout.scope {
         case .system:
+            // The account exists before anything is written, so the tree is written as it.
+            plan.before.append(Command(["systemd-sysusers", "--inline", UnitFiles.sysusersLine(layout)]))
             plan.writes += [
                 .directory(path: "/etc/sysusers.d", mode: 0o755),
                 .file(path: InstallLayout.sysusersFile, mode: 0o644, text: UnitFiles.sysusers(layout)),
@@ -75,7 +97,6 @@ struct InstallPlan: Equatable {
                 .file(path: InstallLayout.polkitRuleFile, mode: 0o644, text: UnitFiles.polkitRule),
             ]
             plan.after = [
-                Command(["systemd-sysusers", InstallLayout.sysusersFile]),
                 Command(systemctl + ["daemon-reload"]),
                 Command(systemctl + ["enable", "--now", InstallLayout.rollbackTimerName]),
                 Command(systemctl + ["enable", layout.serviceName]),
@@ -105,7 +126,7 @@ struct InstallPlan: Equatable {
     /// system account stays, as systemd-sysusers leaves every account it made, so its uid is never reused
     /// for files it may still own.
     static func uninstall(_ layout: InstallLayout) -> InstallPlan {
-        var plan = InstallPlan()
+        var plan = InstallPlan(root: layout.root)
         let systemctl = systemctlPrefix(layout)
         let service = unit(layout, layout.serviceName)
         let timer = unit(layout, InstallLayout.rollbackTimerName)
@@ -123,7 +144,7 @@ struct InstallPlan: Equatable {
         if layout.scope == .system {
             plan.removals += [InstallLayout.polkitRuleFile, InstallLayout.sysusersFile]
         }
-        plan.removals.append(layout.root)
+        plan.removesRoot = true
         plan.after = [Command(systemctl + ["daemon-reload"])]
         return plan
     }

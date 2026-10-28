@@ -24,6 +24,7 @@ struct UnitFilesTests {
                 StartLimitIntervalSec=0
 
                 [Service]
+                Type=exec
                 ExecStart=/home/pbear/.local/share/kernova-agent/current/kernova-agent session
                 Restart=on-failure
                 RestartForceExitStatus=75
@@ -46,6 +47,7 @@ struct UnitFilesTests {
                 StartLimitIntervalSec=0
 
                 [Service]
+                Type=exec
                 User=kernova-agent
                 ExecStart=/var/lib/kernova-agent/current/kernova-agent system
                 StateDirectory=kernova-agent

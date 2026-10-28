@@ -7,32 +7,59 @@ struct InstallPlanTests {
     static let user = UnitFilesTests.user
     static let system = UnitFilesTests.system
 
-    @Test("A user install starts the service and the timer once its files are written")
+    @Test("A user install stops the rollback check first, and starts it and the service once its files are written")
     func userCommands() {
+        let plan = InstallPlan.install(Self.user)
         #expect(
-            InstallPlan.install(Self.user).after.map(\.arguments) == [
+            plan.before == [
+                InstallPlan.Command(
+                    ["systemctl", "--user", "stop", "kernova-agent-rollback.timer", "kernova-agent-rollback.service"],
+                    onlyIfPresent: "/home/pbear/.config/systemd/user/kernova-agent-rollback.timer")
+            ])
+        #expect(
+            plan.after.map(\.arguments) == [
                 ["systemctl", "--user", "daemon-reload"],
                 ["systemctl", "--user", "enable", "--now", "kernova-agent-rollback.timer"],
                 ["systemctl", "--user", "restart", "kernova-agent.service"],
             ])
-        #expect(InstallPlan.install(Self.user).before.isEmpty)
     }
 
-    @Test("A system install makes the account before systemd starts anything that runs as it")
+    @Test("A system install makes the account before it writes anything, so the agent's root is written as it")
     func systemCommands() {
+        let plan = InstallPlan.install(Self.system)
         #expect(
-            InstallPlan.install(Self.system).after.map(\.arguments) == [
-                ["systemd-sysusers", "/etc/sysusers.d/kernova-agent.conf"],
+            plan.before.map(\.arguments) == [
+                ["systemctl", "stop", "kernova-agent-rollback.timer", "kernova-agent-rollback.service"],
+                [
+                    "systemd-sysusers", "--inline",
+                    #"u kernova-agent - "Kernova guest agent" /var/lib/kernova-agent -"#,
+                ],
+            ])
+        #expect(
+            plan.after.map(\.arguments) == [
                 ["systemctl", "daemon-reload"],
                 ["systemctl", "enable", "--now", "kernova-agent-rollback.timer"],
                 ["systemctl", "enable", "kernova-agent-system.service"],
                 ["systemctl", "restart", "kernova-agent-system.service"],
             ])
+        #expect(UnitFiles.sysusers(Self.system).contains(UnitFiles.sysusersLine(Self.system)))
     }
 
-    @Test("An install clears a switch an update left pending, so the rollback check never judges it")
-    func clearsPendingSwitch() {
-        #expect(InstallPlan.install(Self.user).removals == ["/home/pbear/.local/share/kernova-agent/switch-pending"])
+    @Test("An install clears a switch an update left pending before it writes anything", arguments: [user, system])
+    func clearsPendingSwitch(layout: InstallLayout) {
+        let plan = InstallPlan.install(layout)
+        #expect(plan.treeRemovals == [layout.switchPending])
+    }
+
+    @Test("Everything under the agent's root is a tree step, and nothing else is", arguments: [user, system])
+    func treeSteps(layout: InstallLayout) {
+        let plan = InstallPlan.install(layout)
+        for write in plan.treeWrites {
+            #expect(Self.path(of: write).hasPrefix(layout.root + "/"), "\(write)")
+        }
+        for write in plan.writes {
+            #expect(!Self.path(of: write).hasPrefix(layout.root + "/"), "\(write)")
+        }
     }
 
     @Test(
@@ -41,18 +68,18 @@ struct InstallPlanTests {
     func uninstallUndoesInstall(layout: InstallLayout) {
         let install = InstallPlan.install(layout)
         let uninstall = InstallPlan.uninstall(layout)
+        #expect(uninstall.removesRoot)
         for write in install.writes {
-            let path: String
-            switch write {
-            case .file(let file, _, _): path = file
-            case .payload(let binary, _): path = binary
-            case .link(let link, _): path = link
-            case .directory: continue
-            }
-            #expect(
-                uninstall.removals.contains { path == $0 || path.hasPrefix($0 + "/") }, "\(path) is left behind")
+            if case .directory = write { continue }
+            #expect(uninstall.removals.contains(Self.path(of: write)), "\(write) is left behind")
         }
         #expect(uninstall.before.allSatisfy { $0.onlyIfPresent != nil })
-        #expect(uninstall.removals.last == layout.root)
+    }
+
+    private static func path(of write: InstallPlan.Write) -> String {
+        switch write {
+        case .directory(let path, _), .file(let path, _, _), .link(let path, _): path
+        case .payload(let binary, _): binary
+        }
     }
 }
