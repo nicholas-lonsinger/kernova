@@ -14,7 +14,7 @@
 // endpoint: vsock port 49160 at host CID 2 (Hyper-V socket service GUID
 // 0000C008-facb-11e6-bd58-64006a7986d3 under Kernova's own monitor). FROZEN.
 // The connection's byte layout is not protobuf and lives in
-// KernovaWire (phase2-spec.md §2): a 4-byte preamble each way, then frames of
+// KernovaWire: a 4-byte preamble each way, then frames of
 // a 10-byte big-endian header (stream id u32, type u8, flags u8, length u32)
 // and a payload. This file holds every protobuf payload:
 //
@@ -550,8 +550,8 @@ public nonisolated enum Kernova_V2_PayloadFormat: SwiftProtobuf.Enum, Swift.Case
   /// its own unit and autostart files when it installs.
   case executable // = 1
 
-  /// An uncompressed POSIX.1-2001 pax archive of the macOS install tree
-  /// (phase2-spec.md §8.3), extracted by the never-resolve-a-path writer.
+  /// An uncompressed POSIX.1-2001 pax archive of the macOS install tree,
+  /// extracted by the never-resolve-a-path writer.
   case paxTree // = 2
   case UNRECOGNIZED(Int)
 
@@ -816,7 +816,7 @@ public nonisolated struct Kernova_V2_Hello: @unchecked Sendable {
 
   /// The session layer's version: what `SessionMessage.extension` and every
   /// non-frozen session rule mean. Equal: full session. Different: frozen
-  /// subset only (phase2-spec.md §4.2). Currently 1.
+  /// subset only. Currently 1.
   public var protocolVersion: UInt32 {
     get {_storage._protocolVersion}
     set {_uniqueStorage()._protocolVersion = newValue}

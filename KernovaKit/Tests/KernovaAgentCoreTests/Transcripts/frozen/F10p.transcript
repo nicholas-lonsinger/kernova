@@ -1,0 +1,16 @@
+# F10p update pull of a stale hash → RESET UPDATE_STALE — peer pinned
+pinned peer  fixture=linux-session-v1
+current host fixture=host-stale token=000102030405060708090a0b0c0d0e0f
+end 1000
+t=0      expect  h>p preamble
+t=0      expect  h>p s=0 MSG hello role=1 scope=0 token=000102030405060708090a0b0c0d0e0f 1=v1:actions[]:asks=false 2=v1:formats[]
+t=0      p>h     4b524e32
+t=0      p>h     00000000 00 01 0000008c 0a890108011257080210011802220532342e30342a05362e382e3032067562756e747538014220a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a14a03322e3052105e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e1a0c080110011a060a02010210011a09080210011a030a01011a06080310011a00220b0801120263321a03616461
+t=1      expect  h>p s=0 MSG policy
+t=1      expect  h>p s=0 MSG update_available hash=1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1fc167441d2f40ce size=100000 format=1 label=2.26
+t=2      p>h     00000001 01 00 00000003 08ac02
+t=2      p>h     00000003 01 00 00000027 08c80112220a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1fc167441d2f40ce
+t=2      p>h     00000003 04 00 00000004 007c0000
+t=2      in      host setBundles fixture=stale-pax
+t=2      expect  h>p s=0 MSG update_available hash=1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1bfe767839146845af size=100000 format=2 label=2.27
+t=3      expect  h>p s=3 RESET code=121
