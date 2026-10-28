@@ -24,7 +24,7 @@ struct EphemeralSessionSettlementTests {
     private func makeVM(
         in harness: WiredCommandCore, baseline kind: VMSnapshotKind = .warm,
         other otherKind: VMSnapshotKind = .cold, ephemeral: Bool = true, unsettled: Bool = false,
-        phase: VMLifecyclePhase = .stopped
+        phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
     ) throws -> (instance: VMInstance, baseline: VMSnapshot, other: VMSnapshot) {
         // The newer of the two, so it is the one an enable pins.
         let baseline = VMSnapshot(
@@ -37,7 +37,7 @@ struct EphemeralSessionSettlementTests {
         hostState.hasUnsettledSession = unsettled
         let instance = RegisteredVMInstanceFixture.register(
             name: "Throwaway", phase: .stopped, guestOS: .linux, snapshots: [baseline, other],
-            library: harness.library, preferences: preferences, hostState: hostState)
+            library: harness.library, preferences: preferences, hostState: hostState, mutate: mutate)
         // What each snapshot's own config.json holds, so a revert reads it back
         // and a bring-up after it finds the baseline readable.
         for snapshot in [baseline, other] {
@@ -288,10 +288,53 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.snapshotManifest.currentID == other.id)
     }
 
-    // MARK: - Session end
+    // MARK: - Restart
 
-    @Test("An Ephemeral Restart whose session ends with an error reverts before the restart boots")
-    func restartAfterAnErrorRevertsBeforeTheBoot() async throws {
+    /// How the session a Restart waits on ends.
+    enum RestartedSessionEnd: CaseIterable, Sendable {
+        case shutdownAsked, guestShutsItselfDown, guestFails
+    }
+
+    @Test(
+        "A Restart keeps an Ephemeral VM's session and boots it, however the session it waits on ends",
+        arguments: RestartedSessionEnd.allCases)
+    func restartKeepsTheSession(end: RestartedSessionEnd) async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = end != .shutdownAsked
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let session = UUID()
+        let (instance, _, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        }
+        try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
+        switch end {
+        case .shutdownAsked:
+            break
+        case .guestShutsItselfDown:
+            instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        case .guestFails:
+            instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
+        }
+        try await restart.value
+
+        #expect(virtualization.revertCallCount == 0)
+        // The disks the session left, booted cold — not the baseline's saved
+        // state a revert installs.
+        #expect(virtualization.lastStartRoute == .coldBoot)
+        #expect(instance.status == .running)
+        // Carried into the session the boot brought up, whose end settles it.
+        #expect(instance.hostState.hasUnsettledSession)
+    }
+
+    /// A stop someone asks for while a Restart waits.
+    enum StopDuringRestart: CaseIterable, Sendable { case graceful, force }
+
+    @Test(
+        "A Stop or Force Stop while a Restart waits cancels it: nothing boots, and the VM reverts",
+        arguments: StopDuringRestart.allCases)
+    func stopCancelsAWaitingRestart(stop: StopDuringRestart) async throws {
         let virtualization = MockVirtualizationService()
         virtualization.guestIgnoresShutdownRequest = true
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
@@ -302,15 +345,167 @@ struct EphemeralSessionSettlementTests {
             try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
-        instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
-        try await restart.value
+        // The prompt a Force Stop asks with names the baseline it returns to.
+        #expect(VMCommandCore.forceStopPrompt(instance).message.contains(baseline.name))
+        switch stop {
+        case .graceful:
+            try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
+            #expect(!instance.activity.liveSessionContinues)
+            // The guest honours the request: the end of a session no restart
+            // waits on any more.
+            instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        case .force:
+            try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        }
+
+        let error = try await #require(throws: CommandError.self) { try await restart.value }
+        guard case .operationFailed(.restart, _, let message, _) = error else {
+            Issue.record("Expected the restart to report its cancellation, got \(error)")
+            return
+        }
+        #expect(message.contains("was stopped while it restarted"))
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("Only a continuation's own admission carries the ended session: another start in its step reverts first")
+    func onlyTheContinuationCarriesTheSession() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+        // Admitted in the step the continuation is, but resolving an outcome
+        // of its own rather than the one owed to the session's end.
+        let other = VMOutcome()
+        let continuation = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
+            _ in try harness.core.startNow(instance, policy: .command(.unavailable), resolving: other)
+        }
+        instance.activity.follow(continuation, continuing: session)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await other.value()
 
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
-        // The baseline's saved state the revert installed, not the disks the
-        // session left: a cold boot would mean the boot ran on those.
+        // The baseline's saved state the revert installed, not the session's disks.
         #expect(virtualization.lastStartRoute == .restoredSavedState)
         #expect(instance.status == .running)
     }
+
+    @Test("A Stop after a Restart reverts the Ephemeral VM to its baseline")
+    func stopAfterARestartReverts() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
+
+        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        #expect(virtualization.revertCallCount == 0)
+
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A Restart whose deadline passes with the session live leaves its end to revert as a Stop's does")
+    func timedOutRestartLeavesTheEndToRevert() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = WiredCommandCore(
+            virtualization: virtualization, preferences: preferences, clock: clock)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: 30, consent: .none)
+        }
+        // The parked sleep is the power-off deadline: the restart is waiting,
+        // its boot owed to the session's end.
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+        #expect(virtualization.stopCallCount == 1)
+        #expect(instance.activity.liveSessionContinues)
+
+        clock.release(try #require(clock.parked.first))
+        let error = try await #require(throws: CommandError.self) { try await restart.value }
+        guard case .timedOut(_, .restart, _) = error else {
+            Issue.record("Expected the restart's timeout, got \(error)")
+            return
+        }
+        #expect(!instance.activity.liveSessionContinues)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(virtualization.startCallCount == 0)
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A Restart whose boot is refused at the power-off leaves the session to revert as a Stop's does")
+    func refusedRestartBootReverts() async throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let identity = Data([7, 7, 7])
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session)) {
+            $0.genericMachineIdentifierData = identity
+        }
+        let twin = RegisteredVMInstanceFixture.register(
+            name: "Twin", phase: .stopped, guestOS: .linux, library: harness.library,
+            preferences: preferences
+        ) { $0.genericMachineIdentifierData = identity }
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        }
+        try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
+        // Started beside the restarting VM while it waits, so the boot — which
+        // nobody can be asked about — meets the shared identity.
+        try await harness.core.start(
+            .id(twin.id), recovery: false, consent: Consent([.startBesideSharedMachineIdentity]))
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+
+        await #expect(throws: (any Error).self) { try await restart.value }
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        // The twin's start alone.
+        #expect(virtualization.startCallCount == 1)
+        #expect(!instance.hasLiveVirtualMachine)
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A Restart whose boot fails before the guest executes leaves the session to revert as a Stop's does")
+    func failedRestartBootReverts() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        }
+        try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
+        virtualization.startError = Probe()
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+
+        await #expect(throws: (any Error).self) { try await restart.value }
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.startCallCount == 1)
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(!instance.hasLiveVirtualMachine)
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
+    // MARK: - Session end
 
     @Test("A baseline revert that fails at a session end is tried once, and the session stays unsettled")
     func failingRevertAtSessionEndDoesNotLoop() async throws {

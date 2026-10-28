@@ -272,50 +272,6 @@ struct VMCommandCoreOperationTests {
         #expect(virtualization.takenSnapshots.isEmpty)
     }
 
-    @Test("R10: a restart whose power-off wait a delete interrupts ends refused as removed, reporting nothing")
-    func restartInterruptedByADeleteEndsRefused() async throws {
-        let virtualization = MockVirtualizationService()
-        // The guest takes its time, so the restart is parked on the power-off
-        // when the guest does go down.
-        virtualization.guestIgnoresShutdownRequest = true
-        let clock = GatedEngineClock()
-        let harness = makeHarness(virtualization: virtualization, clock: clock)
-        let session = UUID()
-        let instance = makeInstance(in: harness, name: "Doomed", phase: .running(sessionID: session))
-        let deletion = StartedDeletion()
-
-        // The delete is admitted in the very step the power-off rests the VM —
-        // entered synchronously from the hook, so no other request, the
-        // restart's own boot included, can be decided in between.
-        let core = harness.core
-        let poweredOff = instance.activity.onUnsettledSession
-        instance.activity.onUnsettledSession = {
-            let owed = poweredOff?() ?? []
-            deletion.task = Task.immediate { @MainActor in
-                try await core.delete(
-                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
-            }
-            return owed
-        }
-
-        let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
-        }
-        // The parked sleep is the power-off deadline: the restart is waiting.
-        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
-        #expect(virtualization.stopCallCount == 1)
-
-        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        #expect(instance.activity.decide(.start(recovery: false), posture: .commit) != .admit)
-        try await deletion.task?.value
-        #expect(instance.phase == .removed)
-
-        let error = try await #require(throws: CommandError.self) { try await restart.value }
-        #expect(error == .notFound(.id(instance.id)))
-        #expect(virtualization.startCallCount == 0)
-        #expect(harness.failures.isEmpty)
-    }
-
     // MARK: - R11: a revert holds the VM from its admission
 
     @Test("R11: right after a revert is started, Start and Resume are refused and neither is offered")
@@ -406,10 +362,4 @@ struct VMCommandCoreOperationTests {
         try await boot.value
         #expect(original.status == .running)
     }
-}
-
-/// The delete a hook started.
-@MainActor
-private final class StartedDeletion {
-    var task: Task<Void, any Error>?
 }

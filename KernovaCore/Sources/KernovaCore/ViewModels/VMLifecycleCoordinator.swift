@@ -103,6 +103,14 @@ final class VMLifecycleCoordinator {
         }
     }
 
+    /// A Restart's graceful stop, owing `boot` to the end of the session it
+    /// asks to go down — see ``VMActivity/requestStop(continuingWith:_:)``.
+    func requestRestartStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
+        try await instance.activity.requestStop(continuingWith: boot) {
+            try await virtualizationService.requestStop(instance)
+        }
+    }
+
     /// Immediately terminates the VM — see ``VMActivity/forceStop(_:)``.
     func forceStop(_ instance: VMInstance) async throws {
         try await instance.activity.forceStop {

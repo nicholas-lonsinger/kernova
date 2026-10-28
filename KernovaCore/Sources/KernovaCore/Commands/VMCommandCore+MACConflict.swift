@@ -58,9 +58,6 @@ extension VMCommandCore {
         /// lands the VM on a saved state again, beside which the write is
         /// refused.
         case ephemeralBaselineHoldsSavedState(VMSnapshot)
-        /// A restart's power-off returns an Ephemeral Mode VM to its baseline,
-        /// network included, before the boot.
-        case restartReturnsToBaseline(VMSnapshot)
     }
 
     /// The changes a bring-up can be routed through, each with the discard
@@ -114,10 +111,6 @@ extension VMCommandCore {
                 "\(vm) is ephemeral, and discarding its saved state returns it to "
                     + "\u{201C}\(baseline.name)\u{201D}, which holds one too, so a new MAC address "
                     + "or no network device needs Ephemeral Mode turned off first.")
-        case .restartReturnsToBaseline(let baseline):
-            sentences.append(
-                "\(vm) is ephemeral, so a restart returns it to \u{201C}\(baseline.name)\u{201D}, "
-                    + "network included, before it starts again.")
         case nil:
             break
         }
@@ -175,10 +168,6 @@ extension VMCommandCore {
                     membership != .isolated,
                     capabilities.isAvailable(change.key, writing: value, on: instance)
                 else { continue }
-                if verb == .restart, let baseline = instance.ephemeralBaselineSnapshot {
-                    changes.withheld = .restartReturnsToBaseline(baseline)
-                    continue
-                }
                 changes.offered.append((change, nil, .refusedVerb))
             case .newAddress, .noNetwork:
                 guard let discard = instance.savedStateDiscard else {

@@ -3536,42 +3536,6 @@ struct VMCommandCoreTests {
         #expect(!error.message.contains("ipAddress"))
     }
 
-    @Test("A restart waits out the baseline revert its own shutdown started")
-    func restartWaitsOutTheEphemeralRevert() async throws {
-        let harness = makeSuspendingHarness()
-        harness.virtualization.shouldSuspendOnRevert = true
-        // The resume after the revert is a restore through `start`; only the
-        // revert is held.
-        harness.virtualization.shouldSuspendOnStart = false
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
-            hostState: .ephemeral(baseline: baseline.id))
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
-        harness.machineFiles.setCapturedConfiguration(instance.configuration, for: baseline.id)
-        // The baseline's own settings, which the start after the revert reads.
-        instance.fixtureBundleFiles.setSnapshotConfiguration(
-            instance.configuration, id: baseline.id, at: instance.bundleURL)
-
-        let restart = Task { try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none) }
-        // The stop powers the guest off, and the baseline revert is admitted
-        // in the step that rests it; the revert then parks mid-copy, holding
-        // the VM, which is what holds the restart back.
-        await harness.virtualization.waitUntilSuspended()
-        #expect(instance.isHeldByRevert)
-        #expect(instance.status == .restoring)
-
-        harness.virtualization.resumeSuspended()
-        try await restart.value
-
-        // The baseline handed the VM back suspended on its own memory image, so
-        // the restart resumed it rather than waiting for a `.stopped` that was
-        // never coming.
-        #expect(instance.status == .running)
-        #expect(!instance.isHeldByRevert)
-        #expect(harness.virtualization.startCallCount == 1)
-    }
-
     @Test("A restart of an ordinary VM boots it once the power-off settles")
     func restartBootsAnOrdinaryVM() async throws {
         let harness = makeHarness()
@@ -3608,8 +3572,13 @@ struct VMCommandCoreTests {
 
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
         // The step that rested the VM admitted the boot, so no other request
-        // could be decided against the stopped VM first.
+        // could be decided against the stopped VM first: a delete asked for
+        // next finds the boot holding it.
         #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
+        await #expect(throws: CommandError.self) {
+            try await harness.core.delete(
+                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+        }
 
         try await restart.value
         #expect(virtualization.startCallCount == 1)
@@ -3849,42 +3818,26 @@ struct VMCommandCoreTests {
         #expect(virtualization.startCallCount == 0)
     }
 
-    @Test("A restart deadline covers the power-off, not the baseline revert behind it")
-    func restartWaitsOutAnEphemeralRevertPastItsDeadline() async throws {
+    @Test("A restart deadline covers the power-off, not the boot behind it")
+    func restartWaitsOutItsBootPastItsDeadline() async throws {
         // The clock is past the deadline the moment anything waits on it, so
-        // only a wait the revert is not part of survives to bring the VM up.
+        // only a wait the boot is not part of survives to bring the VM up.
         let harness = makeSuspendingHarness(clock: TestEngineClock())
-        harness.virtualization.shouldSuspendOnRevert = true
-        // The resume after the revert is a restore through `start`; only the
-        // revert is held.
-        harness.virtualization.shouldSuspendOnStart = false
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
-            hostState: .ephemeral(baseline: baseline.id))
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
-        harness.machineFiles.setCapturedConfiguration(instance.configuration, for: baseline.id)
-        // The baseline's own settings, which the start after the revert reads.
-        instance.fixtureBundleFiles.setSnapshotConfiguration(
-            instance.configuration, id: baseline.id, at: instance.bundleURL)
+            in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
         let restart = Task {
             try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
         }
+        // The boot parks before the guest executes, holding the VM.
         await harness.virtualization.waitUntilSuspended()
-
         #expect(!instance.hasLiveVirtualMachine)
-        #expect(instance.isHeldByRevert)
-        #expect(harness.virtualization.startCallCount == 0)
+        #expect(harness.virtualization.startCallCount == 1)
 
         harness.virtualization.resumeSuspended()
         try await restart.value
 
-        // The baseline handed the VM back suspended, so the restart resumed it
-        // — and only once the revert had finished writing.
         #expect(instance.status == .running)
-        #expect(!instance.isHeldByRevert)
-        #expect(harness.virtualization.startCallCount == 1)
     }
 
     @Test("A restart inside its deadline boots the guest as an unbounded one does")

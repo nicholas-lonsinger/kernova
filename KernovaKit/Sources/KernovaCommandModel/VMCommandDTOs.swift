@@ -123,7 +123,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let agentStatus: String?
     /// Whether the bundle holds a suspended session.
     public let hasSavedState: Bool
-    /// Whether the VM returns to a baseline snapshot on every power-off.
+    /// Whether the VM returns to a baseline snapshot every time it shuts down; a restart keeps its session.
     public let isEphemeral: Bool
     /// How many named restore points the bundle holds.
     public let snapshotCount: Int

@@ -132,9 +132,10 @@ package struct AppAlertConfigurations {
     /// The Stop a paused VM offers: the guest takes the shutdown request only
     /// awake, so the app resumes it and then stops it, or force stops it.
     package func pausedStopConfig(_ vm: VMInstance) -> AlertConfiguration {
-        // Both choices end in a power-off, and an Ephemeral VM's power-off is
-        // a revert, so the outcome the mode produces belongs here as much as in
-        // the force-stop refusal.
+        // Both choices end in a power-off that a Restart waiting on the
+        // session does not continue — each cancels it — and an Ephemeral VM's
+        // power-off is a revert, so the outcome the mode produces belongs here
+        // as much as in the force-stop refusal.
         let ephemeralReturn =
             vm.ephemeralBaselineSnapshot.map {
                 " Either way it is ephemeral, so it returns to \u{201C}\($0.name)\u{201D}."
