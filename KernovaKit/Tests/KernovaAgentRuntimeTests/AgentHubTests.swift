@@ -403,16 +403,17 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("The forwarder follows the policy: off discards what the ring held and every later record, on forwards")
+    @Test(
+        "A logger's records follow the policy: off discards what the ring held and every later one, on forwards them with their level and privacy"
+    )
     func forwardingFollowsPolicy() async {
         let harness = HubHarness()
         await harness.attached()
         let logs = LogForwarding()
+        // The path the shell installs: a logger whose records go through the forwarding sink.
+        let agentLogger = KernovaLogger(subsystem: "app.kernova.agent", category: "Agent", sink: logs.sink)
         func append(_ text: String) {
-            logs.append(
-                LogRecordValue(
-                    timestampMilliseconds: 0, level: .notice, subsystem: "app.kernova.agent", category: "Agent",
-                    segments: [LogSegmentValue(text: text)]))
+            agentLogger.log(.error, "\(text, privacy: .public) for \("pbear", privacy: .private)")
         }
         let events = Recorder<PeerEvent>()
         var policies = events.waiter()
@@ -427,7 +428,7 @@ struct AgentHubTests {
         _ = await policies.next { $0 == .policyReceived }
         append("appended while on")
         var guestLogs = harness.guestLogs.waiter()
-        _ = await guestLogs.next { $0.segments.last?.text == "appended while on" }
+        _ = await guestLogs.next { $0.segments.contains { $0.text == "appended while on" } }
 
         harness.hub.setPolicy(PolicySnapshot())
         _ = await policies.next { $0 == .policyReceived }
@@ -435,13 +436,19 @@ struct AgentHubTests {
         harness.hub.setPolicy(Fixture.logsEnabled)
         _ = await policies.next { $0 == .policyReceived }
         append("appended while on again")
-        _ = await guestLogs.next { $0.segments.last?.text == "appended while on again" }
+        _ = await guestLogs.next { $0.segments.contains { $0.text == "appended while on again" } }
 
         #expect(
-            harness.guestLogs.elements.map { $0.segments.map(\.text).joined() } == [
-                "[session 1 app.kernova.agent/Agent] appended while on",
-                "[session 1 app.kernova.agent/Agent] appended while on again",
-            ])
+            harness.guestLogs.elements.map(\.level) == [.error, .error])
+        #expect(
+            harness.guestLogs.elements.map(\.segments)
+                == ["appended while on", "appended while on again"].map {
+                    [
+                        LogSegment(text: "[session 1 app.kernova.agent/Agent] ", isPrivate: false),
+                        LogSegment(text: $0, isPrivate: false), LogSegment(text: " for ", isPrivate: false),
+                        LogSegment(text: "pbear", isPrivate: true),
+                    ]
+                })
         await withCheckedContinuation { continuation in session.close { continuation.resume() } }
         harness.hub.close()
     }
