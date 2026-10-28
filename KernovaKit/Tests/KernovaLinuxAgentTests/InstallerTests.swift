@@ -77,7 +77,7 @@ struct InstallerTests {
     /// The account's uid for a path in the system root, the invoker's for every other.
     static func systemOwner(_ path: String) -> uid_t {
         let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
-        return path == "/var/lib/kernova-agent" || path.hasPrefix("/var/lib/kernova-agent/") ? account : getuid()
+        return path == "/opt/kernova-agent" || path.hasPrefix("/opt/kernova-agent/") ? account : getuid()
     }
 
     static let userDirectories = [
@@ -100,19 +100,19 @@ struct InstallerTests {
         ]) { $1 }
 
     static let systemDirectories = [
-        "/var", "/var/lib", "/etc", "/etc/systemd", "/etc/systemd/system", "/etc/sysusers.d", "/etc/polkit-1",
+        "/opt", "/etc", "/etc/systemd", "/etc/systemd/system", "/etc/sysusers.d", "/etc/polkit-1",
         "/etc/polkit-1/rules.d",
     ]
 
     static let systemInstall: [String: String] = Dictionary(
         uniqueKeysWithValues: systemDirectories.map { ($0, "d0755") }
     ).merging([
-        "/var/lib/kernova-agent": "d0755",
-        "/var/lib/kernova-agent/slots": "d0755",
-        "/var/lib/kernova-agent/slots/a": "d0755",
-        "/var/lib/kernova-agent/slots/a/kernova-agent": "f0755",
-        "/var/lib/kernova-agent/state.json": "f0644",
-        "/var/lib/kernova-agent/current": "lslots/a",
+        "/opt/kernova-agent": "d0755",
+        "/opt/kernova-agent/slots": "d0755",
+        "/opt/kernova-agent/slots/a": "d0755",
+        "/opt/kernova-agent/slots/a/kernova-agent": "f0755",
+        "/opt/kernova-agent/state.json": "f0644",
+        "/opt/kernova-agent/current": "lslots/a",
         "/etc/systemd/system/kernova-agent-system.service": "f0644",
         "/etc/systemd/system/kernova-agent-rollback.timer": "f0644",
         "/etc/systemd/system/kernova-agent-rollback.service": "f0644",
@@ -305,7 +305,7 @@ struct InstallerTests {
                 == .user(root: "/home/pbear/.local/share/kernova-agent", configHome: "/home/pbear/.config"))
         #expect(
             (try? Installer.layout(for: system, environment: [:], effectiveUID: 0))
-                == .system(root: "/var/lib/kernova-agent"))
+                == .system(root: "/opt/kernova-agent"))
     }
 }
 #endif

@@ -18,7 +18,7 @@ import KernovaDigest
 /// the running system and its own executable, never read from metadata.
 public enum LinuxIdentity {
     /// The system peer's install root.
-    public static let systemInstallRoot = "/var/lib/kernova-agent"
+    public static let systemInstallRoot = "/opt/kernova-agent"
 
     /// The claim of an agent in `role` labelled `versionLabel`, run from the executable `/proc/self/exe`
     /// names. Its payload hash is that file's SHA-256.
@@ -50,7 +50,7 @@ public enum LinuxIdentity {
 
     /// Where the agent is installed, judged by the install layout `executable` sits in, never by an
     /// environment variable: a slot, `<root>/slots/<slot>/kernova-agent`, of a root holding `state.json`
-    /// (`isFile` answers for a path) is `.system` when the root is `systemRoot` (`/var/lib/kernova-agent`)
+    /// (`isFile` answers for a path) is `.system` when the root is `systemRoot` (`/opt/kernova-agent`)
     /// and `.user` anywhere else. Anything else is `.unspecified`, as a development build run in place is.
     /// Every path is canonical, as realpath(3) gives it, since `/proc/self/exe` resolves every symlink; a nil
     /// system root does not exist.

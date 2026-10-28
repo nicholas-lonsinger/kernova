@@ -74,12 +74,12 @@ struct LinuxIdentityTests {
 
     @Test("A slot of a root holding state.json is of system scope at the system root and user scope elsewhere")
     func scope() {
-        let system = "/var/lib/kernova-agent"
-        let roots: Set = ["/var/lib/kernova-agent/state.json", "/var/home/u/.data/kernova-agent/state.json"]
+        let system = "/opt/kernova-agent"
+        let roots: Set = ["/opt/kernova-agent/state.json", "/var/home/u/.data/kernova-agent/state.json"]
         func scope(_ executable: String) -> InstallScope {
             LinuxIdentity.scope(ofExecutable: executable, systemRoot: system) { roots.contains($0) }
         }
-        #expect(scope("/var/lib/kernova-agent/slots/a/kernova-agent") == .system)
+        #expect(scope("/opt/kernova-agent/slots/a/kernova-agent") == .system)
         // Wherever XDG_DATA_HOME pointed the install, the layout decides.
         #expect(scope("/var/home/u/.data/kernova-agent/slots/b/kernova-agent") == .user)
         #expect(scope("/var/home/u/.local/share/kernova-agent/slots/a/kernova-agent") == .unspecified)

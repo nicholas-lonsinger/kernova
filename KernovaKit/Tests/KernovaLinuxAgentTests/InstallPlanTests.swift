@@ -32,7 +32,7 @@ struct InstallPlanTests {
                 ["systemctl", "stop", "kernova-agent-rollback.timer", "kernova-agent-rollback.service"],
                 [
                     "systemd-sysusers", "--inline",
-                    #"u kernova-agent - "Kernova guest agent" /var/lib/kernova-agent -"#,
+                    #"u kernova-agent - "Kernova guest agent" /opt/kernova-agent -"#,
                 ],
             ])
         #expect(

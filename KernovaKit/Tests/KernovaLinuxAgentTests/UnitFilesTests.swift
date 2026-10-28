@@ -8,7 +8,7 @@ import Testing
 struct UnitFilesTests {
     static let user = InstallLayout.user(
         root: "/home/pbear/.local/share/kernova-agent", configHome: "/home/pbear/.config")
-    static let system = InstallLayout.system(root: "/var/lib/kernova-agent")
+    static let system = InstallLayout.system(root: "/opt/kernova-agent")
 
     @Test(
         "The session service runs the peer through current, restarted on failure or exit 75 without limit; a clean exit stays stopped"
@@ -49,8 +49,8 @@ struct UnitFilesTests {
                 [Service]
                 Type=exec
                 User=kernova-agent
-                ExecStart=/var/lib/kernova-agent/current/kernova-agent system
-                StateDirectory=kernova-agent
+                ExecStart=/opt/kernova-agent/current/kernova-agent system
+                ReadWritePaths=/opt/kernova-agent
                 Restart=on-failure
                 RestartForceExitStatus=75
                 RestartSec=5s
@@ -112,13 +112,13 @@ struct UnitFilesTests {
                 # Written by kernova-agent install --system.
                 [Unit]
                 Description=Kernova guest agent update check
-                ConditionPathExists=/var/lib/kernova-agent/switch-pending
+                ConditionPathExists=/opt/kernova-agent/switch-pending
 
                 [Service]
                 Type=oneshot
                 User=kernova-agent
-                ExecStart=/var/lib/kernova-agent/rollback/kernova-agent rollback-check --scope system
-                StateDirectory=kernova-agent
+                ExecStart=/opt/kernova-agent/rollback/kernova-agent rollback-check --scope system
+                ReadWritePaths=/opt/kernova-agent
                 NoNewPrivileges=yes
                 ProtectSystem=strict
                 ProtectHome=yes
@@ -148,7 +148,7 @@ struct UnitFilesTests {
         #expect(
             UnitFiles.sysusers(Self.system) == """
                 # Written by kernova-agent install --system.
-                u kernova-agent - "Kernova guest agent" /var/lib/kernova-agent -
+                u kernova-agent - "Kernova guest agent" /opt/kernova-agent -
 
                 """)
     }

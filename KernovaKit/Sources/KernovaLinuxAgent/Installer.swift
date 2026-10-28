@@ -24,7 +24,7 @@ import KernovaPlatformLinux
 /// descriptors: each directory opened `O_DIRECTORY | O_NOFOLLOW` relative to its parent, each file created
 /// `O_EXCL | O_NOFOLLOW` beside its destination and renamed onto it, each removal an `unlinkat` relative to its
 /// directory, and each owner and mode set on the descriptor. A link the account planted is refused or removed,
-/// never followed, and what is written belongs to the account, as `StateDirectory=` would make it. Above the
+/// never followed, and what is written belongs to the account, which updates its own slots there. Above the
 /// root, and for the unit and autostart directories, any path that `stat`s as a directory will do, as
 /// `mkdir -p` takes it.
 struct Installer {

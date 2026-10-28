@@ -57,7 +57,7 @@ For you:
                                                      login
 
 With --system:
-  /var/lib/kernova-agent/                            the agent
+  /opt/kernova-agent/                                the agent
   /etc/systemd/system/kernova-agent-system.service   runs it
   /etc/systemd/system/kernova-agent-rollback.*       checks its updates
   /etc/sysusers.d/kernova-agent.conf                 its account
