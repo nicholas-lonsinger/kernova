@@ -132,6 +132,12 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
+    /// The transmit marked `isFinal` was written in full.
+    public mutating func finalTransmitWritten(now: CoreInstant) {
+        connection.finalTransmitWritten(now: now)
+        route(now)
+    }
+
     /// The transport ended.
     public mutating func transportEnded(now: CoreInstant) {
         connection.transportEnded(now: now)

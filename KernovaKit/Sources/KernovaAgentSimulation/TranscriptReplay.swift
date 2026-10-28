@@ -295,6 +295,10 @@ package final class SoloReplay {
             {
                 progressed = true
                 written(transmit)
+                if transmit.isFinal {
+                    host?.finalTransmitWritten(now: instant)
+                    peer?.finalTransmitWritten(now: instant)
+                }
             }
         }
         trace += host?.takeTrace() ?? []

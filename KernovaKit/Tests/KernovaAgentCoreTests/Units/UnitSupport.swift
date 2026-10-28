@@ -222,6 +222,7 @@ struct Wire {
         while let transmit = connection.pollTransmit(maxBytes: maxBytes) {
             for chunk in transmit.chunks { outbound.append(chunk) }
             while let frame = try? outbound.nextFrame() { frames.append(frame) }
+            if transmit.isFinal { connection.finalTransmitWritten(now: now) }
         }
         return frames
     }
@@ -251,6 +252,7 @@ struct Pair {
         var data = Data()
         while let transmit = host.connection.pollTransmit(maxBytes: 1 << 20) {
             for chunk in transmit.chunks { data.append(chunk) }
+            if transmit.isFinal { host.connection.finalTransmitWritten(now: host.now) }
         }
         return data
     }
@@ -259,6 +261,7 @@ struct Pair {
         var data = Data()
         while let transmit = peer.connection.pollTransmit(maxBytes: 1 << 20) {
             for chunk in transmit.chunks { data.append(chunk) }
+            if transmit.isFinal { peer.connection.finalTransmitWritten(now: peer.now) }
         }
         return data
     }

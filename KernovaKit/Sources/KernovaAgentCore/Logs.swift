@@ -113,8 +113,11 @@ public struct LogForwarder: FeatureMachine {
         case .recordsAvailable:
             recordsMayWait = true
         case .batch(let batch):
-            recordsMayWait = true
-            guard let stream, !ending, !batch.records.isEmpty || batch.droppedBefore > 0 else { break }
+            // The batch is what the ring held: an empty one says the ring is empty,
+            // so only the sink's next `.recordsAvailable` may ask again.
+            let isEmpty = batch.records.isEmpty && batch.droppedBefore == 0
+            recordsMayWait = !isEmpty
+            guard let stream, !ending, !isEmpty else { break }
             let message = batch.encoded
             if connection.canSendMessage(message.count, on: stream) {
                 connection.send(message: message, on: stream)

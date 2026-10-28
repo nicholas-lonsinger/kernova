@@ -381,10 +381,12 @@ package final class Duet {
             while let transmit = host.pollTransmit(maxBytes: 1 << 20 + 10) {
                 progressed = true
                 write(transmit, from: .host)
+                if transmit.isFinal { host.finalTransmitWritten(now: instant) }
             }
             while let transmit = peer.pollTransmit(maxBytes: 1 << 20 + 10) {
                 progressed = true
                 write(transmit, from: .peer)
+                if transmit.isFinal { peer.finalTransmitWritten(now: instant) }
             }
         }
         _ = host.takeTrace()

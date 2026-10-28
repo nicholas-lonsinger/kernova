@@ -248,6 +248,10 @@ package final class HostileRun {
                 progressed = true
                 for chunk in transmit.chunks { outbound.append(chunk) }
                 while let frame = try? outbound.nextFrame() { written.append(frame) }
+                if transmit.isFinal {
+                    host?.finalTransmitWritten(now: now)
+                    peer?.finalTransmitWritten(now: now)
+                }
             }
         }
         trace += host?.takeTrace() ?? []

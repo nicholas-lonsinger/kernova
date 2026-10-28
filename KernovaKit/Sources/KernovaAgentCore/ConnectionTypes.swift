@@ -114,8 +114,9 @@ public enum ConnectionEvent: Sendable, Equatable {
     case closed(ConnectionClosure)
 }
 
-/// Frames ready for the transport. Write `chunks` in order; after one marked
-/// `isFinal`, close the transport.
+/// Frames ready for the transport. Write `chunks` in order; once one marked
+/// `isFinal` is written, report it with `finalTransmitWritten`, and close the
+/// transport on the turn that finds the connection `finished`.
 public struct Transmit: Sendable, Equatable {
     /// The bytes, as headers and uncopied payloads.
     public var chunks: [Data]

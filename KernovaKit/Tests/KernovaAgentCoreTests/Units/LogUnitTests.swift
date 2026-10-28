@@ -416,11 +416,16 @@ extension CoreUnits {
             #expect(Self.readies(run) == 2)
         }
 
-        @Test("An empty batch with nothing dropped sends nothing")
+        @Test("An empty batch with nothing dropped sends nothing and asks for no other batch")
         func emptyBatch() {
             let run = Self.peer(logs: true)
+            let asked = Self.readies(run)
+            #expect(asked == 1)
             run.input(.logs(.batch(LogBatchValue(records: [], droppedBefore: 0))))
             #expect(Self.batches(run.written).isEmpty)
+            #expect(Self.readies(run) == asked)
+            run.input(.logs(.recordsAvailable))
+            #expect(Self.readies(run) == asked + 1)
         }
 
         @Test("A batch after the stream ended sends nothing")

@@ -332,8 +332,19 @@ package final class SimWorld {
         at(write.completesAt) { world in
             pipe.writePending = false
             world.scheduleRead(link, side == .host ? .peer : .host)
-            if cut || isFinal {
-                if isFinal { pipe.writerClosed = true }
+            if isFinal {
+                pipe.writerClosed = true
+                world.perform(process) { world in
+                    let local = world.localNow(process)
+                    switch side {
+                    case .host: link.host?.finalTransmitWritten(now: local)
+                    case .peer: link.peer?.finalTransmitWritten(now: local)
+                    }
+                    world.drain(link, side)
+                }
+                return
+            }
+            if cut {
                 world.perform(process) { world in world.endTransport(link, side) }
                 return
             }

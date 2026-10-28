@@ -118,6 +118,32 @@ extension CoreUnits {
             #expect(wire.connection.state == .established)
         }
 
+        @Test("Handing out RESET(0) leaves the connection closing, with nothing more to send, until its write")
+        func finishesOnFinalWrite() {
+            var wire = Wire.host()
+            wire.establish()
+            wire.connection.close(.shuttingDown, retryAfter: nil, now: wire.now)
+            #expect(wire.connection.pollTransmit(maxBytes: 1 << 20)?.isFinal == true)
+            #expect(wire.connection.state == .closing)
+            #expect(wire.connection.pollTransmit(maxBytes: 1 << 20) == nil)
+            wire.connection.finalTransmitWritten(now: wire.now)
+            #expect(wire.connection.state == .finished)
+        }
+
+        @Test("The closing deadline finishes a connection whose final write never completes")
+        func closingDeadlineFinishesUnwritten() {
+            var wire = Wire.host()
+            wire.establish()
+            wire.connection.close(.shuttingDown, retryAfter: nil, now: wire.now)
+            #expect(wire.connection.pollTransmit(maxBytes: 1 << 20)?.isFinal == true)
+            #expect(wire.connection.nextDeadline == wire.now.advanced(by: .seconds(1)))
+            wire.advance(by: .milliseconds(999))
+            #expect(wire.connection.state == .closing)
+            wire.advance(by: .milliseconds(1))
+            #expect(wire.connection.state == .finished)
+            #expect(wire.connection.nextDeadline == nil)
+        }
+
         @Test("PINGs are due every 4 s, each one interval after the last was due, however late its turn")
         func pingAnchored() {
             var wire = Wire.host(policy: Unit.patientPolicy)

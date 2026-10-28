@@ -31,6 +31,8 @@ public struct Connection: Sendable {
     /// Whether the queued session messages and control frames go before RESET(0)
     /// (a local close) or are dropped (a fatal error).
     var closeDrainsQueue = false
+    /// RESET(0) has been handed out; the connection finishes once it is written.
+    var finalHandedOut = false
 
     // MARK: Wire
 
@@ -153,6 +155,15 @@ public struct Connection: Sendable {
             finish()
             emit(.closed(.transportLost))
         }
+    }
+
+    /// The transmit marked `isFinal` has been written in full: the connection
+    /// finishes. A closing connection otherwise finishes when the transport ends
+    /// or its closing deadline passes, whether or not the write completed.
+    public mutating func finalTransmitWritten(now: CoreInstant) {
+        tick(now)
+        guard state == .closing, finalHandedOut else { return }
+        finish()
     }
 
     /// The timer `nextDeadline` named fired (or any time: it only evaluates).
