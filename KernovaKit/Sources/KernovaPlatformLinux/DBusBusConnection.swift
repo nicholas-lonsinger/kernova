@@ -156,6 +156,14 @@ public final class DBusBusConnection: Sendable {
     public func close() {
         engine.close()
     }
+
+    #if DEBUG
+    /// Calls `observer`, under the connection's lock, each time a `cancel()`
+    /// or `close()` starts waiting for a handler in flight to finish.
+    public func observeDeliveryWaitsForTesting(_ observer: @escaping @Sendable () -> Void) {
+        engine.observeDeliveryWaitsForTesting(observer)
+    }
+    #endif
 }
 
 /// A match registered with `DBusBusConnection.subscribe(_:handler:)`.
@@ -239,6 +247,9 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         /// The handler the reader thread is running, while it runs: a
         /// subscription's, or the method-call handler's when nil.
         var delivery: (subscription: UInt64?, thread: pthread_t)?
+        #if DEBUG
+        var deliveryWaitObserverForTesting: (@Sendable () -> Void)?
+        #endif
 
         /// Whether the calling thread is running a handler, so a blocking call
         /// from it could never read its reply. The identity exists only while
@@ -317,10 +328,25 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     private func awaitDeliveries(_ isAwaited: (UInt64?) -> Bool) {
         condition.lock()
         defer { condition.unlock() }
+        #if DEBUG
+        var observed = false
+        #endif
         while let delivery = state.delivery, isAwaited(delivery.subscription), !state.isDeliveryThread {
+            #if DEBUG
+            if !observed {
+                state.deliveryWaitObserverForTesting?()
+                observed = true
+            }
+            #endif
             condition.wait()
         }
     }
+
+    #if DEBUG
+    func observeDeliveryWaitsForTesting(_ observer: @escaping @Sendable () -> Void) {
+        locked { $0.deliveryWaitObserverForTesting = observer }
+    }
+    #endif
 
     /// Calls subscription `id`'s handler with `signal`, if the subscription is
     /// still registered and the connection still open, recording the delivery
