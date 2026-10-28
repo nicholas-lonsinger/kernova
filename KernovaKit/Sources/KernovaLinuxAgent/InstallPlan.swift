@@ -11,8 +11,9 @@ import KernovaAgentCore
 /// agent's own ``root`` made, ``treeWrites``, ``writes``, ``removals``, the root emptied and removed when
 /// ``removesRoot``, then ``after``.
 ///
-/// The tree under ``root`` is the one the system scope's account owns, so the system installer works in it
-/// as that account (``Installer``); everything else is written by whoever runs the installer.
+/// The tree under ``root`` is the one the system scope's account owns. The installer reaches it only through
+/// descriptors and hands what it makes there to the account (``Installer``); an uninstall empties it the same
+/// way, then removes it. Everything else is written by, and belongs to, whoever runs the installer.
 struct InstallPlan: Equatable {
     /// One thing written.
     enum Write: Equatable {
@@ -88,7 +89,7 @@ struct InstallPlan: Equatable {
         ]
         switch layout.scope {
         case .system:
-            // The account exists before anything is written, so the tree is written as it.
+            // The account exists before anything is written, so the tree is handed to it as it is made.
             plan.before.append(Command(["systemd-sysusers", "--inline", UnitFiles.sysusersLine(layout)]))
             plan.writes += [
                 .directory(path: "/etc/sysusers.d", mode: 0o755),

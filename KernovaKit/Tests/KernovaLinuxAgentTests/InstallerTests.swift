@@ -74,9 +74,12 @@ struct InstallerTests {
             environment: environment, effectiveUID: getuid())
     }
 
-    /// The account's uid for a path in the system root, the invoker's for every other.
+    /// The account's uid for a directory or file in the system root, the invoker's for every other path. The
+    /// `current` link stays the invoker's: the installer gives a link no owner, since that could only be done by
+    /// name, and a link's owner grants nothing.
     static func systemOwner(_ path: String) -> uid_t {
         let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
+        guard path != "/opt/kernova-agent/current" else { return getuid() }
         return path == "/opt/kernova-agent" || path.hasPrefix("/opt/kernova-agent/") ? account : getuid()
     }
 
@@ -146,7 +149,7 @@ struct InstallerTests {
     }
 
     @Test(
-        "A system install writes the same, everything in the agent's root as its account",
+        "A system install writes the same, through descriptors, every directory and file in the agent's root handed to its account",
         .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func systemInstall() throws {
         let scratch = try Scratch()
@@ -268,7 +271,7 @@ struct InstallerTests {
     }
 
     @Test(
-        "A system uninstall empties the root as its account, then removes it",
+        "A system uninstall empties the agent's root through descriptors, then removes it",
         .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func uninstallSystem() throws {
         let scratch = try Scratch()

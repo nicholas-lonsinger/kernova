@@ -143,7 +143,7 @@ struct UnitFilesTests {
                 """)
     }
 
-    @Test("sysusers declares a system account homed at the state directory, with no shell")
+    @Test("sysusers declares a system account homed at the agent's root, with no shell")
     func sysusers() {
         #expect(
             UnitFiles.sysusers(Self.system) == """

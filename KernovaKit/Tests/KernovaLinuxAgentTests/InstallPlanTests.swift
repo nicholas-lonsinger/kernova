@@ -24,7 +24,9 @@ struct InstallPlanTests {
             ])
     }
 
-    @Test("A system install makes the account before it writes anything, so the agent's root is written as it")
+    @Test(
+        "A system install makes the account before it writes anything, so what it makes in the agent's root is handed to it"
+    )
     func systemCommands() {
         let plan = InstallPlan.install(Self.system)
         #expect(

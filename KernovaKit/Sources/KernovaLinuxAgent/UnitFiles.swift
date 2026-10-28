@@ -138,7 +138,7 @@ enum UnitFiles {
         """
 
     /// The system peer's account, for systemd-sysusers: a system user with its own group, homed at the
-    /// state directory, with no login shell.
+    /// agent's root, with no login shell.
     static func sysusers(_ layout: InstallLayout) -> String {
         """
         # Written by kernova-agent install --system.

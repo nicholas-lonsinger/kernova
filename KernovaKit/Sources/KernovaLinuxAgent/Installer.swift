@@ -23,8 +23,10 @@ import KernovaPlatformLinux
 /// root itself when it is missing, opens it without following a link, and reaches everything below through
 /// descriptors: each directory opened `O_DIRECTORY | O_NOFOLLOW` relative to its parent, each file created
 /// `O_EXCL | O_NOFOLLOW` beside its destination and renamed onto it, each removal an `unlinkat` relative to its
-/// directory, and each owner and mode set on the descriptor. A link the account planted is refused or removed,
-/// never followed, and what is written belongs to the account, which updates its own slots there. Above the
+/// directory, and each owner and mode set on the descriptor of what the installer just made; no privileged call
+/// below the root acts on a name. A link the account planted is refused or removed, never followed. Every
+/// directory and file written belongs to the account, which updates its own slots there; a link stays the
+/// installer's, which grants nothing (``replaceLink(in:_:path:target:)``). Above the
 /// root, and for the unit and autostart directories, any path that `stat`s as a directory will do, as
 /// `mkdir -p` takes it.
 struct Installer {
@@ -330,7 +332,7 @@ struct Installer {
             }
         case .link(let path, let target):
             try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try replaceLink(in: parent, name, path: path, target: target, owner: owner)
+                try replaceLink(in: parent, name, path: path, target: target)
             }
         }
     }
@@ -474,20 +476,17 @@ struct Installer {
     }
 
     /// Points `name` in `directory` at `target`, replacing whatever entry is there in one rename.
-    private func replaceLink(
-        in directory: Int32, _ name: String, path: String, target: String, owner: Owner?
-    ) throws(Failure) {
+    ///
+    /// The link stays the installer's: giving it an owner could only be done by name, and the name may by then
+    /// be another file. Its owner grants nothing, since the account replaces or removes it as the owner of its
+    /// directory.
+    private func replaceLink(in directory: Int32, _ name: String, path: String, target: String) throws(Failure) {
         let temporary = name + ".kernova-new"
         guard unlinkat(directory, temporary, 0) == 0 || errno == ENOENT else {
             throw .system(operation: "remove", path: path + ".kernova-new", errno: errno)
         }
         guard symlinkat(target, directory, temporary) == 0 else {
             throw .system(operation: "symlink", path: path + ".kernova-new", errno: errno)
-        }
-        if let owner, fchownat(directory, temporary, owner.uid, owner.gid, AT_SYMLINK_NOFOLLOW) != 0 {
-            let failure = errno
-            unlinkat(directory, temporary, 0)
-            throw .system(operation: "chown", path: path + ".kernova-new", errno: failure)
         }
         guard renameat(directory, temporary, directory, name) == 0 else {
             let failure = errno
