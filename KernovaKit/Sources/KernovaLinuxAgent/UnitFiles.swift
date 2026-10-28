@@ -2,7 +2,8 @@
 /// writes its own units, so they can never drift from it.
 ///
 /// Every unit runs the agent through `current`, so an update that switches slots rewrites none of them.
-/// The peer relaunches by exiting 75, which `RestartForceExitStatus=` restarts; `StartLimitIntervalSec=0`
+/// systemd restarts a peer that fails, and one that relaunches by exiting 75 (`RestartForceExitStatus=`),
+/// never one that exits 0, which stays stopped until the next login or boot; `StartLimitIntervalSec=0`
 /// keeps restarts from ever running out. The rollback timer fires every 30 s, `AccuracySec=1s` because
 /// systemd's default of one minute coarsens it; its service runs only while `switch-pending` exists.
 enum UnitFiles {

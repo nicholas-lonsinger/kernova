@@ -10,7 +10,9 @@ struct UnitFilesTests {
         root: "/home/pbear/.local/share/kernova-agent", configHome: "/home/pbear/.config")
     static let system = InstallLayout.system(root: "/var/lib/kernova-agent")
 
-    @Test("The session service runs the peer through current, relaunched on exit 75 without limit")
+    @Test(
+        "The session service runs the peer through current, restarted on failure or exit 75 without limit; a clean exit stays stopped"
+    )
     func userService() {
         #expect(
             UnitFiles.service(Self.user) == """
@@ -31,7 +33,9 @@ struct UnitFilesTests {
                 """)
     }
 
-    @Test("The system service runs the peer as its own account, sandboxed, at boot")
+    @Test(
+        "The system service runs the peer as its own account, sandboxed, at boot, restarted as the session service is"
+    )
     func systemService() {
         #expect(
             UnitFiles.service(Self.system) == """
