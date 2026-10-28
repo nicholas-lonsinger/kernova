@@ -62,9 +62,11 @@ jobs:
 
       - name: Test
         run: |
+          set +e
+          swift build --package-path KernovaKit --build-tests
           for t in KernovaWireTests KernovaPortableTests KernovaDBusTests KernovaPlatformLinuxTests; do
             echo "=== $t"
-            timeout -s QUIT 200 swift test --package-path KernovaKit --skip-build --filter "$t" 2>&1 | tail -150 || true
+            timeout -s QUIT 200 swift test --package-path KernovaKit --skip-build --filter "$t" 2>&1 | tail -150
             echo "=== $t done: ${PIPESTATUS[0]}"
           done
           exit 1
