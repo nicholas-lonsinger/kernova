@@ -1,0 +1,20 @@
+# F09h update pull, 2.5 MiB EXECUTABLE payload → STAGED — host pinned
+pinned host  fixture=host-exec-2.5m
+current peer fixture=linux-session-v1
+end 1500
+t=0      h>p     4b524e32
+t=0      h>p     00000000 00 01 0000003b 0a390801120b08014a074b65726e6f76611a06080110011a001a06080210011a001a06080310011a002a10000102030405060708090a0b0c0d0e0f
+t=0      expect  p>h preamble
+t=0      expect  p>h s=0 MSG hello role=2 scope=1 os=2 arch=1 payload_hash=a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1 instance_id=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e state=console=1,session=c2,user=ada,console_session= 1=v1:actions[1,2]:asks=true 2=v1:formats[1]
+t=1      h>p     00000000 00 01 0000000a 22080a06080310011801
+t=1      h>p     00000000 00 01 00000033 2a310a2f0a20191919191919191919191919191919191919191919191919bce2992302da4f71108080a00118012204322e3235
+t=2      expect  p>h s=3 OPEN kind=UPDATE_PULL body.payload_hash=191919191919191919191919191919191919191919191919bce2992302da4f71
+t=3      h>p     00000003 00 00 00040000 @gen(seed=8414737292313886502,size=2621440,offset=0,count=262144)
+t=3      h>p     00000003 00 00 00100000 @gen(seed=8414737292313886502,size=2621440,offset=262144,count=1048576)
+t=3      h>p     00000003 00 00 000c0000 @gen(seed=8414737292313886502,size=2621440,offset=1310720,count=786432)
+t=3      h>p     00000003 00 00 00040000 @gen(seed=8414737292313886502,size=2621440,offset=2097152,count=262144)
+t=3      h>p     00000003 00 00 00040000 @gen(seed=8414737292313886502,size=2621440,offset=2359296,count=262144)
+t=3      h>p     00000003 02 00 00000000
+t=4      ev      peer update complete id=3 size=2621440
+t=1000   in      peer update installed
+t=1000   expect  p>h s=3 END result.kind=1 result.code=0

@@ -1,0 +1,20 @@
+# F07p power: accepted → waiting on apps → blocked, two apps — peer pinned
+pinned peer  fixture=linux-session-v1
+current host fixture=host-default token=000102030405060708090a0b0c0d0e0f
+end 2500
+t=0      expect  h>p preamble
+t=0      expect  h>p s=0 MSG hello role=1 scope=0 token=000102030405060708090a0b0c0d0e0f 1=v1:actions[]:asks=false 2=v1:formats[]
+t=0      p>h     4b524e32
+t=0      p>h     00000000 00 01 0000008c 0a890108011257080210011802220532342e30342a05362e382e3032067562756e747538014220a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a14a03322e3052105e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e1a0c080110011a060a02010210011a09080210011a030a01011a06080310011a00220b0801120263321a03616461
+t=1      expect  h>p s=0 MSG policy
+t=1      expect  h>p s=0 MSG update_available none
+t=2      p>h     00000001 01 00 00000003 08ac02
+t=1000   in      host requestPower id=1 action=1
+t=1000   expect  h>p s=2 OPEN kind=POWER_REQUEST body.action=1 body.acceptance_deadline_ms=10000
+t=1000   expect  h>p s=2 END empty
+t=1200   p>h     00000002 00 01 00000002 0801
+t=1201   ev      host power id=1 accepted
+t=1400   p>h     00000002 00 01 00000014 080312080a06456469746f7212060a044d61696c
+t=1401   ev      host power id=1 progress stage=3 apps=Editor,Mail
+t=1800   p>h     00000002 02 00 00000014 08031a080a06456469746f721a060a044d61696c
+t=1801   ev      host power id=1 finished blocked apps=Editor,Mail

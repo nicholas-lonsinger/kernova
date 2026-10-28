@@ -1,0 +1,4 @@
+# Golden transcripts are checksummed byte for byte (frozen.sha256), so no checkout
+# may rewrite their line endings.
+*.transcript -text
+*.sha256 -text

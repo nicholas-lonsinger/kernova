@@ -1,0 +1,10 @@
+# F02h handshake: host + macOS system peer, UpdateAvailable with a PAX_TREE manifest — host pinned
+pinned host  fixture=host-pax-system
+current peer fixture=macos-system-v1
+end 2000
+t=0      h>p     4b524e32
+t=0      h>p     00000000 00 01 0000003b 0a390801120b08014a074b65726e6f76611a06080110011a001a06080210011a001a06080310011a002a10000102030405060708090a0b0c0d0e0f
+t=0      expect  p>h preamble
+t=0      expect  p>h s=0 MSG hello role=3 scope=2 os=1 arch=1 payload_hash=b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2 instance_id=5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f state=console=1,session=,user=,console_session=257 1=v1:actions[1,2]:asks=true 2=v1:formats[2]
+t=1      h>p     00000000 00 01 0000000a 22080a06080310011801
+t=1      h>p     00000000 00 01 00000032 2a300a2e0a20b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b21080d8f11618022203322e30
