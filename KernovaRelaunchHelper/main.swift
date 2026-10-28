@@ -12,9 +12,9 @@ import KernovaLogging
 /// and opens the app again.
 ///
 /// A type rather than top-level functions and variables: a `func` declared at
-/// the top level of `main.swift` is a *local* function, so a run-loop callout
-/// or dispatch handler that names one captures it as a non-`Sendable` function
-/// value. Static methods are named through the type and capture nothing.
+/// the top level of `main.swift` is a *local* function, so a dispatch handler
+/// that names one captures it as a non-`Sendable` function value. Static
+/// methods are named through the type and capture nothing.
 @MainActor
 enum Relauncher {
     nonisolated private static let logger = KernovaLogger(
@@ -88,13 +88,11 @@ enum Relauncher {
         DispatchQueue.main.asyncAfter(deadline: .now() + exitWatchSeconds, execute: timeout)
     }
 
-    /// Ends the exit watch and hands the relaunch to a run-loop callout, never a
-    /// main-queue job: the relaunch waits on a nested run loop, and one entered
-    /// from inside a main-queue job cannot drain that queue.
+    /// Ends the exit watch and relaunches.
     private static func begin() {
         exitWatchTimeout?.cancel()
         source?.cancel()
-        RunLoop.main.perform { MainActor.assumeIsolated { relaunch() } }
+        relaunch()
     }
 
     /// Gives up on an open that never called back, leaving whatever it started
@@ -119,9 +117,6 @@ enum Relauncher {
 
     /// Waits for Launch Services to release the app's registration, then opens
     /// it.
-    ///
-    /// Runs from a run-loop callout, which is what lets the wait service the
-    /// main run loop.
     private static func relaunch() {
         let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
         if !AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all, by: deadline) {
