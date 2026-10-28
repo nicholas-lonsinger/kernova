@@ -104,8 +104,9 @@ help:
 # targets below so each piece is also runnable on its own. Every step is
 # idempotent, so rerun it whenever the environment drifts. It ends with
 # `doctor`, which reports the state the run produced.
-setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Periphery, then doctor
+setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org toolchain, LSP config, Periphery, then doctor
 	@Tools/brew-install.sh shellcheck gh xcode-build-server
+	@Tools/install-swift-toolchain.sh >/dev/null
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 	@Tools/install-periphery.sh >/dev/null
 	@Tools/doctor.sh
@@ -239,13 +240,15 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # own scratch path keeps the swift.org toolchain's build state apart from the
 # Xcode toolchain's, which `test-unhosted` uses. `swift build` keeps only the
 # last of several `--target` options, so each target is a build of its own.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaAgentHost KernovaPlatformPOSIX KernovaDBus KernovaPlatformLinux
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaAgentHost KernovaPlatformPOSIX KernovaDBus KernovaDigest KernovaPlatformLinux CKernovaAgentVersion KernovaLinuxAgent
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
+	version=$$(tr -d '[:space:]' <.swift-version); \
+	sdk=$$(. Tools/lib/static-linux-sdk.sh && static_sdk_id "$$version"); \
 	for target in $(PORTABLE_TARGETS); do \
-		"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
-			--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
+		"$$swiftly" run swift build "+$$version" --package-path KernovaKit \
+			--scratch-path KernovaKit/.build/swiftly --swift-sdk "$$sdk" --triple aarch64-swift-linux-musl \
 			--target "$$target" || exit 1; \
 	done
 

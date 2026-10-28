@@ -275,7 +275,7 @@ struct SidebarViewControllerTests {
     /// attaching the disk with the status unchanged must still reach the badge.
     @Test("The agent badge follows the installer's attached state")
     func agentBadgeFollowsInstallerAttachment() async throws {
-        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        _ = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
@@ -333,7 +333,7 @@ struct SidebarViewControllerTests {
     /// to follow the phase, not only the agent status.
     @Test("The agent badge withholds its disk control and dismissal during an operation")
     func agentBadgeWithholdsControlsDuringOperation() async throws {
-        _ = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        _ = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let viewModel = makeViewModel()
         let sessionID = UUID()
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: sessionID))

@@ -18,6 +18,8 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         var acceptor: GuestStreamAcceptor?
         var commands: [HostCommand] = []
         var policies: [PolicySnapshot] = []
+        var bundles: [[BundledPayload]] = []
+        var handlers: [(queue: DispatchQueue, handler: @Sendable (HostEvent) -> Void)] = []
         var shutdowns = 0
     }
 
@@ -31,6 +33,8 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     package var commands: [HostCommand] { state.withLock(\.commands) }
     /// The policy each connection was built with, in order.
     package var policies: [PolicySnapshot] { state.withLock(\.policies) }
+    /// The bundles each connection was built to offer, in order.
+    package var bundles: [[BundledPayload]] { state.withLock(\.bundles) }
     /// How many accepted streams have been shut down.
     package var shutdowns: Int { state.withLock(\.shutdowns) }
     /// Whether a hub has started this transport.
@@ -41,6 +45,13 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     package func connect() -> Bool {
         guard let acceptor = state.withLock(\.acceptor) else { return false }
         return acceptor.offer { [self] released in InertStream(probe: self, released: released) }
+    }
+
+    /// Delivers `event` to the hub as connection `index` (from 0, in accept order) reports it: on the
+    /// queue the hub built the connection to deliver on.
+    package func deliver(_ event: HostEvent, fromConnection index: Int) {
+        let (queue, handler) = state.withLock { $0.handlers[index] }
+        queue.async { handler(event) }
     }
 
     // MARK: GuestStreamTransport
@@ -58,7 +69,11 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         _ stream: any ByteStream, policy: PolicySnapshot, bundles: [BundledPayload],
         deliveringOn queue: DispatchQueue, _ handler: @escaping @Sendable (HostEvent) -> Void
     ) -> any HostConnectionHandle {
-        state.withLock { $0.policies.append(policy) }
+        state.withLock { state in
+            state.policies.append(policy)
+            state.bundles.append(bundles)
+            state.handlers.append((queue, handler))
+        }
         changed.notify()
         return Connection(probe: self)
     }

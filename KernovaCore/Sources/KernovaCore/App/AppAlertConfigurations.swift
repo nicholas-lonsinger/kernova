@@ -314,7 +314,7 @@ package struct AppAlertConfigurations {
         return .acknowledgement(
             title: title,
             message:
-                "\(lead) Inside the VM, open the “\(BundledGuestAgent.diskLabel)” disk in Finder and \(nextStep)"
+                "\(lead) Inside the VM, open the “\(BundledGuestAgents.macOSDiskLabel)” disk in Finder and \(nextStep)"
         )
     }
 }

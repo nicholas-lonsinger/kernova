@@ -1216,7 +1216,7 @@ struct VMInstanceTests {
 
         let control = VsockControlService(
             channel: host, label: "watchdog-test", hostVersion: AppBundleProducts.testing.hostVersion,
-            bundledAgentVersion: BundledGuestAgent.testing.version)
+            bundledAgentVersion: BundledGuestAgents.testing.macOSVersion)
         instance.sessionContext?.vsock.control = control
         control.start()
         defer { control.stop() }
@@ -1561,7 +1561,7 @@ struct VMInstanceTests {
 
     @Test("recordObservedAgentInfo fires onAgentBecameCurrent for a current version")
     func recordObservedFiresBecameCurrentOnCurrentVersion() throws {
-        let bundled = try #require(BundledGuestAgent.testing.version)
+        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
         // lastSeen must differ from the reported version so the persist guard
         // doesn't short-circuit before the auto-eject hook.
         let library = makeWiredLibrary()
@@ -1577,7 +1577,7 @@ struct VMInstanceTests {
 
     @Test("recordObservedAgentInfo does not fire onAgentBecameCurrent for an outdated version")
     func recordObservedSkipsBecameCurrentOnOutdated() throws {
-        let bundled = try #require(BundledGuestAgent.testing.version)
+        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
         // Only meaningful when the bundled version is strictly newer than the
         // sentinel, so "0.0.1" genuinely classifies as outdated.
         try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
@@ -1594,7 +1594,7 @@ struct VMInstanceTests {
 
     @Test("recordObservedAgentInfo does not fire onAgentBecameCurrent on an unchanged-version reconnect")
     func recordObservedSkipsBecameCurrentWhenUnchanged() throws {
-        let bundled = try #require(BundledGuestAgent.testing.version)
+        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
         // Same version as last seen → the became-current guard short-circuits,
         // so a disk mounted to run uninstall.command is never yanked out by a
         // same-version reconnect — even when an OS-version change makes the
@@ -1724,7 +1724,7 @@ struct VMInstanceTests {
 
     @Test("hasGuestAgentInstallerMounted reflects whether the bundled DMG is attached")
     func hasGuestAgentInstallerMountedReflectsState() throws {
-        let installerURL = try #require(BundledGuestAgent.testing.installerDiskImageURL)
+        let installerURL = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let library = makeWiredLibrary()
         let instance = library.registerFixture()
 

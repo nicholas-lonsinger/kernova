@@ -1,0 +1,20 @@
+name: Install the swift.org toolchain
+description: >-
+  Install the swift.org toolchain .swift-version pins and its Static Linux
+  SDK, which the app's "Build Linux Guest Agent" phase cross-builds with,
+  restoring them from the cache when the two pins are unchanged. swiftly
+  installs the toolchain under ~/Library/Developer/Toolchains.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v5
+      with:
+        path: |
+          ~/.swiftly
+          ~/Library/Developer/Toolchains
+          ~/Library/org.swift.swiftpm/swift-sdks
+        key: ${{ runner.os }}-swift-toolchain-${{ hashFiles('.swift-version', 'Tools/lib/static-linux-sdk.sh') }}
+
+    - shell: bash
+      run: make swift-toolchain

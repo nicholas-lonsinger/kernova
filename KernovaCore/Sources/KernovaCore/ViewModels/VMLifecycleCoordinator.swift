@@ -665,7 +665,7 @@ final class VMLifecycleCoordinator {
         )
         let actual: String
         do {
-            actual = try await FileDigest.sha256(of: candidate) { _ in }
+            actual = try await FileDigest.sha256(of: candidate)
         } catch is CancellationError {
             throw CancellationError()
         } catch {

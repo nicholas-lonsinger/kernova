@@ -26,6 +26,9 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/select-xcode
 
+      - name: Install the swift.org toolchain
+        uses: ./.github/actions/swift-toolchain
+
       - name: Install Periphery
         run: Tools/install-periphery.sh
 

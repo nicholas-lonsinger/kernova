@@ -17,4 +17,13 @@ uint32_t kernova_crc32c_hardware_update(uint32_t crc, const uint8_t *bytes, size
 /// `QueryInterruptTimePrecise`. The origin is arbitrary.
 uint64_t kernova_monotonic_nanoseconds(void);
 
+#if defined(__linux__)
+/// Creates a non-blocking, close-on-exec `AF_VSOCK` stream socket and starts
+/// connecting it to `port` at `cid`. Returns the descriptor, with
+/// `*in_progress` set to 1 when the connect is still under way (`EINPROGRESS`)
+/// and 0 when it completed; returns -1 with `errno` set, holding nothing open,
+/// when creating the socket or starting the connect failed.
+int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress);
+#endif
+
 #endif

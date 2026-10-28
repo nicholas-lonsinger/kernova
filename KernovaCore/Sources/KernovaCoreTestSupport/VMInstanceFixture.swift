@@ -31,6 +31,7 @@ enum VMInstanceFixture {
         pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
         files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
         bundleFactory: VMBundle.Factory? = nil,
+        bundleProducts: AppBundleProducts = .testing,
         agentConnector: (any HostConnectionMaking)? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
@@ -41,7 +42,7 @@ enum VMInstanceFixture {
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
-            hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil,
+            hostPasteboard: FakePasteboard(), bundleProducts: bundleProducts, logSink: nil,
             agentConnector: agentConnector)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
@@ -68,7 +69,7 @@ enum VMInstanceFixture {
     }
 
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
-    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:agentConnector:mutate:)``
+    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:bundleProducts:agentConnector:mutate:)``
     /// and a library's fixture admission build their bundle from.
     static func seed(
         name: String, guestOS: VMGuestOS, hostState: VMHostState, snapshots: VMSnapshotManifest,

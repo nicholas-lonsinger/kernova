@@ -48,7 +48,7 @@ struct ConfigurationBuilder: Sendable {
     let entitlements: EntitlementService
 
     /// Whose installer image a guest that takes it over virtio is given.
-    let guestAgent: BundledGuestAgent
+    let guestAgents: BundledGuestAgents
 
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM
     /// configuration and bundle URL, off the caller's actor: the build reads
@@ -419,7 +419,7 @@ struct ConfigurationBuilder: Sendable {
         bundleURL: URL
     ) -> Bool {
         guard GuestAgentDiskDelivery.mode(for: config) == .virtio else { return false }
-        guard let installerURL = guestAgent.installerDiskImageURL else {
+        guard let installerURL = guestAgents.macOSInstallerDiskImageURL else {
             Self.logger.log(
                 .warning,
                 "No guest agent installer image to attach to '\(config.name, privacy: .public)'")
@@ -544,7 +544,7 @@ struct ConfigurationBuilder: Sendable {
             id: stableGuestAgentDiskID(forBundleAt: bundleURL),
             path: installerPath,
             readOnly: true,
-            label: BundledGuestAgent.diskLabel,
+            label: BundledGuestAgents.macOSDiskLabel,
             // The path is absolute and outside the bundle, and `.dmg` would
             // otherwise default to the USB bus this delivery exists to avoid.
             isInternal: false,

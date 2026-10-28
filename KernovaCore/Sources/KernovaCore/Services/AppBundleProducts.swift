@@ -2,7 +2,7 @@ import Foundation
 import KernovaLogging
 
 /// What this copy of Kernova's app bundle ships: where the copy lives, its
-/// version and build number, the guest agent it bundles, its blank-disk
+/// version and build number, the guest agents it bundles, its blank-disk
 /// templates, the `kernova` tool, and the relaunch helper.
 ///
 /// `KernovaApp` reads the app's once, through ``init(bundle:)``, and hands that
@@ -18,8 +18,8 @@ package struct AppBundleProducts: Sendable {
     /// Info.plist; `nil` is a build misconfiguration.
     package let buildNumber: String?
 
-    /// The guest agent this host bundles.
-    package let guestAgent: BundledGuestAgent
+    /// The guest agents this host bundles.
+    package let guestAgents: BundledGuestAgents
 
     /// The bundle resources are looked up in; `nil` when `bundleURL` holds no
     /// bundle, which ships none of them.
@@ -34,19 +34,19 @@ package struct AppBundleProducts: Sendable {
             Self.logger.log(.fault, "CFBundleVersion not found in Info.plist")
             assertionFailure("CFBundleVersion not found in Info.plist")
         }
-        self.guestAgent = BundledGuestAgent(bundle: bundle)
+        self.guestAgents = BundledGuestAgents(bundle: bundle, versionLabel: "\(hostVersion) (\(buildNumber ?? ""))")
         self.resources = bundle
     }
 
-    /// The products of the bundle at `bundleURL`, with the versions and agent
+    /// The products of the bundle at `bundleURL`, with the versions and agents
     /// given rather than read from it.
     package init(
-        bundleURL: URL, hostVersion: String, buildNumber: String?, guestAgent: BundledGuestAgent
+        bundleURL: URL, hostVersion: String, buildNumber: String?, guestAgents: BundledGuestAgents
     ) {
         self.bundleURL = bundleURL
         self.hostVersion = hostVersion
         self.buildNumber = buildNumber
-        self.guestAgent = guestAgent
+        self.guestAgents = guestAgents
         self.resources = Bundle(url: bundleURL)
     }
 

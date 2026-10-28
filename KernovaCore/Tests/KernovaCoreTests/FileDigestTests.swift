@@ -34,7 +34,7 @@ struct FileDigestTests {
         // than against a second call into CryptoKit.
         let url = try makeFile(Data("abc".utf8))
 
-        let digest = try await FileDigest.sha256(of: url) { _ in }
+        let digest = try await FileDigest.sha256(of: url)
 
         #expect(digest == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     }
@@ -43,7 +43,7 @@ struct FileDigestTests {
     func emptyFile() async throws {
         let url = try makeFile(Data())
 
-        let digest = try await FileDigest.sha256(of: url) { _ in }
+        let digest = try await FileDigest.sha256(of: url)
 
         #expect(digest == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     }
@@ -57,7 +57,7 @@ struct FileDigestTests {
         }
         let url = try makeFile(contents)
 
-        let digest = try await FileDigest.sha256(of: url) { _ in }
+        let digest = try await FileDigest.sha256(of: url)
 
         let whole = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
         #expect(digest == whole)
@@ -79,7 +79,7 @@ struct FileDigestTests {
         let url = scratch.url.appendingPathComponent("absent.bin")
 
         await #expect(throws: (any Error).self) {
-            try await FileDigest.sha256(of: url) { _ in }
+            try await FileDigest.sha256(of: url)
         }
     }
 }
