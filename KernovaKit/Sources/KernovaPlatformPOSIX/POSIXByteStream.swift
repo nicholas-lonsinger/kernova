@@ -106,11 +106,15 @@ public final class POSIXByteStream: ByteStream {
 
     /// Resumes the read source after a `.received`.
     public func readMore() {
-        state.withLock { state in
-            guard state.readSuspended, !state.endDelivered, !state.isShutDown else { return }
+        let queue = state.withLock { state -> DispatchQueue? in
+            guard state.readSuspended, !state.endDelivered, !state.isShutDown else { return nil }
             state.readSuspended = false
             state.readSource?.resume()
+            return state.queue
         }
+        // Readiness that arose while the source was suspended need not fire on resume where the event
+        // mechanism is edge-triggered (epoll under swift-corelibs-libdispatch): read once after re-arming.
+        queue?.async { [self] in readReady() }
     }
 
     /// Writes at once what the socket accepts and the rest as it drains; completes on the start queue.
@@ -197,7 +201,7 @@ public final class POSIXByteStream: ByteStream {
 
     /// Writes what the pending write still holds; completes it once written or failed.
     private func writeReady() {
-        let finished = state.withLock { state -> (DispatchQueue, @Sendable () -> Void)? in
+        let next = state.withLock { state -> (DispatchQueue, (@Sendable () -> Void)?)? in
             guard !state.isShutDown, var pending = state.pendingWrite, let queue = state.queue else { return nil }
             var failure: ByteStreamError?
             while pending.index < pending.chunks.count {
@@ -233,13 +237,19 @@ public final class POSIXByteStream: ByteStream {
                 return (queue, { completion(result) })
             }
             state.pendingWrite = pending
-            if state.writeSuspended {
-                state.writeSuspended = false
-                state.writeSource?.resume()
-            }
-            return nil
+            guard state.writeSuspended else { return nil }
+            state.writeSuspended = false
+            state.writeSource?.resume()
+            return (queue, nil)
         }
-        if let (queue, complete) = finished { queue.async(execute: complete) }
+        guard let (queue, completion) = next else { return }
+        if let completion {
+            queue.async(execute: completion)
+        } else {
+            // As in `readMore()`: room that opened before the source was re-armed need not fire it, so
+            // write once after re-arming.
+            queue.async { [self] in writeReady() }
+        }
     }
 
     /// One of the two cancel handlers or the shutdown delivery ran; the last closes the descriptor and
