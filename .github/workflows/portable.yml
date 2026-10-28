@@ -45,9 +45,7 @@ jobs:
     name: Linux (aarch64)
     needs: swift-version
     runs-on: ubuntu-24.04-arm
-    container:
-      image: swift:${{ needs.swift-version.outputs.version }}-noble
-      options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    container: swift:${{ needs.swift-version.outputs.version }}-noble
     timeout-minutes: 20
     steps:
       - name: Checkout repository
@@ -63,20 +61,7 @@ jobs:
         run: swift build --package-path KernovaKit
 
       - name: Test
-        shell: bash
-        run: |
-          set +e
-          apt-get install --yes --no-install-recommends gdb procps > /dev/null
-          swift build --package-path KernovaKit --build-tests
-          stdbuf -oL -eL swift test --package-path KernovaKit --skip-build --filter KernovaPlatformLinuxTests > out.txt 2>&1 &
-          sleep 90
-          ps -eo pid,ppid,stat,wchan:30,cmd | grep -v grep | grep -E 'dbus|runner'
-          for p in $(pgrep -f 'KernovaPlatformLinuxTests-test-runner'); do
-            echo "=== gdb $p"
-            gdb -p "$p" -batch -ex 'thread apply all bt 30' 2>&1 | grep -E '^Thread|^#' | head -600
-          done
-          grep -v '^\[' out.txt | tail -60
-          exit 1
+        run: swift test --package-path KernovaKit
 
   windows:
     name: Windows (arm64)

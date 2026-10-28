@@ -17,7 +17,12 @@ final class PrivateBus {
     init() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["dbus-daemon", "--session", "--nofork", "--print-address=1"]
+        // An abstract socket leaves nothing in the file system once the
+        // daemon is gone.
+        process.arguments = [
+            "dbus-daemon", "--session", "--nofork", "--print-address=1",
+            "--address=unix:abstract=/kernova/tests/\(UUID().uuidString)",
+        ]
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output
@@ -46,7 +51,9 @@ final class PrivateBus {
     }
 
     deinit {
-        process.terminate()
+        // A process spawned from a Dispatch worker thread inherits the signals
+        // that thread blocks, SIGTERM among them, so SIGKILL is what ends it.
+        kill(process.processIdentifier, SIGKILL)
         process.waitUntilExit()
     }
 

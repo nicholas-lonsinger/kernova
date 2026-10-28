@@ -3,7 +3,7 @@ import KernovaDBus
 import KernovaPlatformLinux
 import Testing
 
-@Suite("DBusBusConnection against a private dbus-daemon", .timeLimit(.minutes(1)))
+@Suite("DBusBusConnection against a private dbus-daemon")
 struct BusConnectionTests {
     static let serviceName = "org.kernova.Test"
     static let servicePath: DBusObjectPath = "/org/kernova/Test"

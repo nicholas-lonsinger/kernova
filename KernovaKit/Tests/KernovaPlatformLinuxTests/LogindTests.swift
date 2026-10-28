@@ -147,7 +147,7 @@ final class FakeLogind: Sendable {
     }
 }
 
-@Suite("Logind against a fake org.freedesktop.login1", .timeLimit(.minutes(1)))
+@Suite("Logind against a fake org.freedesktop.login1")
 struct LogindTests {
     @Test("PowerOff and Reboot send interactive false")
     func power() throws {
