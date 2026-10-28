@@ -9,7 +9,7 @@ import KernovaWire
 import Testing
 
 extension CoreUnits {
-    @Suite("PeerAgent: §9.3's dial schedule")
+    @Suite("PeerAgent: the dial schedule")
     struct PeerAgentUnitTests {
         /// An agent driven on a timeline of milliseconds, with what it asked for so far.
         struct Driver {

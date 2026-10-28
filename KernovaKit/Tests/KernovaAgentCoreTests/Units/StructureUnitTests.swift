@@ -16,7 +16,7 @@ extension CoreUnits {
         static let hostBulk = StreamKind.UNRECOGNIZED(9001)
         static let peerBulk = StreamKind.UNRECOGNIZED(9000)
 
-        @Test("OPENs leave in id order even when round-robin would start between them (§3.5 step 7)")
+        @Test("OPENs leave in id order even when round-robin would start between them")
         func openOrderAcrossRoundRobin() {
             var wire = Wire.peer { $0.addTestKinds() }
             wire.establish()
@@ -56,7 +56,7 @@ extension CoreUnits {
             #expect(wire.connection.canOpen(.updatePull))
         }
 
-        @Test("A RESET for a stream closed with its last frame unsent drops that frame and frees the slot (§3.2)")
+        @Test("A RESET for a stream closed with its last frame unsent drops that frame and frees the slot")
         func resetOnClosedRetires() {
             var wire = Wire.host()
             wire.establish()
@@ -108,7 +108,7 @@ extension CoreUnits {
             #expect(wire.connection.streams.first { $0.isAccepted }?.owner == .logs)
         }
 
-        @Test("A frame in the turn after a deadline was found passed ends the judgment first (§5.2 rule 4)")
+        @Test("A frame in the turn after a deadline was found passed ends the judgment first")
         func framesBeforeDeadlines() {
             var wire = Wire.peer()
             wire.advance(to: Unit.at(10_000))
@@ -182,7 +182,7 @@ extension CoreUnits {
             #expect(offers.map(\.manifest.payloadHash) == [newer.manifest.payloadHash])
         }
 
-        @Test("Snapshots read in one turn raise one event each on the host, the newest kept (§4.4)")
+        @Test("Snapshots read in one turn raise one event each on the host, the newest kept")
         func hostEventsCoalesce() {
             let run = HostileRun(local: .host, seed: 29)
             run.feed([WireFrames.hello(role: .sessionPeer)], preamble: true)
@@ -204,7 +204,7 @@ extension CoreUnits {
             #expect(events.count { if case .featuresChanged = $0 { true } else { false } } == 1)
         }
 
-        @Test("PolicyUpdates and offers read in one turn raise one event each on the peer, the newest kept (§4.4)")
+        @Test("PolicyUpdates and offers read in one turn raise one event each on the peer, the newest kept")
         func peerEventsCoalesce() {
             let run = HostileRun(local: .peer, seed: 31)
             run.feed([WireFrames.hello(role: .host)], preamble: true)

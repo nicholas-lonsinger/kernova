@@ -11,7 +11,7 @@ import SwiftProtobuf
 import Testing
 
 extension CoreUnits {
-    @Suite("UpdateClient: §8.1's pull decision and §8.2's peer rows")
+    @Suite("UpdateClient: the pull decision and the peer rows")
     struct UpdateClientUnitTests {
         static let manifest = Unit.manifest(tag: 1, size: 1_000)
         static let newer = Unit.manifest(tag: 2, size: 1_000)
@@ -54,7 +54,7 @@ extension CoreUnits {
             }
         }
 
-        // MARK: §8.1
+        // MARK: The pull decision
 
         @Test("An offer differing from its own hash, in a format it installs, not rejected → OPEN UPDATE_PULL{hash}")
         func pulls() {
@@ -128,7 +128,7 @@ extension CoreUnits {
             #expect(Self.pulls(run.written)[3] == Self.newer.payloadHash)
         }
 
-        // MARK: §8.2 peer rows
+        // MARK: Peer rows
 
         @Test("raw DATA → .payload in order; .consumed releases the held bytes")
         func payload() {
@@ -241,7 +241,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("UpdateServer: §8.1's offer and §8.2's host rows")
+    @Suite("UpdateServer: the offer and the host rows")
     struct UpdateServerUnitTests {
         static let bundle = SimHub.bundle(size: 4_000_000, tag: 1)
         static let offered = bundle.manifest
@@ -290,7 +290,7 @@ extension CoreUnits {
             return Unit.end(1, Unit.encode(result))
         }
 
-        // MARK: §8.1
+        // MARK: The offer
 
         @Test("The offer by role and scope: USER session peer, SYSTEM system peer; nothing else")
         func offerTable() {
@@ -327,7 +327,7 @@ extension CoreUnits {
             #expect(messages.last?.updateAvailable.manifest.payloadHash == Self.offered.payloadHash)
         }
 
-        // MARK: §8.2 host rows
+        // MARK: Host rows
 
         @Test("OPEN while the host offers this peer nothing → RESET UPDATE_UNAVAILABLE, checked before the hash")
         func unavailable() {
@@ -354,7 +354,7 @@ extension CoreUnits {
                 ])
         }
 
-        @Test("A second UPDATE_PULL while one is open → RESET UPDATE_IN_PROGRESS (§3.6 step 5)")
+        @Test("A second UPDATE_PULL while one is open → RESET UPDATE_IN_PROGRESS")
         func secondPull() {
             let run = Self.serving()
             Self.pull(run, stream: 3)

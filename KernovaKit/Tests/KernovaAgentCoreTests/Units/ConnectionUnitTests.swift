@@ -16,9 +16,9 @@ extension CoreUnits {
         static let hostBulk = StreamKind.UNRECOGNIZED(9001)
         static let peerBulk = StreamKind.UNRECOGNIZED(9000)
 
-        // MARK: §3.5 transmit order
+        // MARK: Transmit order
 
-        @Test("pollTransmit hands frames out in §3.5 order: session, connection WINDOW, PING, RESETs, WINDOWs, FIFOs")
+        @Test("pollTransmit hands frames out in order: session, connection WINDOW, PING, RESETs, WINDOWs, FIFOs")
         func transmitOrder() {
             var policy = ReceiverPolicy.production
             policy.connectionReplenishThreshold = 1_000
@@ -114,7 +114,7 @@ extension CoreUnits {
             #expect(wire.connection.canOpen(.powerRequest))
         }
 
-        // MARK: §3.4 credit
+        // MARK: Credit
 
         @Test("Connection credit is conserved after a RESET with raw DATA held, queued and in flight")
         func conservationAfterReset() {
@@ -264,7 +264,7 @@ extension CoreUnits {
             #expect(returned.dropFirst().first.map { $0.at >= Unit.at(62) } == true)
         }
 
-        // MARK: §3.4 S4 writability
+        // MARK: Writability
 
         @Test("A message stream fires .writable on the rising edge of credit ≥ 64 KiB with no message unsent")
         func writableRisingEdge() {
@@ -289,7 +289,7 @@ extension CoreUnits {
             #expect(wire.takeEvents() == [.writable(stream)])
         }
 
-        // MARK: §9.6 misuse
+        // MARK: Misuse
 
         enum Misuse: String, CaseIterable, Sendable, CustomTestStringConvertible {
             case messageOnSilentDirection, rawPastWritable, sendAfterEnd, resetOfClosed, openOtherRolesKind
@@ -342,7 +342,7 @@ extension CoreUnits {
             #expect(wire.connection.state == .finished)
         }
 
-        // MARK: §4.4 coalescing
+        // MARK: Coalescing
 
         @Test("Unsent snapshots coalesce in the transmit queue, the newest replacing the older")
         func coalescedTransmit() {

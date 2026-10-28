@@ -290,7 +290,7 @@ struct Pair {
         peerEvents += peer.takeEvents()
     }
 
-    /// §3.4's conservation sum for the direction `sender` → `receiver`.
+    /// The conservation sum for the direction `sender` → `receiver`.
     static func conserved(sender: Connection, receiver: Connection) -> Int {
         let send = sender.footprint
         let receive = receiver.footprint

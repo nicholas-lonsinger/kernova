@@ -9,7 +9,7 @@ import KernovaWire
 import Testing
 
 extension CoreUnits {
-    @Suite("PowerRouting: §6.4 candidates and routing")
+    @Suite("PowerRouting: candidates and routing")
     struct PowerRoutingUnitTests {
         static func session(
             _ handle: UInt64, _ sessionID: String, console: ConsoleState = .on, order: UInt64? = nil,
@@ -223,7 +223,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("PeerConflict: each row of §4.5")
+    @Suite("PeerConflict: each row of the identity-conflict table")
     struct PeerConflictUnitTests {
         static let instanceA = Data(repeating: 0xAA, count: 16)
         static let instanceB = Data(repeating: 0xBB, count: 16)
@@ -249,7 +249,7 @@ extension CoreUnits {
             #expect(PeerConflict.resolve(existing: Self.session(), incoming: Self.system()) == .noConflict)
         }
 
-        @Test("Row 1: the same non-empty instance id → the existing closes SUPERSEDED")
+        @Test("The same non-empty instance id → the existing closes SUPERSEDED")
         func row1() {
             #expect(
                 PeerConflict.resolve(existing: Self.session(), incoming: Self.session())
@@ -259,7 +259,7 @@ extension CoreUnits {
                     == .closeExisting(.superseded, retryAfter: nil))
         }
 
-        @Test("Row 1 precedes row 2: the same instance with another scope still supersedes")
+        @Test("The instance check precedes rank: the same instance with another scope still supersedes")
         func row1BeforeRow2() {
             #expect(
                 PeerConflict.resolve(existing: Self.session(scope: .user), incoming: Self.session(scope: .unspecified))
@@ -274,7 +274,7 @@ extension CoreUnits {
         }
 
         @Test(
-            "Row 2: session peers of different rank → the lower closes DUPLICATE_PEER, retry 60 s",
+            "Session peers of different rank → the lower closes DUPLICATE_PEER, retry 60 s",
             arguments: [
                 (InstallScope.user, InstallScope.system), (.user, .unspecified), (.system, .unspecified),
             ])
@@ -292,7 +292,8 @@ extension CoreUnits {
                     == .closeExisting(.duplicatePeer, retryAfter: sixty))
         }
 
-        @Test("Row 2 precedes row 3: a lower-rank incoming never displaces an unresponsive higher-rank existing")
+        @Test(
+            "Rank precedes responsiveness: a lower-rank incoming never displaces an unresponsive higher-rank existing")
         func row2BeforeRow3() {
             #expect(
                 PeerConflict.resolve(
@@ -301,7 +302,7 @@ extension CoreUnits {
                     == .closeIncoming(.duplicatePeer, retryAfter: .milliseconds(60_000)))
         }
 
-        @Test("Row 3: same rank, the existing unresponsive → the existing closes SUPERSEDED")
+        @Test("Same rank, the existing unresponsive → the existing closes SUPERSEDED")
         func row3() {
             #expect(
                 PeerConflict.resolve(
@@ -313,7 +314,7 @@ extension CoreUnits {
                     == .closeExisting(.superseded, retryAfter: nil))
         }
 
-        @Test("Row 4: same rank, the existing responsive → the incoming closes DUPLICATE_PEER, retry 20 s")
+        @Test("Same rank, the existing responsive → the incoming closes DUPLICATE_PEER, retry 20 s")
         func row4() {
             let twenty = CoreDuration.milliseconds(20_000)
             #expect(
