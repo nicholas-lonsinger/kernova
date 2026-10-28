@@ -139,7 +139,16 @@ extension Connection {
         markClosed(at: index, closure)
         if discardingQueue { discardQueue(at: index) }
         if isAcceptingInput { returnConnectionCredit() }
-        if streams[index].isRetired { streams.remove(at: index) }
+        retireIfDone(at: index)
+    }
+
+    /// Removes the record once it has nothing left to send. A local one held a
+    /// slot until now, so its kind hears `.slotFreed`.
+    mutating func retireIfDone(at index: Int) {
+        let record = streams[index]
+        guard record.isRetired else { return }
+        streams.remove(at: index)
+        if record.isLocal, isAcceptingInput { emit(.slotFreed(record.kind), owner: record.descriptor.owner) }
     }
 
     /// Marks the stream closed, emits its one `streamClosed`, and credits its held

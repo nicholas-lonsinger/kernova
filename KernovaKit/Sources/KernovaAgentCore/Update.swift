@@ -135,7 +135,7 @@ public struct UpdateClient: FeatureMachine {
     /// Handles a connection event.
     public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
-        case .sessionEstablished, .usabilityChanged:
+        case .sessionEstablished, .usabilityChanged, .slotFreed:
             consider(&connection)
         case .data(let stream, let bytes):
             guard var current = pull, current.id.stream == stream, !current.settled else { return }
@@ -317,7 +317,7 @@ public struct UpdateServer: FeatureMachine {
             guard let current = pull, current.id.stream == stream else { return }
             if !current.resultDelivered { outbox.append(.update(.closed(current.id, closure))) }
             pull = nil
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .writable, .deadline:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .writable, .deadline, .slotFreed:
             break
         }
     }

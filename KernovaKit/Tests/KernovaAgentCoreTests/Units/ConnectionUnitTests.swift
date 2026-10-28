@@ -78,7 +78,8 @@ extension CoreUnits {
             wire.connection.end(dropped, body: Data())
             wire.connection.reset(dropped, WireError(.cancelled))
             let events = wire.takeEvents()
-            #expect(events == [.streamClosed(dropped, .resetLocally(WireError(.cancelled)))])
+            #expect(
+                events == [.streamClosed(dropped, .resetLocally(WireError(.cancelled))), .slotFreed(.powerRequest)])
             let next = wire.connection.open(.powerRequest, body: body)
             #expect(next.rawValue == dropped.rawValue + 2)
             let frames = wire.flush()

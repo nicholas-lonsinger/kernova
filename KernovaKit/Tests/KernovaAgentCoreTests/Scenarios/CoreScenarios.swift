@@ -201,7 +201,7 @@ enum PowerScenarios {
             script: { world in
                 var session = PeerSpec.session()
                 session.power.steps = []
-                session.power.onCancel = .silent
+                session.power.onCancel = .silent(after: .sec(20) ... .sec(30))
                 world.addPeer(session)
                 world.addPeer(.system())
                 world.at(in: .ms(500) ... .sec(2)) { world in
@@ -219,6 +219,28 @@ enum PowerScenarios {
                         after >= 15_000 && after <= 17_000,
                         "indeterminate at 15 s + confirmation, \(after) ms after the ask")
                     + expectThat(world.hub.asks.count == 1, "no second provider")
+            }),
+        Scenario(
+            name: "power: a cancel the adapter cannot confirm releases it: a request on a new connection reaches it",
+            seeds: 20,
+            end: .sec(90),
+            script: { world in
+                var session = PeerSpec.session()
+                session.power.steps = []
+                session.power.onCancel = .silent(after: .sec(20) ... .sec(30))
+                world.addPeer(session)
+                world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
+                world.at(.sec(45)) { world in
+                    world.hostCommand(.close(.shuttingDown, retryAfter: nil), link: world.links[0])
+                }
+                world.at(.sec(60)) { world in world.hub.requestPower(.shutdown, world: world) }
+            },
+            expect: { world in
+                let performed = world.peers[0].performed
+                return expectThat(performed.count == 2, "both requests reached the adapter: \(performed.map(\.id))")
+                    + expectThat(
+                        performed.map(\.id.generation.rawValue) == [1, 2],
+                        "the second on the new connection: \(performed.map(\.id))")
             }),
         connectionLost(
             "power: connection lost while the request waits on the OS → indeterminate unless ACCEPTED was sent",

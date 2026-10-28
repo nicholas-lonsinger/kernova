@@ -108,6 +108,9 @@ public enum ConnectionEvent: Sendable, Equatable {
     case writable(StreamID)
     /// A stream ended; nothing more comes for it.
     case streamClosed(StreamID, StreamClosure)
+    /// A stream of this kind that this side opened left the table, freeing the
+    /// concurrency and per-kind slots it held: `canOpen` may now allow what it refused.
+    case slotFreed(StreamKind)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended; nothing more comes.

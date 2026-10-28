@@ -173,8 +173,11 @@ package final class SimPeerProcess {
                 world.at(world.now + world.rng.time(in: after)) { world in
                     self.report(.cancelled(id), process: starts, world: world)
                 }
-            case .silent:
+            case .silent(let after):
                 cancelled.insert(id)
+                world.at(world.now + world.rng.time(in: after)) { world in
+                    self.report(.unconfirmed(id), process: starts, world: world)
+                }
             case .acceptFirst:
                 break
             }

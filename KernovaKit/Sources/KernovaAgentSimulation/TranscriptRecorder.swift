@@ -59,6 +59,7 @@ package enum TranscriptInput: Sendable, Equatable {
                 case .refused(let id, let error):
                     return "peer power refused id=\(id.rawValue) code=\(error.code.rawValue)"
                 case .cancelled(let id): return "peer power cancelled id=\(id.rawValue)"
+                case .unconfirmed(let id): return "peer power unconfirmed id=\(id.rawValue)"
                 case .askingApps(let id): return "peer power askingApps id=\(id.rawValue)"
                 case .waitingOnApps(let id, let apps):
                     return "peer power waitingOnApps id=\(id.rawValue) apps=\(Self.names(apps))"
@@ -118,6 +119,7 @@ package enum TranscriptInput: Sendable, Equatable {
             case "accepted": input = .accepted(powerID)
             case "refused": input = .refused(powerID, WireError(code("code")))
             case "cancelled": input = .cancelled(powerID)
+            case "unconfirmed": input = .unconfirmed(powerID)
             case "askingApps": input = .askingApps(powerID)
             case "waitingOnApps": input = .waitingOnApps(powerID, apps)
             case "handedOff": input = .handedOff(powerID)

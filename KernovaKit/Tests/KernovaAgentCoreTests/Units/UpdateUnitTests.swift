@@ -118,6 +118,21 @@ extension CoreUnits {
             #expect(Self.pulls(run.written) == [1: Self.manifest.payloadHash, 3: Self.newer.payloadHash])
         }
 
+        @Test("An offer arriving during pull n is pulled once END(n) is handed out, not when the stream closes")
+        func newOfferPulledAfterEndLeaves() {
+            let run = Self.peer(installer: .available(UpdateOffer(formats: [.executable])))
+            run.feed([Unit.raw(1, Data(repeating: 1, count: 1_000)), Unit.end(1)])
+            run.feed([Unit.updateAvailable(Self.newer)])
+            #expect(Self.pulls(run.written).keys.sorted() == [1])
+            run.writerStalled = true
+            run.input(.update(.installed(Self.id())))
+            #expect(Self.pulls(run.written).keys.sorted() == [1])
+            run.writerStalled = false
+            run.drain()
+            #expect(Self.results(run.written).map(\.kind) == [.staged])
+            #expect(Self.pulls(run.written) == [1: Self.manifest.payloadHash, 3: Self.newer.payloadHash])
+        }
+
         @Test("One hash is never pulled twice on one connection")
         func noSecondPullOfOneHash() {
             let run = Self.peer()

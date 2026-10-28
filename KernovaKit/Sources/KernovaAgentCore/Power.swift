@@ -6,7 +6,10 @@ import Foundation
 
 import KernovaWire
 
-/// What a peer's power adapter reports.
+/// What a peer's power adapter reports. Every `.perform` ends in exactly one
+/// terminal report: `.refused`, `.cancelled`, `.unconfirmed`, `.handedOff`,
+/// `.blocked`, `.cancelledInGuest` or `.failed`; until then the process's
+/// `PowerLedger` holds the request and no other is performed.
 public enum PowerInput: Sendable, Equatable {
     /// What the adapter can do now.
     case availability(Availability<PowerOffer>)
@@ -16,6 +19,9 @@ public enum PowerInput: Sendable, Equatable {
     case refused(PowerRequestID, WireError)
     /// The OS confirms a cancelled request did not start.
     case cancelled(PowerRequestID)
+    /// The adapter cannot tell whether the request started (a cancel it could
+    /// not confirm, an OS call that timed out) and no longer tracks it.
+    case unconfirmed(PowerRequestID)
     /// Apps are being asked to quit.
     case askingApps(PowerRequestID)
     /// These apps are holding it up.
@@ -34,7 +40,9 @@ public enum PowerInput: Sendable, Equatable {
 public enum PowerEffect: Sendable, Equatable {
     /// Ask the OS to perform `action`.
     case perform(PowerRequestID, PowerAction)
-    /// Cancel the request if the OS has not started it.
+    /// Cancel the request if the OS has not started it; the adapter answers
+    /// `.cancelled` when the OS confirms nothing started, `.accepted` when the OS
+    /// took it first, and `.unconfirmed` when it cannot tell.
     case cancel(PowerRequestID)
 }
 
@@ -96,7 +104,8 @@ public struct PowerLedger: Sendable, Equatable {
         if case .perform(let id, _) = effect { held = id }
     }
 
-    /// Records the adapter's report: a terminal one for the held request releases it.
+    /// Records the adapter's report: the held request's terminal one releases it.
+    /// Nothing else does, a connection's end included: the OS may still act on it.
     public mutating func record(_ input: PowerInput) {
         guard let id = input.requestID, id == held, input.isTerminal else { return }
         held = nil
@@ -176,7 +185,7 @@ public struct PowerResponder: FeatureMachine {
                 outbox.append(.power(.cancel(current.id)))
             }
             request = current
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .remoteEnded:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .remoteEnded, .slotFreed:
             break
         }
     }
@@ -209,6 +218,9 @@ public struct PowerResponder: FeatureMachine {
             finish(.refused, error: error, connection: &connection)
         case (.cancelling, .cancelled):
             finish(.refused, error: WireError(.timeout), connection: &connection)
+        case (.asked, .unconfirmed), (.cancelling, .unconfirmed):
+            // UNSPECIFIED before ACCEPTED is the host's "cannot know": .indeterminate, never .refused.
+            finish(.unspecified, connection: &connection)
         case (.accepted, .askingApps):
             var progress = Kernova_V2_PowerProgress()
             progress.stage = .askingApps
@@ -234,7 +246,8 @@ public struct PowerResponder: FeatureMachine {
             request = nil
             if current.streamOpen, connection.canReset(current.stream) {
                 connection.reset(
-                    current.stream, WireError(.internal, debugDetail: "the power adapter reported out of order"))
+                    current.stream,
+                    WireError(.streamProtocolError, debugDetail: "the power adapter reported out of order"))
             }
         }
     }
@@ -318,7 +331,7 @@ extension PowerInput {
     var requestID: PowerRequestID? {
         switch self {
         case .availability: nil
-        case .accepted(let id), .refused(let id, _), .cancelled(let id), .askingApps(let id),
+        case .accepted(let id), .refused(let id, _), .cancelled(let id), .unconfirmed(let id), .askingApps(let id),
             .waitingOnApps(let id, _), .handedOff(let id), .blocked(let id, _), .cancelledInGuest(let id),
             .failed(let id, _):
             id
@@ -328,7 +341,7 @@ extension PowerInput {
     /// The adapter no longer holds the request after this report.
     var isTerminal: Bool {
         switch self {
-        case .refused, .cancelled, .handedOff, .blocked, .cancelledInGuest, .failed: true
+        case .refused, .cancelled, .unconfirmed, .handedOff, .blocked, .cancelledInGuest, .failed: true
         case .availability, .accepted, .askingApps, .waitingOnApps: false
         }
     }
@@ -434,7 +447,7 @@ public struct PowerRequester: FeatureMachine {
                 entries[index].deadline = deadline
                 if fires { conclude(index, .indeterminate, reset: .timeout, connection: &connection) }
             }
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .opened, .data, .writable:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .opened, .data, .writable, .slotFreed:
             break
         }
     }

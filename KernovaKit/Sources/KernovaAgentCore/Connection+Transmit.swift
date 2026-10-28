@@ -73,7 +73,7 @@ extension Connection {
             guard fits(payload.count) else { return nil }
             streams[index].pendingReset = nil
             let id = streams[index].id
-            if streams[index].isRetired { streams.remove(at: index) }
+            retireIfDone(at: index)
             return Frame(streamID: id, type: .reset, payload: payload)
         }
         if let index = streams.firstIndex(where: { $0.pendingWindow > 0 && $0.openHandedOut }) {
@@ -141,7 +141,7 @@ extension Connection {
             break
         }
         if streams[index].isRetired {
-            streams.remove(at: index)
+            retireIfDone(at: index)
         } else if case .message = front {
             refreshWritable(at: index)
         }

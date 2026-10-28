@@ -41,6 +41,9 @@ public enum FeatureEvent: Sendable, Equatable {
     case writable(StreamID)
     /// One of its streams closed.
     case streamClosed(StreamID, StreamClosure)
+    /// A stream this side opened stopped holding a slot, which can be after its
+    /// `streamClosed`: an opener `canOpen` held back tries again.
+    case slotFreed
     /// A timer passed: some machine's `nextDeadline`, or the connection's.
     case deadline
 }

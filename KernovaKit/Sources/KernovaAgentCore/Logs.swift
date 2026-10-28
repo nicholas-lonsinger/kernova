@@ -83,7 +83,7 @@ public struct LogForwarder: FeatureMachine {
                 }
             }
             reconcile(&connection)
-        case .usabilityChanged:
+        case .usabilityChanged, .slotFreed:
             reconcile(&connection)
         case .writable(let id) where id == stream:
             checkReady(&connection)
@@ -224,7 +224,7 @@ public struct LogReceiver: FeatureMachine {
             for id in streams where connection.canReset(id) {
                 connection.reset(id, WireError(.disabledByPolicy))
             }
-        case .sessionEstablished, .data, .writable, .deadline:
+        case .sessionEstablished, .data, .writable, .deadline, .slotFreed:
             break
         }
     }

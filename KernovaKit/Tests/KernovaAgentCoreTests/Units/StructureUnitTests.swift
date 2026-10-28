@@ -56,6 +56,28 @@ extension CoreUnits {
             #expect(wire.connection.canOpen(.updatePull))
         }
 
+        @Test(
+            "A local stream that outlives its streamClosed raises .slotFreed when it retires: END out, or a crossing RESET",
+            arguments: [false, true])
+        func slotFreedOnRetire(_ crossingReset: Bool) {
+            var wire = Wire.peer()
+            wire.establish()
+            var pull = Kernova_V2_UpdatePull()
+            pull.payloadHash = Data(repeating: 3, count: 32)
+            let first = wire.connection.open(.updatePull, body: Unit.encode(pull))
+            _ = wire.flush()
+            wire.feed([Unit.end(first.rawValue)])
+            wire.connection.end(first, body: Data())
+            #expect(!wire.takeEvents().contains(.slotFreed(.updatePull)))
+            if crossingReset {
+                wire.feed([WireFrames.reset(first.rawValue, code: ErrorCode.cancelled.rawValue)])
+            } else {
+                #expect(wire.flush().shape == ["\(first.rawValue):end"])
+            }
+            #expect(wire.takeEvents() == [.slotFreed(.updatePull)])
+            #expect(wire.connection.canOpen(.updatePull))
+        }
+
         @Test("A RESET for a stream closed with its last frame unsent drops that frame and frees the slot")
         func resetOnClosedRetires() {
             var wire = Wire.host()

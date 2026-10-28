@@ -308,8 +308,40 @@ extension CoreUnits {
             Self.request(run)
             run.input(.power(.cancelled(Self.id)))
             #expect(Self.localFaults(run) == 1)
-            #expect(run.streamResets.map(\.code) == [.internal])
+            #expect(run.streamResets.map(\.code) == [.streamProtocolError])
             Self.request(run, stream: 4)
+            #expect(
+                Self.powerEffects(run).last
+                    == .perform(PowerRequestID(generation: Self.id.generation, rawValue: 4), .shutdown))
+        }
+
+        @Test(
+            "asked or cancelling + .unconfirmed on an open stream → END UNSPECIFIED; the next OPEN performs",
+            arguments: [false, true])
+        func unconfirmedOpenStream(_ cancelling: Bool) {
+            let run = Self.peer()
+            Self.request(run)
+            if cancelling { run.advanceLive(.sec(11)) }
+            #expect(Self.powerEffects(run).count == (cancelling ? 2 : 1))
+            run.input(.power(.unconfirmed(Self.id)))
+            #expect(Self.outcomes(run.written).map(\.kind) == [.unspecified])
+            #expect(Self.localFaults(run) == 0)
+            Self.request(run, stream: 4)
+            #expect(
+                Self.powerEffects(run).last
+                    == .perform(PowerRequestID(generation: Self.id.generation, rawValue: 4), .shutdown))
+        }
+
+        @Test("cancelling + .unconfirmed on a closed stream → nothing sent; the request is released")
+        func unconfirmedClosedStream() {
+            let run = Self.peer()
+            Self.request(run)
+            run.feed([WireFrames.reset(2, code: ErrorCode.cancelled.rawValue)])
+            let mark = run.written.count
+            run.input(.power(.unconfirmed(Self.id)))
+            #expect(run.written(since: mark).on(2).isEmpty)
+            Self.request(run, stream: 4)
+            #expect(Self.outcomes(run.written, stream: 4).isEmpty)
             #expect(
                 Self.powerEffects(run).last
                     == .perform(PowerRequestID(generation: Self.id.generation, rawValue: 4), .shutdown))
@@ -323,6 +355,13 @@ extension CoreUnits {
             #expect(run.written.on(2).isEmpty)
             #expect(Self.localFaults(run) == 0)
         }
+    }
+
+    @Test("The peer's END UNSPECIFIED before ACCEPTED reads .indeterminate on the host, never .refused")
+    func unspecifiedEndIsIndeterminate() {
+        let run = PowerRequesterUnitTests.host()
+        run.feed([PowerRequesterUnitTests.end(.unspecified)])
+        #expect(PowerRequesterUnitTests.results(run) == [.indeterminate])
     }
 
     @Suite("PowerRequester: every row of its table")

@@ -317,7 +317,7 @@ extension Connection {
     mutating func receiveResetOnClosed(at index: Int) {
         discardQueue(at: index)
         streams[index].pendingReset = nil
-        if streams[index].isRetired { streams.remove(at: index) }
+        retireIfDone(at: index)
     }
 
     /// A frame for a stream this side has closed: ignored, its raw bytes credited back.

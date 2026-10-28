@@ -155,7 +155,7 @@ package struct TraceChecker: Sendable {
                 connectionClosed = true
                 return open.isEmpty ? [] : ["property 1: .closed with streams \(open.sorted()) open"]
             case .helloReceived, .remoteAdvertsChanged, .peerStateChanged, .policyChanged, .updateAvailable,
-                .liveness, .diagnostic:
+                .liveness, .diagnostic, .slotFreed:
                 return []
             }
         }
@@ -286,7 +286,7 @@ package final class PropertyChecker {
                 fail("property 7: link \(link.id) \(side) liveness verdict \(change)")
             }
         case .opened, .remoteEnded, .writable, .streamClosed, .remoteAdvertsChanged, .peerStateChanged,
-            .policyChanged, .updateAvailable, .diagnostic:
+            .policyChanged, .updateAvailable, .diagnostic, .slotFreed:
             break
         }
     }

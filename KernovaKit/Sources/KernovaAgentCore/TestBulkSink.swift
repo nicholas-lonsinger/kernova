@@ -73,7 +73,7 @@ package struct TestBulkSink: Sendable {
             if connection.canQueue(on: stream) { connection.end(stream, body: Data()) }
         case .streamClosed(let stream, _):
             flows.removeAll { $0.stream == stream }
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .deadline:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .deadline, .slotFreed:
             break
         }
     }

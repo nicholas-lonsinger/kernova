@@ -23,8 +23,9 @@ package enum PowerReport: Sendable, Equatable {
 package enum CancelBehavior: Sendable, Equatable {
     /// The OS confirms nothing started, after a delay drawn from the window.
     case confirm(after: SimWindow)
-    /// The adapter cannot tell; it reports nothing.
-    case silent
+    /// The OS confirms nothing; the adapter reports `.unconfirmed` once it gives
+    /// up waiting, after a delay drawn from the window.
+    case silent(after: SimWindow)
     /// The OS took the request first.
     case acceptFirst
 }

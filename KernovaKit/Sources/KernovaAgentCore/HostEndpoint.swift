@@ -263,6 +263,9 @@ public struct HostEndpoint: Sendable {
             deliver(.writable(id), to: routed.owner, now)
         case .streamClosed(let id, let closure):
             deliver(.streamClosed(id, closure), to: routed.owner, now)
+        case .slotFreed:
+            // The slots are shared across kinds, so every opener re-checks.
+            notifyAll(.slotFreed, now)
         }
     }
 
