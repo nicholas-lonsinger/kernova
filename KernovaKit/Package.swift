@@ -66,10 +66,37 @@ var targets: [Target] = [
     ),
     // The C intrinsics Swift cannot spell: the CRC32C instructions.
     .target(name: "CKernovaShims"),
+    // The guest-agent protocol's sans-I/O state machines: streams, credit,
+    // Hello, liveness and close, and every feature's machines per role.
+    .target(
+        name: "KernovaAgentCore",
+        dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
+    // endpoints against each other on virtual time.
+    .target(
+        name: "KernovaAgentSimulation",
+        dependencies: [
+            "KernovaAgentCore", "KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
     // Like `KernovaPortableTests` below, it cannot reach `KernovaTestSupport`.
     .testTarget(
         name: "KernovaWireTests",
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The
+    // transcripts beside it are read from the source tree.
+    .testTarget(
+        name: "KernovaAgentCoreTests",
+        dependencies: [
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        exclude: ["Transcripts"],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which

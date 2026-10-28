@@ -1,0 +1,21 @@
+# F11h protocol mismatch, host at protocol_version 2: the frozen subset still completes F05 — host pinned
+pinned host  fixture=host-proto2
+current peer fixture=linux-session-v1
+end 2500
+t=0      h>p     4b524e32
+t=0      h>p     00000000 00 01 00000046 0a440802120b08014a074b65726e6f76611a06080110011a001a06080210011a001a06080310011a001a09080910011a030102032a10000102030405060708090a0b0c0d0e0f
+t=0      h>p     00000000 00 01 00000004 7a020801
+t=0      h>p     00000000 00 01 00000004 6a020801
+t=0      expect  p>h preamble
+t=0      expect  p>h s=0 MSG hello role=2 scope=1 os=2 arch=1 payload_hash=a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1 instance_id=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e state=console=1,session=c2,user=ada,console_session= 1=v1:actions[1,2]:asks=true 2=v1:formats[1]
+t=1      h>p     00000000 00 01 0000000a 22080a06080310011801
+t=1      h>p     00000000 00 01 00000002 2a00
+t=1000   h>p     00000002 01 00 00000009 08641205080110904e
+t=1000   h>p     00000002 02 00 00000000
+t=1001   ev      peer power perform id=2 action=1
+t=1250   in      peer power accepted id=2
+t=1250   expect  p>h s=2 MSG progress.stage=1 progress.apps=[]
+t=1400   in      peer power askingApps id=2
+t=1400   expect  p>h s=2 MSG progress.stage=2 progress.apps=[]
+t=1600   in      peer power handedOff id=2
+t=1600   expect  p>h s=2 END outcome.kind=2 outcome.code=0 outcome.apps=[]

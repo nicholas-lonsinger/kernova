@@ -1,0 +1,14 @@
+# F03h handshake with a PeerState change and a CapabilityUpdate withdrawing POWER (NOT_ON_CONSOLE) — host pinned
+pinned host  fixture=host-default
+current peer fixture=linux-session-v1
+end 2000
+t=0      h>p     4b524e32
+t=0      h>p     00000000 00 01 0000003b 0a390801120b08014a074b65726e6f76611a06080110011a001a06080210011a001a06080310011a002a10000102030405060708090a0b0c0d0e0f
+t=0      expect  p>h preamble
+t=0      expect  p>h s=0 MSG hello role=2 scope=1 os=2 arch=1 payload_hash=a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1 instance_id=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e state=console=1,session=c2,user=ada,console_session= 1=v1:actions[1,2]:asks=true 2=v1:formats[1]
+t=1      h>p     00000000 00 01 0000000a 22080a06080310011801
+t=1      h>p     00000000 00 01 00000002 2a00
+t=500    in      peer state console=2 session=c2 user=ada
+t=500    expect  p>h s=0 MSG peer_state console=2,session=c2,user=ada,console_session=
+t=500    in      peer power absent reason=3
+t=500    expect  p>h s=0 MSG capabilities 1=v1:absent=3 2=v1:formats[1]
