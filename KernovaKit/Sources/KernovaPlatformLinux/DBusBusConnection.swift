@@ -151,7 +151,8 @@ public final class DBusBusConnection: Sendable {
         try engine.subscribe(rule, handler: handler)
     }
 
-    /// Ends the connection.
+    /// Ends the connection. Once it returns no handler is running or called
+    /// again, unless it is called from a handler, which then finishes.
     public func close() {
         engine.close()
     }
@@ -162,7 +163,9 @@ public struct DBusSubscription: Sendable {
     fileprivate let engine: DBusConnectionEngine
     fileprivate let id: UInt64
 
-    /// Stops calling the handler and removes the rule from the bus. Calling it
+    /// Stops calling the handler and removes the rule from the bus. Once it
+    /// returns the handler is not running and is never called again — unless
+    /// it is called from the handler itself, which then finishes. Calling it
     /// again does nothing.
     public func cancel() {
         engine.unsubscribe(id)
@@ -233,9 +236,15 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         var owners: [String: (owner: String?, subscribers: Int)] = [:]
         /// `GetNameOwner` calls in flight, by serial.
         var ownerLookups: [UInt32: String] = [:]
-        var readerThread: pthread_t?
+        /// The handler the reader thread is running, while it runs: a
+        /// subscription's, or the method-call handler's when nil.
+        var delivery: (subscription: UInt64?, thread: pthread_t)?
 
-        var isReaderThread: Bool { readerThread.map(isCurrentThread) ?? false }
+        /// Whether the calling thread is running a handler, so a blocking call
+        /// from it could never read its reply. The identity exists only while
+        /// the handler runs, so no later thread given the same `pthread_t` can
+        /// match it.
+        var isDeliveryThread: Bool { delivery.map { isCurrentThread($0.thread) } ?? false }
 
         /// The unique name a rule's `sender` currently stands for.
         func owner(of sender: String?) -> String? {
@@ -300,6 +309,46 @@ private final class DBusConnectionEngine: @unchecked Sendable {
 
     func close() {
         disconnect(.closed)
+        awaitDeliveries { _ in true }
+    }
+
+    /// Waits until no handler `isAwaited` picks is running, unless the caller
+    /// is the handler.
+    private func awaitDeliveries(_ isAwaited: (UInt64?) -> Bool) {
+        condition.lock()
+        defer { condition.unlock() }
+        while let delivery = state.delivery, isAwaited(delivery.subscription), !state.isDeliveryThread {
+            condition.wait()
+        }
+    }
+
+    /// Calls subscription `id`'s handler with `signal`, if the subscription is
+    /// still registered and the connection still open, recording the delivery
+    /// for `awaitDeliveries(_:)` while it runs.
+    private func deliver(_ signal: DBusReceivedMessage, to id: UInt64) {
+        let handler = locked { state -> (@Sendable (DBusReceivedMessage) -> Void)? in
+            guard state.disconnection == nil, let subscription = state.subscriptions[id] else { return nil }
+            state.delivery = (id, pthread_self())
+            return subscription.handler
+        }
+        guard let handler else { return }
+        handler(signal)
+        locked { $0.delivery = nil }
+    }
+
+    /// What the method-call handler answers `call` with, recorded as a
+    /// delivery while it runs; nil when the connection has closed.
+    private func answer(_ call: DBusReceivedMessage, with handler: (DBusReceivedMessage) -> DBusMessage?)
+        -> DBusMessage??
+    {
+        let open = locked { state in
+            guard state.disconnection == nil else { return false }
+            state.delivery = (nil, pthread_self())
+            return true
+        }
+        guard open else { return nil }
+        defer { locked { $0.delivery = nil } }
+        return .some(handler(call))
     }
 
     private func disconnect(_ reason: DBusDisconnection) {
@@ -331,7 +380,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     func call(_ message: DBusMessage, timeout: Duration) throws(DBusCallError) -> DBusReceivedMessage {
         let deadline = Deadline(after: timeout)
         let serial = try locked { state throws(DBusCallError) in
-            precondition(!state.isReaderThread, "A handler made a blocking call")
+            precondition(!state.isDeliveryThread, "A handler made a blocking call")
             let serial = try Self.queue(message, in: &state)
             state.replies[serial] = .waiting
             return serial
@@ -372,7 +421,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         // the owner lookup lands before the rule's own AddMatch reply, and no
         // other caller's messages fall between.
         let (id, awaited) = try locked { state throws(DBusCallError) in
-            precondition(!state.isReaderThread, "A handler made a blocking call")
+            precondition(!state.isDeliveryThread, "A handler made a blocking call")
             if let disconnection = state.disconnection { throw .disconnected(disconnection) }
             let id = state.nextSubscriptionID
             state.nextSubscriptionID += 1
@@ -413,6 +462,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
 
     func unsubscribe(_ id: UInt64) {
         locked { state in Self.remove(id, from: &state) }
+        awaitDeliveries { $0 == id }
     }
 
     private static func remove(_ id: UInt64, from state: inout State) {
@@ -467,7 +517,6 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     }
 
     private func runReader() {
-        locked { $0.readerThread = pthread_self() }
         let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: 65_536, alignment: 1)
         defer { buffer.deallocate() }
         while true {
@@ -520,21 +569,27 @@ private final class DBusConnectionEngine: @unchecked Sendable {
                 }
             }
         case .signal(let signal):
-            let handlers = locked { state in
+            let matching = locked { state in
                 Self.followOwnerChange(signal, in: &state)
-                return state.subscriptions.values
-                    .filter { $0.rule.matches(signal, senderOwner: state.owner(of: $0.rule.sender)) }
-                    .map(\.handler)
+                return state.subscriptions
+                    .filter { $0.value.rule.matches(signal, senderOwner: state.owner(of: $0.value.rule.sender)) }
+                    .map(\.key).sorted()
             }
-            for handler in handlers {
-                handler(signal)
+            // Each handler runs only while its subscription is still
+            // registered, which `cancel()` and `close()` wait on.
+            for id in matching {
+                deliver(signal, to: id)
             }
         case .methodCall(let call):
-            let reply: DBusMessage? =
-                onMethodCall.map { $0(call) }
-                ?? .error(
+            let reply: DBusMessage?
+            if let onMethodCall {
+                guard let answered = answer(call, with: onMethodCall) else { return }
+                reply = answered
+            } else {
+                reply = .error(
                     replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownMethod",
                     message: "No method \(call.header.member ?? "") at \(call.header.path?.rawValue ?? "")")
+            }
             guard let reply, !call.header.flags.contains(.noReplyExpected) else { return }
             do throws(DBusCallError) {
                 _ = try send(reply)
@@ -548,14 +603,12 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         }
     }
 
-    /// Applies a `NameOwnerChanged` from the bus to a tracked name.
+    /// Applies a `NameOwnerChanged` to a tracked name: one the bus itself sent,
+    /// as `ownerRule(_:)`, the rule registered for it, defines.
     private static func followOwnerChange(_ signal: DBusReceivedMessage, in state: inout State) {
-        let header = signal.header
-        guard header.sender == DBusBus.name, header.path == DBusBus.path, header.interface == DBusBus.interface,
-            header.member == "NameOwnerChanged",
-            let arguments = try? signal.decodeBody(expecting: "sss"),
+        guard let arguments = try? signal.decodeBody(expecting: "sss"),
             case .string(let name) = arguments[0], case .string(let newOwner) = arguments[2],
-            state.owners[name] != nil
+            state.owners[name] != nil, ownerRule(name).matches(signal, senderOwner: DBusBus.name)
         else { return }
         state.owners[name]?.owner = newOwner.isEmpty ? nil : newOwner
     }
