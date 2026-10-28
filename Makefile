@@ -72,7 +72,8 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/check-config-decoding.sh \
                  Tools/tests/check-test-waits.sh \
                  Tools/tests/check-exit-tests.sh \
-                 Tools/tests/check-self-activation.sh
+                 Tools/tests/check-self-activation.sh \
+                 Tools/tests/check-portable-imports.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
