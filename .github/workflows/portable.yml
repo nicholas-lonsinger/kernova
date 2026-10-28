@@ -69,9 +69,9 @@ jobs:
           dbus-daemon --version || true
           for t in KernovaPlatformLinuxTests; do
             echo "=== $t"
-            timeout -s KILL 240 swift test --package-path KernovaKit --skip-build --filter "$t" > out.txt 2>&1
+            timeout -s KILL 300 stdbuf -oL -eL swift test --package-path KernovaKit --skip-build --filter "$t" > out.txt 2>&1
             echo "=== $t rc=$?"
-            grep -E 'started|passed after|failed|issue|Fatal|error|exitedEarly' out.txt | tail -80
+            grep -v '^\[' out.txt | tail -120
           done
           exit 1
 

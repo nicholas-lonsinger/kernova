@@ -1,19 +1,22 @@
 #if os(Linux)
-#if canImport(Glibc)
-import Glibc
-#elseif canImport(Musl)
-import Musl
-#endif
-
 import KernovaDBus
 import KernovaPlatformLinux
 import Synchronization
 import Testing
 
 /// `org.freedesktop.login1` as the agent sees it, exported on a private bus:
-/// the manager's calls the wrappers make, and one session.
+/// the manager calls the wrappers make, two users, seat0, and two sessions —
+/// a user's graphical session and a greeter.
 final class FakeLogind: Sendable {
-    static let sessionPath: DBusObjectPath = "/org/freedesktop/login1/session/_32"
+    static let userSession = LogindSessionReference(id: "2", path: "/org/freedesktop/login1/session/_32")
+    static let greeterSession = LogindSessionReference(id: "c1", path: "/org/freedesktop/login1/session/c1")
+    static let seatPath: DBusObjectPath = "/org/freedesktop/login1/seat/seat0"
+    /// Logged in with a graphical session.
+    static let displayUID: UInt32 = 1000
+    static let displayUserPath: DBusObjectPath = "/org/freedesktop/login1/user/_1000"
+    /// Logged in with no graphical session: lingering, or reached over SSH.
+    static let sessionlessUID: UInt32 = 1001
+    static let sessionlessUserPath: DBusObjectPath = "/org/freedesktop/login1/user/_1001"
 
     let connection: DBusBusConnection
     let recorder: Recorder
@@ -24,6 +27,8 @@ final class FakeLogind: Sendable {
         let calls = Mutex<[(String, [DBusValue])]>([])
         /// The error PowerOff and Reboot answer with, when set.
         let refusal = Mutex<DBusRemoteError?>(nil)
+        /// seat0's foreground session.
+        let activeSession = Mutex<LogindSessionReference?>(FakeLogind.greeterSession)
     }
 
     static let inhibitors: [DBusValue] = [
@@ -39,6 +44,11 @@ final class FakeLogind: Sendable {
         .struct([.string(what), .string(who), .string(why), .string(mode), .uint32(uid), .uint32(pid)])
     }
 
+    /// A `(so)` session reference; `("", "/")` for none, as logind holds it.
+    static func reference(_ session: LogindSessionReference?) -> DBusValue {
+        .struct([.string(session?.id ?? ""), .objectPath(session?.path ?? .root)])
+    }
+
     init(on bus: PrivateBus) throws {
         let recorder = Recorder()
         self.recorder = recorder
@@ -49,55 +59,86 @@ final class FakeLogind: Sendable {
     private static func answer(_ call: DBusReceivedMessage, recorder: Recorder) -> DBusMessage? {
         let body = (try? call.decodeBody()) ?? []
         let header = call.header
+        let unknown = DBusMessage.error(
+            replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownMethod", message: "")
         if header.path == Logind.managerPath, header.interface == Logind.managerInterface, let member = header.member {
             recorder.calls.withLock { $0.append((member, body)) }
-            switch (member, call.signature.description) {
-            case ("PowerOff", "b"), ("Reboot", "b"):
-                if let error = recorder.refusal.withLock({ $0 }) {
-                    return .error(replyingTo: call, name: error.name, message: error.message)
-                }
-                return .methodReturn(replyingTo: call)
-            case ("ListInhibitors", ""):
-                return .methodReturn(
-                    replyingTo: call,
-                    body: [
-                        .array(
-                            elementType: .struct([.string, .string, .string, .string, .uint32, .uint32]), inhibitors)
-                    ])
-            case ("GetSessionByPID", "u"):
-                guard body == [.uint32(UInt32(getpid()))] else {
-                    return .error(
-                        replyingTo: call, name: "org.freedesktop.login1.NoSessionForPID", message: "No session")
-                }
-                return .methodReturn(replyingTo: call, body: [.objectPath(sessionPath)])
-            default:
-                break
-            }
+            return manager(call, member: member, body: body, recorder: recorder) ?? unknown
         }
-        if header.path == sessionPath, header.interface == "org.freedesktop.DBus.Properties",
-            header.member == "GetAll", body == [.string(Logind.sessionInterface)]
-        {
-            return .methodReturn(
-                replyingTo: call,
-                body: [
-                    .dictionary(
-                        key: .string, value: .variant,
-                        [
-                            (.string("Id"), .variant(.string("32"))),
-                            (.string("Active"), .variant(.boolean(true))),
-                            (.string("State"), .variant(.string("active"))),
-                            (.string("Class"), .variant(.string("user"))),
-                        ])
-                ])
+        guard header.interface == "org.freedesktop.DBus.Properties", let path = header.path,
+            let properties = properties(of: path, interface: body.first, recorder: recorder)
+        else { return unknown }
+        switch (header.member, body.count > 1 ? body[1] : nil) {
+        case ("Get", .string(let name)?):
+            guard let value = properties[name] else { return unknown }
+            return .methodReturn(replyingTo: call, body: [.variant(value)])
+        case ("GetAll", nil):
+            let entries = properties.map { (DBusValue.string($0.key), DBusValue.variant($0.value)) }
+            return .methodReturn(replyingTo: call, body: [.dictionary(key: .string, value: .variant, entries)])
+        default:
+            return unknown
         }
-        return .error(replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownMethod", message: "")
     }
 
-    /// Emits `PropertiesChanged` for `interface` on the session.
-    func emitChange(interface: String, changed: [(String, DBusValue)], invalidated: [String]) throws {
+    private static func properties(
+        of path: DBusObjectPath, interface: DBusValue?, recorder: Recorder
+    ) -> [String: DBusValue]? {
+        switch (path, interface) {
+        case (displayUserPath, .string(Logind.userInterface)?):
+            ["Display": reference(userSession), "Name": .string("user")]
+        case (sessionlessUserPath, .string(Logind.userInterface)?):
+            ["Display": reference(nil), "Name": .string("lingering")]
+        case (seatPath, .string(Logind.seatInterface)?):
+            ["ActiveSession": reference(recorder.activeSession.withLock { $0 }), "Id": .string("seat0")]
+        case (userSession.path, .string(Logind.sessionInterface)?):
+            [
+                "Id": .string("2"), "Active": .boolean(false), "State": .string("online"), "Class": .string("user"),
+                "Type": .string("wayland"),
+            ]
+        case (greeterSession.path, .string(Logind.sessionInterface)?):
+            ["Id": .string("c1"), "Active": .boolean(true), "State": .string("active"), "Class": .string("greeter")]
+        default:
+            nil
+        }
+    }
+
+    private static func manager(
+        _ call: DBusReceivedMessage, member: String, body: [DBusValue], recorder: Recorder
+    ) -> DBusMessage? {
+        switch (member, call.signature.description) {
+        case ("PowerOff", "b"), ("Reboot", "b"):
+            if let error = recorder.refusal.withLock({ $0 }) {
+                return .error(replyingTo: call, name: error.name, message: error.message)
+            }
+            return .methodReturn(replyingTo: call)
+        case ("ListInhibitors", ""):
+            let element = DBusType.struct([.string, .string, .string, .string, .uint32, .uint32])
+            return .methodReturn(replyingTo: call, body: [.array(elementType: element, inhibitors)])
+        case ("GetUser", "u"):
+            switch body[0] {
+            case .uint32(displayUID): return .methodReturn(replyingTo: call, body: [.objectPath(displayUserPath)])
+            case .uint32(sessionlessUID):
+                return .methodReturn(replyingTo: call, body: [.objectPath(sessionlessUserPath)])
+            default:
+                return .error(replyingTo: call, name: "org.freedesktop.login1.NoSuchUser", message: "Not logged in")
+            }
+        case ("GetSeat", "s"):
+            guard body == [.string("seat0")] else {
+                return .error(replyingTo: call, name: "org.freedesktop.login1.NoSuchSeat", message: "No seat")
+            }
+            return .methodReturn(replyingTo: call, body: [.objectPath(seatPath)])
+        default:
+            return nil
+        }
+    }
+
+    /// Emits `PropertiesChanged` for `interface` on `path`.
+    func emitChange(
+        on path: DBusObjectPath, interface: String, changed: [(String, DBusValue)], invalidated: [String]
+    ) throws {
         try connection.send(
             .signal(
-                path: Self.sessionPath, interface: "org.freedesktop.DBus.Properties", member: "PropertiesChanged",
+                path: path, interface: "org.freedesktop.DBus.Properties", member: "PropertiesChanged",
                 body: [
                     .string(interface),
                     .dictionary(key: .string, value: .variant, changed.map { (.string($0.0), .variant($0.1)) }),
@@ -106,7 +147,7 @@ final class FakeLogind: Sendable {
     }
 }
 
-@Suite("Logind against a fake org.freedesktop.login1")
+@Suite("Logind against a fake org.freedesktop.login1", .timeLimit(.minutes(1)))
 struct LogindTests {
     @Test("PowerOff and Reboot send interactive false")
     func power() throws {
@@ -152,47 +193,102 @@ struct LogindTests {
         #expect(try logind.shutdownBlockers(forCallerUID: 0).map(\.who) == ["GNOME Session"])
     }
 
-    @Test("GetSessionByPID finds this process's session and its Active, State and Class")
-    func session() throws {
+    @Test("A user's display session is found from its uid, with the session's Id, Active, State and Class")
+    func displaySession() throws {
         let bus = try PrivateBus()
         _ = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
-        let session = try logind.currentSession()
-        #expect(session == FakeLogind.sessionPath)
+        let user = try logind.user(FakeLogind.displayUID)
+        #expect(user == FakeLogind.displayUserPath)
+        let session = try #require(try logind.displaySession(ofUser: user))
+        #expect(session == FakeLogind.userSession)
         #expect(
-            try logind.sessionProperties(session)
-                == LogindSessionProperties(active: true, state: .active, sessionClass: .user))
+            try logind.sessionProperties(session.path)
+                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user))
+    }
 
+    @Test("A user in no graphical session has no display session, and a user not logged in is an error")
+    func noSession() throws {
+        let bus = try PrivateBus()
+        _ = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        #expect(try logind.displaySession(ofUser: logind.user(FakeLogind.sessionlessUID)) == nil)
         do {
-            _ = try logind.session(ofProcess: 1)
+            _ = try logind.user(1002)
             Issue.record("The call returned")
         } catch LogindError.call(.remote(let error)) {
-            #expect(error.name == "org.freedesktop.login1.NoSessionForPID")
+            #expect(error.name == "org.freedesktop.login1.NoSuchUser")
         }
     }
 
-    @Test("Observing a session delivers its PropertiesChanged, and nothing for another interface")
-    func observe() throws {
+    @Test("seat0's active session names who holds the console: a greeter, a user, or nobody")
+    func console() throws {
         let bus = try PrivateBus()
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
-        let inbox = Inbox<Result<LogindSessionChange, LogindError>>()
-        let subscription = try logind.observeSession(FakeLogind.sessionPath) { inbox.put($0) }
+        let seat = try logind.seat("seat0")
+        #expect(seat == FakeLogind.seatPath)
 
+        let greeter = try #require(try logind.activeSession(onSeat: seat))
+        #expect(greeter == FakeLogind.greeterSession)
+        #expect(
+            try logind.sessionProperties(greeter.path)
+                == LogindSessionProperties(id: "c1", active: true, state: .active, sessionClass: .greeter))
+
+        fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
+        #expect(try logind.activeSession(onSeat: seat) == FakeLogind.userSession)
+        fake.recorder.activeSession.withLock { $0 = nil }
+        #expect(try logind.activeSession(onSeat: seat) == nil)
+
+        #expect(throws: LogindError.self) { try logind.seat("seat1") }
+    }
+
+    @Test("Observing seat0 delivers each change of its active session")
+    func observeSeat() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        let seat = try logind.seat("seat0")
+        let inbox = Inbox<Result<LogindSeatChange, LogindError>>()
+        let subscription = try logind.observeSeat(seat) { inbox.put($0) }
+
+        let interface = Logind.seatInterface
+        try fake.emitChange(on: seat, interface: interface, changed: [("CanTTY", .boolean(true))], invalidated: [])
+        let toUser = [("ActiveSession", FakeLogind.reference(FakeLogind.userSession))]
+        try fake.emitChange(on: seat, interface: interface, changed: toUser, invalidated: [])
+        #expect(try inbox.next().get() == .activeSession(FakeLogind.userSession))
+        let toNobody = [("ActiveSession", FakeLogind.reference(nil))]
+        try fake.emitChange(on: seat, interface: interface, changed: toNobody, invalidated: [])
+        #expect(try inbox.next().get() == .activeSession(nil))
+        try fake.emitChange(on: seat, interface: interface, changed: [], invalidated: ["ActiveSession"])
+        #expect(try inbox.next().get() == .activeSessionInvalidated)
+        #expect(inbox.isEmpty)
+        subscription.cancel()
+    }
+
+    @Test("Observing a session delivers its PropertiesChanged, and nothing for another interface")
+    func observeSession() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        let path = FakeLogind.userSession.path
+        let inbox = Inbox<Result<LogindSessionChange, LogindError>>()
+        let subscription = try logind.observeSession(path) { inbox.put($0) }
+
+        let interface = Logind.sessionInterface
         try fake.emitChange(
-            interface: "org.freedesktop.login1.User", changed: [("State", .string("x"))], invalidated: [])
+            on: path, interface: Logind.userInterface, changed: [("State", .string("x"))], invalidated: [])
+        try fake.emitChange(on: path, interface: interface, changed: [("IdleHint", .boolean(true))], invalidated: [])
         try fake.emitChange(
-            interface: Logind.sessionInterface, changed: [("IdleHint", .boolean(true))], invalidated: [])
-        try fake.emitChange(
-            interface: Logind.sessionInterface, changed: [("Active", .boolean(false)), ("State", .string("online"))],
+            on: path, interface: interface, changed: [("Active", .boolean(true)), ("State", .string("active"))],
             invalidated: ["Class", "IdleHint"])
         let change = try inbox.next().get()
-        #expect(change.active == false)
-        #expect(change.state == .online)
+        #expect(change.active == true)
+        #expect(change.state == .active)
         #expect(change.sessionClass == nil)
         #expect(change.invalidated == [.sessionClass])
 
-        try fake.emitChange(interface: Logind.sessionInterface, changed: [("Active", .string("yes"))], invalidated: [])
+        try fake.emitChange(on: path, interface: interface, changed: [("Active", .string("yes"))], invalidated: [])
         #expect(throws: LogindError.valueMismatch(DBusValueMismatch(expected: .boolean, actual: .string))) {
             try inbox.next().get()
         }

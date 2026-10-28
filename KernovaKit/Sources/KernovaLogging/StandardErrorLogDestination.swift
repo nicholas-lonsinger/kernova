@@ -1,4 +1,12 @@
-import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(ucrt)
+import ucrt
+#endif
 
 /// Where a `KernovaLogger` records locally where there is no unified log: one
 /// line per record on standard error, which journald files as one entry for a
@@ -26,7 +34,14 @@ struct StandardErrorLogDestination: Sendable {
     /// Writes the record's `line` in one write; a line standard error refuses
     /// is dropped, as there is nowhere left to report it.
     func emit(_ segments: [LogSegment], at level: KernovaLogLevel) {
-        try? FileHandle.standardError.write(contentsOf: Data(line(segments, at: level).utf8))
+        var text = line(segments, at: level)
+        text.withUTF8 { bytes in
+            #if canImport(ucrt)
+            _ = _write(2, bytes.baseAddress, UInt32(bytes.count))
+            #else
+            _ = write(2, bytes.baseAddress, bytes.count)
+            #endif
+        }
     }
 
     /// The record as written: the priority, `[subsystem:category]`, then the

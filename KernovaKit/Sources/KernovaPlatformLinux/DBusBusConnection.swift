@@ -5,7 +5,6 @@ import Glibc
 import Musl
 #endif
 
-import Foundation
 import KernovaDBus
 
 /// A connection to a message bus, driving a `DBusConnection` over a
@@ -37,14 +36,19 @@ public final class DBusBusConnection: Sendable {
 
         /// The bus's address from the environment, or its default.
         public func address() throws(DBusConnectError) -> String {
-            let environment = ProcessInfo.processInfo.environment
             switch self {
             case .system:
-                return environment["DBUS_SYSTEM_BUS_ADDRESS"] ?? "unix:path=/run/dbus/system_bus_socket"
+                return Self.environment("DBUS_SYSTEM_BUS_ADDRESS") ?? "unix:path=/run/dbus/system_bus_socket"
             case .session:
-                guard let address = environment["DBUS_SESSION_BUS_ADDRESS"] else { throw .noSessionBusAddress }
+                guard let address = Self.environment("DBUS_SESSION_BUS_ADDRESS") else {
+                    throw .noSessionBusAddress
+                }
                 return address
             }
+        }
+
+        private static func environment(_ name: String) -> String? {
+            getenv(name).map { String(cString: $0) }
         }
     }
 
@@ -95,7 +99,12 @@ public final class DBusBusConnection: Sendable {
         onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil
     ) throws(DBusConnectError) {
         let engine = DBusConnectionEngine(transport: transport, uid: uid, onMethodCall: onMethodCall)
-        engine.start()
+        do throws(DBusConnectError) {
+            try engine.start()
+        } catch {
+            engine.close()
+            throw error
+        }
         do throws(DBusCallError) {
             uniqueName = try engine.waitUntilReady(timeout: Self.defaultTimeout)
         } catch {
@@ -196,6 +205,8 @@ public enum DBusConnectError: Error, Hashable, Sendable {
     case transport(DBusTransportError)
     /// Authentication or `Hello` failed.
     case handshake(DBusCallError)
+    /// `pthread_create` failed with this error.
+    case threadUnavailable(Int32)
 }
 
 /// The state both threads and every caller share, behind one condition.
@@ -222,7 +233,9 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         var owners: [String: (owner: String?, subscribers: Int)] = [:]
         /// `GetNameOwner` calls in flight, by serial.
         var ownerLookups: [UInt32: String] = [:]
-        var readerThread: ObjectIdentifier?
+        var readerThread: pthread_t?
+
+        var isReaderThread: Bool { readerThread.map(isCurrentThread) ?? false }
 
         /// The unique name a rule's `sender` currently stands for.
         func owner(of sender: String?) -> String? {
@@ -239,7 +252,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
 
     private let transport: any DBusTransport
     private let onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)?
-    private let condition = NSCondition()
+    private let condition = Condition()
     /// Read and written only while `condition` is locked.
     private var state: State
 
@@ -251,9 +264,13 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         state = State(core: DBusConnection(uid: uid))
     }
 
-    func start() {
-        Thread { [self] in runReader() }.start()
-        Thread { [self] in runWriter() }.start()
+    /// Starts the reader and writer threads; a failure to start the writer
+    /// leaves the reader for `close()` to end.
+    func start() throws(DBusConnectError) {
+        let reader = startThread { [self] in runReader() }
+        guard reader == 0 else { throw .threadUnavailable(reader) }
+        let writer = startThread { [self] in runWriter() }
+        guard writer == 0 else { throw .threadUnavailable(writer) }
     }
 
     private func locked<Result, Failure: Error>(
@@ -268,7 +285,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     }
 
     func waitUntilReady(timeout: Duration) throws(DBusCallError) -> String {
-        let deadline = Date(timeIntervalSinceNow: timeout.seconds)
+        let deadline = Deadline(after: timeout)
         condition.lock()
         defer { condition.unlock() }
         while true {
@@ -312,9 +329,9 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     }
 
     func call(_ message: DBusMessage, timeout: Duration) throws(DBusCallError) -> DBusReceivedMessage {
-        let deadline = Date(timeIntervalSinceNow: timeout.seconds)
+        let deadline = Deadline(after: timeout)
         let serial = try locked { state throws(DBusCallError) in
-            precondition(state.readerThread != ObjectIdentifier(Thread.current), "A handler made a blocking call")
+            precondition(!state.isReaderThread, "A handler made a blocking call")
             let serial = try Self.queue(message, in: &state)
             state.replies[serial] = .waiting
             return serial
@@ -322,7 +339,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         return try awaitReply(to: serial, until: deadline)
     }
 
-    private func awaitReply(to serial: UInt32, until deadline: Date) throws(DBusCallError) -> DBusReceivedMessage {
+    private func awaitReply(to serial: UInt32, until deadline: Deadline) throws(DBusCallError) -> DBusReceivedMessage {
         condition.lock()
         defer { condition.unlock() }
         var timedOut = false
@@ -350,12 +367,12 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     func subscribe(
         _ rule: DBusMatchRule, handler: @escaping @Sendable (DBusReceivedMessage) -> Void
     ) throws(DBusCallError) -> DBusSubscription {
-        let deadline = Date(timeIntervalSinceNow: DBusBusConnection.defaultTimeout.seconds)
+        let deadline = Deadline(after: DBusBusConnection.defaultTimeout)
         // Everything goes out in one hold, so the bus answers in this order:
         // the owner lookup lands before the rule's own AddMatch reply, and no
         // other caller's messages fall between.
         let (id, awaited) = try locked { state throws(DBusCallError) in
-            precondition(state.readerThread != ObjectIdentifier(Thread.current), "A handler made a blocking call")
+            precondition(!state.isReaderThread, "A handler made a blocking call")
             if let disconnection = state.disconnection { throw .disconnected(disconnection) }
             let id = state.nextSubscriptionID
             state.nextSubscriptionID += 1
@@ -450,7 +467,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     }
 
     private func runReader() {
-        locked { $0.readerThread = ObjectIdentifier(Thread.current) }
+        locked { $0.readerThread = pthread_self() }
         let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: 65_536, alignment: 1)
         defer { buffer.deallocate() }
         while true {
@@ -544,11 +561,4 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     }
 }
 
-extension Duration {
-    /// The duration in seconds, as `Date` takes an interval.
-    fileprivate var seconds: Double {
-        let (seconds, attoseconds) = components
-        return Double(seconds) + Double(attoseconds) / 1e18
-    }
-}
 #endif
