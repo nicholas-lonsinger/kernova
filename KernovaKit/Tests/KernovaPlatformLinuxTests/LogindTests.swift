@@ -176,7 +176,8 @@ struct LogindTests {
     @Test("ListInhibitors maps every field, and the blocking ones are those on shutdown that block this caller")
     func inhibitors() throws {
         let bus = try PrivateBus()
-        _ = try FakeLogind(on: bus)
+        let fake = try FakeLogind(on: bus)
+        defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
         let all = try logind.inhibitors()
         #expect(all.count == 4)
@@ -196,7 +197,8 @@ struct LogindTests {
     @Test("A user's display session is found from its uid, with the session's Id, Active, State and Class")
     func displaySession() throws {
         let bus = try PrivateBus()
-        _ = try FakeLogind(on: bus)
+        let fake = try FakeLogind(on: bus)
+        defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
         let user = try logind.user(FakeLogind.displayUID)
         #expect(user == FakeLogind.displayUserPath)
@@ -210,7 +212,8 @@ struct LogindTests {
     @Test("A user in no graphical session has no display session, and a user not logged in is an error")
     func noSession() throws {
         let bus = try PrivateBus()
-        _ = try FakeLogind(on: bus)
+        let fake = try FakeLogind(on: bus)
+        defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
         #expect(try logind.displaySession(ofUser: logind.user(FakeLogind.sessionlessUID)) == nil)
         do {
