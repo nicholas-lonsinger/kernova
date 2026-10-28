@@ -116,6 +116,20 @@ else
     detail "It ships with Xcode 26+. Confirm your Xcode is selected: xcode-select -p"
 fi
 
+# The app's "Build Linux Guest Agent" phase cross-builds with the swift.org
+# toolchain and Static Linux SDK, and fails on the same check when either is
+# missing.
+# shellcheck source=lib/static-linux-sdk.sh
+. Tools/lib/static-linux-sdk.sh
+pinned_swift="$(tr -d '[:space:]' <.swift-version)"
+missing_swift="$(swift_toolchain_missing "$pinned_swift")"
+if [ -z "$missing_swift" ]; then
+    pass "Swift $pinned_swift and $(static_sdk_id "$pinned_swift") for the Linux guest agent"
+else
+    fail "$missing_swift not installed — the app build cross-builds the Linux guest agent with it"
+    detail "Fix: make swift-toolchain"
+fi
+
 # ---- repository -------------------------------------------------------------
 
 section 'Repository'

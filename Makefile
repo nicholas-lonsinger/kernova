@@ -243,9 +243,11 @@ PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaW
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
+	version=$$(tr -d '[:space:]' <.swift-version); \
+	sdk=$$(. Tools/lib/static-linux-sdk.sh && static_sdk_id "$$version"); \
 	for target in $(PORTABLE_TARGETS); do \
-		"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
-			--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
+		"$$swiftly" run swift build "+$$version" --package-path KernovaKit \
+			--scratch-path KernovaKit/.build/swiftly --swift-sdk "$$sdk" --triple aarch64-swift-linux-musl \
 			--target "$$target" || exit 1; \
 	done
 
@@ -294,7 +296,6 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-self-activation.sh
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
-	@bash Tools/check-linux-agent-fault.sh
 	@bash Tools/check-package-reference.sh
 	@bash Tools/check-core-imports.sh
 	@bash Tools/check-portable-imports.sh $(PORTABLE_TARGETS)

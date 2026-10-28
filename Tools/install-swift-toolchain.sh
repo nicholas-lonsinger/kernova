@@ -27,7 +27,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$lib_dir/lib/static-linux-sdk.sh"
 
 swift_version="$(tr -d '[:space:]' <.swift-version)"
-swiftly="${SWIFTLY_HOME_DIR:-$HOME/.swiftly}/bin/swiftly"
+swiftly="$(swiftly_binary)"
 
 if [ ! -x "$swiftly" ]; then
     tmp_dir="$(mktemp -d)"
@@ -40,12 +40,10 @@ fi
 
 "$swiftly" install "$swift_version" --assume-yes >&2
 
-sdk_id="swift-${swift_version}-RELEASE_static-linux-${STATIC_SDK_VERSION}"
+sdk_id="$(static_sdk_id "$swift_version")"
 installed_sdks="$("$swiftly" run swift sdk list "+$swift_version")"
 if ! grep -qxF "$sdk_id" <<<"$installed_sdks"; then
-    release_dir="swift-${swift_version}-release/static-sdk/swift-${swift_version}-RELEASE"
-    "$swiftly" run swift sdk install \
-        "https://download.swift.org/${release_dir}/${sdk_id}.artifactbundle.tar.gz" \
+    "$swiftly" run swift sdk install "$(static_sdk_url "$swift_version")" \
         --checksum "$STATIC_SDK_CHECKSUM" "+$swift_version" >&2
 fi
 

@@ -12,6 +12,8 @@ on:
       - 'Tools/build-linux-guest-agent.sh'
       - 'Tools/check-linux-guest-agent.sh'
       - 'Tools/lib/static-linux-sdk.sh'
+      - 'Tools/lib/linux-agent.sh'
+      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   pull_request:
     paths:
       - 'KernovaKit/**'
@@ -20,6 +22,8 @@ on:
       - 'Tools/build-linux-guest-agent.sh'
       - 'Tools/check-linux-guest-agent.sh'
       - 'Tools/lib/static-linux-sdk.sh'
+      - 'Tools/lib/linux-agent.sh'
+      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   workflow_dispatch:
 
 permissions:
@@ -77,10 +81,7 @@ jobs:
         run: |
           . Tools/lib/static-linux-sdk.sh
           version='${{ needs.swift-version.outputs.version }}'
-          sdk="swift-${version}-RELEASE_static-linux-${STATIC_SDK_VERSION}"
-          swift sdk install \
-            "https://download.swift.org/swift-${version}-release/static-sdk/swift-${version}-RELEASE/${sdk}.artifactbundle.tar.gz" \
-            --checksum "$STATIC_SDK_CHECKSUM"
+          swift sdk install "$(static_sdk_url "$version")" --checksum "$STATIC_SDK_CHECKSUM"
 
       # A second checkout path, so the comparison proves no path reaches the
       # binary.
