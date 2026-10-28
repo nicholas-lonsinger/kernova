@@ -1,3 +1,4 @@
+import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaTestSupport
@@ -18,8 +19,9 @@ struct GuestAgentPresentationTests {
             console: .on, versionLabel: version, standing: standing, isResponsive: isResponsive)
     }
 
-    private static func snapshot(_ peers: [PeerSummary]) -> AgentHubSnapshot {
-        AgentHubSnapshot(peers: peers, features: FeatureStatus.merge([]))
+    private static func snapshot(_ peers: [PeerSummary], logs: Availability<Data>? = nil) -> AgentHubSnapshot {
+        let features = logs.map { FeatureStatusTable([(feature: .logs, status: $0)]) } ?? FeatureStatus.merge([])
+        return AgentHubSnapshot(peers: peers, features: features)
     }
 
     @Test(
@@ -34,23 +36,44 @@ struct GuestAgentPresentationTests {
         #expect(presentation.hub == nil)
     }
 
-    @Test("With no agent connected, the hub's presentation is waiting, and its Status row says why")
+    @Test("With no agent connected, the hub's presentation is waiting, and its Status and logs rows say why")
     func hubWithNoPeers() {
         let presentation = GuestAgentPresentation(hub: .empty)
         #expect(presentation.status == .waiting)
         #expect(presentation.hub?.peers == [])
         #expect(
             presentation.hub?.capabilities == [
-                .init(title: "Status", isAvailable: false, detail: "No Kernova agent is connected.")
+                .init(title: "Status", isAvailable: false, detail: "No Kernova agent is connected."),
+                .init(title: "Guest logs in Console", isAvailable: false, detail: "No Kernova agent is connected."),
             ])
     }
 
     @Test("One current session agent is a line naming its user, and the Status row is connected")
     func hubWithOneCurrentPeer() {
-        let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1)]))
+        let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1)], logs: .available(Data())))
         #expect(presentation.status == .current(version: "1.0"))
         #expect(presentation.hub?.peers == [.init(title: "Session agent — pbear", state: "Up to date")])
-        #expect(presentation.hub?.capabilities == [.init(title: "Status", isAvailable: true, detail: "Connected")])
+        #expect(
+            presentation.hub?.capabilities == [
+                .init(title: "Status", isAvailable: true, detail: "Connected"),
+                .init(title: "Guest logs in Console", isAvailable: true, detail: "On"),
+            ])
+    }
+
+    @Test(
+        "The logs row reads the merged LOGS status: on, or the reason it is absent",
+        arguments: [
+            (AbsenceReason.disabledByPolicy, "Turned off in Settings."),
+            (.notImplemented, "This agent doesn't offer it."),
+            (.versionMismatch, "The agent is out of date."),
+            (.protocolMismatch, "The agent is out of date."),
+        ])
+    func logsRow(reason: AbsenceReason, detail: String) {
+        let presentation = GuestAgentPresentation(
+            hub: Self.snapshot([Self.peer(1)], logs: .absent(reason, debugDetail: "")))
+        #expect(
+            presentation.hub?.capabilities.last
+                == .init(title: "Guest logs in Console", isAvailable: false, detail: detail))
     }
 
     @Test("An outdated agent makes the whole presentation outdated, and each agent keeps its own line")
