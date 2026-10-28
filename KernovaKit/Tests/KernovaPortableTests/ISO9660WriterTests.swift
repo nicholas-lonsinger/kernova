@@ -144,7 +144,7 @@ struct ISO9660WriterTests {
         let entries = Self.entries()
         try Data(try Self.write(entries)).write(to: iso)
 
-        let listing = try Self.run(["xorriso", "-indev", iso.path, "-find", "/", "-type", "f", "-exec", "lsdm"])
+        let listing = try Self.run(["xorriso", "-indev", iso.path, "-find", "/", "-type", "f", "-exec", "lsdl"])
         var listed: [String: String] = [:]
         for line in listing.split(separator: "\n") where line.hasPrefix("-") {
             let mode = String(line.prefix(10))
