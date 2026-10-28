@@ -14,8 +14,9 @@ struct PeerRecord: Sendable {
     var connection: any HostConnectionHandle
     var claim: PeerClaim
     var state: PeerSessionState
-    /// Its latest `featuresChanged`.
-    var features = FeatureStatusTable()
+    /// Its latest `featuresChanged`; `nil` until the first, which the host endpoint emits with the Hello
+    /// it answers, so a peer is shown only once its features are known.
+    var features: FeatureStatusTable?
     var isResponsive = true
     /// Higher is newer.
     var connectedOrder: UInt64
@@ -80,9 +81,9 @@ struct AgentHubState: Sendable {
     }
 
     var snapshot: AgentHubSnapshot {
-        let ordered = peers.values.sorted { $0.connectedOrder > $1.connectedOrder }
+        let ordered = peers.values.filter { $0.features != nil }.sorted { $0.connectedOrder > $1.connectedOrder }
         return AgentHubSnapshot(
-            peers: ordered.map(summary), features: FeatureStatus.merge(ordered.map(\.features)))
+            peers: ordered.map(summary), features: FeatureStatus.merge(ordered.compactMap(\.features)))
     }
 
     private func summary(_ record: PeerRecord) -> PeerSummary {
