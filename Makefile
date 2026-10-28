@@ -236,14 +236,17 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # evaluates the manifest on this Mac, where every target is declared, so it
 # names them; the Linux and Windows CI jobs build the manifest's own set. Its
 # own scratch path keeps the swift.org toolchain's build state apart from the
-# Xcode toolchain's, which `test-unhosted` uses.
+# Xcode toolchain's, which `test-unhosted` uses. `swift build` keeps only the
+# last of several `--target` options, so each target is a build of its own.
 PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaDBus KernovaPlatformLinux
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
-	"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
-		--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
-		$(addprefix --target ,$(PORTABLE_TARGETS))
+	for target in $(PORTABLE_TARGETS); do \
+		"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
+			--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
+			--target "$$target" || exit 1; \
+	done
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
