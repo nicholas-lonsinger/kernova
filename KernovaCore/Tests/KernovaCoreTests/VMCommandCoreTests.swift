@@ -2304,6 +2304,22 @@ struct VMCommandCoreTests {
         #expect(harness.library.instances.map(\.name) == ["Picked"])
     }
 
+    @Test("A bundle whose config has no device shape imports as the shape its boot mode always got")
+    func importTakesAnUnrecordedShape() async throws {
+        let harness = makeHarness()
+        let (source, config) = try scratch.importSource(name: "Unrecorded")
+        let encoded = try VMConfiguration.makeJSONEncoder().encode(config)
+        var object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["deviceShape"] = nil
+        try JSONSerialization.data(withJSONObject: object)
+            .write(to: VMBundleLayout(bundleURL: source).configURL)
+
+        _ = try await harness.core.importVM(from: source, waitForOutcome: true)
+
+        let imported = try #require(harness.library.instances.first)
+        #expect(imported.configuration.deviceShape == .unrecorded(bootMode: .efi))
+    }
+
     @Test("An imported bundle's pairings are live once it publishes")
     func importTakesOnTheBundlesPairings() async throws {
         let harness = makeHarness()

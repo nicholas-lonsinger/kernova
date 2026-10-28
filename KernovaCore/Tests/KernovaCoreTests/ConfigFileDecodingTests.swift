@@ -341,6 +341,29 @@ struct ConfigFileDecodingTests {
         #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }
 
+    @Test("A config with no device shape reads strictly, as no problem")
+    func aMissingDeviceShapeIsNoProblem() throws {
+        let data = try configJSON { $0["deviceShape"] = nil }
+        let strict = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        #expect(strict.deviceShape == .unrecorded(bootMode: .efi))
+        #expect(diagnose(data).problems.isEmpty)
+    }
+
+    @Test("An unrecognized device shape is refused strictly, and recorded with no repair")
+    func anUnrecognizedDeviceShapeHasNoRepair() throws {
+        let data = try configJSON { $0["deviceShape"] = Self.unrecognized }
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        }
+        let diagnosis = diagnose(data)
+        #expect(
+            diagnosis.problems == [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("deviceShape")]), issue: .unrecognized(found: Self.unrecognized))
+            ])
+        #expect(diagnosis.repaired == nil)
+    }
+
     // MARK: - The snapshot's captured network
 
     @Test("A snapshot's captured network reads past what its configuration no longer takes, keeping the address")

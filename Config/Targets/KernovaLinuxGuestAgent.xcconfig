@@ -1,0 +1,6 @@
+// The Linux guest agent target, both configurations. It builds `kernova-agent`
+// into the products directory, where the app's "Embed Linux Guest Agent" phase
+// copies it from.
+
+// The agent's label carries the app's version.
+MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)

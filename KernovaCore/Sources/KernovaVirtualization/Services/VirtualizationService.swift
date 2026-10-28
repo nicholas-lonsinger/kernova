@@ -16,6 +16,9 @@ package final class VirtualizationService {
 
     private let configBuilder: ConfigurationBuilder
 
+    /// The guest agents this build bundles, whose installer disk a configuration may carry.
+    private let guestAgents: BundledGuestAgents
+
     /// Whether this Mac's protected data is readable right now — `false` while
     /// the user is locked out — which a failed restore reports alongside its
     /// error.
@@ -29,6 +32,7 @@ package final class VirtualizationService {
         configBuilder = ConfigurationBuilder(
             bridgedInterfaces: bridgedInterfaces, vmnetNetworks: vmnetNetworks,
             vmnetAttachments: vmnetAttachments, entitlements: entitlements, guestAgents: guestAgents)
+        self.guestAgents = guestAgents
         self.isProtectedDataAvailable = isProtectedDataAvailable
     }
 
@@ -142,7 +146,8 @@ package final class VirtualizationService {
         // Per attempt, not once per start: the lock-contention retry loop ends
         // the session between attempts, taking this context's scopes with it.
         instance.beginSessionContext(context, bootedIntoRecovery: bootIntoRecovery)
-        let result = try await buildConfiguration(for: instance, context.operation)
+        let result = try await buildConfiguration(
+            try instance.coldBootConfiguration(context), context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -583,13 +588,13 @@ package final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds a VZ configuration, first creating the EFI variable store an EFI
-    /// boot reads when the bundle holds none.
+    /// Builds `config` into a VZ configuration, first making the installer disk
+    /// it carries this build's and creating the EFI variable store an EFI boot
+    /// reads when the bundle holds none.
     private func buildConfiguration(
-        for instance: VMInstance, _ context: borrowing VMOperationContext
+        _ config: VMConfiguration, _ context: borrowing VMOperationContext
     ) async throws -> sending ConfigurationBuilder.BuildResult {
-        let config = instance.effectiveConfiguration
-        try await instance.prepareGuestAgentDisk()
+        try await guestAgents.prepareInstallerDisk(for: config)
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }
@@ -646,7 +651,7 @@ package final class VirtualizationService {
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
         instance.beginSessionContext(context)
-        let result = try await buildConfiguration(for: instance, context.operation)
+        let result = try await buildConfiguration(instance.effectiveConfiguration, context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }

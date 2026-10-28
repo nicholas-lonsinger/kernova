@@ -1315,6 +1315,43 @@ struct ConfigurationBuilderTests {
         #expect(vz.keyboards.first is VZUSBKeyboardConfiguration)
     }
 
+    // MARK: - Socket Device
+
+    @Test("A Linux guest gets exactly one virtio socket device", arguments: [VMBootMode.efi, .linuxKernel])
+    func linuxGuestGetsOneSocketDevice(bootMode: VMBootMode) throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        var config = VMConfiguration.testLinux()
+        config.bootMode = bootMode
+        if bootMode == .linuxKernel {
+            let kernel = bundleURL.appendingPathComponent("vmlinuz")
+            try Data([0]).write(to: kernel)
+            config.kernelPath = kernel.path(percentEncoded: false)
+        }
+
+        let devices = try ConfigurationBuilder.testing()
+            .assemble(from: config, bundleURL: bundleURL, validate: false)
+            .configuration.socketDevices
+
+        #expect(devices.count == 1)
+        #expect(devices.first is VZVirtioSocketDeviceConfiguration)
+    }
+
+    @Test(
+        "A build gives exactly the recorded shape's socket device",
+        arguments: [(VMDeviceShape.current, 1), (VMDeviceShape(virtioSocketDevice: false), 0)]
+    )
+    func socketDeviceFollowsTheRecordedShape(shape: VMDeviceShape, socketDevices: Int) throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        var config = VMConfiguration.testLinux()
+        config.deviceShape = shape
+
+        let devices = try ConfigurationBuilder.testing()
+            .assemble(from: config, bundleURL: bundleURL, validate: false)
+            .configuration.socketDevices
+
+        #expect(devices.count == socketDevices)
+    }
+
     // MARK: - Path-Traversal Containment
 
     @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")

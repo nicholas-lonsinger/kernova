@@ -28,7 +28,7 @@ fi
 # the phase the way Xcode's navigator does rather than a bare hex ID.
 phases=$(awk '
     FNR == NR {
-        if ($0 ~ /^\t\t\tisa = PBXNativeTarget;$/) { in_target = 1; count = 0; next }
+        if ($0 ~ /^\t\t\tisa = PBX(Native|Aggregate)Target;$/) { in_target = 1; count = 0; next }
         if (!in_target) next
         if ($0 ~ /^\t\t\};$/) {
             for (i = 1; i <= count; i++) owner[ids[i]] = target

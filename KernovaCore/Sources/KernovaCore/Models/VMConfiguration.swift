@@ -258,6 +258,12 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
     package var genericMachineIdentifierData: Data?
 
+    // MARK: - Device shape
+
+    /// The devices the last cold boot gave this VM, which a restore of its
+    /// saved state builds.
+    package var deviceShape: VMDeviceShape
+
     // MARK: - Linux kernel boot
 
     package var kernelPath: String?
@@ -408,6 +414,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
+        deviceShape: VMDeviceShape = .current,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = Defaults.kernelCommandLine,
@@ -453,6 +460,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
+        self.deviceShape = deviceShape
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
@@ -531,6 +539,9 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
+        self.deviceShape = try c.decode(
+            VMDeviceShape.self, forKey: .deviceShape, absentMeans: .unrecorded(bootMode: bootMode),
+            in: decoder)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(

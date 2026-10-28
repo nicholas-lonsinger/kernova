@@ -46,8 +46,8 @@ package struct BundledGuestAgentEntry: Sendable, Equatable {
 
 /// The guest agents a host bundles, one per (OS family, architecture, install scope): the macOS agent's
 /// installer DMG, which the "Package Guest Agent DMG" build phase writes, and the Linux `kernova-agent`,
-/// which "Build Linux Guest Agent" writes, serving both the user and the system scope from one file. A file
-/// the bundle lacks has no entry, so what it would deliver is not offered.
+/// which the "Embed Linux Guest Agent" build phase copies in, serving both the user and the system scope
+/// from one file. A file the bundle lacks has no entry, so what it would deliver is not offered.
 ///
 /// One of the ``AppBundleProducts``, which reads the app's.
 package struct BundledGuestAgents: Sendable {
@@ -79,7 +79,7 @@ package struct BundledGuestAgents: Sendable {
         let entries = Self.entries(in: bundle, versionLabel: versionLabel)
         if entries[BundledGuestAgentKey(.linux, .arm64, .user)] == nil {
             Self.logger.log(.fault, "\(Self.linuxAgentPath, privacy: .public) missing from app bundle")
-            assertionFailure("\(Self.linuxAgentPath) missing — check the 'Build Linux Guest Agent' build phase")
+            assertionFailure("\(Self.linuxAgentPath) missing — check the 'Embed Linux Guest Agent' build phase")
         }
         self.init(entries: entries, linuxDisk: .production)
     }
@@ -165,6 +165,14 @@ package struct BundledGuestAgents: Sendable {
             guard let agent = entry(.linux, .arm64, .user) else { return nil }
             return try await linuxDisk.disk(agent: agent.fileURL)
         }
+    }
+
+    /// Makes the installer disk `config` carries this build's, before a bring-up builds from it: the Linux
+    /// disk is written once per process, so an entry left from an earlier copy of Kernova attaches the agent
+    /// this one bundles. A write that fails fails the bring-up.
+    package func prepareInstallerDisk(for config: VMConfiguration) async throws {
+        guard (config.removableMedia ?? []).contains(where: { $0.isInstaller(of: self) }) else { return }
+        _ = try await installerDisk(for: config.guestOS)
     }
 
     /// The label an attachment of `guestOS`'s installer disk carries: the volume name the guest shows.

@@ -640,6 +640,27 @@ struct VMLibraryConfigCheckTests {
                 == nil)
     }
 
+    @Test("The check lists nothing for a VM config with no device shape, which loads as the shape it always had")
+    func aVMConfigWithoutADeviceShapeIsReadable() async throws {
+        let harness = makeHarness()
+        try addBundle("Dev", to: harness.storage) { $0["deviceShape"] = nil }
+        await harness.library.loadVMs()
+
+        #expect(try await harness.library.checkConfigFiles().isEmpty)
+        let instance = try #require(harness.library.instances.first { $0.name == "Dev" })
+        #expect(instance.configuration.deviceShape == .unrecorded(bootMode: .efi))
+    }
+
+    @Test("The check lists nothing for a snapshot config with no device shape")
+    func aSnapshotConfigWithoutADeviceShapeIsReadable() async throws {
+        let harness = makeHarness()
+        _ = try addBundleWithSnapshot(to: harness.storage) { $0["deviceShape"] = nil }
+        await harness.library.loadVMs()
+
+        #expect(try await harness.library.checkConfigFiles().isEmpty)
+        #expect(harness.library.instances.first?.unreadableFiles.isEmpty == true)
+    }
+
     @Test("A snapshot error carries its heading onto the failure it becomes; an untitled error keeps the generic one")
     func snapshotErrorsAreTitled() {
         #expect(

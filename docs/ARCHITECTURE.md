@@ -152,3 +152,5 @@ app links both.
 (`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost`,
 `KernovaUITests` and `KernovaAppBundleTests` each explain
 themselves in `Config/Targets/<Target>.xcconfig` and their entitlements file.
+`KernovaLinuxGuestAgent` (`kernova-agent`, embedded by the app's "Embed Linux
+Guest Agent" Copy Files phase) explains itself in its xcconfig.

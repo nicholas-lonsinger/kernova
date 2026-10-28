@@ -87,6 +87,8 @@ extension VMConfiguration {
         .field("linuxInstallContext", \.linuxInstallContext, []),
         .field("installedImage", \.installedImage, []),
         .field("createdAt", \.createdAt, []),
+        // What a cold boot records of the machine it built.
+        .field("deviceShape", \.deviceShape, []),
         // Hardware the machine is built from.
         .field("cpuCount", \.cpuCount, .machineKeys),
         .field("memorySizeInGB", \.memorySizeInGB, .machineKeys),
