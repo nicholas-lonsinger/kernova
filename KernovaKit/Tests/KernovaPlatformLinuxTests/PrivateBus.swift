@@ -13,12 +13,21 @@ final class PrivateBus {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["dbus-daemon", "--session", "--nofork", "--print-address=1"]
         let output = Pipe()
+        let errors = Pipe()
         process.standardOutput = output
+        process.standardError = errors
         try process.run()
+        // This process's copies of the write ends, closed so a daemon that
+        // exits without printing reads as end of file.
+        try output.fileHandleForWriting.close()
+        try errors.fileHandleForWriting.close()
         var printed = Data()
         while !printed.contains(UInt8(ascii: "\n")) {
             let chunk = output.fileHandleForReading.availableData
-            guard !chunk.isEmpty else { throw PrivateBusError.exitedEarly }
+            guard !chunk.isEmpty else {
+                let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                throw PrivateBusError.exitedEarly(message)
+            }
             printed += chunk
         }
         address = String(decoding: printed, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -37,7 +46,7 @@ final class PrivateBus {
 }
 
 enum PrivateBusError: Error {
-    case exitedEarly
+    case exitedEarly(String)
     case notPrimaryOwner
     case backstopElapsed
 }

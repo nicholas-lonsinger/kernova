@@ -65,11 +65,13 @@ jobs:
         run: |
           set +e
           swift build --package-path KernovaKit --build-tests
-          for t in KernovaPortableTests KernovaDBusTests KernovaPlatformLinuxTests; do
+          ls -l /usr/share/dbus-1/ || true
+          dbus-daemon --version || true
+          for t in KernovaPlatformLinuxTests; do
             echo "=== $t"
-            timeout -s QUIT 240 swift test --package-path KernovaKit --skip-build --filter "$t" > out.txt 2>&1
+            timeout -s KILL 240 swift test --package-path KernovaKit --skip-build --filter "$t" > out.txt 2>&1
             echo "=== $t rc=$?"
-            grep -E 'started|passed after|failed|issue|Fatal|error' out.txt | tail -60
+            grep -E 'started|passed after|failed|issue|Fatal|error|exitedEarly' out.txt | tail -80
           done
           exit 1
 
