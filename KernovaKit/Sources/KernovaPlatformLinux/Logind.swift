@@ -94,32 +94,25 @@ public struct Logind: Sendable {
         return try Self.read { () throws(DBusValueMismatch) in try value.string() }
     }
 
-    /// Calls `onNew` for each `SessionNew` the manager emits, with the new
-    /// session, until the subscription is cancelled. A user's `Display` is
-    /// elected from their sessions, so a new one is when it can appear.
-    /// `onNew` runs on the connection's reader thread.
-    public func observeNewSessions(
-        onNew: @escaping @Sendable (Result<LogindSessionReference, LogindError>) -> Void
+    /// Calls `onChange` for each `PropertiesChanged` logind emits for the
+    /// user that touches `Display`, until the subscription is cancelled; as
+    /// `observeSession(_:onChange:)`, subscribe before reading
+    /// `displaySession(ofUser:)`.
+    ///
+    /// logind emits it as one of the user's sessions starts and as one is
+    /// finalized (systemd's `session_start` and `session_finalize`). A
+    /// session that stops re-elects `Display` at once but emits nothing until
+    /// it is finalized, which waits on its last process.
+    public func observeUser(
+        _ user: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindUserChange, LogindError>) -> Void
     ) throws(LogindError) -> DBusSubscription {
-        let rule = DBusMatchRule(
-            sender: Self.busName, path: Self.managerPath, interface: Self.managerInterface, member: "SessionNew")
-        do throws(DBusCallError) {
-            return try connection.subscribe(rule) { signal in
-                let result = Result { () throws(LogindError) -> LogindSessionReference in
-                    let body: [DBusValue]
-                    do throws(DBusProtocolError) {
-                        body = try signal.decodeBody(expecting: "so")
-                    } catch {
-                        throw .unexpectedReply(error)
-                    }
-                    return try Self.read { () throws(DBusValueMismatch) in
-                        LogindSessionReference(id: try body[0].string(), path: try body[1].objectPath())
-                    }
-                }
-                onNew(result)
+        try observeProperties(of: user, Self.userInterface, onChange: onChange) {
+            changed, invalidated throws(LogindError) in
+            if let value = changed["Display"] {
+                let content = try Self.read { () throws(DBusValueMismatch) in try value.variantContent() }
+                return .display(try LogindSessionReference(content))
             }
-        } catch {
-            throw .call(error)
+            return invalidated.contains("Display") ? .displayInvalidated : nil
         }
     }
 
@@ -478,6 +471,15 @@ public struct LogindSessionReference: Sendable, Hashable {
         guard !id.isEmpty else { return nil }
         self.init(id: id, path: path)
     }
+}
+
+/// What one `PropertiesChanged` on a user says of its `Display`.
+public enum LogindUserChange: Sendable, Hashable {
+    /// The user's display session is now this one, or none.
+    case display(LogindSessionReference?)
+    /// The property changed without a value; reread it with
+    /// `Logind.displaySession(ofUser:)`.
+    case displayInvalidated
 }
 
 /// What one `PropertiesChanged` on a seat says of its `ActiveSession`.

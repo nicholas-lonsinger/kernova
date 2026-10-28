@@ -120,7 +120,7 @@ public final class POSIXByteStream: ByteStream {
     /// Writes at once what the socket accepts and the rest as it drains; completes on the start queue.
     public func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void) {
         let refused = state.withLock { state -> (DispatchQueue, ByteStreamError)? in
-            guard let queue = state.queue else { return nil }
+            guard let queue = state.queue else { preconditionFailure("a write before start") }
             if state.isShutDown { return (queue, .shutDown) }
             precondition(state.pendingWrite == nil, "a second write while one is outstanding")
             state.pendingWrite = PendingWrite(chunks: chunks.filter { !$0.isEmpty }, completion: completion)

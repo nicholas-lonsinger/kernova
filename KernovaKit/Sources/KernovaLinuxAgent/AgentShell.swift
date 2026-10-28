@@ -27,6 +27,7 @@ enum AgentShell {
     private struct Held: Sendable {
         var runtime: PeerAgentRuntime?
         var bus: DBusBusConnection?
+        var watcher: LogindPeerStateWatcher?
         var termination: (any DispatchSourceSignal)?
     }
 
@@ -70,9 +71,13 @@ enum AgentShell {
         }
     }
 
-    /// Runs the peer for `role`: reads its identity and session state, then holds a connection to the host
-    /// through `PeerAgentRuntime` with no adapters, so every feature is advertised absent.
+    /// Runs the peer for `role`: reads its identity, then holds a connection to the host through
+    /// `PeerAgentRuntime` for as long as logind gives it a session to serve, forwarding its own records
+    /// when the host's policy turns LOGS on.
     private static func runPeer(_ role: PeerRole, label: String) -> Never {
+        // First, so every record the process makes reaches the ring, the start notice included.
+        let logs = LogForwarding()
+        KernovaLogger.bootstrapProcessSink(logs.sink)
         let name = role == .systemPeer ? "system" : "session"
         let claim: PeerClaim
         do throws(LinuxIdentityError) {
@@ -99,44 +104,66 @@ enum AgentShell {
         }
         held.withLock { $0.bus = bus }
         let logind = Logind(connection: bus)
-        installTermination()
-        switch role {
-        case .sessionPeer:
-            LogindPeerState.awaitSessionPeer(logind, uid: getuid(), on: queue) { result in
-                switch result {
-                case .success(let state): start(claim, state)
-                case .failure(let error):
-                    fail("The session peer cannot read its session: \(String(describing: error), privacy: .public)")
-                }
-            }
-        case .systemPeer, .host:
-            queue.async {
-                do throws(LogindError) {
-                    start(claim, try LogindPeerState.systemPeer(logind))
-                } catch {
-                    fail("The system peer cannot read seat0: \(String(describing: error), privacy: .public)")
-                }
-            }
-        }
-        dispatchMain()
-    }
-
-    private static func start(_ claim: PeerClaim, _ state: PeerSessionState) {
+        // Dials nothing until the watcher's first state.
         let runtime = PeerAgentRuntime(
-            claim: claim, state: state, registry: PeerFeatureRegistry(), dialer: LinuxVsockDialer(),
+            claim: claim, state: nil, registry: PeerFeatureRegistry(logs: logs), dialer: LinuxVsockDialer(),
             scheduler: SystemScheduler(), logger: logger,
             handlers: PeerAgentRuntime.Handlers { reason in
                 logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
                 exit(0)
             })
         held.withLock { $0.runtime = runtime }
+        installTermination()
+        runtime.start()
+
+        // Its own queue: a logind read can block for the bus's reply timeout, and SIGTERM must not wait on it.
+        let watchQueue = DispatchQueue(label: "app.kernova.agent.logind")
+        let hasState = Locked(false)
+        let apply: @Sendable (Result<PeerSessionState?, LogindError>) -> Void = { result in
+            switch result {
+            case .success(let state):
+                hasState.withLock { $0 = true }
+                logState(state, role: role)
+                runtime.setPeerState(state)
+            case .failure(let error) where !hasState.withLock({ $0 }):
+                // Nothing to keep, and a change that would reread may never come — a headless guest's
+                // seat0 can stay as it is — so the process exits and its unit's restart reads again.
+                fail(
+                    "The \(name) peer cannot read its first session state: \(String(describing: error), privacy: .public)"
+                )
+            case .failure(let error):
+                logger.log(
+                    .error,
+                    """
+                    The \(name, privacy: .public) peer cannot read its session state; it keeps the last one \
+                    until logind's next change: \(String(describing: error), privacy: .public)
+                    """)
+            }
+        }
+        let watcher: LogindPeerStateWatcher
+        do throws(LogindError) {
+            watcher =
+                role == .sessionPeer
+                ? try LogindPeerStateWatcher.sessionPeer(logind, uid: getuid(), on: watchQueue, apply)
+                : try LogindPeerStateWatcher.systemPeer(logind, on: watchQueue, apply)
+        } catch {
+            fail("The \(name) peer cannot follow its session in logind: \(String(describing: error), privacy: .public)")
+        }
+        held.withLock { $0.watcher = watcher }
+        dispatchMain()
+    }
+
+    private static func logState(_ state: PeerSessionState?, role: PeerRole) {
+        guard let state else {
+            return logger.log(.notice, "The user has no display session: the session peer waits for one")
+        }
+        let session = role == .sessionPeer ? state.sessionID : state.consoleSessionID
         logger.log(
             .notice,
             """
-            Dialing the host: session \(state.sessionID, privacy: .public), console \
-            \(String(describing: state.console), privacy: .public)
+            Session state: console \(String(describing: state.console), privacy: .public), session \
+            \(session.isEmpty ? "none" : session, privacy: .public)
             """)
-        runtime.start()
     }
 
     /// On SIGTERM — systemd's stop — closes the connection with `SHUTTING_DOWN`, then exits 0.
