@@ -23,7 +23,7 @@ struct SweepSuite {
         return boundaries + (0..<100).map { _ in generator.int(in: 1...(pullSize + 8192)) }
     }
 
-    @Test("A 3 MiB pull cut anywhere ends every stream once and stages on a later connection")
+    @Test("A 512 KiB pull cut anywhere ends every stream once and stages on a later connection")
     func pullCuts() {
         for (index, offset) in Self.cutOffsets.enumerated() {
             var options = SimOptions()
