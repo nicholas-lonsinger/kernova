@@ -1,4 +1,10 @@
 #if os(Linux)
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
 import Foundation
 import KernovaDBus
 import KernovaPlatformLinux
@@ -21,14 +27,19 @@ final class PrivateBus {
         // exits without printing reads as end of file.
         try output.fileHandleForWriting.close()
         try errors.fileHandleForWriting.close()
-        var printed = Data()
+        // read(2) returns as soon as the daemon prints its address; the daemon
+        // holds the pipe open for as long as it runs.
+        var printed: [UInt8] = []
+        var chunk = [UInt8](repeating: 0, count: 512)
         while !printed.contains(UInt8(ascii: "\n")) {
-            let chunk = output.fileHandleForReading.availableData
-            guard !chunk.isEmpty else {
+            let count = chunk.withUnsafeMutableBytes {
+                read(output.fileHandleForReading.fileDescriptor, $0.baseAddress, $0.count)
+            }
+            guard count > 0 else {
                 let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 throw PrivateBusError.exitedEarly(message)
             }
-            printed += chunk
+            printed += chunk[0..<count]
         }
         address = String(decoding: printed, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         self.process = process
