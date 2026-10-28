@@ -320,6 +320,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
 
     func close() {
         disconnect(.closed)
+        awaitDeliveries { _ in true }
     }
 
     /// Waits until no handler `isAwaited` picks is running, unless the caller
@@ -487,6 +488,7 @@ private final class DBusConnectionEngine: @unchecked Sendable {
 
     func unsubscribe(_ id: UInt64) {
         locked { state in Self.remove(id, from: &state) }
+        awaitDeliveries { $0 == id }
     }
 
     private static func remove(_ id: UInt64, from state: inout State) {
