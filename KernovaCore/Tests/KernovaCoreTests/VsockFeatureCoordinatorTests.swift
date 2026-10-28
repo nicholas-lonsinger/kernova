@@ -74,24 +74,29 @@ struct VsockFeatureCoordinatorTests {
         #expect(VsockFeatureDescriptor.drop.isEnabled(config))
     }
 
-    /// The predicate that has to stay separate from the install-time one: a
-    /// Linux guest's sharing rides the SPICE console port, so live-toggling
-    /// vsock listeners there would install ports nothing dials.
-    @Test("Clipboard applies live only to macOS guests, unlike log and drop")
-    func clipboardAppliesLiveOnlyToMacOS() {
-        let linux = VMConfiguration(
-            name: "Linux VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let macOS = VMConfiguration(
-            name: "macOS VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
-            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
-
-        #expect(!VsockFeatureDescriptor.clipboard.appliesLive(linux))
-        #expect(VsockFeatureDescriptor.clipboard.appliesLive(macOS))
-        for descriptor in [VsockFeatureDescriptor.log, .drop] {
-            #expect(descriptor.appliesLive(linux))
-            #expect(descriptor.appliesLive(macOS))
+    @Test("A Linux session binds no channel with every toggle on, and a macOS one binds them all")
+    func onlyAMacOSGuestBindsChannels() throws {
+        func everyToggleOn(_ guestOS: VMGuestOS, _ bootMode: VMBootMode) -> VMConfiguration {
+            var config = VMConfiguration(
+                name: "Gate VM", guestOS: guestOS, bootMode: bootMode, cpuCount: guestOS.hostCPUCount,
+                memorySizeInGB: guestOS.hostMemorySize)
+            config.clipboardSharingEnabled = true
+            config.agentLogForwardingEnabled = true
+            config.dropFilesEnabled = true
+            return config
         }
+        let linux = everyToggleOn(.linux, .efi)
+        let macOS = everyToggleOn(.macOS, .macOS)
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Coordinator VM")
+        let vsock = try #require(instance.sessionContext?.vsock)
+
+        for descriptor in VsockFeatureDescriptor.all {
+            #expect(!descriptor.isEnabled(linux), "\(descriptor.name): enabled for Linux")
+        }
+        #expect(vsock.listeners(for: linux, sessionID: sessionID).isEmpty)
+        #expect(
+            vsock.listeners(for: macOS, sessionID: sessionID).map(\.port)
+                == VsockFeatureDescriptor.all.flatMap(\.ports))
     }
 
     // MARK: - Accept

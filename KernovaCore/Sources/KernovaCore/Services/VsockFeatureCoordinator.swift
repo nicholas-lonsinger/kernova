@@ -36,16 +36,8 @@ struct VsockFeatureDescriptor {
     /// control handshake, or `nil` for a listener that admits unconditionally.
     let requirement: FeatureChannelRequirement?
 
-    /// Whether a configuration installs this channel at all.
-    let isEnabled: @MainActor (VMConfiguration) -> Bool
-
-    /// Whether a change to ``isEnabled`` may be applied to a running VM.
-    ///
-    /// Separate from ``isEnabled``: clipboard sharing is install-time gated for
-    /// every guest but live-toggled only for macOS ones, and a single predicate
-    /// would live-toggle vsock listeners on a Linux guest whose sharing rides
-    /// the SPICE console port.
-    let appliesLive: @MainActor (VMConfiguration) -> Bool
+    /// The configuration setting that turns this channel on for a macOS guest.
+    let toggle: @MainActor (VMConfiguration) -> Bool
 
     /// Reads this channel's service slot.
     let current: @MainActor (VsockFeatureCoordinator) -> (any VsockFeatureService)?
@@ -71,6 +63,16 @@ struct VsockFeatureDescriptor {
 
     /// Every port this channel binds, the framed port first.
     var ports: [UInt32] { data.map { [port, $0.port] } ?? [port] }
+
+    /// Whether a session running `configuration` binds this channel — the one
+    /// predicate install, accept and live edit all read.
+    ///
+    /// Only a macOS guest's agent speaks these channels, so no other guest's
+    /// session binds one, whatever its settings say.
+    @MainActor
+    func isEnabled(_ configuration: VMConfiguration) -> Bool {
+        configuration.guestOS == .macOS && toggle(configuration)
+    }
 }
 
 /// The two shapes a channel takes, each building the slot accessors its
@@ -82,8 +84,7 @@ extension VsockFeatureDescriptor {
         name: String,
         port: UInt32,
         requirement: FeatureChannelRequirement?,
-        isEnabled: @escaping @MainActor (VMConfiguration) -> Bool,
-        appliesLive: @escaping @MainActor (VMConfiguration) -> Bool = { _ in true },
+        toggle: @escaping @MainActor (VMConfiguration) -> Bool,
         slot: ReferenceWritableKeyPath<VsockFeatureCoordinator, Service?>,
         releasesSlotOnChannelLoss: Bool = false,
         onChannelLost: (@MainActor (VMInstance) -> Void)? = nil,
@@ -95,8 +96,7 @@ extension VsockFeatureDescriptor {
             port: port,
             data: nil,
             requirement: requirement,
-            isEnabled: isEnabled,
-            appliesLive: appliesLive,
+            toggle: toggle,
             current: { $0[keyPath: slot] },
             install: { coordinator, instance, channel in
                 let service = make(instance, channel)
@@ -120,8 +120,7 @@ extension VsockFeatureDescriptor {
         dataPort: UInt32,
         dataSink: KeyPath<VsockFeatureCoordinator, VsockDataConnectionSink>,
         requirement: FeatureChannelRequirement,
-        isEnabled: @escaping @MainActor (VMConfiguration) -> Bool,
-        appliesLive: @escaping @MainActor (VMConfiguration) -> Bool = { _ in true },
+        toggle: @escaping @MainActor (VMConfiguration) -> Bool,
         slot: ReferenceWritableKeyPath<VsockFeatureCoordinator, Service?>,
         releasesSlotOnChannelLoss: Bool = false,
         onChannelLost: (@MainActor (VMInstance) -> Void)? = nil,
@@ -133,8 +132,7 @@ extension VsockFeatureDescriptor {
             port: port,
             data: DataPort(port: dataPort, sink: dataSink),
             requirement: requirement,
-            isEnabled: isEnabled,
-            appliesLive: appliesLive,
+            toggle: toggle,
             current: { $0[keyPath: slot] },
             install: { coordinator, instance, channel in
                 let service = make(instance, channel)
@@ -168,10 +166,9 @@ extension VsockFeatureDescriptor {
         // No admission check: every feature port is gated on the handshake this
         // channel carries, so gating this one would deadlock the session.
         requirement: nil,
-        // Always installed, whatever the feature toggles say — which also
+        // On in every macOS session, whatever the feature toggles say — which also
         // leaves a live edit nothing to change here.
-        isEnabled: { _ in true },
-        appliesLive: { _ in false },
+        toggle: { _ in true },
         slot: \.control,
         onChannelLost: { instance in
             // The agent went away mid-session. Re-arm the same grace clock the
@@ -193,7 +190,7 @@ extension VsockFeatureDescriptor {
         name: "log",
         port: KernovaVsockPort.log,
         requirement: FeatureChannelRequirement.none,
-        isEnabled: { $0.agentLogForwardingEnabled },
+        toggle: { $0.agentLogForwardingEnabled },
         slot: \.log,
         // Nothing reads a settled log service, so holding a dead channel until
         // the next accept would be pure retention.
@@ -208,8 +205,7 @@ extension VsockFeatureDescriptor {
         dataPort: KernovaVsockPort.clipboardData,
         dataSink: \.clipboardDataSink,
         requirement: .clipboardStreaming,
-        isEnabled: { $0.clipboardSharingEnabled },
-        appliesLive: { $0.guestOS == .macOS },
+        toggle: { $0.clipboardSharingEnabled },
         slot: \.clipboard,
         // The slot is kept on channel loss: a settled service's materialized
         // representations stay servable, and the clipboard window reads its
@@ -224,7 +220,7 @@ extension VsockFeatureDescriptor {
         dataPort: KernovaVsockPort.dropData,
         dataSink: \.dropDataSink,
         requirement: .dropFiles,
-        isEnabled: { $0.dropFilesEnabled },
+        toggle: { $0.dropFilesEnabled },
         slot: \.drop,
         // The slot is kept on channel loss too: the settled service's
         // `isConnected == false` already refuses the display gesture.
@@ -454,12 +450,9 @@ final class VsockFeatureCoordinator {
         let changed = VsockFeatureDescriptor.all.filter {
             $0.isEnabled(oldConfig) != $0.isEnabled(newConfig)
         }
-        // Gated on what changed, not on what applies: a clipboard edit a Linux
-        // guest cannot take live still owes its agent the policy frame below.
         guard !changed.isEmpty, let instance else { return }
-        let applying = changed.filter { $0.appliesLive(newConfig) }
-        let installing = applying.filter { $0.isEnabled(newConfig) }
-        let withdrawing = applying.filter { !$0.isEnabled(newConfig) }
+        let installing = changed.filter { $0.isEnabled(newConfig) }
+        let withdrawing = changed.filter { !$0.isEnabled(newConfig) }
         let snapshot = instance.agentPolicySnapshot(for: newConfig)
         let label = instance.name
         let sessionID = session.id
