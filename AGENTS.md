@@ -44,7 +44,7 @@ Test waits are event-driven; the seams and their contracts are `KernovaKit/Sourc
 A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. A change that turns the test green while that structure still permits the failure — a loosened assertion, a longer wait, a retry — is a patch, and an intermittent failure is owed the same root cause as a steady one.
 
 A change that needs the macOS guest agent reinstalled bumps `MARKETING_VERSION` in `Config/Targets/KernovaMacOSAgent.xcconfig` — the version mismatch is the only thing that offers the update — and each further behavioral revision on the same branch bumps again, since a guest that installed an earlier branch build is offered the update only by a version change (minor for the branch's first bump, patch for later ones).
-The Linux agent is identified by its payload hash; a change to it is offered to guests by building it.
+The Linux agent has no version to bump: the host identifies it by the SHA-256 of the bundled file, which every build of it sets.
 
 ## Dependencies
 
@@ -82,9 +82,9 @@ No compatibility path is written for any shape that is not the current one. A na
 
 **Persisted formats:** a persisted field with a default decodes through the config-field forms in `ConfigFileDecoding.swift`, which `make lint` enforces. Migration code takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
 
-**The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and the update its new build offers is the whole remedy.
+**The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and updating it to the bundled build is the whole remedy.
 
-Nothing refuses an older agent, either: it keeps every feature it can still run, and the version mismatch surfaces the update affordance while nothing else acts on it.
+Nothing refuses an older agent, either: it keeps every feature it can still run, and the mismatch with the bundled build — its version for the macOS agent, its hash for the Linux agent — surfaces the update affordance while nothing else acts on it.
 
 ### File Operations
 
