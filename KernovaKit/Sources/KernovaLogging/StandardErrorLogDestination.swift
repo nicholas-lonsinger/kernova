@@ -31,16 +31,25 @@ struct StandardErrorLogDestination: Sendable {
         level.syslogPriority <= Self.threshold.syslogPriority
     }
 
-    /// Writes the record's `line` in one write; a line standard error refuses
+    /// Writes the record's `line`, resuming after a short write and, where
+    /// the platform has it, an interrupted one; a line standard error refuses
     /// is dropped, as there is nowhere left to report it.
     func emit(_ segments: [LogSegment], at level: KernovaLogLevel) {
         var text = line(segments, at: level)
         text.withUTF8 { bytes in
-            #if canImport(ucrt)
-            _ = _write(2, bytes.baseAddress, UInt32(bytes.count))
-            #else
-            _ = write(2, bytes.baseAddress, bytes.count)
-            #endif
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                #if canImport(ucrt)
+                let written = Int(_write(2, base + offset, UInt32(bytes.count - offset)))
+                guard written > 0 else { return }
+                #else
+                let written = write(2, base + offset, bytes.count - offset)
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { return }
+                #endif
+                offset += written
+            }
         }
     }
 
