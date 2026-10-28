@@ -61,13 +61,15 @@ jobs:
         run: swift build --package-path KernovaKit
 
       - name: Test
+        shell: bash
         run: |
           set +e
           swift build --package-path KernovaKit --build-tests
-          for t in KernovaWireTests KernovaPortableTests KernovaDBusTests KernovaPlatformLinuxTests; do
+          for t in KernovaPortableTests KernovaDBusTests KernovaPlatformLinuxTests; do
             echo "=== $t"
-            timeout -s QUIT 200 swift test --package-path KernovaKit --skip-build --filter "$t" 2>&1 | tail -150
-            echo "=== $t done: ${PIPESTATUS[0]}"
+            timeout -s QUIT 240 swift test --package-path KernovaKit --skip-build --filter "$t" > out.txt 2>&1
+            echo "=== $t rc=$?"
+            grep -E 'started|passed after|failed|issue|Fatal|error' out.txt | tail -60
           done
           exit 1
 
