@@ -48,24 +48,19 @@ final class RestoreImageCatalogSheetContentViewController: NSViewController {
     ///
     /// `isDownloaded` reports whether an entry's image already sits at its
     /// download destination — the same check that drives the wizard's overwrite
-    /// banner — and defaults to a `FileManager` probe of that path.
+    /// banner.
     init(
         entries: [RestoreImageCatalogEntry],
         selectedBuild: String? = nil,
         generatedAt: String? = nil,
         hostVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion,
-        isDownloaded: (@MainActor (RestoreImageCatalogEntry) -> Bool)? = nil
+        isDownloaded: @escaping @MainActor (RestoreImageCatalogEntry) -> Bool
     ) {
         self.entries = entries
         self.visibleEntries = entries
         self.generatedAt = generatedAt
         self.hostVersion = hostVersion
-        self.isDownloaded =
-            isDownloaded
-            ?? { entry in
-                FileManager.default.fileExists(
-                    atPath: VMCreationViewModel.downloadPath(forFilename: entry.suggestedFilename))
-            }
+        self.isDownloaded = isDownloaded
         self.pendingSelectedBuild = selectedBuild
         super.init(nibName: nil, bundle: nil)
     }

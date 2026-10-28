@@ -64,8 +64,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             sections.append(section)
         }
         for section in sections {
-            panelStack.addArrangedSubview(section)
-            section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(section, to: panelStack)
         }
         armPairingLoop()
     }
@@ -224,8 +223,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         for pairing in pairings {
             let row = USBAccessoryPairingRowView(
                 pairing: pairing, target: self, action: #selector(forgetPairingTapped))
-            pairingListStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: pairingListStack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(row, to: pairingListStack)
         }
     }
 

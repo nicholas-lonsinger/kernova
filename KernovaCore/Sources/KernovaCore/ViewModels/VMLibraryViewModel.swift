@@ -627,11 +627,12 @@ package final class VMLibraryViewModel {
     @ObservationIgnored private let localImageInspector: any LocalRestoreImageInspecting
 
     /// A creation wizard over this library's Virtualization host and
-    /// restore-image lookups.
+    /// restore-image lookups, downloading to the folder its installs do.
     package func makeCreationViewModel() -> VMCreationViewModel {
         VMCreationViewModel(
             host: library.virtualizationHost, localImageInspector: localImageInspector,
-            ipswService: lifecycle.ipswService)
+            ipswService: lifecycle.ipswService,
+            downloadsDirectory: lifecycle.downloadsDirectory)
     }
 
     // MARK: - Initialization
@@ -670,7 +671,7 @@ package final class VMLibraryViewModel {
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating,
-        downloadsDirectory: URL?,
+        downloadsDirectory: URL,
         preferences: AppPreferences,
         vmnetNetworks: VmnetNetworkService,
         arpTable: any ARPTableReading,

@@ -118,16 +118,18 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         commandLineField.placeholderString = "Kernel command line"
         commandLineField.delegate = self
 
-        addFullWidth(
-            makeGroupedFormContentText("Provide the kernel image and optional initrd/command line."))
-        addFullWidth(
+        addGroupedFormFullWidth(
+            makeGroupedFormContentText("Provide the kernel image and optional initrd/command line."),
+            to: conditionalContainer)
+        addGroupedFormFullWidth(
             makeGroupedFormCard(rows: [
                 makeFileRow(
                     label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)),
                 makeFileRow(
                     label: "Initrd", path: creationVM.initrdPath, browseAction: #selector(browseInitrd)),
                 GroupedFormFieldRow("Command line", control: commandLineField),
-            ]))
+            ]),
+            to: conditionalContainer)
     }
 
     /// Renders the three EFI image sources and, once one has been picked, a
@@ -157,12 +159,13 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         options.alignment = .leading
         options.spacing = Spacing.large
 
-        addFullWidth(makeGroupedFormContentText("Choose the installer image to boot from via EFI."))
-        addFullWidth(options)
+        addGroupedFormFullWidth(
+            makeGroupedFormContentText("Choose the installer image to boot from via EFI."), to: conditionalContainer)
+        addGroupedFormFullWidth(options, to: conditionalContainer)
 
         switch creationVM.linuxSelection {
         case .catalogEntry(let entry):
-            conditionalContainer.addArrangedSubview(
+            addGroupedFormFullWidth(
                 makeWizardBadge(
                     symbolName: "shippingbox.fill",
                     text: [
@@ -172,9 +175,10 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     secondaryText: entry.digestSource.pendingCheckLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeDistribution))
-                ))
+                ),
+                to: conditionalContainer)
         case .customURL(let image, let sizeBytes):
-            conditionalContainer.addArrangedSubview(
+            addGroupedFormFullWidth(
                 makeWizardBadge(
                     symbolName: "link",
                     text: [image.displayName, DataFormatters.formatBytes(sizeBytes)]
@@ -182,14 +186,16 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     secondaryText: image.digestSource.pendingCheckLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeImageURL))
-                ))
+                ),
+                to: conditionalContainer)
         case .localISO(let path, _):
-            conditionalContainer.addArrangedSubview(
+            addGroupedFormFullWidth(
                 makeWizardPathBadge(
                     path: path,
                     changeButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeISOFile))
-                ))
+                ),
+                to: conditionalContainer)
         case nil:
             break
         }
@@ -225,13 +231,6 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     private var selectedCustomImage: CustomLinuxImage? {
         guard case .customURL(let image, _) = creationVM.linuxSelection else { return nil }
         return image
-    }
-
-    /// Adds an arranged subview to the conditional container and pins its width
-    /// to the container once it is in the hierarchy.
-    private func addFullWidth(_ view: NSView) {
-        conditionalContainer.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
     }
 
     private func makeFileRow(label: String, path: String?, browseAction: Selector) -> NSView {
@@ -304,7 +303,10 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         let sheet = LinuxImageCatalogSheetContentViewController(
             entries: creationVM.linuxCatalogService.entries,
             selectedID: selectedCatalogID,
-            generatedAt: creationVM.linuxCatalogService.generatedAt
+            generatedAt: creationVM.linuxCatalogService.generatedAt,
+            downloadsFilenames: { [downloadsDirectory = creationVM.downloadsDirectory] in
+                LinuxImageCatalogSheetContentViewController.filenames(in: downloadsDirectory)
+            }
         )
         sheet.onChoose = { [weak self] entry in self?.commitCatalogEntry(entry) }
         sheet.onCancel = { [weak self] in self?.dismissSourceSheet() }
@@ -317,6 +319,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         let current = selectedCustomImage
         let sheet = LinuxImageURLSheetContentViewController(
             resolveService: creationVM.linuxImageResolveService,
+            downloadsDirectory: creationVM.downloadsDirectory,
             initialURL: current?.url.absoluteString,
             initialChecksum: current?.sha256
         )

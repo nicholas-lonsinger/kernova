@@ -640,8 +640,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         renderedNetworkMACWarning = nil
         renderedNetworkMenu = nil
         let section = buildNetworkSection()
-        panelStack.addArrangedSubview(section)
-        section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
+        addGroupedFormFullWidth(section, to: panelStack)
     }
 
     func refresh() {

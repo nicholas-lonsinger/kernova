@@ -32,8 +32,14 @@ func makeTestPreferences() -> AppPreferences {
 /// A `VMLifecycleCoordinator` over mocks — the test target's one construction
 /// of one, which a test library is built on too.
 ///
-/// No Downloads directory unless a test names one: a test that needs it passes
-/// a temporary directory, never the user's own.
+/// A Downloads folder of the running test case's own, which holds nothing until
+/// the test puts it there.
+func makeTestDownloadsDirectory() -> URL {
+    TestScratchDirectory(prefix: "Downloads").url
+}
+
+/// Downloads is the test case's own folder unless a test names one, never the
+/// user's.
 @MainActor
 func makeTestLifecycle(
     virtualization: any VirtualizationProviding = MockVirtualizationService(),
@@ -44,7 +50,7 @@ func makeTestLifecycle(
     linuxImageResolveService: any LinuxImageResolving = MockLinuxImageResolveService(),
     downloadService: any Downloading = MockDownloadService(),
     fileSystem: MockFileSystem = MockFileSystem(),
-    downloadsDirectory: URL? = nil
+    downloadsDirectory: URL = makeTestDownloadsDirectory()
 ) -> VMLifecycleCoordinator {
     VMLifecycleCoordinator(
         virtualizationService: virtualization,

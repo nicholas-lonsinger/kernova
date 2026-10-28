@@ -181,16 +181,14 @@ final class VMDetailRouterViewController: NSViewController {
 
         if let banner {
             banner.translatesAutoresizingMaskIntoConstraints = false
-            contentStack.addArrangedSubview(banner)
-            banner.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+            addGroupedFormFullWidth(banner, to: contentStack)
             // Buffer below the banner so it doesn't crowd the first section title.
             contentStack.setCustomSpacing(Spacing.section, after: banner)
             currentBanner = banner
         }
 
         child.view.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(child.view)
-        child.view.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        addGroupedFormFullWidth(child.view, to: contentStack)
         child.view.setContentHuggingPriority(.defaultLow, for: .vertical)
     }
 }
