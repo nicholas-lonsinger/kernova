@@ -1,4 +1,12 @@
-import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(ucrt)
+import ucrt
+#endif
 
 /// Where a `KernovaLogger` records locally where there is no unified log: one
 /// line per record on standard error, which journald files as one entry for a
@@ -23,10 +31,26 @@ struct StandardErrorLogDestination: Sendable {
         level.syslogPriority <= Self.threshold.syslogPriority
     }
 
-    /// Writes the record's `line` in one write; a line standard error refuses
+    /// Writes the record's `line`, resuming after a short write and, where
+    /// the platform has it, an interrupted one; a line standard error refuses
     /// is dropped, as there is nowhere left to report it.
     func emit(_ segments: [LogSegment], at level: KernovaLogLevel) {
-        try? FileHandle.standardError.write(contentsOf: Data(line(segments, at: level).utf8))
+        var text = line(segments, at: level)
+        text.withUTF8 { bytes in
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                #if canImport(ucrt)
+                let written = Int(_write(2, base + offset, UInt32(bytes.count - offset)))
+                guard written > 0 else { return }
+                #else
+                let written = write(2, base + offset, bytes.count - offset)
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { return }
+                #endif
+                offset += written
+            }
+        }
     }
 
     /// The record as written: the priority, `[subsystem:category]`, then the

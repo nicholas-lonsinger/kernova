@@ -1,3 +1,4 @@
+#if canImport(Darwin) || os(Linux)
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -303,3 +304,4 @@ private enum Glue {
         }
     }
 }
+#endif

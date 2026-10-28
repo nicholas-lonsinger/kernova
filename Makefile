@@ -72,7 +72,8 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/check-config-decoding.sh \
                  Tools/tests/check-test-waits.sh \
                  Tools/tests/check-exit-tests.sh \
-                 Tools/tests/check-self-activation.sh
+                 Tools/tests/check-self-activation.sh \
+                 Tools/tests/check-portable-imports.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
@@ -235,14 +236,17 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 # evaluates the manifest on this Mac, where every target is declared, so it
 # names them; the Linux and Windows CI jobs build the manifest's own set. Its
 # own scratch path keeps the swift.org toolchain's build state apart from the
-# Xcode toolchain's, which `test-unhosted` uses.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaPlatformPOSIX
+# Xcode toolchain's, which `test-unhosted` uses. `swift build` keeps only the
+# last of several `--target` options, so each target is a build of its own.
+PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaPlatformPOSIX KernovaDBus KernovaPlatformLinux
 
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
 	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
-	"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
-		--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
-		$(addprefix --target ,$(PORTABLE_TARGETS))
+	for target in $(PORTABLE_TARGETS); do \
+		"$$swiftly" run swift build "+$$(cat .swift-version)" --package-path KernovaKit \
+			--scratch-path KernovaKit/.build/swiftly --swift-sdk aarch64-swift-linux-musl \
+			--target "$$target" || exit 1; \
+	done
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
@@ -264,7 +268,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, KernovaCore's import allowlist, and the checked-in protobuf Swift against its schemas
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, the app's Launch Services self-activation and AppPresence routing, the local package references, KernovaCore's import allowlist, the portable targets' Foundation imports, and the checked-in protobuf Swift against its schemas
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -291,6 +295,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-build-phases.sh
 	@bash Tools/check-package-reference.sh
 	@bash Tools/check-core-imports.sh
+	@bash Tools/check-portable-imports.sh $(PORTABLE_TARGETS)
 	@bash Tools/check-generated-protos.sh
 
 # Unused-code scan, reading .periphery.yml, over one fixed arena per checkout.

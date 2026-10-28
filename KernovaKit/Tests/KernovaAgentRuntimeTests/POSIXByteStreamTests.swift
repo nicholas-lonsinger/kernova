@@ -1,4 +1,4 @@
-#if canImport(KernovaPlatformPOSIX)
+#if canImport(Darwin) || os(Linux)
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)

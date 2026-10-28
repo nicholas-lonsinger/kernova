@@ -37,13 +37,6 @@ var dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")
 ]
 
-// Darwin and Linux: the non-blocking `ByteStream` over a socket.
-#if os(Windows)
-let posixTargets: [String] = []
-#else
-let posixTargets = ["KernovaPlatformPOSIX"]
-#endif
-
 var targets: [Target] = [
     // The one logging spelling: `KernovaLogger` and the `LogMessage` its
     // `log(_:_:)` takes. Its own target so the relaunch helper can link it
@@ -77,6 +70,28 @@ var targets: [Target] = [
         name: "CKernovaShims",
         linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
     ),
+    // The D-Bus protocol with no I/O: types, marshalling, messages, SASL
+    // EXTERNAL, and a connection driven by the bytes a transport moves.
+    .target(
+        name: "KernovaDBus",
+        swiftSettings: sharedSwiftSettings
+    ),
+    // What the Linux guest agent calls into Linux for. It is declared on every
+    // platform, its sources compiled only for Linux, because a cross build
+    // from a Mac evaluates this manifest for macOS.
+    .target(
+        name: "KernovaPlatformLinux",
+        dependencies: ["KernovaDBus"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The non-blocking `ByteStream` over a socket. Declared on every platform,
+    // like `KernovaPlatformLinux`, with its sources compiled only for Darwin
+    // and Linux.
+    .target(
+        name: "KernovaPlatformPOSIX",
+        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The guest-agent protocol's sans-I/O state machines: streams, credit,
     // Hello, liveness and close, and every feature's machines per role.
     .target(
@@ -108,6 +123,18 @@ var targets: [Target] = [
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
+    .testTarget(
+        name: "KernovaDBusTests",
+        dependencies: ["KernovaDBus"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Against a private `dbus-daemon` each test starts; compiled, like the
+    // target it tests, only for Linux.
+    .testTarget(
+        name: "KernovaPlatformLinuxTests",
+        dependencies: ["KernovaPlatformLinux", "KernovaDBus"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The
     // transcripts beside it are read from the source tree.
     .testTarget(
@@ -120,13 +147,15 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its
-    // socket suites run where `KernovaPlatformPOSIX` builds.
+    // socket suites, like the target they test, compile only for Darwin and
+    // Linux.
     .testTarget(
         name: "KernovaAgentRuntimeTests",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
-            "KernovaSynchronization", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
-        ] + posixTargets.map { .target(name: $0) },
+            "KernovaSynchronization", "KernovaPlatformPOSIX",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
@@ -138,16 +167,6 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
 ]
-
-#if !os(Windows)
-targets += [
-    .target(
-        name: "KernovaPlatformPOSIX",
-        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
-        swiftSettings: sharedSwiftSettings
-    )
-]
-#endif
 
 #if os(macOS)
 products += [
