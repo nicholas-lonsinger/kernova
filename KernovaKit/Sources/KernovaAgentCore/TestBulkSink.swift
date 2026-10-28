@@ -6,7 +6,7 @@ import Foundation
 
 import KernovaWire
 
-/// The simulation's machine for the bulk test kinds (§10.4): the acceptor sends
+/// The simulation's machine for the bulk test kinds: the acceptor sends
 /// a configured number of raw bytes as credit allows, then END; the opener
 /// consumes them, or holds them unconsumed while stalled, and ENDs back.
 package struct TestBulkSink: Sendable {

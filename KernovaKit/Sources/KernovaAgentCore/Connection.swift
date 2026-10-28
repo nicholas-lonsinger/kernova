@@ -57,7 +57,7 @@ public struct Connection: Sendable {
 
     // MARK: Credit
 
-    // The two halves of the raw-DATA budget every raw sender shares (§3.4 S1):
+    // The two halves of the raw-DATA budget every raw sender shares:
     // any change to either moves each raw stream's S4 predicate, so the writable
     // refresh lives here rather than at each place that spends or refunds it.
     var connectionSendCredit = Limits.initialConnectionWindow {
@@ -196,13 +196,13 @@ public struct Connection: Sendable {
 
     // MARK: - Queries
 
-    /// The raw DATA a machine may send on `id` now (§3.4 S1), 0 when none.
+    /// The raw DATA a machine may send on `id` now, 0 when none.
     public func writableData(_ id: StreamID) -> Int {
         guard let index = index(of: id) else { return 0 }
         return writableData(at: index)
     }
 
-    /// Whether a message of `byteCount` bytes is sendable on `id` now (§3.4 S2).
+    /// Whether a message of `byteCount` bytes is sendable on `id` now.
     public func canSendMessage(_ byteCount: Int, on id: StreamID) -> Bool {
         guard let index = index(of: id) else { return false }
         let record = streams[index]
@@ -211,7 +211,7 @@ public struct Connection: Sendable {
     }
 
     /// Whether this side may open a stream of `kind` now: its role opens it, its
-    /// feature is usable (§4.3), and the concurrency and per-connection limits allow.
+    /// feature is usable, and the concurrency and per-connection limits allow.
     public func canOpen(_ kind: StreamKind) -> Bool {
         openRefusal(kind) == nil
     }
@@ -249,7 +249,7 @@ public struct Connection: Sendable {
         index(of: id).map { streams[$0].phase }
     }
 
-    /// Whether `feature` is usable on this connection (§4.3), with the far
+    /// Whether `feature` is usable on this connection, with the far
     /// side's params when it is, or the first failing condition's reason.
     public func usability(_ feature: FeatureID) -> Availability<Data> {
         guard let remoteHello else { return .absent(.unspecified, debugDetail: "no Hello read yet") }
@@ -455,7 +455,7 @@ public struct Connection: Sendable {
         diagnosticsSuppressed = 0
     }
 
-    /// A command the core's state forbids (§9.6): a bug in a core machine.
+    /// A command the core's state forbids: a bug in a core machine.
     mutating func misuse(_ what: String) {
         if configuration.assertsOnMisuse {
             assertionFailure("Connection misuse: \(what)")
@@ -478,7 +478,7 @@ package struct RoutedEvent: Sendable, Equatable {
     package var owner: KindOwner?
 }
 
-/// The session messages a side sends, each kind but Hello coalescing (§3.5 step 2).
+/// The session messages a side sends, each kind but Hello coalescing.
 enum SessionSlot: Int, CaseIterable, Sendable {
     case hello, peerState, capabilities, policy, updateAvailable
 }

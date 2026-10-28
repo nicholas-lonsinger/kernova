@@ -25,7 +25,7 @@ public protocol FeatureMachine: Sendable {
 public enum FeatureEvent: Sendable, Equatable {
     /// The far side's Hello was read.
     case sessionEstablished
-    /// Some input to §4.3's usability changed.
+    /// Some input to `Connection.usability(_:)` changed.
     case usabilityChanged
     /// The policy changed (a `PolicyUpdate` on a peer, a command on the host).
     case policyChanged

@@ -7,7 +7,7 @@ import Foundation
 import KernovaWire
 
 extension Connection {
-    /// The next frames to write, in §3.5's order, built from pending state:
+    /// The next frames to write, in transmit order, built from pending state:
     /// at least one whole frame even past `maxBytes`; nil when nothing is pending
     /// and after the final transmit.
     public mutating func pollTransmit(maxBytes: Int) -> Transmit? {
@@ -159,7 +159,7 @@ extension Connection {
         bigEndian(UInt32(truncatingIfNeeded: value >> 32)) + bigEndian(UInt32(truncatingIfNeeded: value))
     }
 
-    // MARK: - Session queue (§3.5 step 2)
+    // MARK: - Session queue
 
     /// Queues a session message; a snapshot replaces an unsent one of its kind in place.
     mutating func queueSession(_ slot: SessionSlot, payload: Data) {

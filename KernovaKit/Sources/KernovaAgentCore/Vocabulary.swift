@@ -363,7 +363,7 @@ public struct BundledPayload: Sendable, Equatable {
         self.manifest = manifest
     }
 
-    /// What the host offers a peer claiming `claim` (§8.1): a session peer of USER
+    /// What the host offers a peer claiming `claim`: a session peer of USER
     /// scope its os and architecture's USER bundle, a system peer the SYSTEM bundle,
     /// anything else nothing. The first matching bundle wins.
     public static func offer(from bundles: [BundledPayload], for claim: PeerClaim) -> UpdateManifestValue? {
@@ -423,7 +423,7 @@ public struct UpdateOffer: Sendable, Equatable {
     }
 }
 
-/// A liveness verdict about the far side (§5.1), edge-triggered.
+/// A liveness verdict about the far side, edge-triggered.
 public enum LivenessChange: Sendable, Equatable {
     /// Silence crossed the unresponsive threshold.
     case unresponsive(silentFor: CoreDuration)
@@ -431,7 +431,7 @@ public enum LivenessChange: Sendable, Equatable {
     case responsive
 }
 
-/// How a stream ended (§3.2).
+/// How a stream ended.
 public enum StreamClosure: Sendable, Equatable {
     /// Both sides sent END; the far side's END body.
     case completed(remoteEndBody: Data)

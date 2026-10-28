@@ -22,7 +22,7 @@ public enum AgentEffect: Sendable, Equatable {
     case stop(StopReason)
 }
 
-/// The peer's pure dial scheduler (§9.3): it holds no endpoint, only when to
+/// The peer's pure dial scheduler: it holds no endpoint, only when to
 /// dial next.
 public struct PeerAgent: Sendable {
     /// The delays between attempts; the last repeats.

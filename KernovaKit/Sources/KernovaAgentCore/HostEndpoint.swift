@@ -6,7 +6,7 @@ import Foundation
 
 import KernovaWire
 
-/// What a host endpoint is created with (§9.3).
+/// What a host endpoint is created with.
 public struct HostConfiguration: Sendable {
     /// The host's claim: role HOST, Kernova's version label.
     public var claim: PeerClaim
@@ -53,9 +53,9 @@ public enum HostCommand: Sendable, Equatable {
 public enum HostEvent: Sendable, Equatable {
     /// The peer's Hello was read.
     case helloReceived(PeerClaim, PeerSessionState)
-    /// The peer's state changed (coalesced, §4.4).
+    /// The peer's state changed (coalesced).
     case peerStateChanged(PeerSessionState)
-    /// Some feature's usability changed (§4.3; coalesced, §4.4).
+    /// Some feature's usability changed (coalesced).
     case featuresChanged(FeatureStatusTable)
     /// A liveness verdict about the peer.
     case liveness(LivenessChange)
@@ -172,7 +172,7 @@ public struct HostEndpoint: Sendable {
         route(now)
     }
 
-    /// Opens a bulk test stream (§10.4).
+    /// Opens a bulk test stream.
     package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
         connection.tick(now)
         route(now)
@@ -283,7 +283,7 @@ public struct HostEndpoint: Sendable {
     }
 }
 
-/// The host's events that coalesce (§4.4).
+/// The host's events that coalesce.
 enum HostEventSlot: Hashable, Sendable {
     case peerState, features
 }

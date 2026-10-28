@@ -6,7 +6,7 @@ import Foundation
 
 import KernovaWire
 
-/// A frame in a stream's own FIFO (§3.5 step 7). Its credit was taken when it
+/// A frame in a stream's own FIFO. Its credit was taken when it
 /// was queued, so it leaves whenever its turn comes.
 enum QueuedFrame: Sendable {
     case open(Data)
@@ -22,7 +22,7 @@ struct StreamRecord: Sendable {
     let descriptor: StreamKindDescriptor
     /// This side opened it.
     let isLocal: Bool
-    /// The machines know of it: a local open, or a remote OPEN that passed §3.6.
+    /// The machines know of it: a local open, or a remote OPEN this side accepted.
     /// A refused OPEN is a record only to carry its RESET.
     let isAccepted: Bool
     var phase: StreamPhase = .open
@@ -61,7 +61,7 @@ struct StreamRecord: Sendable {
 
     var hasQueuedFrames: Bool { queueHead < queue.count }
 
-    /// Still counted against the far side's or this side's limit (§3.3): not
+    /// Still counted against the far side's or this side's limit: not
     /// closed, or closed with this side's last frame not yet handed out.
     var holdsSlot: Bool { phase != .closed || hasQueuedFrames || pendingReset != nil }
 

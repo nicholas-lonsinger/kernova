@@ -9,14 +9,14 @@ import KernovaWire
 extension Connection {
     // MARK: - Time
 
-    /// Advances both clocks to `now` and evaluates every deadline (§5).
+    /// Advances both clocks to `now` and evaluates every deadline.
     package mutating func tick(_ now: CoreInstant) {
         clock.advance(to: now)
         evaluate()
     }
 
     /// Ends a receive turn: its frames are processed, so any of them has already
-    /// replaced the deadlines it ends (§5.2 rule 4) before they are evaluated.
+    /// replaced the deadlines it ends before they are evaluated.
     package mutating func finishReceive() {
         evaluate()
     }
@@ -109,7 +109,7 @@ extension Connection {
         }
     }
 
-    // MARK: - Hello (§4.1)
+    // MARK: - Hello
 
     mutating func handleFirstFrame(_ frame: Frame) {
         if frame.streamID == .session, frame.type == .reset {
@@ -156,9 +156,10 @@ extension Connection {
         }
     }
 
-    /// The far side's adverts, normalized (§4.1 step 4), each one's params
-    /// decoded once; where §4.3's conditions 1–4 hold, params that do not decode
-    /// make the advert absent.
+    /// The far side's adverts, normalized, each one's params decoded once; for a
+    /// feature that is frozen or whose protocol version both sides share, and that
+    /// this side advertises at the same version, params that do not decode make
+    /// the advert absent.
     mutating func receivedAdverts(_ features: [Kernova_V2_FeatureAdvert], remoteVersion: UInt32)
         -> [ReceivedAdvert]
     {
@@ -311,7 +312,7 @@ extension Connection {
     }
 
     /// A RESET for a stream this side closed while its last frame, or its own
-    /// RESET, waits to leave: §3.2's discard applies all the same, so the record
+    /// RESET, waits to leave: a received RESET discards the queue all the same, so the record
     /// retires and frees its slot just as the far side's does.
     mutating func receiveResetOnClosed(at index: Int) {
         discardQueue(at: index)
@@ -319,7 +320,7 @@ extension Connection {
         if streams[index].isRetired { streams.remove(at: index) }
     }
 
-    /// A frame for a stream this side has closed: ignored, its raw bytes credited back (§3.1).
+    /// A frame for a stream this side has closed: ignored, its raw bytes credited back.
     mutating func handleLateFrame(_ frame: Frame) {
         guard frame.type == .data, !frame.flags.contains(.message) else { return }
         let count = frame.payload.count
@@ -390,7 +391,7 @@ extension Connection {
         kind: .unspecified, feature: nil, owner: nil, openerRole: .host, openerToAcceptor: .nothing,
         acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: { _ in false })
 
-    /// §3.4 R3: a raw-DATA receive direction is raised to the bulk target by one WINDOW.
+    /// Raises a raw-DATA receive direction to the bulk target with one WINDOW.
     func raiseToBulkTarget(_ record: inout StreamRecord, viaQueue: Bool) {
         let raise = record.receiveTarget - Limits.initialStreamWindow
         guard raise > 0 else { return }

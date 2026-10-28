@@ -32,7 +32,7 @@ public enum LogDelivery: Sendable, Equatable {
 
 // MARK: - Peer
 
-/// The peer's log forwarder (§7.3): at most one LOG_FORWARD per connection.
+/// The peer's log forwarder: at most one LOG_FORWARD per connection.
 public struct LogForwarder: FeatureMachine {
     /// LOGS.
     public static let feature = FeatureID.logs
@@ -95,7 +95,7 @@ public struct LogForwarder: FeatureMachine {
             ending = false
             switch closure {
             case .completed: reconcile(&connection)
-            // The host's session messages leave before its stream RESETs (§3.5), so
+            // The host's session messages leave before its stream RESETs, so
             // this side already holds a policy at least as new as the one that
             // disabled the stream: reconcile reopens only if that policy enables LOGS.
             case .resetByPeer(let error) where error.code == .disabledByPolicy: reconcile(&connection)
@@ -160,7 +160,7 @@ public struct LogForwarder: FeatureMachine {
 
 // MARK: - Host
 
-/// The host's log receiver (§7.4).
+/// The host's log receiver.
 public struct LogReceiver: FeatureMachine {
     /// LOGS.
     public static let feature = FeatureID.logs

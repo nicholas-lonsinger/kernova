@@ -96,7 +96,7 @@ public enum ConnectionEvent: Sendable, Equatable {
     case updateAvailable(UpdateManifestValue?)
     /// A liveness verdict.
     case liveness(LivenessChange)
-    /// The far side opened a stream that passed §3.6's checks.
+    /// The far side opened a stream this side accepted.
     case opened(StreamID, StreamKind, body: Data)
     /// A message arrived on a stream.
     case message(StreamID, Data)
@@ -104,7 +104,7 @@ public enum ConnectionEvent: Sendable, Equatable {
     case data(StreamID, Data)
     /// The far side sent END.
     case remoteEnded(StreamID, body: Data)
-    /// A stream became writable again (§3.4 S4).
+    /// A stream became writable again.
     case writable(StreamID)
     /// A stream ended; nothing more comes for it.
     case streamClosed(StreamID, StreamClosure)
@@ -128,7 +128,7 @@ public struct Transmit: Sendable, Equatable {
 }
 
 /// A connection's current memory and credit, for the simulation's bounds and
-/// conservation checks (§10.3).
+/// conservation checks.
 public struct MemoryFootprint: Sendable, Equatable {
     /// Raw DATA delivered to machines and not yet consumed.
     public var heldRawBytes: Int
@@ -152,7 +152,7 @@ public struct MemoryFootprint: Sendable, Equatable {
     public var unreturnedConnectionCredit: Int
 }
 
-/// The phases of one stream, from this side (§3.2).
+/// The phases of one stream, from this side.
 public enum StreamPhase: Sendable, Equatable {
     /// Both halves open.
     case open

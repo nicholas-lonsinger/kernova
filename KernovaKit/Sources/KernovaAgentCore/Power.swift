@@ -58,7 +58,7 @@ public enum PowerFinish: Sendable, Equatable {
     case failed(WireError)
 }
 
-/// The host's view of one power request (§6.3).
+/// The host's view of one power request.
 public enum PowerRequestResult: Sendable, Equatable {
     /// The peer's OS took it; no other provider may be asked.
     case accepted
@@ -76,8 +76,8 @@ public enum PowerRequestResult: Sendable, Equatable {
 
 // MARK: - Peer
 
-/// The peer process's record of the one power request its adapter holds
-/// (§6.2): from the `.perform` effect until the adapter's terminal report, in
+/// The peer process's record of the one power request its adapter holds:
+/// from the `.perform` effect until the adapter's terminal report, in
 /// whatever order the reports come. It outlives connections, so the runtime
 /// keeps one per process, as it keeps the `LogRing`: it records every power
 /// effect it carries out and every report the adapter makes, and hands the
@@ -103,7 +103,7 @@ public struct PowerLedger: Sendable, Equatable {
     }
 }
 
-/// The peer's power machine (§6.2): one request at a time on this peer.
+/// The peer's power machine: one request at a time on this peer.
 public struct PowerResponder: FeatureMachine {
     /// POWER.
     public static let feature = FeatureID.power
@@ -336,7 +336,7 @@ extension PowerInput {
 
 // MARK: - Host
 
-/// The host's power machine (§6.3): one entry per open request stream.
+/// The host's power machine: one entry per open request stream.
 public struct PowerRequester: FeatureMachine {
     /// POWER.
     public static let feature = FeatureID.power
@@ -405,7 +405,7 @@ public struct PowerRequester: FeatureMachine {
             Entry(id: id, stream: stream, phase: .waiting, deadline: connection.judgedDeadline(after: Self.hostWait)))
     }
 
-    /// The hub cancels a request; only a waiting one can be (§6.3).
+    /// The hub cancels a request; only a waiting one can be.
     public mutating func cancel(_ id: PowerRequestID, connection: inout Connection) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         guard entries[index].phase == .waiting else {

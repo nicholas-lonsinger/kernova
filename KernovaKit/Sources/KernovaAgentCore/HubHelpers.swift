@@ -22,7 +22,7 @@ public struct PeerHandle: Hashable, Comparable, Sendable {
     }
 }
 
-// MARK: - Identity conflicts (§4.5)
+// MARK: - Identity conflicts
 
 /// The parts of a connection the conflict rule reads.
 public struct ConflictParty: Sendable, Equatable {
@@ -51,7 +51,7 @@ public enum ConflictResolution: Sendable, Equatable {
     case closeIncoming(ErrorCode, retryAfter: CoreDuration?)
 }
 
-/// The host's rule for two connections claiming one identity (§4.5).
+/// The host's rule for two connections claiming one identity.
 public enum PeerConflict {
     /// A lower-rank install stays quiet this long.
     public static let lowerRankRetry = CoreDuration.milliseconds(60_000)
@@ -65,7 +65,7 @@ public enum PeerConflict {
         return a.claim.role != .sessionPeer || a.state.sessionID == b.state.sessionID
     }
 
-    /// The first matching row of §4.5's table.
+    /// How a second connection claiming `existing`'s identity is resolved.
     public static func resolve(existing: ConflictParty, incoming: ConflictParty) -> ConflictResolution {
         guard sameKey(existing, incoming) else { return .noConflict }
         if !existing.claim.instanceID.isEmpty, existing.claim.instanceID == incoming.claim.instanceID {
@@ -132,7 +132,7 @@ public enum FeatureStatus {
     }
 }
 
-// MARK: - Power routing (§6.4)
+// MARK: - Power routing
 
 /// The hub's view of one connected peer, for routing.
 public struct RoutingPeer: Sendable, Equatable {
@@ -213,7 +213,7 @@ public struct PeerRefusal: Sendable, Equatable {
     }
 }
 
-/// Routes one power action per VM across its peers (§6.4).
+/// Routes one power action per VM across its peers.
 public struct PowerRouting: Sendable {
     private struct Active: Sendable {
         var action: PowerAction
@@ -273,7 +273,7 @@ public struct PowerRouting: Sendable {
         outputs.isEmpty ? nil : outputs.removeFirst()
     }
 
-    /// The candidates for `action` in order (§6.4), excluding `asked`.
+    /// The candidates for `action` in order, excluding `asked`.
     public static func candidates(for action: PowerAction, peers: [RoutingPeer], excluding asked: [PeerHandle])
         -> [PeerHandle]
     {

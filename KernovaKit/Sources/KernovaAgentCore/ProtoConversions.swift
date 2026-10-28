@@ -8,7 +8,7 @@ import KernovaWire
 import SwiftProtobuf
 
 // Generated messages stay inside the core: these convert at its edge, applying
-// the receiver's normalization (§4.1) on the way in.
+// the receiver's normalization on the way in.
 
 extension SwiftProtobuf.Message {
     /// The message's encoding; the generated messages hold no maps and no

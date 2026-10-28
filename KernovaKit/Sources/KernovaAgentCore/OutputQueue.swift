@@ -1,5 +1,5 @@
 /// An endpoint's queue of outputs for its driver, polled in the order they
-/// were appended. The one place §4.4's receive-side coalescing lives: an
+/// were appended. The one place receive-side coalescing lives: an
 /// output appended under a slot replaces that slot's pending one in place, so
 /// a far side sending snapshots in a tight loop costs one output per drain.
 struct OutputQueue<Output: Sendable, Slot: Hashable & Sendable>: Sendable {

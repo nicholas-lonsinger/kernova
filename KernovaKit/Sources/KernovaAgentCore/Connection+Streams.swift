@@ -7,7 +7,7 @@ import Foundation
 import KernovaWire
 
 extension Connection {
-    // MARK: - Stream commands (misuse: §9.6)
+    // MARK: - Stream commands
 
     /// Opens a stream of `kind` with its encoded OPEN body; check `canOpen` first.
     @discardableResult
@@ -78,7 +78,7 @@ extension Connection {
         resetStream(at: index, error)
     }
 
-    /// The owning machine finished with `byteCount` raw bytes of `id` (§3.4 R1).
+    /// The owning machine finished with `byteCount` raw bytes of `id`.
     /// Ignored once the stream has closed (R5).
     public mutating func consumed(_ byteCount: Int, on id: StreamID) {
         guard isAcceptingInput, let index = index(of: id), streams[index].phase != .closed else { return }
@@ -117,7 +117,7 @@ extension Connection {
         closeStream(at: index, .resetLocally(error), discardingQueue: true)
     }
 
-    /// Drops the stream's FIFO, refunding the connection credit of its raw DATA (§3.4 S3).
+    /// Drops the stream's FIFO, refunding the connection credit of its raw DATA.
     mutating func discardQueue(at index: Int) {
         var record = streams[index]
         while record.hasQueuedFrames {
@@ -143,7 +143,7 @@ extension Connection {
     }
 
     /// Marks the stream closed, emits its one `streamClosed`, and credits its held
-    /// raw bytes back to the connection (§3.4 R5).
+    /// raw bytes back to the connection.
     private mutating func markClosed(at index: Int, _ closure: StreamClosure) {
         let record = streams[index]
         streams[index].phase = .closed
@@ -174,7 +174,7 @@ extension Connection {
         streams.removeAll { $0.isRetired }
     }
 
-    // MARK: - Credit return (§3.4 R2–R6)
+    // MARK: - Credit return
 
     /// Sends unreturned stream credit once it reaches the threshold, within any rate cap.
     mutating func returnStreamCredit(at index: Int) {
@@ -205,7 +205,7 @@ extension Connection {
         connectionUnreturned = 0
     }
 
-    // MARK: - Writability (§3.4 S4)
+    // MARK: - Writability
 
     /// The S4 predicate: raw senders, `writableData` ≥ 64 KiB; message senders,
     /// stream credit ≥ 64 KiB with no message unsent.
@@ -236,7 +236,7 @@ extension Connection {
         }
     }
 
-    // MARK: - Close (§4.8)
+    // MARK: - Close
 
     /// A fatal error: every queue dropped, RESET(0) queued alone, every stream closed.
     mutating func fatal(_ code: ErrorCode, _ detail: String) {

@@ -6,7 +6,7 @@ import Foundation
 
 import KernovaWire
 
-/// What a peer endpoint is created with (§9.3): who it is, its state, and each
+/// What a peer endpoint is created with: who it is, its state, and each
 /// implemented feature's current availability from the adapters' last reports.
 public struct PeerConfiguration: Sendable {
     /// The peer's claim, its process's instance id included.
@@ -16,7 +16,7 @@ public struct PeerConfiguration: Sendable {
     /// The power adapter's availability; absent `NOT_IMPLEMENTED` without one.
     public var power: Availability<PowerOffer>
     /// The process's power ledger: the request the adapter still holds from an
-    /// earlier connection, which a new request waits behind (§6.2).
+    /// earlier connection, which a new request waits behind.
     public var powerLedger = PowerLedger()
     /// Whether this build forwards logs.
     public var logs: Availability<NoParams>
@@ -65,11 +65,11 @@ public enum PeerEffect: Sendable, Equatable {
 public enum PeerEvent: Sendable, Equatable {
     /// The host's Hello was read.
     case established(host: PeerClaim)
-    /// A `PolicyUpdate` arrived (coalesced, §4.4).
+    /// A `PolicyUpdate` arrived (coalesced).
     case policyReceived
     /// A liveness verdict about the host.
     case hostLiveness(LivenessChange)
-    /// What the host offers (coalesced, §4.4).
+    /// What the host offers (coalesced).
     case updateAvailable(UpdateManifestValue?)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
@@ -175,7 +175,7 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
-    /// Opens a bulk test stream (§10.4).
+    /// Opens a bulk test stream.
     package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
         connection.tick(now)
         route(now)
@@ -307,7 +307,7 @@ public struct PeerEndpoint: Sendable {
     }
 }
 
-/// The peer's events that coalesce (§4.4).
+/// The peer's events that coalesce.
 enum PeerEventSlot: Hashable, Sendable {
     case policy, updateAvailable
 }

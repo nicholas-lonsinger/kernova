@@ -77,7 +77,7 @@ public enum UpdateServeEvent: Sendable, Equatable {
 
 // MARK: - Peer
 
-/// The peer's update client (§8.1, §8.2): decides when to pull and checks the
+/// The peer's update client: decides when to pull and checks the
 /// byte count; the rejected hash comes from the installer's reports only.
 public struct UpdateClient: FeatureMachine {
     /// UPDATE.
@@ -211,7 +211,6 @@ public struct UpdateClient: FeatureMachine {
         connection.end(stream, body: result.encoded)
     }
 
-    /// Pulls when §8.1's conditions hold.
     private mutating func consider(_ connection: inout Connection) {
         guard let offered, case .available(let offer) = availability else { return }
         var rejected = offer.rejectedHash
@@ -237,7 +236,7 @@ public struct UpdateClient: FeatureMachine {
 
 // MARK: - Host
 
-/// The host's update server (§8.2): serves exactly the offered manifest's
+/// The host's update server: serves exactly the offered manifest's
 /// `payload_size` bytes, a read of the hub's payload source at a time, then
 /// ends the stream itself. A source that returns nothing short of the size,
 /// more than a read asked for, or bytes no read asked for has failed: the pull
