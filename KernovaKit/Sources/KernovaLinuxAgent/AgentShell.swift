@@ -114,11 +114,19 @@ enum AgentShell {
 
         // Its own queue: a logind read can block for the bus's reply timeout, and SIGTERM must not wait on it.
         let watchQueue = DispatchQueue(label: "app.kernova.agent.logind")
+        let hasState = Locked(false)
         let apply: @Sendable (Result<PeerSessionState?, LogindError>) -> Void = { result in
             switch result {
             case .success(let state):
+                hasState.withLock { $0 = true }
                 logState(state, role: role)
                 runtime.setPeerState(state)
+            case .failure(let error) where !hasState.withLock({ $0 }):
+                // Nothing to keep, and a change that would reread may never come — a headless guest's
+                // seat0 can stay as it is — so the process exits and its unit's restart reads again.
+                fail(
+                    "The \(name) peer cannot read its first session state: \(String(describing: error), privacy: .public)"
+                )
             case .failure(let error):
                 logger.log(
                     .error,
