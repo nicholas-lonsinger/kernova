@@ -1,5 +1,5 @@
 /// Why a dial failed.
-public enum DialFailure: Sendable, Equatable {
+public enum DialFailure: Error, Sendable, Equatable {
     /// Try again later.
     case transient
     /// This guest has no transport to the host; never retry.
@@ -54,9 +54,11 @@ public struct PeerAgent: Sendable {
     /// The current connection's generation, once one has connected.
     public var currentGeneration: ConnectionGeneration { generation }
 
-    /// The dial connected; the driver makes the endpoint with the generation returned.
-    public mutating func dialSucceeded(now: CoreInstant) -> ConnectionGeneration {
+    /// The dial connected; the driver makes the endpoint with the generation returned. Nil once the agent
+    /// has stopped: the stream is the caller's to shut down.
+    public mutating func dialSucceeded(now: CoreInstant) -> ConnectionGeneration? {
         clock.advance(to: now)
+        guard !stopped else { return nil }
         dialing = false
         connected = true
         policyAt = nil
@@ -101,6 +103,14 @@ public struct PeerAgent: Sendable {
         }
         self.policyAt = nil
         schedule(after: max(retryAfter ?? .zero, takeBackoff()))
+    }
+
+    /// The shell is exiting: dial no more, with no `.stop` effect, since the shell asked for it. Every
+    /// later input does nothing.
+    public mutating func shutDown(now: CoreInstant) {
+        clock.advance(to: now)
+        stopped = true
+        dialAt = nil
     }
 
     /// The timer fired.

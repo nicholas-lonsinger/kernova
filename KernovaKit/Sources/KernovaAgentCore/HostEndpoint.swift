@@ -41,12 +41,22 @@ public enum HostCommand: Sendable, Equatable {
     case setPolicy(PolicySnapshot)
     /// The bundled payloads changed; re-sends `UpdateAvailable` and resets a pull it makes stale.
     case setBundles([BundledPayload])
-    /// Payload bytes for the outstanding read: 1 … `maxBytes` of them, from its offset.
-    case updateBytes(UpdatePullID, Data)
-    /// The payload source failed.
-    case updateFailed(UpdatePullID, WireError)
     /// Close the connection (`SUPERSEDED`, `DUPLICATE_PEER`, `SHUTTING_DOWN`).
     case close(ErrorCode, retryAfter: CoreDuration?)
+}
+
+/// What a host endpoint asks of its update payload source.
+public enum HostEffect: Sendable, Equatable {
+    /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
+    case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
+}
+
+/// The update payload source's answer to the outstanding `.read`.
+public enum PayloadInput: Sendable, Equatable {
+    /// The bytes read: 1 … `maxBytes` of them. None, short of the payload's size, fails the pull.
+    case bytes(UpdatePullID, Data)
+    /// The read failed.
+    case failed(UpdatePullID, WireError)
 }
 
 /// What a host endpoint tells the hub.
@@ -81,6 +91,8 @@ public struct HostEndpoint: Sendable {
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
     private var events = OutputQueue<HostEvent, HostEventSlot>()
+    private var effects: [HostEffect] = []
+    private var effectHead = 0
     private var lastStatus: FeatureStatusTable?
 
     /// Creates the endpoint of a connection just accepted.
@@ -162,12 +174,21 @@ public struct HostEndpoint: Sendable {
         case .setBundles(let bundles):
             connection.setBundles(bundles)
             update.offerChanged(connection.offeredUpdate, connection: &connection)
-        case .updateBytes(let id, let data):
-            if id.generation == generation { update.bytes(id, data, connection: &connection) }
-        case .updateFailed(let id, let error):
-            if id.generation == generation { update.failed(id, error, connection: &connection) }
         case .close(let code, let retryAfter):
             connection.close(code, retryAfter: retryAfter, now: now)
+        }
+        route(now)
+    }
+
+    /// The payload source's answer; one naming another generation is dropped.
+    public mutating func handle(_ input: PayloadInput, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        switch input {
+        case .bytes(let id, let data):
+            if id.generation == generation { update.bytes(id, data, connection: &connection) }
+        case .failed(let id, let error):
+            if id.generation == generation { update.failed(id, error, connection: &connection) }
         }
         route(now)
     }
@@ -203,6 +224,19 @@ public struct HostEndpoint: Sendable {
 
     /// Events not yet polled.
     package var pendingEventCount: Int { events.count }
+
+    /// The next ask of the payload source.
+    public mutating func pollEffect() -> HostEffect? {
+        guard effectHead < effects.count else { return nil }
+        defer {
+            effectHead += 1
+            if effectHead == effects.count {
+                effects.removeAll(keepingCapacity: true)
+                effectHead = 0
+            }
+        }
+        return effects[effectHead]
+    }
 
     package mutating func takeTrace() -> [ConnectionTrace] {
         connection.takeTrace()
@@ -280,7 +314,11 @@ public struct HostEndpoint: Sendable {
     }
 
     private mutating func collect() {
-        for output in [power.takeOutputs(), logs.takeOutputs(), update.takeOutputs()] {
+        let served = update.takeOutputs()
+        effects += served.effects
+        for output in [
+            power.takeOutputs(), logs.takeOutputs(), (events: served.events, diagnostics: served.diagnostics),
+        ] {
             for event in output.events { events.append(event) }
             for diagnostic in output.diagnostics {
                 connection.diagnose(diagnostic)

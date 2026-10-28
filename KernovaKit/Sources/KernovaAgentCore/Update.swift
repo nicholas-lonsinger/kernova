@@ -63,12 +63,11 @@ public struct UpdateResultValue: Sendable, Equatable {
     }
 }
 
-/// What the host's update server tells the hub.
+/// What the host's update server tells the hub. The payload's bytes pass between the endpoint and its
+/// payload source as `HostEffect.read` and `PayloadInput`, never through the hub.
 public enum UpdateServeEvent: Sendable, Equatable {
     /// The peer pulls the offered payload.
     case pullRequested(UpdatePullID, UpdateManifestValue)
-    /// Read 1 … `maxBytes` payload bytes from `offset` and send them as `.updateBytes`.
-    case read(UpdatePullID, offset: UInt64, maxBytes: Int)
     /// The peer's verdict.
     case result(UpdatePullID, UpdateResultValue)
     /// The pull ended without a verdict.
@@ -237,7 +236,7 @@ public struct UpdateClient: FeatureMachine {
 // MARK: - Host
 
 /// The host's update server: serves exactly the offered manifest's
-/// `payload_size` bytes, a read of the hub's payload source at a time, then
+/// `payload_size` bytes, a read of the payload source at a time, then
 /// ends the stream itself. A source that returns nothing short of the size,
 /// more than a read asked for, or bytes no read asked for has failed: the pull
 /// is RESET `READ_FAILED`, which the next connection retries, rather than
@@ -260,6 +259,7 @@ public struct UpdateServer: FeatureMachine {
     private let generation: ConnectionGeneration
     private var pull: Pull?
     private(set) var outbox: [HostEvent] = []
+    private(set) var reads: [HostEffect] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A server for one connection.
@@ -275,12 +275,13 @@ public struct UpdateServer: FeatureMachine {
     /// The server sets no deadlines.
     public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
-    mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (events: [HostEvent], effects: [HostEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
+            reads.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, diagnostics)
+        return (outbox, reads, diagnostics)
     }
 
     /// Handles a connection event.
@@ -328,7 +329,7 @@ public struct UpdateServer: FeatureMachine {
         connection.reset(current.id.stream, WireError(.updateStale))
     }
 
-    /// The hub's payload source returned bytes for the outstanding read.
+    /// The payload source returned bytes for the outstanding read.
     mutating func bytes(_ id: UpdatePullID, _ data: Data, connection: inout Connection) {
         guard var current = pull, current.id == id, !current.ended, connection.canQueue(on: id.stream) else { return }
         guard let granted = current.granted else {
@@ -372,7 +373,7 @@ public struct UpdateServer: FeatureMachine {
         let grant = min(writable, WireConstants.maxRawDataPayload, Int(clamping: remaining))
         current.granted = grant
         pull = current
-        outbox.append(.update(.read(current.id, offset: current.sent, maxBytes: grant)))
+        reads.append(.read(current.id, current.manifest, offset: current.sent, maxBytes: grant))
     }
 
     private mutating func sourceFailed(_ id: UpdatePullID, _ detail: String, _ connection: inout Connection) {

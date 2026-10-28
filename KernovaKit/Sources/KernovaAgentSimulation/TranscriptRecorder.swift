@@ -385,7 +385,10 @@ package final class Duet {
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .host, text: text))
                 }
-                for command in source.answer(event) { host.handle(command, now: instant) }
+            }
+            while let effect = host.pollEffect() {
+                progressed = true
+                host.handle(source.answer(effect), now: instant)
             }
             while let effect = peer.pollEffect() {
                 progressed = true

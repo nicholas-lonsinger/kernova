@@ -64,8 +64,12 @@ var targets: [Target] = [
         exclude: ["Proto/kernova_v2.proto"],
         swiftSettings: sharedSwiftSettings
     ),
-    // The C intrinsics Swift cannot spell: the CRC32C instructions.
-    .target(name: "CKernovaShims"),
+    // The C calls the portable targets make without importing an OS module:
+    // the CRC32C instructions, and the monotonic clock that counts sleep.
+    .target(
+        name: "CKernovaShims",
+        linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
+    ),
     // The D-Bus protocol with no I/O: types, marshalling, messages, SASL
     // EXTERNAL, and a connection driven by the bytes a transport moves.
     .target(
@@ -78,6 +82,14 @@ var targets: [Target] = [
     .target(
         name: "KernovaPlatformLinux",
         dependencies: ["KernovaDBus"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The non-blocking `ByteStream` over a socket. Declared on every platform,
+    // like `KernovaPlatformLinux`, with its sources compiled only for Darwin
+    // and Linux.
+    .target(
+        name: "KernovaPlatformPOSIX",
+        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
         swiftSettings: sharedSwiftSettings
     ),
     // The guest-agent protocol's sans-I/O state machines: streams, credit,
@@ -93,6 +105,15 @@ var targets: [Target] = [
         name: "KernovaAgentSimulation",
         dependencies: [
             "KernovaAgentCore", "KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Drives the core: one serial queue and one `ByteStream` per connection,
+    // the platform clock, the dial schedule, and the adapter registry.
+    .target(
+        name: "KernovaAgentRuntime",
+        dependencies: [
+            "KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization", "CKernovaShims",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -123,6 +144,18 @@ var targets: [Target] = [
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         exclude: ["Transcripts"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its
+    // socket suites, like the target they test, compile only for Darwin and
+    // Linux.
+    .testTarget(
+        name: "KernovaAgentRuntimeTests",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization", "KernovaPlatformPOSIX",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which

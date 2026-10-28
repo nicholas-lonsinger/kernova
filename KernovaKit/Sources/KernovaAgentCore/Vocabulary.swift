@@ -24,7 +24,7 @@ public struct ItemFailureValue: Sendable, Equatable {
 }
 
 /// The domain form of the wire's `Error`: a RESET's payload, or an outcome's error.
-public struct WireError: Sendable, Equatable {
+public struct WireError: Error, Sendable, Equatable {
     /// What went wrong.
     public var code: ErrorCode
     /// The item, for READ_FAILED and WRITE_FAILED.

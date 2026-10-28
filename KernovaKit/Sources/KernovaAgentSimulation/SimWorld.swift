@@ -265,8 +265,9 @@ package final class SimWorld {
 
     package func dial(_ index: Int) {
         let process = peers[index]
-        guard !process.isDead, var agent = process.agent else { return }
-        let generation = agent.dialSucceeded(now: localNow(.peer(index)))
+        guard !process.isDead, var agent = process.agent,
+            let generation = agent.dialSucceeded(now: localNow(.peer(index)))
+        else { return }
         process.agent = agent
         let link = SimLink(id: links.count, peerIndex: index, generation: generation, options: options)
         links.append(link)
@@ -299,6 +300,9 @@ package final class SimWorld {
             while let event = link.host?.pollEvent() {
                 checker.hostEvent(event, link: link, world: self)
                 hub.handle(event, link: link, world: self)
+            }
+            while let effect = link.host?.pollEffect() {
+                hub.handle(effect, link: link, world: self)
             }
             if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
         case .peer:
@@ -492,6 +496,9 @@ package final class SimWorld {
                 checker.hostEvent(event, link: link, world: self)
                 hub.handle(event, link: link, world: self)
             }
+            while let effect = link.host?.pollEffect() {
+                hub.handle(effect, link: link, world: self)
+            }
             if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
         case .peer:
             while let effect = link.peer?.pollEffect() {
@@ -525,6 +532,17 @@ package final class SimWorld {
             world.perform(.host) { world in
                 guard !link.shutDown.contains(.host) else { return }
                 link.host?.handle(command, now: world.localNow(.host))
+                world.drain(link, .host)
+            }
+        }
+    }
+
+    /// Answers a host endpoint's payload read (async, as the runtime's source does).
+    package func hostPayload(_ input: PayloadInput, link: SimLink, after delay: SimTime = 0) {
+        at(now + delay) { world in
+            world.perform(.host) { world in
+                guard !link.shutDown.contains(.host) else { return }
+                link.host?.handle(input, now: world.localNow(.host))
                 world.drain(link, .host)
             }
         }

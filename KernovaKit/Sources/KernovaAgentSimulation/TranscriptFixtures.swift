@@ -286,26 +286,20 @@ package enum FrozenFields {
 }
 
 /// The fixtures' payload source: serves each read from the content of the
-/// manifest its pull named; the server ends the pull at the manifest's size.
+/// manifest it names; the server ends the pull at the manifest's size.
 package struct FixturePayloadSource: Sendable {
-    private var contents: [UpdatePullID: Data] = [:]
+    /// Each manifest's content, by payload hash, generated once.
+    private var contents: [Data: Data] = [:]
 
     package init() {}
 
-    /// The commands answering `event`, if it is an update event.
-    package mutating func answer(_ event: HostEvent) -> [HostCommand] {
-        switch event {
-        case .update(.pullRequested(let id, let manifest)):
-            contents[id] = SimHub.expectedContent(manifest)
-            return []
-        case .update(.read(let id, let offset, let maxBytes)):
-            guard let content = contents[id] else { return [] }
-            return [.updateBytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))]
-        case .update(.result(let id, _)), .update(.closed(let id, _)):
-            contents[id] = nil
-            return []
-        default:
-            return []
+    /// The answer to `effect`.
+    package mutating func answer(_ effect: HostEffect) -> PayloadInput {
+        switch effect {
+        case .read(let id, let manifest, let offset, let maxBytes):
+            let content = contents[manifest.payloadHash] ?? SimHub.expectedContent(manifest)
+            contents[manifest.payloadHash] = content
+            return .bytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))
         }
     }
 

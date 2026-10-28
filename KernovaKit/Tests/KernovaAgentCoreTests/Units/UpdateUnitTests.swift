@@ -295,7 +295,11 @@ extension CoreUnits {
         }
 
         static func grants(_ run: HostileRun) -> [Int] {
-            served(run).compactMap { if case .read(_, _, let maxBytes) = $0 { maxBytes } else { nil } }
+            run.hostEffects.map { effect in
+                switch effect {
+                case .read(_, _, _, let maxBytes): maxBytes
+                }
+            }
         }
 
         static func result(_ kind: Kernova_V2_UpdateResult.Kind, _ code: ErrorCode? = nil) -> Frame {
@@ -363,10 +367,8 @@ extension CoreUnits {
         @Test("OPEN with the offered hash → .pullRequested(manifest), then a read grant within writableData")
         func pullRequested() {
             let run = Self.serving()
-            #expect(
-                Self.served(run) == [
-                    .pullRequested(Self.id(), Self.offered), .read(Self.id(), offset: 0, maxBytes: 262_144),
-                ])
+            #expect(Self.served(run) == [.pullRequested(Self.id(), Self.offered)])
+            #expect(run.hostEffects == [.read(Self.id(), Self.offered, offset: 0, maxBytes: 262_144)])
         }
 
         @Test("A second UPDATE_PULL while one is open → RESET UPDATE_IN_PROGRESS")
@@ -382,7 +384,7 @@ extension CoreUnits {
             let run = Self.serving()
             run.feed([WireFrames.window(1, 8_388_608 - 262_144)])
             #expect(Self.grants(run) == [262_144])
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 100_000)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 100_000)))
             #expect(run.written.on(1).filter { $0.type == .data }.map(\.payload.count) == [100_000])
             #expect(Self.grants(run) == [262_144, 1_048_576])
         }
@@ -390,7 +392,7 @@ extension CoreUnits {
         @Test("With credit spent no grant is made; credit rising past 64 KiB grants again")
         func grantAfterCredit() {
             let run = Self.serving()
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 262_144 - 1_000)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 262_144 - 1_000)))
             #expect(Self.grants(run) == [262_144])
             run.feed([WireFrames.window(1, 70_000)])
             #expect(Self.grants(run) == [262_144, 71_000])
@@ -399,7 +401,7 @@ extension CoreUnits {
         @Test("Bytes past the grant → RESET READ_FAILED with a diagnostic (as built)")
         func bytesPastGrant() {
             let run = Self.serving()
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 262_145)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 262_145)))
             #expect(run.streamResets.map(\.code) == [.readFailed])
             #expect(run.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
         }
@@ -407,18 +409,20 @@ extension CoreUnits {
         @Test("Each read is capped at payload_size − sent, from the offset served so far")
         func grantsCappedAtSize() {
             let run = Self.serving(Self.small)
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 400)))
+            let manifest = Self.small.manifest
             #expect(
-                Self.served(run).dropFirst() == [
-                    .read(Self.id(), offset: 0, maxBytes: 1_000), .read(Self.id(), offset: 400, maxBytes: 600),
+                run.hostEffects == [
+                    .read(Self.id(), manifest, offset: 0, maxBytes: 1_000),
+                    .read(Self.id(), manifest, offset: 400, maxBytes: 600),
                 ])
         }
 
         @Test("payload_size bytes served → the server ENDs (empty) by itself and asks for no more")
         func endsAtSize() {
             let run = Self.serving(Self.small)
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 600)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 600)))
             let frames = run.written.on(1)
             #expect(frames.filter { $0.type == .data }.map(\.payload.count) == [400, 600])
             #expect(frames.last?.type == .end)
@@ -429,8 +433,8 @@ extension CoreUnits {
         @Test("The source returning no bytes short of payload_size → RESET READ_FAILED and a local fault")
         func emptyReadIsSourceFault() {
             let run = Self.serving(Self.small)
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
-            run.command(.updateBytes(Self.id(), Data()))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.payload(.bytes(Self.id(), Data()))
             #expect(run.streamResets.map(\.code) == [.readFailed])
             #expect(!run.written.on(1).contains { $0.type == .end })
             #expect(run.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
@@ -440,16 +444,16 @@ extension CoreUnits {
         @Test("Bytes no read asked for, on a live pull → RESET READ_FAILED and a local fault, nothing sent")
         func unsolicitedBytesAreSourceFault() {
             let run = Self.serving(Self.small)
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 400)))
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 600)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 400)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 600)))
             let ended = run.written.on(1).count
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 10)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 10)))
             #expect(run.written.on(1).count == ended)
 
             let live = Self.serving()
-            live.command(.updateBytes(Self.id(), Data(repeating: 4, count: 100_000)))
-            live.command(.updateBytes(Self.id(), Data(repeating: 4, count: 100_000)))
-            live.command(.updateBytes(Self.id(), Data(repeating: 4, count: 10)))
+            live.payload(.bytes(Self.id(), Data(repeating: 4, count: 100_000)))
+            live.payload(.bytes(Self.id(), Data(repeating: 4, count: 100_000)))
+            live.payload(.bytes(Self.id(), Data(repeating: 4, count: 10)))
             #expect(live.streamResets.map(\.code) == [.readFailed])
             #expect(live.written.on(1).filter { $0.type == .data }.map(\.payload.count) == [100_000, 100_000])
             #expect(live.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
@@ -464,7 +468,7 @@ extension CoreUnits {
         @Test("The payload source failing → RESET READ_FAILED, and .closed without a result")
         func sourceFailed() {
             let run = Self.serving()
-            run.command(.updateFailed(Self.id(), WireError(.readFailed)))
+            run.payload(.failed(Self.id(), WireError(.readFailed)))
             #expect(run.streamResets.map(\.code) == [.readFailed])
             #expect(Self.served(run).last == .closed(Self.id(), .resetLocally(WireError(.readFailed))))
         }
@@ -499,7 +503,7 @@ extension CoreUnits {
             ])
         func result(_ kind: Kernova_V2_UpdateResult.Kind, _ code: ErrorCode?) {
             let run = Self.serving(Self.small)
-            run.command(.updateBytes(Self.id(), Data(repeating: 4, count: 1_000)))
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 1_000)))
             run.feed([Self.result(kind, code)])
             let expected = UpdateResultValue(
                 kind: kind == .staged ? .staged : .rejected, error: code.map { WireError($0) })
@@ -531,8 +535,8 @@ extension CoreUnits {
         func otherGeneration() {
             let run = Self.serving()
             let stale = UpdatePullID(generation: ConnectionGeneration(rawValue: 4), stream: StreamID(rawValue: 1))
-            run.command(.updateFailed(stale, WireError(.readFailed)))
-            run.command(.updateBytes(stale, Data(repeating: 1, count: 10)))
+            run.payload(.failed(stale, WireError(.readFailed)))
+            run.payload(.bytes(stale, Data(repeating: 1, count: 10)))
             #expect(run.streamResets.isEmpty)
             #expect(run.written.on(1).filter { $0.type == .data }.isEmpty)
         }

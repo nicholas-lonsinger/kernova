@@ -114,6 +114,8 @@ package final class HostileRun {
     private var outbound = FrameDecoder()
     package private(set) var written: [Frame] = []
     package private(set) var hostEvents: [HostEvent] = []
+    /// The host endpoint's payload reads, in order.
+    package private(set) var hostEffects: [HostEffect] = []
     package private(set) var peerEvents: [PeerEvent] = []
     package private(set) var peerEffects: [PeerEffect] = []
     package private(set) var trace: [ConnectionTrace] = []
@@ -213,6 +215,12 @@ package final class HostileRun {
         drain()
     }
 
+    /// Answers the host's payload read.
+    package func payload(_ input: PayloadInput) {
+        host?.handle(input, now: now)
+        drain()
+    }
+
     package func input(_ input: PeerInput) {
         peer?.handle(input, now: now)
         drain()
@@ -240,6 +248,10 @@ package final class HostileRun {
             }
             while let effect = peer?.pollEffect() {
                 peerEffects.append(effect)
+                progressed = true
+            }
+            while let effect = host?.pollEffect() {
+                hostEffects.append(effect)
                 progressed = true
             }
             while !writerStalled,

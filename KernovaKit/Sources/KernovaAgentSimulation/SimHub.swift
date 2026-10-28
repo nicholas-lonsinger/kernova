@@ -54,7 +54,6 @@ package final class SimHub {
     private var order: UInt64 = 0
     private var nextPowerID: UInt64 = 0
     private var pending: [PowerRequestID: PeerHandle] = [:]
-    private var pulls: [UpdatePullID: Data] = [:]
     /// Every link whose host endpoint this hub made and has not seen close,
     /// handshaking ones included: each holds a policy and bundles to keep current.
     private var endpoints: [SimLink] = []
@@ -241,19 +240,21 @@ package final class SimHub {
 
     private func handleUpdate(_ event: UpdateServeEvent, link: SimLink, world: SimWorld) {
         switch event {
-        case .pullRequested(let id, let manifest):
-            pulls[id] = world.content(of: manifest)
-        case .read(let id, let offset, let maxBytes):
-            guard let content = pulls[id] else { return }
-            world.hostCommand(
-                .updateBytes(id, FixturePayloadSource.read(content, offset: offset, maxBytes: maxBytes)), link: link,
-                after: options.payloadSourceDelay)
-        case .result(let id, let result):
-            pulls[id] = nil
+        case .pullRequested:
+            break
+        case .result(_, let result):
             updateResults.append((world.now, result))
-        case .closed(let id, let closure):
-            pulls[id] = nil
+        case .closed(_, let closure):
             updateClosures.append((world.now, closure))
+        }
+    }
+
+    /// The payload source: each read is served from the content its manifest names.
+    func handle(_ effect: HostEffect, link: SimLink, world: SimWorld) {
+        switch effect {
+        case .read(let id, let manifest, let offset, let maxBytes):
+            let bytes = FixturePayloadSource.read(world.content(of: manifest), offset: offset, maxBytes: maxBytes)
+            world.hostPayload(.bytes(id, bytes), link: link, after: options.payloadSourceDelay)
         }
     }
 

@@ -49,7 +49,11 @@ extension CoreUnits {
 
             mutating func connect(after milliseconds: Int64 = 0) -> ConnectionGeneration {
                 now += milliseconds
-                return agent.dialSucceeded(now: Unit.at(now))
+                guard let generation = agent.dialSucceeded(now: Unit.at(now)) else {
+                    Issue.record("a running agent refused a connected dial")
+                    return ConnectionGeneration(rawValue: 0)
+                }
+                return generation
             }
 
             mutating func policy(_ generation: ConnectionGeneration, after milliseconds: Int64) {
@@ -82,6 +86,22 @@ extension CoreUnits {
             var driver = Driver()
             #expect(driver.failDials(9) == [1, 2, 4, 8, 16, 30, 30, 30, 30])
             #expect(driver.effects == Array(repeating: .dial, count: 10))
+        }
+
+        @Test("Shut down: no deadline, no effect, and every later dial result and end does nothing")
+        func shutDownStops() {
+            var driver = Driver()
+            driver.agent.dialFailed(.transient, now: Unit.at(0))
+            driver.agent.shutDown(now: Unit.at(10))
+            #expect(driver.agent.nextDeadline == nil)
+            driver.step(to: 60_000)
+            #expect(driver.agent.dialSucceeded(now: Unit.at(60_000)) == nil)
+            driver.agent.dialFailed(.permanent, now: Unit.at(60_000))
+            driver.agent.connectionEnded(
+                ConnectionGeneration(rawValue: 0), .closedByPeer(WireError(.superseded)), now: Unit.at(60_000))
+            driver.collect()
+            #expect(driver.effects == [.dial])
+            #expect(driver.agent.nextDeadline == nil)
         }
 
         @Test("A timeout before the deadline dials nothing")
