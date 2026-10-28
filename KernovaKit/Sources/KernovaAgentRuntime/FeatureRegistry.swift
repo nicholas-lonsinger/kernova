@@ -37,8 +37,8 @@ public protocol PowerAdapter: Sendable {
     /// `.blocked`, `.cancelledInGuest` or `.failed` — after `.accepted` and the stages it reaches, if any.
     /// Until then the process performs no other request.
     func perform(_ id: PowerRequestID, _ action: PowerAction)
-    /// Reports `.cancelled` when the OS confirms the request did not start, and `.unconfirmed` when it
-    /// cannot tell.
+    /// Reports `.cancelled` when the OS confirms the request did not start, `.accepted` when the OS took
+    /// it first, and `.unconfirmed` when it cannot tell.
     func cancel(_ id: PowerRequestID)
 }
 

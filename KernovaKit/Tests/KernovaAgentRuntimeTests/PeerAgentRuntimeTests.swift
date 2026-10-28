@@ -107,10 +107,12 @@ struct PeerAgentRuntimeTests {
         var results = second.far.events.waiter()
         _ = await results.next { $0 == .power(refused, .indeterminate) }
 
-        let writes = second.stream.writeCount
+        let writes = second.stream.calls.elements.filter { $0 == "write" }.count
+        let events = second.far.events.elements.count
         harness.power.report(.handedOff(held))
         await harness.pump(second)
-        #expect(second.stream.writeCount == writes)
+        #expect(second.stream.calls.elements.filter { $0 == "write" }.count == writes)
+        #expect(second.far.events.elements.dropFirst(events).isEmpty)
 
         let accepted = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 3)
         second.far.command(.requestPower(accepted, .shutdown))

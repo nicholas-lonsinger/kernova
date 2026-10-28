@@ -90,12 +90,19 @@ final class ObservedStream: Sendable {
         }
     }
 
-    /// Writes `chunks` and waits for the completion, checking it never runs inside the call.
-    func write(_ chunks: [Data]) async -> (error: ByteStreamError?, insideCall: Bool) {
+    /// Writes `chunks` and waits for the completion, checking it never runs inside the call. The write is
+    /// issued from a block on the start queue that marks its own end, so on that serial queue the
+    /// completion can find the mark unset only if `write` ran it synchronously.
+    func write(_ chunks: [Data], then follow: @escaping @Sendable () -> Void = {}) async
+        -> (error: ByteStreamError?, insideCall: Bool)
+    {
         let returned = Locked(false)
         let done = Recorder<(ByteStreamError?, Bool)>()
-        stream.write(chunks) { error in done.record((error, !returned.withLock { $0 })) }
-        returned.withLock { $0 = true }
+        queue.async { [stream] in
+            stream.write(chunks) { error in done.record((error, !returned.withLock { $0 })) }
+            returned.withLock { $0 = true }
+            follow()
+        }
         var waiter = done.waiter()
         return await waiter.next { _ in true }
     }
@@ -106,122 +113,126 @@ final class ObservedStream: Sendable {
     }
 }
 
-@Suite("POSIX byte stream")
-struct POSIXByteStreamTests {
-    @Test("More than 64 chunks of mixed sizes, some empty, cross a 4 KiB send buffer byte for byte")
-    func manyChunksArriveIntact() async throws {
-        let (local, far) = try RawSocket.pair(sendBuffer: 4_096)
-        let observed = try ObservedStream(adopting: local)
-        let sizes = [0, 1, 17, 4_093, 65_536, 0, 100_003, 9, 3, 131_072, 511]
-        let base = FakePayloadSource.payload(140_000)
-        let chunks = (0..<220).map { index in
-            let start = (index * 7_919) % 8_000
-            return Data(base[start..<(start + sizes[index % sizes.count])])
+/// The suites that open descriptors, run one test at a time so no test reuses a number another just closed.
+@Suite("Sockets", .serialized)
+enum SocketTests {}
+
+extension SocketTests {
+    @Suite("POSIX byte stream")
+    struct POSIXByteStreamTests {
+        @Test("More than 64 chunks of mixed sizes, some empty, cross a 4 KiB send buffer byte for byte")
+        func manyChunksArriveIntact() async throws {
+            let (local, far) = try RawSocket.pair(sendBuffer: 4_096)
+            let observed = try ObservedStream(adopting: local)
+            let sizes = [0, 1, 17, 4_093, 65_536, 0, 100_003, 9, 3, 131_072, 511]
+            let base = FakePayloadSource.payload(140_000)
+            let chunks = (0..<220).map { index in
+                let start = (index * 7_919) % 8_000
+                return Data(base[start..<(start + sizes[index % sizes.count])])
+            }
+            let expected = chunks.reduce(into: Data()) { $0.append($1) }
+            let received = Recorder<Data>()
+            DispatchQueue.global().async { received.record(RawSocket.read(far, total: expected.count)) }
+
+            let result = await observed.write(chunks)
+            #expect(result.error == nil)
+            #expect(!result.insideCall)
+            var waiter = received.waiter()
+            let bytes = await waiter.next { _ in true }
+            #expect(bytes == expected)
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+            close(far)
         }
-        let expected = chunks.reduce(into: Data()) { $0.append($1) }
-        let received = Recorder<Data>()
-        DispatchQueue.global().async { received.record(RawSocket.read(far, total: expected.count)) }
 
-        let result = await observed.write(chunks)
-        #expect(result.error == nil)
-        #expect(!result.insideCall)
-        var waiter = received.waiter()
-        let bytes = await waiter.next { _ in true }
-        #expect(bytes == expected)
-        observed.stream.shutdown()
-        await observed.waitForRelease()
-        close(far)
-    }
-
-    @Test("shutdown() from another thread fails a pending write and delivers one .ended(.failed(.shutDown))")
-    func shutdownFailsPendingWrite() async throws {
-        let (local, far) = try RawSocket.pair(sendBuffer: 4_096)
-        let observed = try ObservedStream(adopting: local)
-        let returned = Locked(false)
-        let done = Recorder<(error: ByteStreamError?, afterCall: Bool)>()
-        observed.stream.write([Data(count: 1_048_576)]) { error in
-            done.record((error, returned.withLock { $0 }))
+        @Test("shutdown() from another thread fails a pending write and delivers one .ended(.failed(.shutDown))")
+        func shutdownFailsPendingWrite() async throws {
+            let (local, far) = try RawSocket.pair(sendBuffer: 4_096)
+            let observed = try ObservedStream(adopting: local)
+            let result = await observed.write([Data(count: 1_048_576)]) {
+                DispatchQueue.global().async { observed.stream.shutdown() }
+            }
+            #expect(result.error == .shutDown)
+            #expect(!result.insideCall)
+            await observed.waitForRelease()
+            #expect(observed.events.elements == [.ended(.failed(.shutDown))])
+            _ = RawSocket.readToEnd(far)
+            close(far)
         }
-        returned.withLock { $0 = true }
-        DispatchQueue.global().async { observed.stream.shutdown() }
 
-        var completion = done.waiter()
-        let result = await completion.next { _ in true }
-        #expect(result.error == .shutDown)
-        #expect(result.afterCall)
-        await observed.waitForRelease()
-        #expect(observed.events.elements == [.ended(.failed(.shutDown))])
-        _ = RawSocket.readToEnd(far)
-        close(far)
-    }
+        @Test("shutdown() after the far side's EOF adds nothing")
+        func shutdownAfterEOF() async throws {
+            let (local, far) = try RawSocket.pair()
+            let observed = try ObservedStream(adopting: local)
+            close(far)
+            var events = observed.events.waiter()
+            #expect(await events.next { _ in true } == .ended(.eof))
+            observed.stream.shutdown()
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+            #expect(observed.events.elements == [.ended(.eof)])
+        }
 
-    @Test("shutdown() after the far side's EOF adds nothing")
-    func shutdownAfterEOF() async throws {
-        let (local, far) = try RawSocket.pair()
-        let observed = try ObservedStream(adopting: local)
-        close(far)
-        var events = observed.events.waiter()
-        #expect(await events.next { _ in true } == .ended(.eof))
-        observed.stream.shutdown()
-        observed.stream.shutdown()
-        await observed.waitForRelease()
-        #expect(observed.events.elements == [.ended(.eof)])
-    }
+        @Test("shutdown() before start closes the descriptor at once: the far side reads EOF and no handler runs")
+        func shutdownBeforeStart() async throws {
+            let (local, far) = try RawSocket.pair()
+            let observed = try ObservedStream(adopting: local, start: false)
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+            // No other suite opens a descriptor while this one runs (`SocketTests` is serialized), so the number
+            // cannot have been reused.
+            let flags = fcntl(local, F_GETFD)
+            let error = errno
+            #expect(flags == -1 && error == EBADF)
+            #expect(RawSocket.readToEnd(far).isEmpty)
+            #expect(observed.events.elements.isEmpty)
+            close(far)
+        }
 
-    @Test("shutdown() before start closes the descriptor at once: the far side reads EOF and no handler runs")
-    func shutdownBeforeStart() async throws {
-        let (local, far) = try RawSocket.pair()
-        let observed = try ObservedStream(adopting: local, start: false)
-        observed.stream.shutdown()
-        await observed.waitForRelease()
-        #expect(RawSocket.readToEnd(far).isEmpty)
-        #expect(observed.events.elements.isEmpty)
-        close(far)
-    }
+        @Test("A write after shutdown fails .shutDown, never inside the call")
+        func writeAfterShutdown() async throws {
+            let (local, far) = try RawSocket.pair()
+            let observed = try ObservedStream(adopting: local)
+            observed.stream.shutdown()
+            let result = await observed.write([Data(count: 10)])
+            #expect(result.error == .shutDown)
+            #expect(!result.insideCall)
+            await observed.waitForRelease()
+            close(far)
+        }
 
-    @Test("A write after shutdown fails .shutDown, never inside the call")
-    func writeAfterShutdown() async throws {
-        let (local, far) = try RawSocket.pair()
-        let observed = try ObservedStream(adopting: local)
-        observed.stream.shutdown()
-        let result = await observed.write([Data(count: 10)])
-        #expect(result.error == .shutDown)
-        #expect(!result.insideCall)
-        await observed.waitForRelease()
-        close(far)
-    }
+        @Test("A write of only empty chunks completes without error, never inside the call")
+        func emptyWrite() async throws {
+            let (local, far) = try RawSocket.pair()
+            let observed = try ObservedStream(adopting: local)
+            let result = await observed.write([Data(), Data()])
+            #expect(result.error == nil)
+            #expect(!result.insideCall)
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+            close(far)
+        }
 
-    @Test("A write of only empty chunks completes without error, never inside the call")
-    func emptyWrite() async throws {
-        let (local, far) = try RawSocket.pair()
-        let observed = try ObservedStream(adopting: local)
-        let result = await observed.write([Data(), Data()])
-        #expect(result.error == nil)
-        #expect(!result.insideCall)
-        observed.stream.shutdown()
-        await observed.waitForRelease()
-        close(far)
-    }
+        @Test("Nothing more is delivered after a .received until readMore()")
+        func readMoreGates() async throws {
+            let (local, far) = try RawSocket.pair()
+            let observed = try ObservedStream(adopting: local)
+            RawSocket.send(far, Data(repeating: 1, count: 10))
+            var events = observed.events.waiter()
+            #expect(await events.next { _ in true } == .received(Data(repeating: 1, count: 10)))
 
-    @Test("Nothing more is delivered after a .received until readMore()")
-    func readMoreGates() async throws {
-        let (local, far) = try RawSocket.pair()
-        let observed = try ObservedStream(adopting: local)
-        RawSocket.send(far, Data(repeating: 1, count: 10))
-        var events = observed.events.waiter()
-        #expect(await events.next { _ in true } == .received(Data(repeating: 1, count: 10)))
+            RawSocket.send(far, Data(repeating: 2, count: 10))
+            close(far)
+            for _ in 0..<8 { await flush(observed.queue) }
+            #expect(observed.events.elements.count == 1)
 
-        RawSocket.send(far, Data(repeating: 2, count: 10))
-        close(far)
-        for _ in 0..<8 { await flush(observed.queue) }
-        #expect(observed.events.elements.count == 1)
-
-        observed.queue.async { observed.stream.readMore() }
-        #expect(await events.next { _ in true } == .received(Data(repeating: 2, count: 10)))
-        observed.queue.async { observed.stream.readMore() }
-        #expect(await events.next { _ in true } == .ended(.eof))
-        observed.stream.shutdown()
-        await observed.waitForRelease()
+            observed.queue.async { observed.stream.readMore() }
+            #expect(await events.next { _ in true } == .received(Data(repeating: 2, count: 10)))
+            observed.queue.async { observed.stream.readMore() }
+            #expect(await events.next { _ in true } == .ended(.eof))
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+        }
     }
 }
 #endif

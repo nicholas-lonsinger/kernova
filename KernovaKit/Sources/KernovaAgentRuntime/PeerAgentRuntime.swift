@@ -43,8 +43,9 @@ public final class PeerAgentRuntime: Sendable {
     private let logger: KernovaLogger
     private let handlers: Handlers
     private let receiverPolicy: ReceiverPolicy
-    /// The process's power ledger: written on the driver queue for each effect carried out, and on this
-    /// queue for each report.
+    /// The process's power ledger: written on the driver queue for each effect carried out, and on the
+    /// adapter's thread for each report, before the report hops to this queue — so a configuration built
+    /// here after a report always carries it.
     private let ledger = Locked(PowerLedger())
     private let state: Locked<State>
 
