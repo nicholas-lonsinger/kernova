@@ -30,7 +30,7 @@ public enum LinuxIdentity {
             role: role,
             scope: scope(ofExecutable: executable, systemRoot: canonicalPath(systemInstallRoot), userRoot: userRoot),
             os: .linux,
-            osVersion: release["VERSION_ID"] ?? "", osBuild: kernelRelease(), osDistribution: release["ID"] ?? "",
+            osVersion: release["VERSION_ID"] ?? "", osBuild: kernelRelease(), osDistribution: distribution(release),
             architecture: architecture, payloadHash: Data(try sha256(ofFileAt: "/proc/self/exe")),
             versionLabel: versionLabel)
     }
@@ -73,6 +73,13 @@ public enum LinuxIdentity {
             if let text = readText(path) { return osRelease(parsing: text) }
         }
         return [:]
+    }
+
+    /// The distribution os-release(5) `fields` name: `ID`, or `linux` when it is unset, as os-release(5)
+    /// defines.
+    public static func distribution(_ fields: [String: String]) -> String {
+        guard let id = fields["ID"], !id.isEmpty else { return "linux" }
+        return id
     }
 
     /// Parses os-release(5) text: one `KEY=value` per line, the value bare or in single or double quotes

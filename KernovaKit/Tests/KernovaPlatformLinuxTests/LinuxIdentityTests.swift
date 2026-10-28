@@ -7,6 +7,7 @@ import Musl
 
 import Foundation
 import KernovaAgentCore
+import KernovaDigest
 import KernovaPlatformLinux
 import Testing
 
@@ -51,6 +52,13 @@ struct LinuxIdentityTests {
         #expect(fields["VERSION_ID"] == "44")
     }
 
+    @Test("The distribution is os-release's ID, or linux when it names none")
+    func distribution() {
+        #expect(LinuxIdentity.distribution(["ID": "fedora"]) == "fedora")
+        #expect(LinuxIdentity.distribution(["ID": ""]) == "linux")
+        #expect(LinuxIdentity.distribution(["NAME": "Linux"]) == "linux")
+    }
+
     @Test("The user root is under XDG_DATA_HOME when it is absolute, else under HOME")
     func userRoot() {
         #expect(
@@ -82,8 +90,7 @@ struct LinuxIdentityTests {
     func hash() throws {
         let digest = try LinuxIdentity.sha256(ofFileAt: "/dev/null")
         #expect(
-            digest.map { String(format: "%02x", $0) }.joined()
-                == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            lowercaseHex(digest) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         #expect(throws: LinuxIdentityError.executableUnreadable(ENOENT)) {
             try LinuxIdentity.sha256(ofFileAt: "/nonexistent/kernova-agent")
         }

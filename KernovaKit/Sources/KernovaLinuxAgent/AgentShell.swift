@@ -11,6 +11,7 @@ import CKernovaAgentVersion
 import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaDBus
+import KernovaDigest
 import KernovaLogging
 import KernovaPlatformLinux
 import KernovaSynchronization
@@ -53,7 +54,7 @@ enum AgentShell {
         do throws(LinuxIdentityError) {
             let claim = try LinuxIdentity.current(role: .sessionPeer, versionLabel: label)
             print("version: \(claim.versionLabel)")
-            print("payload-sha256: \(hex(claim.payloadHash))")
+            print("payload-sha256: \(lowercaseHex(claim.payloadHash))")
             print("scope: \(claim.scope)")
             print("architecture: \(claim.architecture)")
             print("os: \(claim.osDistribution) \(claim.osVersion)")
@@ -79,7 +80,7 @@ enum AgentShell {
             .notice,
             """
             The \(name, privacy: .public) peer \(label, privacy: .public) starts, scope \
-            \(String(describing: claim.scope), privacy: .public), payload \(hex(claim.payloadHash), privacy: .public)
+            \(String(describing: claim.scope), privacy: .public), payload \(lowercaseHex(claim.payloadHash), privacy: .public)
             """)
         #if KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
         logger.log(.notice, "This build carries the hang-before-Hello fault: it never dials")
@@ -136,7 +137,8 @@ enum AgentShell {
 
     /// On SIGTERM — systemd's stop — closes the connection with `SHUTTING_DOWN`, then exits 0.
     private static func installTermination() {
-        signal(SIGTERM, SIG_IGN)
+        // No SIG_IGN first, as on Darwin: Linux's libdispatch installs its own disposition when the source
+        // registers, and ignoring the signal until then would drop a SIGTERM that arrives in between.
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
         source.setEventHandler {
             guard let runtime = held.withLock({ $0.runtime }) else { exit(0) }
@@ -154,13 +156,6 @@ enum AgentShell {
     private static func writeError(_ text: String) {
         var line = text + "\n"
         line.withUTF8 { bytes in _ = write(2, bytes.baseAddress, bytes.count) }
-    }
-
-    private static func hex(_ bytes: some Sequence<UInt8>) -> String {
-        bytes.map { byte in
-            let digits = String(byte, radix: 16)
-            return digits.count == 1 ? "0" + digits : digits
-        }.joined()
     }
 }
 #endif

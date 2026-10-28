@@ -105,8 +105,8 @@ var targets: [Target] = [
     .executableTarget(
         name: "KernovaLinuxAgent",
         dependencies: [
-            "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaLogging",
-            "CKernovaAgentVersion",
+            "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaDigest",
+            "KernovaLogging", "CKernovaAgentVersion",
         ],
         swiftSettings: sharedSwiftSettings
     ),

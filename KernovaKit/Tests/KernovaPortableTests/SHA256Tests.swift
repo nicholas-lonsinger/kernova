@@ -7,13 +7,6 @@ import CryptoKit
 
 @Suite("SHA-256")
 struct SHA256Tests {
-    private func hex(_ bytes: [UInt8]) -> String {
-        bytes.map { byte in
-            let digits = String(byte, radix: 16)
-            return digits.count == 1 ? "0" + digits : digits
-        }.joined()
-    }
-
     /// FIPS 180-4's examples (NIST's SHA256.pdf, "Example Algorithms") and the long-message vectors of
     /// the NIST CSRC "SHA-2" test vectors.
     @Test(
@@ -31,7 +24,13 @@ struct SHA256Tests {
             ),
         ])
     func vectors(message: String, digest: String) {
-        #expect(hex(KernovaDigest.SHA256.hash(Array(message.utf8))) == digest)
+        #expect(lowercaseHex(KernovaDigest.SHA256.hash(Array(message.utf8))) == digest)
+    }
+
+    @Test("Hex writes two lowercase digits a byte")
+    func hexDigits() {
+        #expect(lowercaseHex([0x00, 0x0F, 0xA0, 0xFF]) == "000fa0ff")
+        #expect(lowercaseHex([UInt8]()) == "")
     }
 
     @Test("A million 'a's, fed in uneven pieces")
@@ -44,7 +43,7 @@ struct SHA256Tests {
             hasher.update(Array(piece[0..<count]))
             fed += count
         }
-        #expect(hex(hasher.finalize()) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+        #expect(lowercaseHex(hasher.finalize()) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
     }
 
     @Test("Every length across the padding boundaries hashes the same fed whole or byte by byte")
