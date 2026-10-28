@@ -74,7 +74,7 @@ package struct BundledGuestAgents: Sendable {
         let entries = Self.entries(in: bundle, versionLabel: versionLabel)
         if entries[BundledGuestAgentKey(.linux, .arm64, .user)] == nil {
             Self.logger.log(.fault, "\(Self.linuxAgentPath, privacy: .public) missing from app bundle")
-            assertionFailure("\(Self.linuxAgentPath) missing — check the 'Build Linux Guest Agent' build phase")
+            assertionFailure("\(Self.linuxAgentPath) missing — check the 'Embed Linux Guest Agent' build phase")
         }
         self.init(entries: entries)
     }
