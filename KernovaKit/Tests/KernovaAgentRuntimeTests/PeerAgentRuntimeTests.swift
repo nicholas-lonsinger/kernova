@@ -197,6 +197,65 @@ struct PeerAgentRuntimeTests {
         _ = await events.next { $0 == .peerStateChanged(changed) }
     }
 
+    @Test("A session peer's new session closes its connection SHUTTING_DOWN and redials at once to say Hello with it")
+    func sessionMoves() async {
+        let harness = PeerRuntimeHarness()
+        harness.runtime.start()
+        let first = await harness.connect(1)
+        let moved = PeerSessionState(console: .on, sessionID: "3", userName: "user")
+        harness.runtime.setPeerState(moved)
+        await harness.pump(first)
+        var firstEvents = first.far.events.waiter()
+        _ = await firstEvents.next { $0 == .closed(.closedByPeer(WireError(.shuttingDown))) }
+
+        let second = await harness.connect(2)
+        var secondEvents = second.far.events.waiter()
+        _ = await secondEvents.next { event in
+            if case .helloReceived(_, moved) = event { true } else { false }
+        }
+        // At once: the clock never moved, so no backoff came between the two dials.
+        #expect(harness.scheduler.now == Fixture.t0)
+        #expect(harness.dialer.dials.elements == [1, 2])
+    }
+
+    @Test("With no session the peer closes SHUTTING_DOWN and dials nothing, until a session dials at once")
+    func sessionEnds() async {
+        let harness = PeerRuntimeHarness()
+        harness.runtime.start()
+        let first = await harness.connect(1)
+        harness.runtime.setPeerState(nil)
+        await harness.pump(first)
+        var firstEvents = first.far.events.waiter()
+        _ = await firstEvents.next { $0 == .closed(.closedByPeer(WireError(.shuttingDown))) }
+        await harness.settle()
+        #expect(harness.scheduler.armed.isEmpty)
+        harness.scheduler.advance(to: Fixture.at(milliseconds: 600_000))
+        await harness.settle()
+        #expect(harness.dialer.dials.elements == [1])
+
+        harness.runtime.setPeerState(Fixture.peerState)
+        let second = await harness.connect(2)
+        var secondEvents = second.far.events.waiter()
+        _ = await secondEvents.next { event in
+            if case .helloReceived(_, Fixture.peerState) = event { true } else { false }
+        }
+    }
+
+    @Test("A runtime made with no session dials nothing until it has one")
+    func startsWithoutSession() async {
+        let harness = PeerRuntimeHarness(state: nil)
+        harness.runtime.start()
+        await harness.settle()
+        #expect(harness.dialer.dials.elements.isEmpty)
+        #expect(harness.scheduler.armed.isEmpty)
+        harness.runtime.setPeerState(Fixture.peerState)
+        let link = await harness.connect(1)
+        var events = link.far.events.waiter()
+        _ = await events.next { event in
+            if case .helloReceived(_, Fixture.peerState) = event { true } else { false }
+        }
+    }
+
     @Test("SUPERSEDED stops the agent, and no dial timer stays armed")
     func stopDisarms() async {
         let harness = PeerRuntimeHarness()

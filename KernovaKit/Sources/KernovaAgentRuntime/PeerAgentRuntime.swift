@@ -52,7 +52,8 @@ public final class PeerAgentRuntime: Sendable {
     private struct State: Sendable {
         var agent: PeerAgent
         var driver: ConnectionDriver<PeerEndpoint>?
-        var peerState: PeerSessionState
+        /// Nil while the peer has no session to serve, and the schedule is parked.
+        var peerState: PeerSessionState?
         var power: Availability<PowerOffer>
         var update: Availability<UpdateOffer>
         var timer = TimerSlot()
@@ -60,8 +61,9 @@ public final class PeerAgentRuntime: Sendable {
     }
 
     /// A runtime for a peer claiming `claim`, whose `instanceID` it replaces with 16 bytes it draws once.
+    /// With no `state` it dials nothing until `setPeerState(_:)` gives it one.
     public init(
-        claim: PeerClaim, state: PeerSessionState, registry: PeerFeatureRegistry, dialer: any TransportDialer,
+        claim: PeerClaim, state: PeerSessionState?, registry: PeerFeatureRegistry, dialer: any TransportDialer,
         scheduler: any RuntimeScheduler, logger: KernovaLogger, receiverPolicy: ReceiverPolicy = .production,
         handlers: Handlers
     ) {
@@ -78,7 +80,7 @@ public final class PeerAgentRuntime: Sendable {
         let unregistered = "no adapter registered"
         self.state = Locked(
             State(
-                agent: PeerAgent(now: scheduler.now), peerState: state,
+                agent: PeerAgent(now: scheduler.now, parked: state == nil), peerState: state,
                 power: registry.power == nil
                     ? .absent(.notImplemented, debugDetail: unregistered)
                     : .absent(.unspecified, debugDetail: "not yet reported"),
@@ -101,14 +103,26 @@ public final class PeerAgentRuntime: Sendable {
         }
     }
 
-    /// The session's state changed.
-    public func setPeerState(_ peerState: PeerSessionState) {
+    /// The session's state changed; nil when the peer has no session to serve.
+    ///
+    /// A connection serves one session for its life: a session peer's new session, or none, closes the
+    /// connection with `SHUTTING_DOWN`. With a session the runtime dials at once, as soon as that
+    /// connection has ended; with none it dials nothing until a later call gives it one.
+    public func setPeerState(_ peerState: PeerSessionState?) {
         queue.async { [self] in
-            let driver = state.withLock { state in
-                state.peerState = peerState
-                return state.driver
+            let (previous, driver) = state.withLock { state in
+                defer { state.peerState = peerState }
+                return (state.peerState, state.driver)
             }
-            driver?.handle(.peerState(peerState))
+            if let peerState, let previous,
+                claim.role != .sessionPeer || previous.sessionID == peerState.sessionID
+            {
+                driver?.handle(.peerState(peerState))
+                return
+            }
+            step { agent, now in agent.park(now: now) }
+            driver?.close(.shuttingDown)
+            if peerState != nil { step { agent, now in agent.unpark(now: now) } }
         }
     }
 
@@ -160,8 +174,9 @@ public final class PeerAgentRuntime: Sendable {
             guard let generation else { return stream.shutdown() }
             let ledger = ledger.withLock { $0 }
             var configuration = state.withLock { state in
+                // The schedule connects nothing while parked, which is exactly while there is no state.
                 PeerConfiguration(
-                    claim: claim, state: state.peerState, power: state.power,
+                    claim: claim, state: state.peerState ?? PeerSessionState(), power: state.power,
                     logs: registry.logs == nil
                         ? .absent(.notImplemented, debugDetail: "no log forwarding") : .available(NoParams()),
                     update: state.update)

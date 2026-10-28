@@ -742,7 +742,7 @@ package enum VMConfigurationKeyRegistry {
         summary:
             "Drag files onto the display into the guest's Downloads, and out of it onto this Mac: true or false.",
         gate: .live,
-        applies: { $0 == .macOS },
+        applies: { $0.guestAgentSettings.contains(.dropFiles) },
         read: { String($0.dropFilesEnabled) },
         write: { value, config, _ in
             config.dropFilesEnabled = try ConfigurationValue.boolean(value, key: "dropFiles")
@@ -752,7 +752,7 @@ package enum VMConfigurationKeyRegistry {
         name: "agent.logForwarding",
         summary: "Forward the guest agent's log records to this Mac: true or false.",
         gate: .live,
-        applies: { $0 == .macOS },
+        applies: { $0.guestAgentSettings.contains(.forwardLogs) },
         read: { String($0.agentLogForwardingEnabled) },
         write: { value, config, _ in
             config.agentLogForwardingEnabled = try ConfigurationValue.boolean(
@@ -762,7 +762,7 @@ package enum VMConfigurationKeyRegistry {
     package static let agentInstallReminder = VMConfigurationKey(
         name: "agent.installReminder",
         summary: "Remind in the sidebar while the guest agent has not connected: true or false.",
-        applies: { $0 == .macOS },
+        applies: { $0.guestAgentSettings.contains(.installReminder) },
         readHostState: { String(!$0.agentInstallNudgeDismissed) },
         changeHostState: { value, _ in
             let reminds = try ConfigurationValue.boolean(value, key: "agent.installReminder")

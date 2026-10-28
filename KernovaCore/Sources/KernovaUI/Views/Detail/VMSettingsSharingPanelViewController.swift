@@ -2,9 +2,10 @@ import AppKit
 import KernovaCommandModel
 import KernovaCore
 
-/// The Sharing category: shared directories, the guest-agent group (macOS) or
-/// the standalone clipboard section (Linux) beside them, and the USB
-/// accessories this VM takes back on its own.
+/// The Sharing category: shared directories, the guest-agent settings the
+/// guest's agent offers, a standalone clipboard section where the clipboard
+/// rides a device instead (Linux), and the USB accessories this VM takes back
+/// on its own.
 @MainActor
 final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPanel {
     let context: VMSettingsPanelContext
@@ -47,14 +48,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         lockRegistry.removeAll()
         sharesLockRegistry.removeAll()
 
-        var sections = [
-            buildSharedDirectoriesSection(),
-            // macOS: clipboard rides the agent's vsock channel, so it nests in
-            // the agent group rather than forming a sibling section. Linux:
-            // clipboard is SPICE-based, so it stands alone.
-            isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS)
-                ? buildGuestAgentSection() : buildClipboardSection(),
-        ]
+        var sections = [buildSharedDirectoriesSection()]
+        let settings = agentSettings
+        if !settings.isEmpty { sections.append(buildGuestAgentSection(settings)) }
+        if !settings.contains(.clipboard) { sections.append(buildClipboardSection()) }
         // Absent, not disabled, in a process that cannot pass accessories
         // through: there is nothing it could ever list.
         pairingSection = nil
@@ -244,13 +241,43 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     // MARK: Guest Agent
 
-    /// The macOS Guest Agent header's info: the prerequisite every row in the
-    /// section shares.
-    static let agentDependencyInfo: [InfoPopoverParagraph] = [
-        .body(
-            "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the clipboard window."
-        )
-    ]
+    /// The guest-agent settings this VM's guest offers, in section order.
+    private var agentSettings: [GuestAgentSetting] {
+        instance.configuration.guestOS.guestAgentSettings
+    }
+
+    /// The Guest Agent header's info for `guestOS`: the prerequisite every row
+    /// in the section shares.
+    static func agentDependencyInfo(for guestOS: VMGuestOS) -> [InfoPopoverParagraph] {
+        switch guestOS {
+        case .macOS:
+            [
+                .body(
+                    "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the clipboard window."
+                )
+            ]
+        case .linux:
+            [.body("Log forwarding needs the Kernova guest agent in the guest.")]
+        }
+    }
+
+    /// The "Forward guest logs" row's info for `guestOS`.
+    static func logForwardingInfo(for guestOS: VMGuestOS) -> [InfoPopoverParagraph] {
+        switch guestOS {
+        case .macOS:
+            [
+                .body(
+                    "Streams `os.Logger` records from the macOS guest agent to this Mac, where they appear in Console.app under `app.kernova.guest`."
+                )
+            ]
+        case .linux:
+            [
+                .body(
+                    "Streams the Linux guest agent's own log records to this Mac, where they appear in Console.app under `app.kernova.guest`. Other records in the guest's journal are not forwarded."
+                )
+            ]
+        }
+    }
 
     /// Shown under the "Show install reminder" row while the app-wide
     /// preference turns the install prompt off, so the greyed row reads as
@@ -276,31 +303,25 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         ),
     ]
 
-    /// Guest Agent group for **macOS** guests, holding the agent-management
-    /// toggles plus Clipboard sharing, which rides the agent's vsock channel.
-    private func buildGuestAgentSection() -> NSView {
+    /// The Guest Agent group: a row for each of `settings`, which on macOS
+    /// include Clipboard sharing, riding the agent's vsock channel.
+    private func buildGuestAgentSection(_ settings: [GuestAgentSetting]) -> NSView {
+        let guestOS = instance.configuration.guestOS
         logForwardingSwitch = makeGroupedFormSwitch(target: self, action: #selector(logForwardingToggled))
         installReminderSwitch = makeGroupedFormSwitch(target: self, action: #selector(installReminderToggled))
         clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
         clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
         dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
         // Not lockable — every toggle here takes effect live.
-        let overrideCaption = GroupedFormStateNote(
-            Self.installPromptDisabledCaption,
-            shownWhen: { [weak self] in self?.viewModel.agentInstallPromptDisabled ?? false })
-        installReminderOverrideCaption = overrideCaption
-        let card = makeGroupedFormCard(
-            rows: [
-                makeGroupedFormCardRow(
-                    "Forward guest logs", control: logForwardingSwitch,
-                    info: [
-                        .body(
-                            "Streams `os.Logger` records from the macOS guest agent to this Mac, where they appear in Console.app under `app.kernova.guest`."
-                        )
-                    ]),
+        let rows: [NSView] = settings.map { setting in
+            switch setting {
+            case .forwardLogs:
+                return makeGroupedFormCardRow(
+                    "Forward guest logs", control: logForwardingSwitch, info: Self.logForwardingInfo(for: guestOS))
+            case .clipboard:
                 // Passthrough rides on sharing — it goes inert when sharing is off —
                 // so it nests as a sub-option rather than an equal sibling toggle.
-                makeGroupedFormSubOptionGroup(
+                return makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow(
                         "Clipboard sharing", control: clipboardSwitch,
                         info: [
@@ -308,15 +329,21 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         ]),
                     subOption: makeGroupedFormCardRow(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                        info: Self.passthroughInfoParagraphs)),
-                makeGroupedFormCardRow(
+                        info: Self.passthroughInfoParagraphs))
+            case .dropFiles:
+                return makeGroupedFormCardRow(
                     "Drag and drop files", control: dropFilesSwitch,
                     info: [
                         .body(
                             "Lets you drag files and folders between this Mac and the virtual machine's display. Files dropped on the display go to the guest's Downloads folder; files dragged out of it are copied where you drop them."
                         )
-                    ]),
-                GroupedFormNotedRow(
+                    ])
+            case .installReminder:
+                let overrideCaption = GroupedFormStateNote(
+                    Self.installPromptDisabledCaption,
+                    shownWhen: { [weak self] in self?.viewModel.agentInstallPromptDisabled ?? false })
+                installReminderOverrideCaption = overrideCaption
+                return GroupedFormNotedRow(
                     makeGroupedFormCardRow(
                         "Show install reminder", control: installReminderSwitch,
                         info: [
@@ -324,10 +351,12 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                                 "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
                             )
                         ]),
-                    notes: [overrideCaption]),
-            ])
+                    notes: [overrideCaption])
+            }
+        }
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Guest Agent", paragraphs: Self.agentDependencyInfo), card,
+            lockRegistry.makeHeader("Guest Agent", paragraphs: Self.agentDependencyInfo(for: guestOS)),
+            makeGroupedFormCard(rows: rows),
         ])
     }
 
@@ -355,29 +384,39 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         ])
     }
 
+    /// Refreshes the agent rows on screen but Clipboard sharing's, which
+    /// ``refreshClipboard()`` owns wherever it is shown.
     private func refreshGuestAgent() {
-        guard isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) else { return }
-        let forwardsLogs = instance.configuration.agentLogForwardingEnabled
-        logForwardingSwitch.state = forwardsLogs ? .on : .off
-        applyGroupedFormRowEnabled(
-            isAvailable(VMConfigurationKeyRegistry.agentLogForwarding, writing: String(!forwardsLogs)),
-            control: logForwardingSwitch)
-        let dropsFiles = instance.configuration.dropFilesEnabled
-        dropFilesSwitch.state = dropsFiles ? .on : .off
-        applyGroupedFormRowEnabled(
-            isAvailable(VMConfigurationKeyRegistry.dropFiles, writing: String(!dropsFiles)),
-            control: dropFilesSwitch)
-        // The per-VM flag keeps its value while the app-wide preference overrides
-        // it, so the switch still shows what this VM reverts to when the
-        // preference is turned back on — it just can't be changed from here.
-        let reminds = !instance.hostState.agentInstallNudgeDismissed
-        installReminderSwitch.state = reminds ? .on : .off
-        let overridden = viewModel.agentInstallPromptDisabled
-        applyGroupedFormRowEnabled(
-            !overridden
-                && isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
-            control: installReminderSwitch)
-        installReminderOverrideCaption?.refresh()
+        for setting in agentSettings {
+            switch setting {
+            case .forwardLogs:
+                let forwardsLogs = instance.configuration.agentLogForwardingEnabled
+                logForwardingSwitch.state = forwardsLogs ? .on : .off
+                applyGroupedFormRowEnabled(
+                    isAvailable(VMConfigurationKeyRegistry.agentLogForwarding, writing: String(!forwardsLogs)),
+                    control: logForwardingSwitch)
+            case .clipboard:
+                break
+            case .dropFiles:
+                let dropsFiles = instance.configuration.dropFilesEnabled
+                dropFilesSwitch.state = dropsFiles ? .on : .off
+                applyGroupedFormRowEnabled(
+                    isAvailable(VMConfigurationKeyRegistry.dropFiles, writing: String(!dropsFiles)),
+                    control: dropFilesSwitch)
+            case .installReminder:
+                // The per-VM flag keeps its value while the app-wide preference overrides
+                // it, so the switch still shows what this VM reverts to when the
+                // preference is turned back on — it just can't be changed from here.
+                let reminds = !instance.hostState.agentInstallNudgeDismissed
+                installReminderSwitch.state = reminds ? .on : .off
+                let overridden = viewModel.agentInstallPromptDisabled
+                applyGroupedFormRowEnabled(
+                    !overridden
+                        && isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
+                    control: installReminderSwitch)
+                installReminderOverrideCaption?.refresh()
+            }
+        }
     }
 
     private func refreshClipboard() {

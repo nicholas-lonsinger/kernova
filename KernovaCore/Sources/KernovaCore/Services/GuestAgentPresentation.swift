@@ -1,3 +1,4 @@
+import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaWire
@@ -53,8 +54,17 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             capabilities: [
                 snapshot.peers.isEmpty
                     ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))
-                    : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected")
+                    : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
+                Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
             ])
+    }
+
+    /// The row titled `title` for a feature whose merged status is `status`.
+    private static func row(_ title: String, _ status: Availability<Data>, availableDetail: String) -> CapabilityRow {
+        switch status {
+        case .available: CapabilityRow(title: title, isAvailable: true, detail: availableDetail)
+        case .absent(let reason, _): CapabilityRow(title: title, isAvailable: false, detail: Self.reason(reason))
+        }
     }
 
     /// What `reason` means, as the user reads it.

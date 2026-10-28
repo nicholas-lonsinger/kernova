@@ -39,13 +39,17 @@ public struct PeerAgent: Sendable {
     private var dialAt: CoreInstant?
     private var dialing = false
     private var stopped = false
+    /// No session to serve: nothing dials until `unpark`.
+    private var parked = false
+    /// Unparked while a connection or dial was still in flight: the next dial follows its end at once.
+    private var dialOnEnd = false
     private var effects: [AgentEffect] = []
 
-    /// A schedule that dials at once.
-    public init(now: CoreInstant) {
+    /// A schedule that dials at once, or, `parked`, once `unpark` is called.
+    public init(now: CoreInstant, parked: Bool = false) {
         clock = JudgedClock(now: now, suspendedStep: CoreDuration(nanoseconds: .max))
-        dialing = true
-        effects.append(.dial)
+        self.parked = parked
+        if !parked { dialNow() }
     }
 
     /// When `handleTimeout` must next run.
@@ -55,11 +59,12 @@ public struct PeerAgent: Sendable {
     public var currentGeneration: ConnectionGeneration { generation }
 
     /// The dial connected; the driver makes the endpoint with the generation returned. Nil once the agent
-    /// has stopped: the stream is the caller's to shut down.
+    /// has stopped or parked: the stream is the caller's to shut down.
     public mutating func dialSucceeded(now: CoreInstant) -> ConnectionGeneration? {
         clock.advance(to: now)
-        guard !stopped else { return nil }
         dialing = false
+        guard !stopped, !parked else { return nil }
+        dialOnEnd = false
         connected = true
         policyAt = nil
         generation = ConnectionGeneration(rawValue: generation.rawValue + 1)
@@ -71,6 +76,8 @@ public struct PeerAgent: Sendable {
         clock.advance(to: now)
         guard !stopped else { return }
         dialing = false
+        dialOnEnd = false
+        guard !parked else { return }
         switch failure {
         case .permanent:
             stop(.noTransport)
@@ -102,7 +109,31 @@ public struct PeerAgent: Sendable {
             nextBackoff = 0
         }
         self.policyAt = nil
+        guard !parked else { return }
+        if dialOnEnd {
+            dialOnEnd = false
+            return dialNow()
+        }
         schedule(after: max(retryAfter ?? .zero, takeBackoff()))
+    }
+
+    /// The peer has no session to serve: dial no more until `unpark`. The runtime closes the connection,
+    /// if there is one, and a dial in flight connects nothing.
+    public mutating func park(now: CoreInstant) {
+        clock.advance(to: now)
+        guard !stopped else { return }
+        parked = true
+        dialOnEnd = false
+        dialAt = nil
+    }
+
+    /// The peer has a session to serve again: dial at once — or, while a connection or a dial is still in
+    /// flight, as soon as it ends. Does nothing unless parked.
+    public mutating func unpark(now: CoreInstant) {
+        clock.advance(to: now)
+        guard !stopped, parked else { return }
+        parked = false
+        if connected || dialing { dialOnEnd = true } else { dialNow() }
     }
 
     /// The shell is exiting: dial no more, with no `.stop` effect, since the shell asked for it. Every
@@ -117,14 +148,18 @@ public struct PeerAgent: Sendable {
     public mutating func handleTimeout(now: CoreInstant) {
         clock.advance(to: now)
         guard !stopped, let dialAt, clock.raw >= dialAt else { return }
-        self.dialAt = nil
-        dialing = true
-        effects.append(.dial)
+        dialNow()
     }
 
     /// The next effect.
     public mutating func pollEffect() -> AgentEffect? {
         effects.isEmpty ? nil : effects.removeFirst()
+    }
+
+    private mutating func dialNow() {
+        dialAt = nil
+        dialing = true
+        effects.append(.dial)
     }
 
     private mutating func takeBackoff() -> CoreDuration {

@@ -5,10 +5,12 @@ import Synchronization
 import Testing
 
 /// `org.freedesktop.login1` as the agent sees it, exported on a private bus:
-/// the manager calls the wrappers make, two users, seat0, and two sessions —
-/// a user's graphical session and a greeter.
+/// the manager calls the wrappers make, two users, seat0, and three sessions —
+/// a user's graphical session, the same user's next one, and a greeter.
 final class FakeLogind: Sendable {
     static let userSession = LogindSessionReference(id: "2", path: "/org/freedesktop/login1/session/_32")
+    /// The display user's next graphical session: active, of class `user`, on seat0.
+    static let nextUserSession = LogindSessionReference(id: "3", path: "/org/freedesktop/login1/session/_33")
     static let greeterSession = LogindSessionReference(id: "c1", path: "/org/freedesktop/login1/session/c1")
     static let seatPath: DBusObjectPath = "/org/freedesktop/login1/seat/seat0"
     /// Logged in with a graphical session.
@@ -33,6 +35,8 @@ final class FakeLogind: Sendable {
         let display = Mutex<LogindSessionReference?>(FakeLogind.userSession)
         /// The user session's `Active`.
         let userSessionActive = Mutex(false)
+        /// The user session's `Class`.
+        let userSessionClass = Mutex("user")
         /// The user session's `Seat` ID; nil for a session on no seat.
         let userSessionSeat = Mutex<String?>("seat0")
     }
@@ -104,9 +108,14 @@ final class FakeLogind: Sendable {
         case (userSession.path, .string(Logind.sessionInterface)?):
             [
                 "Id": .string("2"), "Active": .boolean(recorder.userSessionActive.withLock { $0 }),
-                "State": .string("online"), "Class": .string("user"),
+                "State": .string("online"), "Class": .string(recorder.userSessionClass.withLock { $0 }),
                 "Seat": seatReference(recorder.userSessionSeat.withLock { $0 }),
                 "Type": .string("wayland"),
+            ]
+        case (nextUserSession.path, .string(Logind.sessionInterface)?):
+            [
+                "Id": .string("3"), "Active": .boolean(true), "State": .string("active"),
+                "Class": .string("user"), "Seat": seatReference("seat0"),
             ]
         case (greeterSession.path, .string(Logind.sessionInterface)?):
             [
@@ -146,14 +155,6 @@ final class FakeLogind: Sendable {
         default:
             return nil
         }
-    }
-
-    /// Emits the manager's `SessionNew` for `session`.
-    func emitSessionNew(_ session: LogindSessionReference) throws {
-        try connection.send(
-            .signal(
-                path: Logind.managerPath, interface: Logind.managerInterface, member: "SessionNew",
-                body: [.string(session.id), .objectPath(session.path)]))
     }
 
     /// Emits `PropertiesChanged` for `interface` on `path`.
@@ -290,6 +291,32 @@ struct LogindTests {
         #expect(try inbox.next().get() == .activeSession(nil))
         try fake.emitChange(on: seat, interface: interface, changed: [], invalidated: ["ActiveSession"])
         #expect(try inbox.next().get() == .activeSessionInvalidated)
+        #expect(inbox.isEmpty)
+        subscription.cancel()
+    }
+
+    @Test("Observing a user delivers each change of its display session")
+    func observeUser() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        let user = try logind.user(FakeLogind.displayUID)
+        let inbox = Inbox<Result<LogindUserChange, LogindError>>()
+        let subscription = try logind.observeUser(user) { inbox.put($0) }
+
+        let interface = Logind.userInterface
+        try fake.emitChange(on: user, interface: interface, changed: [("IdleHint", .boolean(true))], invalidated: [])
+        try fake.emitChange(
+            on: user, interface: Logind.sessionInterface,
+            changed: [("Display", FakeLogind.reference(FakeLogind.nextUserSession))], invalidated: [])
+        let toNext = [("Display", FakeLogind.reference(FakeLogind.nextUserSession))]
+        try fake.emitChange(on: user, interface: interface, changed: toNext, invalidated: [])
+        #expect(try inbox.next().get() == .display(FakeLogind.nextUserSession))
+        try fake.emitChange(
+            on: user, interface: interface, changed: [("Display", FakeLogind.reference(nil))], invalidated: [])
+        #expect(try inbox.next().get() == .display(nil))
+        try fake.emitChange(on: user, interface: interface, changed: [], invalidated: ["Display"])
+        #expect(try inbox.next().get() == .displayInvalidated)
         #expect(inbox.isEmpty)
         subscription.cancel()
     }
