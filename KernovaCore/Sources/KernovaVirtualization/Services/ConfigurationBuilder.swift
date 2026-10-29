@@ -425,8 +425,7 @@ struct ConfigurationBuilder: Sendable {
         }
 
         // The VM's copy, made by the bring-up, never the app's shared file.
-        let copy = VMBundleLayout(bundleURL: bundleURL).guestAgentDiskCopyURL(
-            of: installerURL.path(percentEncoded: false))
+        let copy = VMBundleLayout(bundleURL: bundleURL).guestAgentVirtioDiskURL(of: installerURL)
         let disk = Self.guestAgentDisk(installerPath: copy.path(percentEncoded: false), bundleURL: bundleURL)
         do {
             let resolved = try ConfigurationPaths.resolveFile(
@@ -496,9 +495,7 @@ struct ConfigurationBuilder: Sendable {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         for item in items {
             // An installer entry names the app's disk; the guest gets the VM's copy of it.
-            let path =
-                item.isInstaller(of: guestAgents)
-                ? layout.guestAgentDiskCopyURL(of: item.path).path(percentEncoded: false) : item.path
+            let path = item.installerCopy(in: layout)?.path(percentEncoded: false) ?? item.path
             let resolved = try ConfigurationPaths.resolveFile(
                 at: path, context: "Removable media '\(item.label)'",
                 requireWritable: !item.readOnly,

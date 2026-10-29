@@ -468,24 +468,25 @@ struct ConfigurationBuilderTests {
         #expect(xhci.usbDevices.first is VZUSBMassStorageDeviceConfiguration)
     }
 
-    @Test("An installer entry attaches the VM's copy of the disk, never the app's shared file")
-    func installerEntryAttachesTheBundleCopy() throws {
+    @Test(
+        "An installer entry attaches the VM's copy of the disk, never the shared file, whichever build named it",
+        arguments: [false, true])
+    func installerEntryAttachesTheBundleCopy(namedByAnotherBuild: Bool) throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let shared = scratch.url.appendingPathComponent("KernovaMacOSAgent.dmg")
         try Data("shared".utf8).write(to: shared)
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        let copy = layout.guestAgentDiskCopyURL(of: shared.path(percentEncoded: false))
+        let item = RemovableMediaItem(path: shared.path(percentEncoded: false), readOnly: true)
+        let copy = layout.guestAgentDiskCopyURL(for: item)
 
         var config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        config.removableMedia = [RemovableMediaItem(path: shared.path(percentEncoded: false), readOnly: true)]
-        let builder = ConfigurationBuilder.testing(guestAgentInstaller: shared)
-
-        // With no copy in the bundle, the shared file alone attaches nothing.
-        #expect(throws: ConfigurationBuilderError.self) {
-            try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-        }
+        config.removableMedia = [item]
+        // Another build's installer is no file of this build's.
+        let builder =
+            namedByAnotherBuild
+            ? ConfigurationBuilder.testing() : ConfigurationBuilder.testing(guestAgentInstaller: shared)
 
         try FileManager.default.createDirectory(
             at: layout.guestAgentDiskDirectoryURL, withIntermediateDirectories: true)
@@ -1501,7 +1502,7 @@ struct ConfigurationBuilderTests {
         let agentURL = try makeAgentDiskImage()
         // The bring-up makes the VM's copy; the build attaches it.
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        let copy = layout.guestAgentDiskCopyURL(of: agentURL.path(percentEncoded: false))
+        let copy = layout.guestAgentVirtioDiskURL(of: agentURL)
         try FileManager.default.createDirectory(
             at: layout.guestAgentDiskDirectoryURL, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: agentURL, to: copy)

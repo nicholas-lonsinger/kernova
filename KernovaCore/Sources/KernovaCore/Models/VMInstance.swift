@@ -430,7 +430,13 @@ package final class VMInstance {
     /// `true` when a guest-agent installer disk is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        (configuration.removableMedia ?? []).contains { $0.isInstaller(of: bundleProducts.guestAgents) }
+        (configuration.removableMedia ?? []).contains { isGuestAgentInstaller($0) }
+    }
+
+    /// Whether `item` is a guest-agent installer disk on this VM
+    /// (``RemovableMediaItem/isInstaller(of:in:)``).
+    package func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
+        item.isInstaller(of: bundleProducts.guestAgents, in: bundleLayout)
     }
 
     var diskImageURL: URL { bundleLayout.diskImageURL }
@@ -800,11 +806,12 @@ package final class VMInstance {
     /// shape the bundle does not record.
     package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
         let agents = bundleProducts.guestAgents
+        let layout = bundleLayout
         if configuration.deviceShape != .current || hasGuestAgentInstallerMounted {
             try bringUp.operation.permit.updateConfiguration {
                 $0.deviceShape = .current
                 // The disk was the last session's; this one starts without it.
-                $0.removeInstallerDisks(of: agents)
+                $0.removeInstallerDisks(of: agents, in: layout)
             }.get()
         }
         // Each boot that attaches an installer disk makes its own copy.

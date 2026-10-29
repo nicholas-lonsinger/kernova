@@ -366,7 +366,7 @@ extension VMCommandCore {
                     copy: {
                         try await Task.detached {
                             try Self.copyOut(
-                                copy, .guestWritten, from: source, into: staged, storage: storage)
+                                copy, .stateBound, from: source, into: staged, storage: storage)
                         }.value
                     })
                 guard case .rest = ending else { return ending }
@@ -380,7 +380,7 @@ extension VMCommandCore {
             } else {
                 try await Task.detached {
                     try Self.copyOut(
-                        copy, .settledAndGuestWritten, from: source, into: staged,
+                        copy, .settledAndStateBound, from: source, into: staged,
                         storage: storage)
                 }.value
                 ending = .rest(.asStarted, ())
@@ -455,9 +455,11 @@ extension VMCommandCore {
         /// identifier.
         var carriesSavedState: Bool { outcome == .exactCopy && mode != .stopped }
 
-        /// The bundle-relative files a running guest writes: its internal
-        /// disks and firmware state — what a live copy takes inside its pause.
-        func guestWrittenPaths(in source: VMBundleLayout) -> [String] {
+        /// The bundle-relative files a saved state restores onto — internal
+        /// disks, firmware state and the installer-disk copies
+        /// (``VMBundleItems/capturedRelativePaths(for:layout:)``): what a live
+        /// copy takes inside its pause.
+        func stateBoundPaths(in source: VMBundleLayout) -> [String] {
             VMBundleItems.capturedRelativePaths(for: configuration, layout: source)
         }
 
@@ -481,10 +483,10 @@ extension VMCommandCore {
         /// The files and state files nothing writes under the hold
         /// (``CloneCopy/settledPaths()``), plus a suspended source's slot.
         case settled
-        /// The files a running guest writes (``CloneCopy/guestWrittenPaths(in:)``).
-        case guestWritten
+        /// The files a saved state restores onto (``CloneCopy/stateBoundPaths(in:)``).
+        case stateBound
         /// Both, for a source with no guest running.
-        case settledAndGuestWritten
+        case settledAndStateBound
     }
 
     /// Clones `part` of what `copy` names out of the bundle at `source` into
@@ -497,12 +499,12 @@ extension VMCommandCore {
         let paths: [String] =
             switch part {
             case .settled: copy.settledPaths()
-            case .guestWritten: copy.guestWrittenPaths(in: sourceLayout)
-            case .settledAndGuestWritten:
-                copy.guestWrittenPaths(in: sourceLayout) + copy.settledPaths()
+            case .stateBound: copy.stateBoundPaths(in: sourceLayout)
+            case .settledAndStateBound:
+                copy.stateBoundPaths(in: sourceLayout) + copy.settledPaths()
             }
         try storage.cloneVMBundle(from: source, to: staged.url, relativePaths: paths)
-        guard part != .guestWritten else { return }
+        guard part != .stateBound else { return }
         // A live copy's saved state is written into the clone by VZ; a
         // suspended one's is the slot, which admission found on disk and the
         // hold keeps there.
@@ -890,9 +892,13 @@ extension VMCommandCore {
     /// trashing it would corrupt the app for every VM, and every Linux VM
     /// shares the one Linux disk.
     private func offeredExternalReferences(for instance: VMInstance) -> [ExternalFileReference] {
+        let installers = Set(
+            (instance.configuration.removableMedia ?? []).filter(instance.isGuestAgentInstaller).map(\.path))
         let agents = instance.bundleProducts.guestAgents
         return instance.configuration.externalFileReferences
-            .filter { $0.kind.isOfferedOnVMDelete && !agents.isInstallerDisk(path: $0.path) }
+            .filter {
+                $0.kind.isOfferedOnVMDelete && !installers.contains($0.path) && !agents.isInstallerDisk(path: $0.path)
+            }
     }
 
     /// ``externalAttachments(for:)`` of the VM `selector` names.

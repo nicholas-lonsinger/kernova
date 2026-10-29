@@ -23,13 +23,13 @@ struct AppBundleProductsTests {
         #expect(products.guestAgents.macOSVersion == built)
     }
 
-    @Test("isInstaller(of:) matches the app's bundled installer image path only")
+    @Test("isInstallerDisk(path:) matches the app's bundled installer image path only")
     func installerImageMatchesThePathOnly() throws {
         let agents = products.guestAgents
         let path = try #require(agents.macOSInstallerDiskImageURL).path(percentEncoded: false)
         #expect(FileManager.default.fileExists(atPath: path))
-        #expect(RemovableMediaItem(path: path, readOnly: true).isInstaller(of: agents))
-        #expect(!RemovableMediaItem(path: "/tmp/other.iso", readOnly: true).isInstaller(of: agents))
+        #expect(agents.isInstallerDisk(path: path))
+        #expect(!agents.isInstallerDisk(path: "/tmp/other.iso"))
     }
 
     @Test("The built app carries the Linux agent for both scopes, readable and not executable")

@@ -395,7 +395,7 @@ extension VMCommandCore {
         guard let item = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
-        let isAgentInstaller = item.isInstaller(of: instance.bundleProducts.guestAgents)
+        let isAgentInstaller = instance.isGuestAgentInstaller(item)
         var shared: [String] = []
         if trashFile, !isAgentInstaller {
             shared = await sharingVMNames(
@@ -714,9 +714,14 @@ extension VMCommandCore {
                 verb: .guestAgentDisk,
                 message: "The Guest Agent installer is missing from this copy of Kernova.")
         }
+        let item = RemovableMediaItem(
+            path: disk.path(percentEncoded: false), readOnly: true,
+            label: BundledGuestAgents.installerDiskLabel(for: guestOS))
+        let layout = instance.bundleLayout
+        let copy = layout.guestAgentDiskCopyURL(for: item)
         do {
             // The guest gets the VM's own copy, never the app's shared file.
-            try await GuestAgentDiskCopies.make(of: disk, in: instance.bundleLayout)
+            try await GuestAgentDiskCopies.make(of: disk, at: copy)
         } catch {
             throw CommandError.operationFailed(
                 verb: .guestAgentDisk,
@@ -725,16 +730,20 @@ extension VMCommandCore {
         logger.log(
             .notice,
             "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        let item = RemovableMediaItem(
-            path: disk.path(percentEncoded: false), readOnly: true,
-            label: BundledGuestAgents.installerDiskLabel(for: guestOS))
+        var landed = false
+        defer {
+            // A copy no entry names is no installer's; leave none behind.
+            if !landed { GuestAgentDiskCopies.discard(copy) }
+        }
         try writeConfiguration(of: instance, as: .toggleGuestAgentDisk, verb: .guestAgentDisk) { config in
-            // A mount that raced this one across the disk's write has attached it already.
+            // A mount that raced this one across the disk's copy has attached one already.
             let media = config.removableMedia ?? []
-            guard !media.contains(where: { $0.isInstaller(of: agents) }) else { return }
+            guard !media.contains(where: { $0.id != item.id && $0.isInstaller(of: agents, in: layout) })
+            else { return }
             config.removableMedia = media + [item]
         }
-        return .attached(delivery)
+        landed = instance.configuration.removableMedia?.contains { $0.id == item.id } == true
+        return landed ? .attached(delivery) : .alreadyPresent(delivery)
     }
 
     /// Takes the bundled installer image away again.
@@ -744,8 +753,9 @@ extension VMCommandCore {
         detachGuestAgentDisk(from: instance)
     }
 
-    /// Drops the installer's `removableMedia` entry when it is there, and the
-    /// VM's copy of the disk; the reconcile pass performs the runtime detach.
+    /// Drops the installer's `removableMedia` entry when it is there, which
+    /// takes the VM's copy of the disk with it; the reconcile pass performs the
+    /// runtime detach.
     ///
     /// The auto-eject an agent handshake triggers calls this rather than
     /// ``unmountGuestAgentDisk(_:)``: the Hello proves a live session, and the
@@ -754,14 +764,14 @@ extension VMCommandCore {
     func detachGuestAgentDisk(from instance: VMInstance) {
         guard instance.hasGuestAgentInstallerMounted else { return }
         let agents = instance.bundleProducts.guestAgents
-        let ejected = (instance.configuration.removableMedia ?? []).filter { $0.isInstaller(of: agents) }
+        let layout = instance.bundleLayout
         logger.log(
             .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
         let write: VMLibrary.SettingsWrite
         do {
             write = try instance.activity.edit(.hotPlugMedia) { permit in
-                library.updateConfiguration(permit) { $0.removeInstallerDisks(of: agents) }
+                library.updateConfiguration(permit) { $0.removeInstallerDisks(of: agents, in: layout) }
             }
         } catch {
             logger.log(
@@ -772,8 +782,7 @@ extension VMCommandCore {
         }
         switch write {
         case .saved:
-            // The guest's handle on the copy outlives its name until the detach.
-            for item in ejected { GuestAgentDiskCopies.remove(of: item.path, in: instance.bundleLayout) }
+            break
         case .refused(let refusal):
             logger.log(
                 .notice,

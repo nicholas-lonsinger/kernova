@@ -239,7 +239,7 @@ package actor VMSession: VMSessionOperating {
         }
     }
 
-    package func saveMachineState(to url: URL) async throws {
+    package func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.saveMachineStateTo(url: url) { error in
                 if let error {

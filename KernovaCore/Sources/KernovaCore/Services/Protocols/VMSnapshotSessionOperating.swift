@@ -12,11 +12,14 @@ import Foundation
 package protocol VMSnapshotSessionOperating: Sendable {
     func pauseIfRunning() async throws
     func resumeIfPaused(_ execution: borrowing VMGuestExecution) async throws
-    func saveMachineState(to url: URL) async throws
+    /// Writes the guest's state into `url`. Only ``VMLiveStateCapture`` holds
+    /// a ``VMLiveStateCapture/SaveGrant``, so every save is one of its entry
+    /// points, which take the passthrough accessories off first.
+    func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws
     func restoreMachineState(from url: URL) async throws
     func resume(_ execution: borrowing VMGuestExecution) async throws
     /// Detaches the USB device carrying `uuid`. A save calls it for every
-    /// passthrough accessory and installer disk before writing state — see
+    /// passthrough accessory before writing state — see
     /// ``VMLiveStateCapture/suspendState(_:session:to:)``.
     func detachUSBDevice(uuid: UUID) async throws
 }

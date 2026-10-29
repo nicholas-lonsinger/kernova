@@ -127,22 +127,31 @@ package struct VMBundleLayout: Sendable {
 
     static let guestAgentDiskRelativePath = "GuestAgentDisk"
 
-    /// The VM's own copies of the guest-agent installer disks attached to it.
+    /// The VM's own copies of the guest-agent installer disks attached to it
+    /// (``GuestAgentDiskCopies``).
     ///
     /// The guest never sees the app's shared file: what is attached is a copy
-    /// here, cloned on APFS, so a saved state resumes onto bytes no update of
-    /// Kernova changes. A snapshot and a clone carry the directory with the
+    /// here, cloned on APFS, so a saved state resumes onto bytes no other build
+    /// of Kernova changes. A snapshot and a clone carry the directory with the
     /// bundle's other files (``VMBundleItems/capturedRelativePaths(for:layout:)``),
     /// and a revert writes it back.
     package var guestAgentDiskDirectoryURL: URL {
         bundleURL.appendingPathComponent(Self.guestAgentDiskRelativePath, isDirectory: true)
     }
 
-    /// The VM's copy of the installer disk at `sourcePath`, what a configuration's
-    /// installer entry names.
-    package func guestAgentDiskCopyURL(of sourcePath: String) -> URL {
-        guestAgentDiskDirectoryURL.appendingPathComponent(
-            URL(filePath: sourcePath).lastPathComponent, isDirectory: false)
+    /// The VM's copy of the installer disk `item` attaches, named by the
+    /// entry's `id`: a copy here is what makes the entry an installer
+    /// (``RemovableMediaItem/isInstaller(of:in:)``).
+    package func guestAgentDiskCopyURL(for item: RemovableMediaItem) -> URL {
+        let name = URL(filePath: item.id.uuidString).appendingPathExtension(URL(filePath: item.path).pathExtension)
+        return guestAgentDiskDirectoryURL.appendingPathComponent(name.lastPathComponent, isDirectory: false)
+    }
+
+    /// The VM's copy of the virtio-delivered installer disk at `source`, which
+    /// no configuration entry names.
+    package func guestAgentVirtioDiskURL(of source: URL) -> URL {
+        guestAgentDiskDirectoryURL.appendingPathComponent("Virtio", isDirectory: false)
+            .appendingPathExtension(source.pathExtension)
     }
 
     // MARK: - Snapshot store

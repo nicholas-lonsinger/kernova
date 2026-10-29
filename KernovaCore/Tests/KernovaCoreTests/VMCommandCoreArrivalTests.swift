@@ -559,17 +559,17 @@ struct VMCommandCoreArrivalTests {
         #expect(source.hasSaveFile)
     }
 
-    /// The bundle files a running `source`'s guest writes — what a live
+    /// The bundle files `source`'s saved state restores onto — what a live
     /// copy takes inside its pause.
-    private func guestWrittenPaths(of source: VMInstance) -> [String] {
+    private func stateBoundPaths(of source: VMInstance) -> [String] {
         VMBundleItems.capturedRelativePaths(
             for: source.configuration, layout: source.bundleLayout)
     }
 
     @Test(
-        "A live clone copies its settled files before the pause, and only what the guest writes inside it",
+        "A live clone copies its settled files before the pause, and only what its saved state restores onto inside it",
         arguments: [CloneOutcome.exactCopy, .newMachine])
-    func liveCloneCopiesOnlyGuestWrittenFilesInsideThePause(outcome: CloneOutcome) async throws {
+    func liveCloneCopiesOnlyStateBoundFilesInsideThePause(outcome: CloneOutcome) async throws {
         let harness = makeHarness()
         let sessionID = UUID()
         let source = register(.running(sessionID: sessionID), in: harness)
@@ -586,14 +586,14 @@ struct VMCommandCoreArrivalTests {
         #expect(await session.calls.isEmpty)
         let settled = storage.lastCloneRelativePaths ?? []
         #expect(settled.contains(VMBundleLayout.hardwareModelRelativePath))
-        #expect(Set(settled).isDisjoint(with: guestWrittenPaths(of: source)))
+        #expect(Set(settled).isDisjoint(with: stateBoundPaths(of: source)))
         hold.signal()
         // The guest-written files copy while the guest is paused on the state
         // just written, and nothing else does.
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 2 }
         #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
         #expect(await session.guestState == .paused)
-        #expect(storage.lastCloneRelativePaths == guestWrittenPaths(of: source))
+        #expect(storage.lastCloneRelativePaths == stateBoundPaths(of: source))
         #expect(source.status == .cloning)
         hold.signal()
         let row = try await waiter.value
@@ -649,7 +649,7 @@ struct VMCommandCoreArrivalTests {
         // Only the settled files, before the pause, were copied.
         #expect(storage.cloneVMBundleCallCount == 1)
         let copied = Set(storage.lastCloneRelativePaths ?? [])
-        #expect(copied.isDisjoint(with: guestWrittenPaths(of: source)))
+        #expect(copied.isDisjoint(with: stateBoundPaths(of: source)))
         #expect(storage.discardedStagedURLs.count == 1)
         #expect(await session.guestState == .running)
         #expect(source.phase == .running(sessionID: sessionID))

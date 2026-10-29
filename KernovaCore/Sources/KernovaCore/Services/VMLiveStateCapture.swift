@@ -47,14 +47,25 @@ package enum VMLiveStateCapture {
 
     // MARK: Writing a live guest's state
 
-    // No saved state holds host hardware. The two entry points below are the
-    // only way to write a live guest's state: each takes the passthrough
-    // accessories off, then reaches the one call to `saveMachineState`. An
-    // installer disk needs no step here: what the guest has attached is the
-    // VM's own copy, whose bytes never change (``VMBundleLayout/guestAgentDiskDirectoryURL``).
+    /// What `saveMachineState` takes, which only this file can make: the two
+    /// entry points below are then the only way to write a live guest's state.
+    package struct SaveGrant: Sendable {
+        fileprivate init() {}
+    }
 
     /// Writes the guest's state, as a suspend does, into `url`: every
     /// passthrough USB accessory taken off first, then the guest paused.
+    ///
+    /// No saved state holds host hardware. A passthrough device restores two
+    /// ways (docs/research/2026-10-02-vz-restore-matches-usb-passthrough-devices.md):
+    /// naming it under the `uuid` it was saved with is the one
+    /// `VZUSBDeviceConfiguration.uuid` documents, but VZ checks nothing about
+    /// the hardware behind that `uuid`, and the resumed guest would trust its
+    /// cached view of a drive the Mac or another VM may have written since;
+    /// leaving it out restored on the one host build measured, and no vendor
+    /// documents it. Taking it off before the write keeps a restore resting on
+    /// neither. An installer disk stays attached: what the guest holds is the
+    /// VM's own copy, whose bytes nothing changes (``GuestAgentDiskCopies``).
     package static func suspendState(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
     ) async throws {
@@ -96,26 +107,17 @@ package enum VMLiveStateCapture {
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
     ) async throws {
         try await session.pauseIfRunning()
-        try await session.saveMachineState(to: url)
+        try await session.saveMachineState(to: url, SaveGrant())
     }
 
     /// Takes every passthrough USB accessory off the VM `context` holds before
-    /// its state is written.
-    ///
-    /// A saved state holding a passthrough device restores two ways
-    /// (docs/research/2026-10-02-vz-restore-matches-usb-passthrough-devices.md).
-    /// Naming the device under the `uuid` it was saved with is the one
-    /// `VZUSBDeviceConfiguration.uuid` documents, but VZ checks nothing about
-    /// the hardware behind that `uuid`, and the resumed guest would trust its
-    /// cached view of a drive the Mac or another VM may have written since.
-    /// Leaving the device out restored on the one host build measured, and no
-    /// vendor documents it. Detaching before the write keeps every saved state
-    /// free of host hardware, so a restore rests on neither.
+    /// its state is written, for the reason
+    /// ``suspendState(_:session:to:)`` gives.
     ///
     /// A device the controller no longer holds is a success — an unplug got
     /// there first, and the post-condition already holds. Anything else throws:
     /// a state still carrying a passthrough device restores only by one of the
-    /// two ways above, so the save fails where the user can see it rather than
+    /// two ways, so the save fails where the user can see it rather than
     /// write one.
     ///
     /// Each accessory is released as its device leaves, and the one that threw

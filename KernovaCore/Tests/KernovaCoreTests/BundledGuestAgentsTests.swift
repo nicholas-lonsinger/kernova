@@ -93,7 +93,7 @@ struct BundledGuestAgentsTests {
         #expect(dmg.lastPathComponent == "KernovaMacOSAgent.dmg")
         #expect(agents.entry(.macOS, .arm64, .user)?.kind == .installerDisk(version: "3.1"))
         #expect(await agents.payloads(for: .macOS).isEmpty)
-        #expect(RemovableMediaItem(path: dmg.path(percentEncoded: false), readOnly: true).isInstaller(of: agents))
+        #expect(agents.isInstallerDisk(path: dmg.path(percentEncoded: false)))
     }
 
     // MARK: The hub's provider

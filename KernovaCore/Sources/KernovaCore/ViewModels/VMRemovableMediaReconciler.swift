@@ -220,9 +220,7 @@ final class VMRemovableMediaReconciler {
                 // (released at detach or teardown), and released by deinit if it throws.
                 let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
                 // An installer entry names the app's disk; the guest gets the VM's copy of it.
-                let installerCopy =
-                    item.isInstaller(of: instance.bundleProducts.guestAgents)
-                    ? instance.bundleLayout.guestAgentDiskCopyURL(of: item.path) : nil
+                let installerCopy = item.installerCopy(in: instance.bundleLayout)
                 _ = try await lifecycle.attachRemovableMedia(
                     diskImagePath: item.path,
                     readOnly: item.readOnly,
