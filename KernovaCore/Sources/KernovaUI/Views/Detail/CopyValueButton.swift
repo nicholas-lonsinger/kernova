@@ -1,5 +1,4 @@
 import AppKit
-import Symbols
 
 /// Puts `string` on `pasteboard`, for a panel's copy affordance; `false` when
 /// the pasteboard refuses the write.
@@ -13,9 +12,8 @@ func copyToPasteboard(_ string: String, to pasteboard: NSPasteboard = .general) 
 /// A copy button carrying the text it writes, so the value travels with the
 /// control; it is hidden while there is nothing to copy.
 ///
-/// A copy that lands turns the glyph into a checkmark until `confirmationHold`
-/// passes. The glyph is an image view because AppKit runs symbol transitions
-/// only in `NSImageView`.
+/// A copy that lands swaps the glyph for a checkmark until `confirmationHold`
+/// passes.
 @MainActor
 final class CopyValueButton: NSButton {
     var value: String? {
@@ -29,15 +27,14 @@ final class CopyValueButton: NSButton {
     /// it wrote is still the one shown.
     var showsConfirmation: Bool { confirmed != nil && confirmed == value }
 
-    private static let copyGlyph = smallSymbol("doc.on.doc")
-    private static let confirmedGlyph = smallSymbol("checkmark")
+    private static let copyGlyph = NSImage.systemSymbol("doc.on.doc", accessibilityDescription: "")
+    private static let confirmedGlyph = NSImage.systemSymbol("checkmark", accessibilityDescription: "")
 
     private let pasteboard: NSPasteboard
     private let confirmationHold: Duration
-    private let glyphView: NSImageView
-    /// The copy glyph's metrics, kept while the smaller checkmark shows.
-    private let glyphSize: NSSize
-    private let glyphInsets: NSEdgeInsets
+    /// The copy glyph's size, which the narrower checkmark keeps so the value
+    /// beside it stays put.
+    private var restingSize = NSSize.zero
     /// The value the last landed copy wrote, until its hold passes.
     private var confirmed: String? { didSet { showGlyph() } }
     private var holdTask: Task<Void, Never>?
@@ -51,25 +48,16 @@ final class CopyValueButton: NSButton {
         self.value = value
         self.pasteboard = pasteboard
         self.confirmationHold = confirmationHold
-        let glyphView = NSImageView(image: Self.copyGlyph)
-        glyphView.contentTintColor = .secondaryLabelColor
-        glyphView.setAccessibilityElement(false)
-        glyphView.translatesAutoresizingMaskIntoConstraints = false
-        self.glyphView = glyphView
-        glyphSize = glyphView.intrinsicContentSize
-        glyphInsets = glyphView.alignmentRectInsets
         super.init(frame: .zero)
         isHidden = value == nil
-        title = ""
-        imagePosition = .noImage
+        image = Self.copyGlyph
+        symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+        imagePosition = .imageOnly
         isBordered = false
+        contentTintColor = .secondaryLabelColor
+        restingSize = super.intrinsicContentSize
         toolTip = name
         setAccessibilityLabel(name)
-        addSubview(glyphView)
-        NSLayoutConstraint.activate([
-            glyphView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            glyphView.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         target = self
@@ -81,28 +69,7 @@ final class CopyValueButton: NSButton {
         fatalError("CopyValueButton does not support NSCoder")
     }
 
-    override var intrinsicContentSize: NSSize { glyphSize }
-
-    override var alignmentRectInsets: NSEdgeInsets { glyphInsets }
-
-    // NSView's hit-test answers with the deepest view under the point, which
-    // here is the glyph.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        super.hitTest(point) == nil ? nil : self
-    }
-
-    override func highlight(_ flag: Bool) {
-        super.highlight(flag)
-        glyphView.contentTintColor =
-            flag ? .secondaryLabelColor.withSystemEffect(.pressed) : .secondaryLabelColor
-    }
-
-    // AppKit rings a borderless image button along its glyph's outline.
-    override var focusRingMaskBounds: NSRect { glyphView.frame }
-
-    override func drawFocusRingMask() {
-        glyphView.image?.draw(in: glyphView.frame)
-    }
+    override var intrinsicContentSize: NSSize { restingSize }
 
     @objc private func copyValue() {
         guard let value, copyToPasteboard(value, to: pasteboard) else { return }
@@ -121,21 +88,7 @@ final class CopyValueButton: NSButton {
         }
     }
 
-    /// Transitions the glyph to the one `showsConfirmation` calls for.
     private func showGlyph() {
-        let glyph = showsConfirmation ? Self.confirmedGlyph : Self.copyGlyph
-        guard glyphView.image !== glyph else { return }
-        glyphView.setSymbolImage(glyph, contentTransition: .replace)
-        noteFocusRingMaskChanged()
-    }
-
-    private static func smallSymbol(_ name: String) -> NSImage {
-        let symbol = NSImage.systemSymbol(name, accessibilityDescription: "")
-        guard let small = symbol.withSymbolConfiguration(NSImage.SymbolConfiguration(scale: .small))
-        else {
-            assertionFailure("\(name) is not a symbol image")
-            return symbol
-        }
-        return small
+        image = showsConfirmation ? Self.confirmedGlyph : Self.copyGlyph
     }
 }

@@ -16,47 +16,52 @@ struct CopyValueButtonTests {
             confirmationHold: hold)
     }
 
-    @Test("A copy writes the value and shows the checkmark")
-    func copyShowsTheCheckmark() {
+    @Test("A copy writes the value and swaps the glyph for the checkmark")
+    func copySwapsInTheCheckmark() {
         defer { pasteboard.releaseGlobally() }
         let button = makeButton(hold: .seconds(testWaitBackstop))
+        let copyGlyph = button.image
 
         button.performClick(nil)
 
         #expect(pasteboard.string(forType: .string) == "192.168.64.10")
         #expect(button.showsConfirmation)
+        #expect(button.image !== copyGlyph)
     }
 
-    @Test("The checkmark goes once its hold passes")
-    func checkmarkGoesOnceItsHoldPasses() async throws {
+    @Test("The copy glyph returns once the hold passes")
+    func copyGlyphReturnsOnceTheHoldPasses() async throws {
         defer { pasteboard.releaseGlobally() }
         let button = makeButton(hold: .zero)
+        let copyGlyph = button.image
 
         button.performClick(nil)
 
-        try await waitUntil { !button.showsConfirmation }
+        try await waitUntil { !button.showsConfirmation && button.image === copyGlyph }
     }
 
     @Test("The checkmark leaves with the value it confirmed")
     func checkmarkLeavesWithItsValue() {
         defer { pasteboard.releaseGlobally() }
         let button = makeButton(hold: .seconds(testWaitBackstop))
+        let copyGlyph = button.image
         button.performClick(nil)
 
         button.value = "192.168.64.11"
 
         #expect(!button.showsConfirmation)
+        #expect(button.image === copyGlyph)
     }
 
-    @Test("A click on the glyph lands on the button")
-    func clickOnTheGlyphLandsOnTheButton() {
+    @Test("The checkmark keeps the copy glyph's size, so the value beside it stays put")
+    func checkmarkKeepsTheCopyGlyphsSize() {
         defer { pasteboard.releaseGlobally() }
         let button = makeButton(hold: .seconds(testWaitBackstop))
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
-        container.addSubview(button)
-        button.frame = NSRect(origin: NSPoint(x: 10, y: 10), size: button.fittingSize)
-        container.layoutSubtreeIfNeeded()
+        let restingSize = button.intrinsicContentSize
 
-        #expect(container.hitTest(NSPoint(x: button.frame.midX, y: button.frame.midY)) === button)
+        button.performClick(nil)
+
+        #expect(button.showsConfirmation)
+        #expect(button.intrinsicContentSize == restingSize)
     }
 }
