@@ -168,14 +168,14 @@ struct CLIRenderingTests {
         let lines = TableRenderer.render(
             report(
                 info(agents: [
-                    VMAgentLine(title: "System service", state: "Up to date"),
-                    VMAgentLine(title: "Session agent — pbear", state: "Out of date"),
+                    VMAgentLine(role: "system", user: nil, version: "1.0 (9)", status: "current"),
+                    VMAgentLine(role: "session", user: "pbear", version: "0.9 (8)", status: "outdated"),
                 ]))
         ).components(separatedBy: "\n")
         let start = lines.firstIndex { $0.hasPrefix("Guest Agent") }
         #expect(start.map { lines[$0].hasSuffix("  current") } == true)
-        #expect(start.map { lines[$0 + 1].hasSuffix("  System service: Up to date") } == true)
-        #expect(start.map { lines[$0 + 2].hasSuffix("  Session agent — pbear: Out of date") } == true)
+        #expect(start.map { lines[$0 + 1].hasSuffix("  System service: current, 1.0 (9)") } == true)
+        #expect(start.map { lines[$0 + 2].hasSuffix("  Session agent — pbear: outdated, 0.9 (8)") } == true)
     }
 
     @Test("A VM with no session omits the agent status from its JSON")

@@ -38,12 +38,20 @@ struct USBPortLayoutTests {
     func restores(_ sequence: Case) {
         var layout = USBPortLayout(starting: [Self.l])
         for device in sequence.attached { layout.attached(device) }
-        #expect(layout.restores(sequence.atSave) == sequence.restores)
+        #expect(layout.devicesAboveGap(sequence.atSave).isEmpty == sequence.restores)
+    }
+
+    @Test("The devices above the first empty port are named, in port order")
+    func devicesAboveTheGap() {
+        var layout = USBPortLayout(starting: [Self.l])
+        for device in [Self.a, Self.b, Self.c] { layout.attached(device) }
+        // A removed: B and C sit above its port.
+        #expect(layout.devicesAboveGap([Self.c, Self.l, Self.b]) == [Self.b, Self.c])
     }
 
     @Test("A device the session never attached is placed nowhere, so its state does not restore")
     func unknownDevice() {
-        #expect(!USBPortLayout(starting: [Self.l]).restores([Self.l, Self.a]))
-        #expect(USBPortLayout(starting: []).restores([]))
+        #expect(USBPortLayout(starting: [Self.l]).devicesAboveGap([Self.l, Self.a]) == [Self.a])
+        #expect(USBPortLayout(starting: []).devicesAboveGap([]).isEmpty)
     }
 }

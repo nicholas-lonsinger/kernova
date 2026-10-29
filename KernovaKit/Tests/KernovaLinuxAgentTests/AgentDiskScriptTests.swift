@@ -32,7 +32,7 @@ struct AgentDiskScriptTests {
         }
 
         /// Puts a stand-in `sudo` first on the script's `PATH`: it records `sudo <arguments>`, refuses `-n` with
-        /// sudo's own message when `refusesNonInteractive`, answers `-v`, and otherwise runs the rest.
+        /// sudo's own message when `refusesNonInteractive`, and otherwise runs the rest.
         func addSudo(refusesNonInteractive: Bool) throws {
             let bin = directory.path + "/bin"
             try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
@@ -42,7 +42,6 @@ struct AgentDiskScriptTests {
                 #!/bin/sh
                 echo "sudo $*" >> '\(calls)'
                 if [ "$1" = -n ]; then \(refusal); shift; fi
-                if [ "$1" = -v ]; then exit 0; fi
                 exec "$@"
 
                 """
@@ -114,7 +113,7 @@ struct AgentDiskScriptTests {
         let calls = disk.recorded()
         #expect(
             calls.prefix(4) == [
-                "65534 install --dry-run", "65534 install --system --dry-run", "sudo -n -v", "65534 install",
+                "65534 install --dry-run", "65534 install --system --dry-run", "sudo -n true", "65534 install",
             ])
         #expect(calls.count == 6)
         #expect(calls.dropFirst(4).first?.hasPrefix("sudo -n /") == true)
@@ -129,7 +128,7 @@ struct AgentDiskScriptTests {
         let disk = try Disk()
         try disk.addSudo(refusesNonInteractive: true)
         #expect(try disk.run(["--system"], as: Self.nobody) == 1)
-        #expect(disk.recorded() == ["65534 install --dry-run", "65534 install --system --dry-run", "sudo -n -v"])
+        #expect(disk.recorded() == ["65534 install --dry-run", "65534 install --system --dry-run", "sudo -n true"])
     }
 
     static let nobody = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]

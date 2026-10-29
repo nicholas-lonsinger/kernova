@@ -176,9 +176,11 @@ final class VMRemovableMediaReconciler {
                 toAttach.append(desired)
             }
         }
-        // Iterate the deduped dictionary, not `target`, so a config with
-        // duplicate ids can't queue two attaches for the same UUID.
-        for targetItem in targetByID.values where trackedByID[targetItem.id] == nil {
+        // In the list's order, which is the order the devices take their USB
+        // ports in and the order a restore rebuilds them in; each id once, so a
+        // config with duplicate ids can't queue two attaches for one UUID.
+        var queued = Set(toAttach.map(\.id))
+        for targetItem in target where trackedByID[targetItem.id] == nil && queued.insert(targetItem.id).inserted {
             toAttach.append(targetItem)
         }
 

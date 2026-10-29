@@ -1,4 +1,6 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
@@ -637,6 +639,18 @@ package final class VMCommandCore {
         return .failed(verb: verb, error: error)
     }
 
+    /// The hub's agents on `instance`, newest first, as automation reads them:
+    /// none for a guest whose agents the hub doesn't serve.
+    static func agentLines(of instance: VMInstance) -> [VMAgentLine] {
+        guard instance.agentPresentation?.hub != nil else { return [] }
+        return instance.agentHubSnapshot.peers.map { peer in
+            VMAgentLine(
+                role: peer.role == .systemPeer ? "system" : "session",
+                user: peer.role == .systemPeer || peer.userName.isEmpty ? nil : peer.userName,
+                version: peer.versionLabel, status: GuestAgentPresentation.status(of: [peer]).wireName)
+        }
+    }
+
     // MARK: - Steps
 
     /// Takes one step a ``StepRequirement`` routes through, as the standalone
@@ -693,7 +707,7 @@ package final class VMCommandCore {
             stateBucket: subject.state,
             bundlePath: instance.bundleURL.path(percentEncoded: false),
             heldByAnotherCopy: instance.heldByAnotherCopy,
-            agents: (instance.agentPresentation?.hub?.peers ?? []).map { VMAgentLine(title: $0.title, state: $0.state) }
+            agents: Self.agentLines(of: instance)
         )
     }
 

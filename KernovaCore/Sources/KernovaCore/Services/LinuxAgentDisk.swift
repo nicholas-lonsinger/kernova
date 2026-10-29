@@ -11,10 +11,10 @@ package enum LinuxAgentDisk {
     /// `/run/media/$USER/KERNOVA_AGENT`, and the label Kernova shows for the attachment.
     package static let volumeLabel = "KERNOVA_AGENT"
 
-    /// The command that installs the agent from the disk: it mounts the disk first where the desktop has not
-    /// (udisks2's `udisksctl`, whose polkit default lets the active session mount a filesystem), then finds it
-    /// wherever it is mounted (util-linux's `findmnt`, on every systemd distribution). `README.txt` gives the
-    /// same command.
+    /// The command that installs the agent from the disk: where the disk is not mounted, it mounts it (udisks2's
+    /// `udisksctl`, whose polkit default lets the active session mount a filesystem, and which says why when it
+    /// can't), then finds it wherever it is mounted (util-linux's `findmnt`, on every systemd distribution).
+    /// `README.txt` gives the same command.
     package static let installCommand = command("install.sh")
 
     /// The command that removes it.
@@ -32,7 +32,7 @@ package enum LinuxAgentDisk {
     ]
 
     private static func command(_ script: String) -> String {
-        #"udisksctl mount -b /dev/disk/by-label/\#(volumeLabel) >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=\#(volumeLabel))/\#(script)""#
+        #"findmnt -n LABEL=\#(volumeLabel) >/dev/null || udisksctl mount -b /dev/disk/by-label/\#(volumeLabel) >/dev/null; sh "$(findmnt -nro TARGET LABEL=\#(volumeLabel))/\#(script)""#
     }
 
     /// The date every record on the disk carries: fixed, so the image is a function of its files alone.

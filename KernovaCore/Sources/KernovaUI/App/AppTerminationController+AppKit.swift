@@ -38,6 +38,10 @@ extension AppTerminationController {
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         case .terminate:
             NSApp.terminate(nil)
+        case .cancelDeferredReply:
+            NSApplication.shared.reply(toApplicationShouldTerminate: false)
+        case .cancelled:
+            break
         }
     }
 }

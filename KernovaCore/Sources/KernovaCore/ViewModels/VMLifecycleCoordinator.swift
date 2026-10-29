@@ -177,7 +177,10 @@ final class VMLifecycleCoordinator {
     ///
     /// The accessories the write ejects stay off, on both outcomes: the guest
     /// is going away, and a suspend that fails takes the session down with it,
-    /// so there is no guest left to put anything back on.
+    /// so there is no guest left to put anything back on. A suspend refused
+    /// because its state would not restore
+    /// (``VMLiveStateCapture/SaveRefusal``) touches nothing first, and leaves
+    /// the guest running.
     func save(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
         try await instance.activity.perform(.saving, origin: origin) { context in
             try await virtualizationService.save(instance, context)

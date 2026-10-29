@@ -24,6 +24,9 @@ private actor VMQueueIsolation {
     func makeSession(
         id: UUID, configuration: sending VZVirtualMachineConfiguration, events: VMSessionEvents
     ) -> VMSession {
+        // The configuration's order is the ports' order: a boot attaches its
+        // devices in it, and a restore rebuilds the devices its save held in it.
+        let usbDevices = configuration.usbControllers.first?.usbDevices.map(\.uuid) ?? []
         let vm = VZVirtualMachine(configuration: configuration, queue: queue)
         // Read outside `assert`: its autoclosure would capture `vm`.
         let vmQueue = vm.queue
@@ -41,7 +44,8 @@ private actor VMQueueIsolation {
             usbAdapter = usb
         }
         return VMSession(
-            id: id, queue: queue, vm: vm, delegateAdapter: adapter, usbDelegateAdapter: usbAdapter)
+            id: id, queue: queue, vm: vm, delegateAdapter: adapter, usbDelegateAdapter: usbAdapter,
+            usbPorts: USBPortLayout(starting: usbDevices))
     }
 }
 
@@ -111,9 +115,9 @@ package actor VMSession: VMSessionOperating {
 
     private let vm: VZVirtualMachine
 
-    /// Where the USB devices sit, read from the controller at the first USB
-    /// call: every device on it until then is one the session started with.
-    private var usbPorts: USBPortLayout?
+    /// Where the USB devices sit: those the session started with, then each
+    /// attach this session made.
+    private var usbPorts: USBPortLayout
 
     /// VZ holds its delegate weakly; the session retains it.
     private let delegateAdapter: VMDelegateAdapter
@@ -127,8 +131,9 @@ package actor VMSession: VMSessionOperating {
 
     fileprivate init(
         id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine,
-        delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?
+        delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?, usbPorts: USBPortLayout
     ) {
+        self.usbPorts = usbPorts
         self.id = id
         self.queue = queue
         self.vm = vm
@@ -402,22 +407,13 @@ package actor VMSession: VMSessionOperating {
                 }
             }
         }
-        usbPorts?.attached(uuid)
+        usbPorts.attached(uuid)
         return uuid
     }
 
-    package func savedStateRestores(removingUSBDevices removed: Set<UUID>) -> Bool {
-        guard let controller = vm.usbControllers.first else { return true }
-        let ports = startUSBPorts(controller)
-        return ports.restores(controller.usbDevices.map(\.uuid).filter { !removed.contains($0) })
-    }
-
-    /// The port layout, read from `controller` when no USB call has read it yet.
-    private func startUSBPorts(_ controller: VZUSBController) -> USBPortLayout {
-        if let usbPorts { return usbPorts }
-        let started = USBPortLayout(starting: controller.usbDevices.map(\.uuid))
-        usbPorts = started
-        return started
+    package func usbDevicesAboveGap(removing removed: Set<UUID>) -> [UUID] {
+        guard let controller = vm.usbControllers.first else { return [] }
+        return usbPorts.devicesAboveGap(controller.usbDevices.map(\.uuid).filter { !removed.contains($0) })
     }
 
     /// Attaches the disk image at `url` as a USB mass storage device, building
@@ -462,7 +458,6 @@ package actor VMSession: VMSessionOperating {
             assertionFailure("Callers must guard on hasUSBController")
             throw VMSessionError.usbControllerUnavailable
         }
-        _ = startUSBPorts(controller)
         return controller
     }
 

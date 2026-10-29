@@ -3318,7 +3318,7 @@ struct VMLibraryViewModelTests {
 
     // MARK: - saveForTermination / tryForceStop
 
-    @Test("saveForTermination throws on failure")
+    @Test("saveForTermination throws the save's own error, so the pass can tell a refusal from a failure")
     func saveForTerminationThrows() async {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
@@ -3326,7 +3326,7 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        await #expect(throws: CommandError.self) {
+        await #expect(throws: VirtualizationError.self) {
             try await viewModel.saveForTermination(instance)
         }
     }

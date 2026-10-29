@@ -10,10 +10,10 @@ Install
 
 Open a terminal and run:
 
-    udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh"
+    findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh"
 
-The first command mounts this disk where the desktop has not; the second finds
-it wherever it is mounted. That installs the agent for you, and it connects at
+Where the desktop has not mounted this disk, the first part mounts it, and says
+why if it can't; the second finds it wherever it is mounted. That installs the agent for you, and it connects at
 once. Kernova ejects this disk when it does.
 
 install.sh shows what it will change, and waits for Return. With NONINTERACTIVE
@@ -24,7 +24,7 @@ To install the system service too, which keeps the agent connected while
 nobody is logged in, add --system. It asks for your password through sudo,
 and prints each sudo command before it runs it:
 
-    udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh" --system
+    findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh" --system
 
 In a root shell, install.sh --system installs only the system service, without
 sudo.
@@ -46,7 +46,7 @@ Without --system the agent runs only for that login.
 Uninstall
 ---------
 
-    udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/uninstall.sh"
+    findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/uninstall.sh"
 
 With --system it removes the system service too. The system service's
 account, kernova-agent, stays.

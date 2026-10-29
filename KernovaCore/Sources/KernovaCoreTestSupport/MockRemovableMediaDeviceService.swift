@@ -12,6 +12,8 @@ final class MockRemovableMediaDeviceService: RemovableMediaAttaching {
     var attachErrorsByPath: [String: any Error] = [:]
     var detachError: (any Error)?
     var lastAttachedPath: String?
+    /// Every path attached, in order.
+    var attachedPaths: [String] = []
     var lastAttachedReadOnly: Bool?
     var lastAttachedDesiredUUID: UUID?
 
@@ -25,6 +27,7 @@ final class MockRemovableMediaDeviceService: RemovableMediaAttaching {
         let attachedPath = file?.path(percentEncoded: false) ?? diskImagePath
         attachCallCount += 1
         lastAttachedPath = attachedPath
+        attachedPaths.append(attachedPath)
         lastAttachedReadOnly = readOnly
         lastAttachedDesiredUUID = desiredUUID
         if let error = attachError ?? attachErrorsByPath[attachedPath] { throw error }

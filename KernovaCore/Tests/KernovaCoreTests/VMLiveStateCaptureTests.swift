@@ -97,12 +97,14 @@ struct VMLiveStateCaptureTests {
         }
     }
 
-    private func instanceHoldingAccessories(_ count: Int) async throws -> AccessoryFixture {
+    private func instanceHoldingAccessories(
+        _ count: Int, _ mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) async throws -> AccessoryFixture {
         let accessories = MockUSBAccessoryService()
         let lifecycle = makeTestLifecycle(usbAccessoryPassthrough: .available(accessories))
         let library = makeWiredLibrary(lifecycle: lifecycle)
         let sessionID = UUID()
-        let instance = library.registerFixture(phase: .running(sessionID: sessionID))
+        let instance = library.registerFixture(phase: .running(sessionID: sessionID), mutate: mutate)
         instance.beginSessionContextForTesting()
         var deviceIDs: [UUID] = []
         for index in 0..<count {
@@ -130,20 +132,38 @@ struct VMLiveStateCaptureTests {
         #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
     }
 
-    @Test("A save whose state would not restore is refused before anything is taken off, paused or written")
-    func anUnrestorableSaveIsRefusedFirst() async throws {
-        let fixture = try await instanceHoldingAccessories(2)
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setSavedStateWouldRestore(false)
-
-        await #expect(throws: VMLiveStateCapture.SaveRefusal.usbDeviceRemovedEarlier) {
-            try await fixture.sweep(session)
+    @Test(
+        "A save whose USB ports would have a gap is refused before anything is taken off, paused or written, naming the disks above it",
+        arguments: [false, true])
+    func anUnrestorableSaveIsRefusedFirst(leftByAccessories: Bool) async throws {
+        let fixture = try await instanceHoldingAccessories(2) {
+            $0.removableMedia = [RemovableMediaItem(path: "/tmp/later.iso", readOnly: true, label: "Later")]
         }
+        let disk = try #require(fixture.instance.configuration.removableMedia?.first?.id)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDevicesAboveGap(asIs: leftByAccessories ? [] : [disk], removing: [disk])
 
+        let refusal = try #require(
+            await #expect(throws: VMLiveStateCapture.SaveRefusal.self) { try await fixture.sweep(session) })
+
+        #expect(refusal == .usbPortGap(below: ["Later"], leftByAccessories: leftByAccessories))
         // Judged as the state would stand once the accessories were taken off.
         #expect(await session.askedRemovingUSBDevices == Set(fixture.deviceIDs))
         #expect(await session.calls.isEmpty)
         #expect(fixture.instance.liveUSBAccessories.count == 2)
+    }
+
+    @Test("The refusal says where the gap is, what left it, and which disks to detach")
+    func refusalCopy() {
+        #expect(
+            VMLiveStateCapture.SaveRefusal.usbPortGap(below: ["KERNOVA_AGENT"], leftByAccessories: false)
+                .localizedDescription
+                == "Kernova can't save this virtual machine's state: its USB ports have a gap below \u{201C}KERNOVA_AGENT\u{201D}, and a saved state with a gap in its USB ports doesn't restore. Detach \u{201C}KERNOVA_AGENT\u{201D} and try again, or shut the virtual machine down instead."
+        )
+        #expect(
+            VMLiveStateCapture.SaveRefusal.usbPortGap(below: ["A", "B"], leftByAccessories: true).localizedDescription
+                == "Kernova can't save this virtual machine's state: saving takes its USB accessories off, which leaves a gap in its USB ports below \u{201C}A\u{201D} and \u{201C}B\u{201D}, and a saved state with a gap in its USB ports doesn't restore. Detach \u{201C}A\u{201D} and \u{201C}B\u{201D} and try again, or shut the virtual machine down instead."
+        )
     }
 
     @Test("A device the controller already lost is released and does not fail the save")

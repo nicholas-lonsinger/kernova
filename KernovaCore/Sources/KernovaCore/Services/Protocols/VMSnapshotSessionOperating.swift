@@ -22,7 +22,8 @@ package protocol VMSnapshotSessionOperating: Sendable {
     /// passthrough accessory before writing state — see
     /// ``VMLiveStateCapture/suspendState(_:session:to:)``.
     func detachUSBDevice(uuid: UUID) async throws
-    /// Whether a state saved once every USB device carrying one of `removed`
-    /// is taken off would restore (``USBPortLayout/restores(_:)``).
-    func savedStateRestores(removingUSBDevices removed: Set<UUID>) async -> Bool
+    /// The USB devices above the first empty port once every device carrying
+    /// one of `removed` is taken off (``USBPortLayout/devicesAboveGap(_:)``):
+    /// empty exactly when a state saved then would restore.
+    func usbDevicesAboveGap(removing removed: Set<UUID>) async -> [UUID]
 }

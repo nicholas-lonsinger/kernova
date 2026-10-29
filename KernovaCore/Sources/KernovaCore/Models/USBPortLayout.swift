@@ -21,12 +21,14 @@ package struct USBPortLayout: Equatable, Sendable {
         next += 1
     }
 
-    /// Whether a state saved while exactly `devices` are attached restores:
-    /// their ports are 1 through their count. A device this layout never saw
-    /// attached sits nowhere it knows, so it does not.
-    package func restores(_ devices: [UUID]) -> Bool {
-        let held = devices.compactMap { ports[$0] }
-        guard held.count == devices.count else { return false }
-        return Set(held) == Set(held.indices.map { $0 + 1 })
+    /// The devices of `devices` above the first empty port, in port order:
+    /// empty exactly when a state saved while `devices` alone are attached
+    /// restores. A device this layout never saw attached sits nowhere it
+    /// knows, so it counts as above.
+    package func devicesAboveGap(_ devices: [UUID]) -> [UUID] {
+        let placed = devices.compactMap { device in ports[device].map { (device, $0) } }.sorted { $0.1 < $1.1 }
+        let unplaced = devices.filter { ports[$0] == nil }
+        let gap = placed.enumerated().first { $0.element.1 != $0.offset + 1 }.map(\.offset) ?? placed.count
+        return placed[gap...].map(\.0) + unplaced
     }
 }

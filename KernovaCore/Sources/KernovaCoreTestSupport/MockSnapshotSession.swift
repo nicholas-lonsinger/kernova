@@ -87,16 +87,22 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         detachedUSBDeviceIDs.append(uuid)
     }
 
-    /// What ``savedStateRestores(removingUSBDevices:)`` answers, and the
-    /// devices it was last asked to leave out.
-    var savedStateWouldRestore = true
+    /// What ``usbDevicesAboveGap(removing:)`` answers with nothing removed,
+    /// and with what it is asked to remove; and what it was last asked to
+    /// remove.
+    var devicesAboveGapAsIs: [UUID] = []
+    var devicesAboveGapRemoving: [UUID] = []
     var askedRemovingUSBDevices: Set<UUID>?
 
-    func setSavedStateWouldRestore(_ restores: Bool) { savedStateWouldRestore = restores }
+    func setDevicesAboveGap(asIs: [UUID], removing: [UUID]) {
+        devicesAboveGapAsIs = asIs
+        devicesAboveGapRemoving = removing
+    }
 
-    func savedStateRestores(removingUSBDevices removed: Set<UUID>) -> Bool {
+    func usbDevicesAboveGap(removing removed: Set<UUID>) -> [UUID] {
+        guard !removed.isEmpty else { return devicesAboveGapAsIs }
         askedRemovingUSBDevices = removed
-        return savedStateWouldRestore
+        return devicesAboveGapRemoving
     }
 
     func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {

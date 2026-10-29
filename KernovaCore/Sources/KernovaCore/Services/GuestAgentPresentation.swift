@@ -25,7 +25,9 @@ package struct GuestAgentPresentation: Equatable, Sendable {
     package struct PeerLine: Equatable, Sendable {
         /// Which agent: "Session agent — pbear", "System service".
         package var title: String
-        /// How it stands against the agent Kernova bundles.
+        /// What the line shows of it: whether it answers, then whether it is the
+        /// agent Kernova bundles, or only its version where Kernova offers it
+        /// nothing to compare against.
         package var state: String
     }
 
@@ -100,7 +102,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
     /// unresponsive one, else the newest — current only when every agent is,
     /// and connected when the host offers any of them nothing to judge it
     /// against.
-    private static func status(of peers: [PeerSummary]) -> AgentStatus {
+    package static func status(of peers: [PeerSummary]) -> AgentStatus {
         guard let newest = peers.first else { return .waiting }
         for peer in peers {
             if case .outdated(let offered) = peer.standing {

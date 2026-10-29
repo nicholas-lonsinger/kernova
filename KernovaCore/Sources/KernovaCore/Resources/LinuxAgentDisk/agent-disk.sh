@@ -78,8 +78,11 @@ main() {
     fi
     if [ -n "$system" ]; then
         # sudo's answer first, so a refused sudo stops before anything changes.
-        echo "+ $sudo -v"
-        if ! $sudo -v; then
+        # A command, not -v: -v asks for a password unless every sudoers entry
+        # for the user is NOPASSWD, where a command needs only the one it
+        # matches.
+        echo "+ $sudo true"
+        if ! $sudo true; then
             echo "$script: sudo refused, so nothing was changed" >&2
             exit 1
         fi

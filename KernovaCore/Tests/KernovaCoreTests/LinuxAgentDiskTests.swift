@@ -52,7 +52,7 @@ struct LinuxAgentDiskTests {
         #expect(readme.contains(LinuxAgentDisk.mountAndInstallCommands.map { "    " + $0 }.joined(separator: "\n")))
         #expect(
             LinuxAgentDisk.installCommand
-                == #"udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
+                == #"findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
         )
     }
 
