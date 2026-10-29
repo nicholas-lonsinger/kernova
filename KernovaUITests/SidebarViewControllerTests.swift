@@ -31,9 +31,9 @@ struct SidebarViewControllerTests {
         self.preferences = makeTestPreferences()
     }
 
-    private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
-        -> VMLibraryViewModel
-    {
+    private func makeViewModel(
+        storageService: MockVMStorageService = MockVMStorageService(), bundleProducts: AppBundleProducts = .testing
+    ) -> VMLibraryViewModel {
         VMLibraryViewModel(
             storageService: storageService,
             diskImageService: MockDiskImageService(),
@@ -53,7 +53,7 @@ struct SidebarViewControllerTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            bundleProducts: .testing
+            bundleProducts: bundleProducts
         )
     }
 
@@ -102,12 +102,12 @@ struct SidebarViewControllerTests {
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
-    @Test("Agent indicator shows for a Linux guest while a Kernova agent is connected, and hides with none")
+    @Test("Agent indicator shows for a Linux guest with a channel to an agent, waiting until one connects")
     func agentShownForLinuxWithAnAgent() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(instance.agentPresentation?.status == .waiting)
-        #expect(visibleAgentStatus(for: instance) == nil)
+        #expect(visibleAgentStatus(for: instance) == .waiting)
 
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(
@@ -119,7 +119,15 @@ struct SidebarViewControllerTests {
         #expect(visibleAgentStatus(for: instance) == .current(version: "1.0"))
 
         instance.publishAgentHubSnapshotForTesting(.empty)
-        #expect(visibleAgentStatus(for: instance) == nil)
+        #expect(visibleAgentStatus(for: instance) == .waiting)
+    }
+
+    @Test("A waiting Linux guest's indicator follows the install nudge as a macOS guest's does")
+    func linuxWaitingFollowsTheNudge() {
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(
+            SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: true) == nil)
     }
 
     @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
@@ -295,6 +303,62 @@ struct SidebarViewControllerTests {
         // The cell's observation applies on a later main-actor turn, with no
         // observable of its own to await.
         try await waitUntil { badge.isInstallerMounted }
+    }
+
+    /// A Linux guest's agent connects only after its install, so the badge has
+    /// to be there before any agent is: it carries the disk's install command.
+    @Test("A waiting Linux guest's badge offers the attached disk's install command")
+    func linuxBadgeOffersTheInstallCommand() async throws {
+        let scratch = TestScratchDirectory.forCase(prefix: "LinuxAgentBadge")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 4096).write(to: agent)
+        let products = AppBundleProducts(
+            bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+            guestAgents: .linux(
+                agent: agent,
+                disk: GuestAgentDiskCache(
+                    directory: scratch.url.appending(path: "GuestAgentDisks"), files: LinuxAgentDisk.bundledFiles)))
+        let viewModel = makeViewModel(bundleProducts: products)
+        let instance = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        await viewModel.toggleGuestAgentDisk(on: instance)
+        #expect(instance.hasGuestAgentInstallerMounted)
+        let cell = makeRow(instance: instance, isBusy: false) {
+            GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+        }
+
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+        #expect(badge.status == .waiting)
+        #expect(badge.isInstallerMounted)
+        let control = try #require(badge.diskControl)
+        #expect(control.title == "Eject Guest Agent Media")
+        #expect(control.installCommand == LinuxAgentDisk.installCommand)
+
+        let popover = AgentStatusPopoverContentViewController()
+        popover.update(
+            presentation: badge.presentation, isInstallerMounted: badge.isInstallerMounted, diskControl: control,
+            vmName: instance.name, hasDismissAction: badge.hasDismissAction)
+        popover.loadViewIfNeeded()
+        let texts = visibleTexts(in: popover.view)
+        #expect(texts.first == "Set up the Kernova guest agent")
+        #expect(texts.contains(LinuxAgentDisk.installCommandPrecondition))
+        #expect(texts.contains(LinuxAgentDisk.installCommand))
+        #expect(
+            firstSubview(NSButton.self, in: popover.view) { $0.title == "Eject Guest Agent Media" }?.isHidden == false)
+        #expect(
+            firstSubview(NSButton.self, in: popover.view) { $0.accessibilityLabel() == "Copy Install Command" }?
+                .isHidden == false)
+    }
+
+    /// The text of every label on screen, in document order: none under a hidden view.
+    private func visibleTexts(in view: NSView) -> [String] {
+        guard !view.isHidden else { return [] }
+        var texts: [String] = []
+        if let field = view as? NSTextField, !field.isEditable { texts.append(field.stringValue) }
+        for subview in view.subviews { texts += visibleTexts(in: subview) }
+        return texts
     }
 
     /// The preference lives in Settings, so it changes while every row is up.

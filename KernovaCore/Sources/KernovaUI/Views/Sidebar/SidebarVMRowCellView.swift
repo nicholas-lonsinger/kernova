@@ -538,17 +538,17 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// The agent presentation to surface as a sidebar indicator, or `nil` to
     /// hide.
     ///
-    /// Hidden during macOS install and for a VM with no session
-    /// (`agentPresentation` is `nil`). The hub's agents show while any is
-    /// connected. The macOS agent hides when `.current`, and when `.waiting`
-    /// was dismissed for this VM or turned off app-wide by
-    /// `installPromptDisabled`.
+    /// Hidden during macOS install and for a VM with no channel to an agent
+    /// (`agentPresentation` is `nil`). While the hub has agents connected,
+    /// they show. Otherwise the status decides, for every guest alike: hidden
+    /// when `.current` or `.connected`, and when `.waiting` was dismissed for
+    /// this VM or turned off app-wide by `installPromptDisabled`.
     static func visibleAgentPresentation(
         for instance: VMInstance, installPromptDisabled: Bool
     ) -> GuestAgentPresentation? {
         guard instance.setupState == nil else { return nil }
         guard let presentation = instance.agentPresentation else { return nil }
-        if let hub = presentation.hub { return hub.peers.isEmpty ? nil : presentation }
+        if let hub = presentation.hub, !hub.peers.isEmpty { return presentation }
         switch presentation.status {
         case .current, .connected: return nil
         case .waiting, .outdated, .unresponsive, .expectedMissing, .connecting: break

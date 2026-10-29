@@ -70,12 +70,13 @@ final class SuspendingMockRemovableMediaDeviceService: RemovableMediaAttaching {
 
     func attach(
         diskImagePath: String,
+        attaching file: URL?,
         readOnly: Bool,
         desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> RemovableMediaDeviceInfo {
         attachCallCount += 1
-        lastAttachedPath = diskImagePath
+        lastAttachedPath = file?.path(percentEncoded: false) ?? diskImagePath
         lastAttachedReadOnly = readOnly
         await suspendIfNeeded()
         if let attachError {

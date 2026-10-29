@@ -949,16 +949,14 @@ final class VMLifecycleCoordinator {
     ) async throws -> RemovableMediaDeviceInfo {
         guard instance.liveSessionID == sessionID else { throw RemovableMediaDeviceError.noVirtualMachine }
         let info = try await removableMediaDeviceService.attach(
-            diskImagePath: resolvedURL?.path(percentEncoded: false) ?? diskImagePath,
+            diskImagePath: diskImagePath,
+            attaching: resolvedURL,
             readOnly: readOnly,
             desiredUUID: desiredUUID,
             to: instance
         )
-        let tracked = RemovableMediaDeviceInfo(
-            id: info.id, path: diskImagePath, readOnly: info.readOnly,
-            attachedAt: info.attachedAt)
-        instance.recordAttachedMedia(tracked, for: sessionID)
-        return tracked
+        instance.recordAttachedMedia(info, for: sessionID)
+        return info
     }
 
     /// Detaches a device the session `sessionID` names is holding, and clears
