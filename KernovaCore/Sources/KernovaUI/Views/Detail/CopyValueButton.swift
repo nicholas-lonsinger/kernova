@@ -55,6 +55,7 @@ final class CopyValueButton: NSButton {
         imagePosition = .imageOnly
         isBordered = false
         contentTintColor = .secondaryLabelColor
+        wantsLayer = true
         restingSize = super.intrinsicContentSize
         toolTip = name
         setAccessibilityLabel(name)
@@ -89,6 +90,16 @@ final class CopyValueButton: NSButton {
     }
 
     private func showGlyph() {
-        image = showsConfirmation ? Self.confirmedGlyph : Self.copyGlyph
+        let glyph = showsConfirmation ? Self.confirmedGlyph : Self.copyGlyph
+        guard image !== glyph else { return }
+        // Apple documents CATransition for layers but not that AppKit fades an
+        // NSButton's image change through one added to the layer it manages;
+        // where it doesn't, the swap is instant.
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = 0.15
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(fade, forKey: "glyph")
+        image = glyph
     }
 }
