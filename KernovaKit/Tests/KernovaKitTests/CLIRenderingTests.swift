@@ -18,7 +18,7 @@ struct CLIRenderingTests {
     private func info(
         ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
         networkMembership: String = "common", networkName: VMNetworkName? = nil,
-        agentStatus: String? = "current"
+        agentStatus: String? = "current", agents: [VMAgentLine] = []
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
@@ -27,7 +27,7 @@ struct CLIRenderingTests {
             ipAddress: ipAddress, agentStatus: agentStatus,
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
             stateBucket: .stopped,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
+            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: agents)
     }
 
     private let mainDisk = StorageDiskSummary(
@@ -161,6 +161,21 @@ struct CLIRenderingTests {
         let row = try #require(
             rendered.components(separatedBy: "\n").first { $0.hasPrefix("Guest Agent") })
         #expect(row.hasSuffix("  \u{2013}"))
+    }
+
+    @Test("Each agent the hub serves gets a line of its own under the agent status")
+    func infoListsEachAgent() {
+        let lines = TableRenderer.render(
+            report(
+                info(agents: [
+                    VMAgentLine(title: "System service", state: "Up to date"),
+                    VMAgentLine(title: "Session agent — pbear", state: "Out of date"),
+                ]))
+        ).components(separatedBy: "\n")
+        let start = lines.firstIndex { $0.hasPrefix("Guest Agent") }
+        #expect(start.map { lines[$0].hasSuffix("  current") } == true)
+        #expect(start.map { lines[$0 + 1].hasSuffix("  System service: Up to date") } == true)
+        #expect(start.map { lines[$0 + 2].hasSuffix("  Session agent — pbear: Out of date") } == true)
     }
 
     @Test("A VM with no session omits the agent status from its JSON")

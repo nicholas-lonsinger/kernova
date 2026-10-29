@@ -4,8 +4,8 @@ import Glibc
 import KernovaPortableTestSupport
 import Testing
 
-/// The disk's `install.sh`, run against a stand-in `kernova-agent` that records how it was run: which steps
-/// a root shell and a user take.
+/// The disk's `install.sh`, run against a stand-in `kernova-agent` and, where a test gives one, a stand-in
+/// `sudo`, each recording how it was run: which steps a root shell and a user take, and in what order.
 @Suite("The agent disk's install.sh")
 struct AgentDiskScriptTests {
     /// The script, from the source tree, where KernovaCore bundles it for the disk.
@@ -31,13 +31,47 @@ struct AgentDiskScriptTests {
             chmod(calls, 0o666)
         }
 
-        /// Runs `sh install.sh arguments`, under `prefix` when given, answering its exit status.
-        func run(_ arguments: [String], as prefix: [String] = []) throws -> Int32 {
+        /// Puts a stand-in `sudo` first on the script's `PATH`: it records `sudo <arguments>`, refuses `-n` with
+        /// sudo's own message when `refusesNonInteractive`, answers `-v`, and otherwise runs the rest.
+        func addSudo(refusesNonInteractive: Bool) throws {
+            let bin = directory.path + "/bin"
+            try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+            chmod(bin, 0o777)
+            let refusal = refusesNonInteractive ? "echo 'sudo: a password is required' >&2; exit 1" : ":"
+            let sudo = """
+                #!/bin/sh
+                echo "sudo $*" >> '\(calls)'
+                if [ "$1" = -n ]; then \(refusal); shift; fi
+                if [ "$1" = -v ]; then exit 0; fi
+                exec "$@"
+
+                """
+            try Data(sudo.utf8).write(to: URL(fileURLWithPath: bin + "/sudo"))
+            chmod(bin + "/sudo", 0o755)
+            path = bin + ":" + path
+        }
+
+        private var path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+
+        /// Runs `sh install.sh arguments`, under `prefix` when given, with `NONINTERACTIVE` set when
+        /// `nonInteractive` and `input` on standard input, answering its exit status.
+        func run(
+            _ arguments: [String], as prefix: [String] = [], nonInteractive: Bool = true, input: String = ""
+        ) throws -> Int32 {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            var environment = ProcessInfo.processInfo.environment
+            environment["PATH"] = path
+            environment["NONINTERACTIVE"] = nonInteractive ? "1" : nil
+            process.environment = environment
             process.arguments = prefix + ["sh", directory.path + "/install.sh"] + arguments
+            let stdin = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             try process.run()
+            stdin.fileHandleForWriting.write(Data(input.utf8))
+            try stdin.fileHandleForWriting.close()
             process.waitUntilExit()
             return process.terminationStatus
         }
@@ -54,21 +88,61 @@ struct AgentDiskScriptTests {
     func rootShell() throws {
         let disk = try Disk()
         #expect(try disk.run(["--system"]) == 0)
-        #expect(disk.recorded() == ["0 install --system"])
+        #expect(disk.recorded() == ["0 install --system --dry-run", "0 install --system"])
         #expect(try disk.run([]) == 64)
-        #expect(disk.recorded() == ["0 install --system"])
+        #expect(disk.recorded() == ["0 install --system --dry-run", "0 install --system"])
     }
+
+    @Test(
+        "Without NONINTERACTIVE it shows the plan and waits for Return, changing nothing without one",
+        .enabled(if: geteuid() == 0, "needs a root shell, which the CI container is"))
+    func waitsForReturn() throws {
+        let disk = try Disk()
+        #expect(try disk.run(["--system"], nonInteractive: false) == 1)
+        #expect(disk.recorded() == ["0 install --system --dry-run"])
+        #expect(try disk.run(["--system"], nonInteractive: false, input: "\n") == 0)
+        #expect(disk.recorded().suffix(2) == ["0 install --system --dry-run", "0 install --system"])
+    }
+
+    @Test(
+        "NONINTERACTIVE skips the wait and runs sudo -n, after the plan and before the user step",
+        .enabled(if: geteuid() == 0, "needs root to become another user"))
+    func nonInteractiveUsesSudoN() throws {
+        let disk = try Disk()
+        try disk.addSudo(refusesNonInteractive: false)
+        #expect(try disk.run(["--system"], as: Self.nobody) == 0)
+        let calls = disk.recorded()
+        #expect(
+            calls.prefix(4) == [
+                "65534 install --dry-run", "65534 install --system --dry-run", "sudo -n -v", "65534 install",
+            ])
+        #expect(calls.count == 6)
+        #expect(calls.dropFirst(4).first?.hasPrefix("sudo -n /") == true)
+        #expect(calls.dropFirst(4).first?.hasSuffix("/kernova-agent install --system") == true)
+        #expect(calls.last == "65534 install --system")
+    }
+
+    @Test(
+        "A sudo -n that needs a password stops before anything is changed",
+        .enabled(if: geteuid() == 0, "needs root to become another user"))
+    func refusedSudoChangesNothing() throws {
+        let disk = try Disk()
+        try disk.addSudo(refusesNonInteractive: true)
+        #expect(try disk.run(["--system"], as: Self.nobody) == 1)
+        #expect(disk.recorded() == ["65534 install --dry-run", "65534 install --system --dry-run", "sudo -n -v"])
+    }
+
+    static let nobody = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]
 
     @Test(
         "A user's --system without sudo refuses before the user step runs",
         .enabled(if: geteuid() == 0 && !Self.hasSudo, "needs root to become another user, and no sudo"))
     func userWithoutSudo() throws {
         let disk = try Disk()
-        let nobody = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]
-        #expect(try disk.run(["--system"], as: nobody) == 1)
+        #expect(try disk.run(["--system"], as: Self.nobody) == 1)
         #expect(disk.recorded() == [])
-        #expect(try disk.run([], as: nobody) == 0)
-        #expect(disk.recorded() == ["65534 install"])
+        #expect(try disk.run([], as: Self.nobody) == 0)
+        #expect(disk.recorded() == ["65534 install --dry-run", "65534 install"])
     }
 
     static var hasSudo: Bool {

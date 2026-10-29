@@ -7,9 +7,8 @@ import Foundation
 import KernovaAgentCore
 
 /// Everything `kernova-agent install` or `uninstall` does in one scope, as data: what it writes and removes,
-/// and the commands it runs. ``Installer`` carries it out in this order: ``before``, ``treeRemovals``, the
-/// agent's own ``root`` made, ``treeWrites``, ``writes``, ``removals``, the root emptied and removed when
-/// ``removesRoot``, then ``after``.
+/// and the commands it runs. ``steps`` puts it in the order ``Installer`` carries it out, and is both what a
+/// dry run prints and what the installer performs and reports, one step at a time.
 ///
 /// The tree under ``root`` is the one the system scope's account owns. The installer reaches it only through
 /// descriptors and hands what it makes there to the account (``Installer``); an uninstall empties it the same
@@ -56,6 +55,35 @@ struct InstallPlan: Equatable {
     var removesRoot = false
     /// Commands run after.
     var after: [Command] = []
+
+    /// One thing the installer does.
+    enum Step: Equatable {
+        /// Runs a command; skipped when its ``Command/onlyIfPresent`` path is absent.
+        case run(Command)
+        /// Removes a path under ``root``, a directory with everything in it.
+        case removeBelowRoot(String)
+        /// Makes ``root`` when it is missing.
+        case makeRoot(String)
+        /// Writes under ``root``.
+        case writeBelowRoot(Write)
+        /// Writes outside ``root``.
+        case write(Write)
+        /// Removes a file or link outside ``root``.
+        case remove(String)
+        /// Empties ``root`` and removes it.
+        case removeRoot(String)
+    }
+
+    /// The plan in the order it is carried out: ``before``, ``treeRemovals``, the agent's own ``root`` made,
+    /// ``treeWrites``, ``writes``, ``removals``, the root emptied and removed when ``removesRoot``, then
+    /// ``after``.
+    var steps: [Step] {
+        var steps = before.map(Step.run) + treeRemovals.map(Step.removeBelowRoot)
+        if !treeWrites.isEmpty { steps += [.makeRoot(root)] + treeWrites.map(Step.writeBelowRoot) }
+        steps += writes.map(Step.write) + removals.map(Step.remove)
+        if removesRoot { steps.append(.removeRoot(root)) }
+        return steps + after.map(Step.run)
+    }
 
     /// The install of `layout`'s scope.
     ///
@@ -150,6 +178,11 @@ struct InstallPlan: Equatable {
         return plan
     }
 
+    /// What a dry run of `layout`'s install or uninstall prints, `heading` first: one line per step.
+    static func dryRun(_ plan: InstallPlan, heading: String) -> [String] {
+        [heading] + plan.steps.map { "  " + $0.description }
+    }
+
     private static func systemctlPrefix(_ layout: InstallLayout) -> [String] {
         layout.scope == .system ? ["systemctl"] : ["systemctl", "--user"]
     }
@@ -157,6 +190,41 @@ struct InstallPlan: Equatable {
     private static func unit(_ layout: InstallLayout, _ name: String) -> String {
         layout.unitDirectory + "/" + name
     }
+}
+
+extension InstallPlan.Step: CustomStringConvertible {
+    /// The step as one line: what a dry run lists, and what the installer prints as it takes it.
+    var description: String {
+        switch self {
+        case .run(let command):
+            let line = "run " + command.arguments.map(Self.quoted).joined(separator: " ")
+            return command.onlyIfPresent.map { line + ", if \($0) exists" } ?? line
+        case .removeBelowRoot(let path): return "remove \(path), if present"
+        case .makeRoot(let path): return "make directory \(path), if missing"
+        case .writeBelowRoot(let write), .write(let write):
+            switch write {
+            case .directory(let path, _): return "make directory \(path), if missing"
+            case .file(let path, _, _): return "write \(path)"
+            case .payload(let binary, let state): return "write \(binary), the agent, and \(state)"
+            case .link(let path, let target): return "link \(path) -> \(target)"
+            }
+        case .remove(let path): return "remove \(path), if present"
+        case .removeRoot(let path): return "remove \(path) and everything in it, if present"
+        }
+    }
+
+    /// `argument` as a shell would need it typed: single-quoted when it holds anything but plain ASCII.
+    private static func quoted(_ argument: String) -> String {
+        let plain = !argument.isEmpty && argument.utf8.allSatisfy { Self.plainBytes.contains($0) }
+        return plain
+            ? argument
+            : "'"
+                + argument.split(separator: "'", omittingEmptySubsequences: false)
+                .joined(separator: #"'\''"#) + "'"
+    }
+
+    private static let plainBytes = Set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./=:@+,".utf8)
 }
 
 /// The slot metadata in `state.json`: which slot is in use, and what each holds.

@@ -24,6 +24,8 @@ struct AgentCommandTests {
             (["install", "--system"], .install(Request(scope: .system))),
             (["uninstall", "--system"], .uninstall(Request(scope: .system))),
             (["install", "--no-systemctl"], .install(Request(runsSystemd: false))),
+            (["install", "--dry-run", "--system"], .install(Request(scope: .system, dryRun: true))),
+            (["uninstall", "--dry-run"], .uninstall(Request(dryRun: true))),
             (
                 ["install", "--root", "/tmp/stage", "--system", "--no-systemctl"],
                 .install(Request(scope: .system, root: "/tmp/stage", runsSystemd: false))
@@ -42,6 +44,7 @@ struct AgentCommandTests {
         arguments: [
             [], ["help"], ["session", "extra"], ["--system"], ["Session"], ["system", "--version"],
             ["install", "--user"], ["install", "--system", "--system"], ["install", "--root"],
+            ["install", "--dry-run", "--dry-run"],
             ["install", "--root", "relative", "--no-systemctl"],
             // A staging root has no systemd to run.
             ["install", "--root", "/stage"], ["uninstall", "session"],

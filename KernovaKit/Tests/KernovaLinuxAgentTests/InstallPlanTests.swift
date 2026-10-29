@@ -84,4 +84,49 @@ struct InstallPlanTests {
         case .payload(let binary, _): binary
         }
     }
+
+    @Test("A system install's dry run lists every step, in the order the installer takes them")
+    func systemInstallDryRun() {
+        #expect(
+            InstallPlan.dryRun(.install(Self.system), heading: "kernova-agent install --system will:") == [
+                "kernova-agent install --system will:",
+                "  run systemctl stop kernova-agent-rollback.timer kernova-agent-rollback.service, if /etc/systemd/system/kernova-agent-rollback.timer exists",
+                #"  run systemd-sysusers --inline 'u kernova-agent - "Kernova guest agent" /opt/kernova-agent -'"#,
+                "  remove /opt/kernova-agent/switch-pending, if present",
+                "  make directory /opt/kernova-agent, if missing",
+                "  make directory /opt/kernova-agent/slots, if missing",
+                "  make directory /opt/kernova-agent/slots/a, if missing",
+                "  write /opt/kernova-agent/slots/a/kernova-agent, the agent, and /opt/kernova-agent/state.json",
+                "  link /opt/kernova-agent/current -> slots/a",
+                "  make directory /etc/systemd/system, if missing",
+                "  write /etc/systemd/system/kernova-agent-system.service",
+                "  write /etc/systemd/system/kernova-agent-rollback.timer",
+                "  write /etc/systemd/system/kernova-agent-rollback.service",
+                "  make directory /etc/sysusers.d, if missing",
+                "  write /etc/sysusers.d/kernova-agent.conf",
+                "  make directory /etc/polkit-1/rules.d, if missing",
+                "  write /etc/polkit-1/rules.d/50-kernova-agent.rules",
+                "  run systemctl daemon-reload",
+                "  run systemctl enable --now kernova-agent-rollback.timer",
+                "  run systemctl enable kernova-agent-system.service",
+                "  run systemctl restart kernova-agent-system.service",
+            ])
+    }
+
+    @Test("A system uninstall's dry run lists every step, in the order the installer takes them")
+    func systemUninstallDryRun() {
+        #expect(
+            InstallPlan.dryRun(.uninstall(Self.system), heading: "h") == [
+                "h",
+                "  run systemctl disable --now kernova-agent-rollback.timer, if /etc/systemd/system/kernova-agent-rollback.timer exists",
+                "  run systemctl disable --now kernova-agent-system.service, if /etc/systemd/system/kernova-agent-system.service exists",
+                "  remove /etc/systemd/system/kernova-agent-system.service, if present",
+                "  remove /etc/systemd/system/kernova-agent-rollback.timer, if present",
+                "  remove /etc/systemd/system/kernova-agent-rollback.service, if present",
+                "  remove /etc/polkit-1/rules.d/50-kernova-agent.rules, if present",
+                "  remove /etc/sysusers.d/kernova-agent.conf, if present",
+                "  remove /opt/kernova-agent and everything in it, if present",
+                "  run systemctl daemon-reload",
+            ])
+    }
 }

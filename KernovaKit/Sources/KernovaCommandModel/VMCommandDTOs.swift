@@ -140,6 +140,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// Whether the app last found another running copy of Kernova holding the
     /// VM, which is at rest in the copy answering.
     public let heldByAnotherCopy: Bool
+    /// Each guest agent connected through the agent hub, newest first, and
+    /// how it stands; empty for a guest whose agents the hub doesn't serve.
+    public let agents: [VMAgentLine]
 
     /// Describes one VM.
     public init(
@@ -162,7 +165,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         guestAgent: VMGuestAgentBucket?,
         stateBucket: VMStateBucket,
         bundlePath: String,
-        heldByAnotherCopy: Bool
+        heldByAnotherCopy: Bool,
+        agents: [VMAgentLine] = []
     ) {
         self.id = id
         self.name = name
@@ -184,6 +188,21 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.stateBucket = stateBucket
         self.bundlePath = bundlePath
         self.heldByAnotherCopy = heldByAnotherCopy
+        self.agents = agents
+    }
+}
+
+/// One guest agent connected through the agent hub.
+public struct VMAgentLine: Codable, Sendable, Hashable {
+    /// Which agent: "Session agent — pbear", "System service".
+    public let title: String
+    /// How it stands: "Up to date", "Out of date", "Not responding", or its version.
+    public let state: String
+
+    /// Describes one agent.
+    public init(title: String, state: String) {
+        self.title = title
+        self.state = state
     }
 }
 

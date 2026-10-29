@@ -482,8 +482,8 @@ struct AppAlertConfigurationsTests {
             "Ubuntu", guestOS: .linux, purpose: .install, delivery: .usb
         ) { copied.append($0) }
         #expect(install.message.contains(LinuxAgentDisk.installCommand))
-        // The command works once a desktop has mounted the disk; the lines after it mount it where none has.
-        #expect(install.message.contains("Once the guest's desktop has mounted the disk"))
+        // The command mounts the disk itself where the desktop has not; the lines after it serve a guest with no desktop.
+        #expect(install.message.contains(LinuxAgentDisk.installCommandPrecondition))
         #expect(install.message.contains(LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")))
         #expect(install.buttons.map(\.title) == ["Copy Command", "Done"])
         #expect(install.buttons.first?.role == .default)

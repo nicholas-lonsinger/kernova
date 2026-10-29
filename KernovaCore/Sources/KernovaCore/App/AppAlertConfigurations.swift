@@ -325,9 +325,10 @@ package struct AppAlertConfigurations {
         )
     }
 
-    /// The Linux disk's alert: the commands that install or remove the agent
-    /// from it once the guest's desktop has mounted it, each with a button that
-    /// copies it, and the lines that mount it on a guest with no desktop.
+    /// The Linux disk's alert: the commands that mount the disk where the
+    /// desktop has not and install or remove the agent from it, each with a
+    /// button that copies it, and the lines that mount it on a guest with no
+    /// desktop.
     private func linuxInstallerMountedConfig(
         _ vmName: String, purpose: GuestAgentInstallerPurpose, copy: @escaping (String) -> Void
     ) -> AlertConfiguration {
@@ -350,7 +351,7 @@ package struct AppAlertConfigurations {
             return AlertConfiguration(
                 title: "Guest Agent Disk Attached",
                 message:
-                    "\(lead) Once the guest's desktop has mounted the disk, open a terminal. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)\n\nAdding --system to either also installs or removes the system service.\n\n\(headless)",
+                    "\(lead) Open a terminal in the guest. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)\n\nAdding --system to either also installs or removes the system service.\n\n\(headless)",
                 buttons: [
                     AlertButton("Copy Install Command", role: .default) { copy(install) },
                     AlertButton("Done", role: .cancel),

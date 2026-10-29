@@ -49,12 +49,25 @@ package enum GuestAgentDiskCopies {
     }
 
     /// Removes the copy of every entry `old` lists and `new` does not — the
-    /// one place a dropped installer entry takes its copy. A guest still
-    /// attached to it keeps its handle until the reconcile detaches it.
+    /// one place a dropped installer entry takes its copy — and the directory
+    /// once it holds none. A guest still attached to a copy keeps its handle
+    /// until the reconcile detaches it.
     static func removeCopies(droppedFrom old: VMConfiguration, to new: VMConfiguration, in layout: VMBundleLayout) {
         let kept = Set((new.removableMedia ?? []).map(\.id))
+        var removed = false
         for item in old.removableMedia ?? [] where !kept.contains(item.id) {
-            if let copy = item.installerCopy(in: layout) { discard(copy) }
+            guard let copy = item.installerCopy(in: layout) else { continue }
+            discard(copy)
+            removed = true
+        }
+        guard removed else { return }
+        // rmdir removes only an empty directory, so a copy still there keeps it.
+        let directory = layout.guestAgentDiskDirectoryURL.path(percentEncoded: false)
+        if rmdir(directory) != 0, errno != ENOTEMPTY, errno != EEXIST, errno != ENOENT {
+            logger.log(
+                .error,
+                "Cannot remove the guest agent disk directory \(directory, privacy: .public): \(String(cString: strerror(errno)), privacy: .public)"
+            )
         }
     }
 

@@ -102,24 +102,45 @@ struct SidebarViewControllerTests {
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
-    @Test("Agent indicator shows for a Linux guest with a channel to an agent, waiting until one connects")
+    private static func peer(
+        _ handle: UInt64, role: PeerRole = .sessionPeer, standing: PeerSummary.Standing = .current
+    ) -> PeerSummary {
+        PeerSummary(
+            handle: PeerHandle(rawValue: handle), role: role, scope: role == .systemPeer ? .system : .user, os: .linux,
+            sessionID: role == .systemPeer ? "" : "2", userName: role == .systemPeer ? "" : "pbear", console: .on,
+            versionLabel: "1.0", standing: standing, isResponsive: true)
+    }
+
+    @Test("A Linux guest's indicator follows the status rule a macOS guest's does")
     func agentShownForLinuxWithAnAgent() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
+        // None connected: waiting, shown.
         #expect(instance.agentPresentation?.status == .waiting)
         #expect(visibleAgentStatus(for: instance) == .waiting)
 
+        // Every agent current: hidden.
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [Self.peer(1), Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([])))
+        #expect(visibleAgentStatus(for: instance) == nil)
+
+        // One outdated: shown, as outdated.
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(
                 peers: [
-                    PeerSummary(
-                        handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
-                        userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
-                ], features: FeatureStatus.merge([])))
-        #expect(visibleAgentStatus(for: instance) == .current(version: "1.0"))
+                    Self.peer(1), Self.peer(3, role: .systemPeer, standing: .outdated(offeredVersionLabel: "2.0")),
+                ],
+                features: FeatureStatus.merge([])))
+        #expect(visibleAgentStatus(for: instance) == .outdated(installed: "1.0", bundled: "2.0"))
 
-        instance.publishAgentHubSnapshotForTesting(.empty)
-        #expect(visibleAgentStatus(for: instance) == .waiting)
+        // Waiting with the nudge dismissed: hidden.
+        let dismissed = VMInstanceFixture.make(
+            guestOS: .linux, phase: .running(sessionID: UUID()),
+            hostState: VMHostState(agentInstallNudgeDismissed: true))
+        dismissed.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(dismissed.agentPresentation?.status == .waiting)
+        #expect(visibleAgentStatus(for: dismissed) == nil)
     }
 
     @Test("A waiting Linux guest's indicator follows the install nudge as a macOS guest's does")

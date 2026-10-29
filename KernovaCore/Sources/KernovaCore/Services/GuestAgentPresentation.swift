@@ -85,19 +85,20 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
     }
 
-    /// How `peer` stands, as only what the host knows: its version alone when
-    /// the host offers it nothing to compare against.
+    /// How `peer` stands, as only what the host knows: whether it answers, and
+    /// its version alone when the host offers it nothing to compare against.
     private static func state(of peer: PeerSummary) -> String {
+        guard peer.isResponsive else { return "Not responding" }
         switch peer.standing {
-        case .current: "Up to date"
-        case .outdated: "Out of date"
-        case .notOffered: peer.versionLabel.isEmpty ? "Connected" : "Version \(peer.versionLabel)"
+        case .current: return "Up to date"
+        case .outdated: return "Out of date"
+        case .notOffered: return peer.versionLabel.isEmpty ? "Connected" : "Version \(peer.versionLabel)"
         }
     }
 
-    /// The agents' state as one value: an outdated agent first, then every
-    /// agent unresponsive, else the newest one — current only when every agent
-    /// is, and connected when the host offers any of them nothing to judge it
+    /// The agents' state as one value: an outdated agent first, then an
+    /// unresponsive one, else the newest — current only when every agent is,
+    /// and connected when the host offers any of them nothing to judge it
     /// against.
     private static func status(of peers: [PeerSummary]) -> AgentStatus {
         guard let newest = peers.first else { return .waiting }
@@ -106,7 +107,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 return .outdated(installed: peer.versionLabel, bundled: offered)
             }
         }
-        if peers.allSatisfy({ !$0.isResponsive }) { return .unresponsive(version: newest.versionLabel) }
+        if let silent = peers.first(where: { !$0.isResponsive }) { return .unresponsive(version: silent.versionLabel) }
         return peers.allSatisfy { $0.standing == .current }
             ? .current(version: newest.versionLabel) : .connected(version: newest.versionLabel)
     }

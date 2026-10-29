@@ -50,7 +50,10 @@ struct LinuxAgentDiskTests {
         #expect(readme.contains(LinuxAgentDisk.installCommand))
         #expect(readme.contains(LinuxAgentDisk.uninstallCommand))
         #expect(readme.contains(LinuxAgentDisk.mountAndInstallCommands.map { "    " + $0 }.joined(separator: "\n")))
-        #expect(LinuxAgentDisk.installCommand == #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#)
+        #expect(
+            LinuxAgentDisk.installCommand
+                == #"udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
+        )
     }
 
     @Test("LICENSES.txt carries Kernova's licence whole")

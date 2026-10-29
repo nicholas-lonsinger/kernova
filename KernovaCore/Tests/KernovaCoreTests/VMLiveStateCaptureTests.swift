@@ -130,6 +130,22 @@ struct VMLiveStateCaptureTests {
         #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
     }
 
+    @Test("A save whose state would not restore is refused before anything is taken off, paused or written")
+    func anUnrestorableSaveIsRefusedFirst() async throws {
+        let fixture = try await instanceHoldingAccessories(2)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setSavedStateWouldRestore(false)
+
+        await #expect(throws: VMLiveStateCapture.SaveRefusal.usbDeviceRemovedEarlier) {
+            try await fixture.sweep(session)
+        }
+
+        // Judged as the state would stand once the accessories were taken off.
+        #expect(await session.askedRemovingUSBDevices == Set(fixture.deviceIDs))
+        #expect(await session.calls.isEmpty)
+        #expect(fixture.instance.liveUSBAccessories.count == 2)
+    }
+
     @Test("A device the controller already lost is released and does not fail the save")
     func anAlreadyDetachedDeviceIsNotAFailure() async throws {
         let fixture = try await instanceHoldingAccessories(1)

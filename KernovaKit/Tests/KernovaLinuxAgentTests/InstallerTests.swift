@@ -149,6 +149,22 @@ struct InstallerTests {
     }
 
     @Test(
+        "An install and an uninstall report each step as they take it, in their dry run's words and order",
+        arguments: [false, true])
+    func reportsTheDryRun(uninstalling: Bool) throws {
+        let scratch = try Scratch()
+        let layout = try Self.layout(.user)
+        if uninstalling { try scratch.installer().run(.install(layout)) }
+        let plan: InstallPlan = uninstalling ? .uninstall(layout) : .install(layout)
+        var reported: [String] = []
+        try scratch.installer().run(plan) { reported.append($0) }
+        // With no systemd tool run, every step but the commands is taken.
+        let taken = plan.steps.filter { if case .run = $0 { false } else { true } }
+        #expect(reported == taken.map(\.description))
+        #expect(InstallPlan.dryRun(plan, heading: "h") == ["h"] + plan.steps.map { "  " + $0.description })
+    }
+
+    @Test(
         "A system install writes the same, through descriptors, every directory and file in the agent's root handed to its account",
         .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func systemInstall() throws {

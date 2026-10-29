@@ -692,7 +692,8 @@ package final class VMCommandCore {
             guestAgent: subject.guestAgent,
             stateBucket: subject.state,
             bundlePath: instance.bundleURL.path(percentEncoded: false),
-            heldByAnotherCopy: instance.heldByAnotherCopy
+            heldByAnotherCopy: instance.heldByAnotherCopy,
+            agents: (instance.agentPresentation?.hub?.peers ?? []).map { VMAgentLine(title: $0.title, state: $0.state) }
         )
     }
 

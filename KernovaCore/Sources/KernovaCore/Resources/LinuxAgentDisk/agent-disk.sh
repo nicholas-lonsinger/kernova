@@ -7,10 +7,15 @@
 #                                --system, the system service too
 #   sh uninstall.sh [--system]   removes the same
 #
+# It prints what the chosen scope will change, from kernova-agent's own dry run
+# of the steps it then takes, and waits for Return. With NONINTERACTIVE set to
+# anything but empty it skips the wait and runs sudo -n, which fails at once
+# where sudo would ask for a password.
+#
 # kernova-agent does the work. This copies it off the disk, which Kernova
 # ejects once an agent it bundles connects, and runs it from the copy. The
-# --system step is the one that runs as root: sudo asks for it here, and a
-# root shell runs it, and only it, without sudo.
+# --system step is the one that runs as root: sudo runs it here, printed first,
+# and a root shell runs it, and only it, without sudo.
 
 set -eu
 
@@ -27,6 +32,8 @@ main() {
         --system) system=yes ;;
         *) echo "usage: sh $script [--system]" >&2; exit 64 ;;
     esac
+    sudo=sudo
+    if [ -n "${NONINTERACTIVE:-}" ]; then sudo='sudo -n'; fi
 
     machine=$(uname -m)
     if [ "$machine" != aarch64 ]; then
@@ -34,7 +41,9 @@ main() {
         exit 1
     fi
 
+    root=''
     if [ "$(id -u)" -eq 0 ]; then
+        root=yes
         if [ -z "$system" ]; then
             echo "$script: as root, only --system applies; run it as the user the agent is for without it" >&2
             exit 64
@@ -49,14 +58,36 @@ main() {
     trap 'rm -rf "$staged"' EXIT
     cp "$disk/kernova-agent" "$staged/kernova-agent"
     chmod 0755 "$staged/kernova-agent"
+    agent=$staged/kernova-agent
 
-    if [ "$(id -u)" -eq 0 ]; then
-        "$staged/kernova-agent" "$verb" --system
-    else
-        "$staged/kernova-agent" "$verb"
-        if [ -n "$system" ]; then
-            sudo "$staged/kernova-agent" "$verb" --system
+    # The plan: each scope's own dry run, as a user, of the steps it then takes.
+    if [ -z "$root" ]; then "$agent" "$verb" --dry-run; fi
+    if [ -n "$system" ]; then "$agent" "$verb" --system --dry-run; fi
+    if [ -z "${NONINTERACTIVE:-}" ]; then
+        printf 'Press Return to continue, or Control-C to cancel. '
+        if ! read -r _; then
+            echo
+            echo "$script: no answer, so nothing was changed" >&2
+            exit 1
         fi
+    fi
+
+    if [ -n "$root" ]; then
+        "$agent" "$verb" --system
+        return
+    fi
+    if [ -n "$system" ]; then
+        # sudo's answer first, so a refused sudo stops before anything changes.
+        echo "+ $sudo -v"
+        if ! $sudo -v; then
+            echo "$script: sudo refused, so nothing was changed" >&2
+            exit 1
+        fi
+    fi
+    "$agent" "$verb"
+    if [ -n "$system" ]; then
+        echo "+ $sudo $agent $verb --system"
+        $sudo "$agent" "$verb" --system
     fi
 }
 

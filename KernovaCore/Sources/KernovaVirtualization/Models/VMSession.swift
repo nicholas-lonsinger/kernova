@@ -111,6 +111,10 @@ package actor VMSession: VMSessionOperating {
 
     private let vm: VZVirtualMachine
 
+    /// Where the USB devices sit, read from the controller at the first USB
+    /// call: every device on it until then is one the session started with.
+    private var usbPorts: USBPortLayout?
+
     /// VZ holds its delegate weakly; the session retains it.
     private let delegateAdapter: VMDelegateAdapter
 
@@ -398,29 +402,37 @@ package actor VMSession: VMSessionOperating {
                 }
             }
         }
+        usbPorts?.attached(uuid)
         return uuid
+    }
+
+    package func savedStateRestores(removingUSBDevices removed: Set<UUID>) -> Bool {
+        guard let controller = vm.usbControllers.first else { return true }
+        let ports = startUSBPorts(controller)
+        return ports.restores(controller.usbDevices.map(\.uuid).filter { !removed.contains($0) })
+    }
+
+    /// The port layout, read from `controller` when no USB call has read it yet.
+    private func startUSBPorts(_ controller: VZUSBController) -> USBPortLayout {
+        if let usbPorts { return usbPorts }
+        let started = USBPortLayout(starting: controller.usbDevices.map(\.uuid))
+        usbPorts = started
+        return started
     }
 
     /// Attaches the disk image at `url` as a USB mass storage device, building
     /// the device on the queue through ``attachUSBDevice(_:)``.
     package func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID {
         try await attachUSBDevice {
-            let attachment: VZDiskImageStorageDeviceAttachment
+            let usbConfig: VZUSBMassStorageDeviceConfiguration
             do {
-                attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
+                usbConfig = try ConfigurationBuilder.massStorageDevice(url: url, readOnly: readOnly, uuid: uuid)
             } catch {
                 Self.logger.log(
                     .error,
                     "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw error
-            }
-            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-            if let uuid {
-                // Override the framework-generated UUID so the live device
-                // matches the caller's persisted identity (e.g.
-                // `RemovableMediaItem.id`) for save-state restore matching.
-                usbConfig.uuid = uuid
             }
             return VZUSBMassStorageDevice(configuration: usbConfig)
         }
@@ -450,6 +462,7 @@ package actor VMSession: VMSessionOperating {
             assertionFailure("Callers must guard on hasUSBController")
             throw VMSessionError.usbControllerUnavailable
         }
+        _ = startUSBPorts(controller)
         return controller
     }
 

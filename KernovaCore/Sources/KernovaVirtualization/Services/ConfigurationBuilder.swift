@@ -506,10 +506,9 @@ struct ConfigurationBuilder: Sendable {
                 notWritable: .removableMediaNotWritable(
                     id: item.id, path: item.path, label: item.label))
 
-            let attachment: VZDiskImageStorageDeviceAttachment
+            let usbConfig: VZUSBMassStorageDeviceConfiguration
             do {
-                attachment = try VZDiskImageStorageDeviceAttachment(
-                    url: resolved.url, readOnly: item.readOnly)
+                usbConfig = try Self.massStorageDevice(url: resolved.url, readOnly: item.readOnly, uuid: item.id)
             } catch {
                 Self.logger.log(
                     .error,
@@ -522,8 +521,6 @@ struct ConfigurationBuilder: Sendable {
                     underlying: error)
             }
 
-            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-            usbConfig.uuid = item.id
             attached.append(usbConfig)
             infos.append(RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
 
@@ -534,6 +531,16 @@ struct ConfigurationBuilder: Sendable {
         }
         xhci.usbDevices = attached
         return infos
+    }
+
+    /// The USB mass storage device a removable medium attaches as, at a boot and
+    /// in a live attach alike, under `uuid` when given: the identity a saved
+    /// state's restore matches it by.
+    static func massStorageDevice(url: URL, readOnly: Bool, uuid: UUID?) throws -> VZUSBMassStorageDeviceConfiguration {
+        let device = VZUSBMassStorageDeviceConfiguration(
+            attachment: try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly))
+        if let uuid { device.uuid = uuid }
+        return device
     }
 
     /// Synthesizes the guest-agent installer's disk entry.

@@ -53,6 +53,35 @@ package enum VMLiveStateCapture {
         fileprivate init() {}
     }
 
+    /// A save refused before anything was taken off or written, because the
+    /// state it would write could not be restored.
+    package enum SaveRefusal: LocalizedError, Equatable {
+        /// A USB device was removed earlier in the session, ahead of one still
+        /// attached (``USBPortLayout``).
+        case usbDeviceRemovedEarlier
+
+        package var errorDescription: String? {
+            "Kernova can't save this virtual machine's state: a USB device was removed from it earlier in this "
+                + "session, and its saved state would not restore. Remove the USB disks attached since then, or "
+                + "shut it down instead."
+        }
+    }
+
+    /// Refuses a save whose state, once every passthrough accessory is taken
+    /// off, would not restore.
+    private static func requireRestorable(
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
+    ) async throws {
+        let accessories = Set(context.instance.liveUSBAccessories.map(\.deviceID))
+        guard await session.savedStateRestores(removingUSBDevices: accessories) else {
+            logger.log(
+                .error,
+                "Refused to save '\(context.instance.name, privacy: .public)': a USB device was removed ahead of one still attached"
+            )
+            throw SaveRefusal.usbDeviceRemovedEarlier
+        }
+    }
+
     /// Writes the guest's state, as a suspend does, into `url`: every
     /// passthrough USB accessory taken off first, then the guest paused.
     ///
@@ -69,6 +98,7 @@ package enum VMLiveStateCapture {
     package static func suspendState(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
     ) async throws {
+        try await requireRestorable(context, session: session)
         try await detachUSBAccessories(context, session: session)
         try await writeState(context, session: session, to: url)
     }
@@ -93,6 +123,7 @@ package enum VMLiveStateCapture {
         // disks copy still leaves a complete capture, which the resume, a no-op
         // on a guest no longer paused, must not refuse.
         let execution = try capture.operation.liveExecution()
+        try await requireRestorable(capture.operation, session: session)
         try await detachUSBAccessories(owingReturns: capture, session: session)
         try await writeState(capture.operation, session: session, to: saveFileURL)
         try await captureDisks()

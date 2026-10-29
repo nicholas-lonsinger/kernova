@@ -122,34 +122,57 @@ struct Installer {
         var gid: gid_t
     }
 
-    /// Runs `plan`.
-    func run(_ plan: InstallPlan) throws(Failure) {
+    /// Runs `plan`'s ``InstallPlan/steps`` in order, handing `report` each one's description just before it
+    /// takes it; a command not run, as with `runsSystemd` false or its path absent, is not reported.
+    func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) {
         let source = try openPayload(plan)
         defer { if let source { close(source) } }
-        try runCommands(plan.before)
-        let owner = try resolveOwner()
-        if let root = try openRoot(plan.root, creating: false, owner: nil) {
-            defer { close(root) }
-            for path in plan.treeRemovals { try removeBelow(root, plan.root, path) }
-        }
-        if !plan.treeWrites.isEmpty {
-            guard let root = try openRoot(plan.root, creating: true, owner: owner) else { return }
-            defer { close(root) }
-            for write in plan.treeWrites { try performBelow(root, plan.root, write, owner: owner, source: source) }
-        }
-        for write in plan.writes { try perform(write, source: source) }
-        for path in plan.removals { try remove(path) }
-        if plan.removesRoot, let root = try openRoot(plan.root, creating: false, owner: nil) {
-            do throws(Failure) { try empty(root, path: plan.root) } catch {
-                close(root)
-                throw error
+        // The root open for the steps below it: as found until the plan makes it, then as made and handed to
+        // its owner, whose account the commands before it create.
+        var root: Int32?
+        var owner: Owner?
+        defer { if let root { close(root) } }
+        for step in plan.steps {
+            if case .run(let command) = step, !willRun(command) { continue }
+            report(step.description)
+            switch step {
+            case .run(let command):
+                let status = Self.spawn(command.arguments)
+                guard status == 0 else { throw .command(arguments: command.arguments, status: status) }
+            case .removeBelowRoot(let path):
+                if root == nil { root = try openRoot(plan.root, creating: false, owner: nil) }
+                if let root { try removeBelow(root, plan.root, path) }
+            case .makeRoot:
+                if let found = root { close(found) }
+                root = nil
+                owner = try resolveOwner()
+                root = try openRoot(plan.root, creating: true, owner: owner)
+            case .writeBelowRoot(let write):
+                guard let root else { preconditionFailure("\(step) before the root is made") }
+                try performBelow(root, plan.root, write, owner: owner, source: source)
+            case .write(let write):
+                try perform(write, source: source)
+            case .remove(let path):
+                try remove(path)
+            case .removeRoot:
+                if let found = root { close(found) }
+                root = nil
+                try removeRoot(plan.root)
             }
+        }
+    }
+
+    /// Empties the agent's root and removes it; a missing one is skipped.
+    private func removeRoot(_ path: String) throws(Failure) {
+        guard let root = try openRoot(path, creating: false, owner: nil) else { return }
+        do throws(Failure) { try empty(root, path: path) } catch {
             close(root)
-            guard rmdir(staged(plan.root)) == 0 || errno == ENOENT else {
-                throw .system(operation: "rmdir", path: staged(plan.root), errno: errno)
-            }
+            throw error
         }
-        try runCommands(plan.after)
+        close(root)
+        guard rmdir(staged(path)) == 0 || errno == ENOENT else {
+            throw .system(operation: "rmdir", path: staged(path), errno: errno)
+        }
     }
 
     private func openPayload(_ plan: InstallPlan) throws(Failure) -> Int32? {
@@ -497,16 +520,12 @@ struct Installer {
 
     // MARK: Commands
 
-    private func runCommands(_ commands: [InstallPlan.Command]) throws(Failure) {
-        guard runsSystemd else { return }
-        for command in commands {
-            if let path = command.onlyIfPresent {
-                var info = stat()
-                guard lstat(staged(path), &info) == 0 else { continue }
-            }
-            let status = Self.spawn(command.arguments)
-            guard status == 0 else { throw .command(arguments: command.arguments, status: status) }
-        }
+    /// Whether `command` runs: not when commands are off or its path is absent.
+    private func willRun(_ command: InstallPlan.Command) -> Bool {
+        guard runsSystemd else { return false }
+        guard let path = command.onlyIfPresent else { return true }
+        var info = stat()
+        return lstat(staged(path), &info) == 0
     }
 
     /// Runs `arguments` as ``spawn(_:)`` does, answering its exit status and what it wrote to standard

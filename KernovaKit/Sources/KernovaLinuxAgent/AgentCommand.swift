@@ -24,12 +24,14 @@ enum AgentCommand: Equatable {
         var root: String?
         /// False with `--no-systemctl`: no systemd tool runs.
         var runsSystemd = true
+        /// `--dry-run`: print what it would do, and change nothing.
+        var dryRun = false
     }
 
     /// The usage line printed for arguments `parse(_:)` refuses.
     static let usage = """
         usage: kernova-agent session | system | self-test | --version
-               kernova-agent install | uninstall [--system] [--no-systemctl [--root <dir>]]
+               kernova-agent install | uninstall [--system] [--dry-run] [--no-systemctl [--root <dir>]]
         """
 
     /// The command `arguments` — those after the program name — ask for, or nil when they ask for none.
@@ -59,6 +61,7 @@ enum AgentCommand: Equatable {
             switch option {
             case "--system": request.scope = .system
             case "--no-systemctl": request.runsSystemd = false
+            case "--dry-run": request.dryRun = true
             case "--root":
                 guard let root = remaining.popFirst(), root.hasPrefix("/") else { return nil }
                 request.root = root

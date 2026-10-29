@@ -11,15 +11,17 @@ package enum LinuxAgentDisk {
     /// `/run/media/$USER/KERNOVA_AGENT`, and the label Kernova shows for the attachment.
     package static let volumeLabel = "KERNOVA_AGENT"
 
-    /// The command that installs the agent from the mounted disk, wherever the guest mounted it: `findmnt` is
-    /// util-linux's, on every systemd distribution. `README.txt` gives the same command.
+    /// The command that installs the agent from the disk: it mounts the disk first where the desktop has not
+    /// (udisks2's `udisksctl`, whose polkit default lets the active session mount a filesystem), then finds it
+    /// wherever it is mounted (util-linux's `findmnt`, on every systemd distribution). `README.txt` gives the
+    /// same command.
     package static let installCommand = command("install.sh")
 
     /// The command that removes it.
     package static let uninstallCommand = command("uninstall.sh")
 
     /// What the install command needs, as the user reads it before the command.
-    package static let installCommandPrecondition = "Once the guest's desktop has mounted the disk, run in a terminal:"
+    package static let installCommandPrecondition = "In a terminal in the guest, run:"
 
     /// The lines that mount the disk on a guest with no desktop, which mounts nothing on its own, and install
     /// the system service from it: `README.txt` gives the same lines.
@@ -30,7 +32,7 @@ package enum LinuxAgentDisk {
     ]
 
     private static func command(_ script: String) -> String {
-        #"sh "$(findmnt -nro TARGET LABEL=\#(volumeLabel))/\#(script)""#
+        #"udisksctl mount -b /dev/disk/by-label/\#(volumeLabel) >/dev/null 2>&1; sh "$(findmnt -nro TARGET LABEL=\#(volumeLabel))/\#(script)""#
     }
 
     /// The date every record on the disk carries: fixed, so the image is a function of its files alone.

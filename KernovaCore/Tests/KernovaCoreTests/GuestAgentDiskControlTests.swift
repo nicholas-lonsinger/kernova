@@ -165,7 +165,7 @@ struct GuestAgentDiskControlTests {
         attached.attachAgentTransport(AgentHubProbe())
         let ejecting = GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities)
         #expect(ejecting.action == .eject)
-        #expect(ejecting.installCommand == #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#)
+        #expect(ejecting.installCommand == LinuxAgentDisk.installCommand)
     }
 
     @Test("A Linux guest in a build without the Linux agent is withheld the control")
