@@ -351,7 +351,8 @@ extension VMCommandCore {
             let source = context.operation.bundle.url
             let ending: VMOperationEnding<Void>
             if context.mode == .live {
-                // Only what the guest writes is copied inside the pause, so
+                // Only the files the saved state restores onto
+                // (`CloneCopy.stateBoundPaths`) are copied inside the pause, so
                 // the freeze does not grow with the snapshots an Exact Copy
                 // carries.
                 ending = try await virtualization.copyLive(

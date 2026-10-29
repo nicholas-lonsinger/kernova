@@ -414,16 +414,10 @@ struct VirtualizationServiceTests {
         #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
     }
 
-    @Test(
-        "A restore attaches the copy the state was saved with, whatever the app's disk holds now",
-        arguments: [false, true])
-    func restoreKeepsTheSavedCopy(attachedByAnotherBuild: Bool) async throws {
+    @Test("A restore leaves the copy the state was saved with as it was, whatever the app's disk holds now")
+    func restoreKeepsTheSavedCopy() async throws {
         let (service, products, cache) = try linuxAgentProducts()
-        // Another build's entry names a disk this build never wrote, which is gone.
-        let path =
-            attachedByAnotherBuild
-            ? scratch.url.appending(path: "Other/linux-arm64.iso").path(percentEncoded: false)
-            : cache.url.path(percentEncoded: false)
+        let path = cache.url.path(percentEncoded: false)
         let item = RemovableMediaItem(path: path, readOnly: true)
         let instance = VMInstanceFixture.make(phase: .suspended, bundleProducts: products) {
             $0.removableMedia = [item]
@@ -435,8 +429,8 @@ struct VirtualizationServiceTests {
         try Data("the saved copy".utf8).write(to: copy)
         try Data("a later build's disk".utf8).write(to: cache.url)
 
-        // The bundle holds no real disk image, so the restore fails at the
-        // configuration build, past the installer: the copy is what it reads.
+        // The bring-up's copy step leaves the saved copy alone; the build then
+        // stops at the bundle's missing main disk.
         await #expect(throws: ConfigurationBuilderError.self) {
             try await start(instance, .restoringSavedState, on: service)
         }

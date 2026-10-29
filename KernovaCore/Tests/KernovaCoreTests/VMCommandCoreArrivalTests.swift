@@ -588,8 +588,8 @@ struct VMCommandCoreArrivalTests {
         #expect(settled.contains(VMBundleLayout.hardwareModelRelativePath))
         #expect(Set(settled).isDisjoint(with: stateBoundPaths(of: source)))
         hold.signal()
-        // The guest-written files copy while the guest is paused on the state
-        // just written, and nothing else does.
+        // The files the saved state restores onto copy while the guest is
+        // paused on the state just written, and nothing else does.
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 2 }
         #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
         #expect(await session.guestState == .paused)

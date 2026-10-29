@@ -404,8 +404,8 @@ package final class VirtualizationService {
 
     /// Copies a live VM into a clone through ``VMLiveStateCapture/captureWarm(_:_:session:prepare:savingStateTo:copy:)``:
     /// `prepare` lays down the clone's staged bundle, and `copy` copies the
-    /// files the guest writes into it inside the pause that writes the
-    /// guest's memory to `saveFileURL` first.
+    /// files the saved state restores onto into it inside the pause that
+    /// writes the guest's memory to `saveFileURL` first.
     package func copyLive(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         savingStateTo saveFileURL: URL,
