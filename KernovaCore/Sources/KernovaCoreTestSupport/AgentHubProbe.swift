@@ -69,17 +69,20 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         _ stream: any ByteStream, policy: PolicySnapshot, bundles: [BundledPayload],
         deliveringOn queue: DispatchQueue, _ handler: @escaping @Sendable (HostEvent) -> Void
     ) -> any HostConnectionHandle {
-        state.withLock { state in
+        let index = state.withLock { state in
             state.policies.append(policy)
             state.bundles.append(bundles)
             state.handlers.append((queue, handler))
+            return state.handlers.count
         }
         changed.notify()
-        return Connection(probe: self)
+        return Connection(probe: self, generation: ConnectionGeneration(rawValue: UInt64(index)))
     }
 
     private struct Connection: HostConnectionHandle {
         let probe: AgentHubProbe
+        /// From 1, in accept order.
+        let generation: ConnectionGeneration
 
         func start() {}
 

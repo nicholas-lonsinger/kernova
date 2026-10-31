@@ -37,6 +37,8 @@ public protocol HostConnectionMaking: Sendable {
 
 /// One host connection, as the hub drives it.
 public protocol HostConnectionHandle: Sendable {
+    /// The connection's generation, which every power request id the hub sends it carries.
+    var generation: ConnectionGeneration { get }
     /// Starts the connection.
     func start()
     /// Sends `command` to the connection's driver with `async`.
@@ -159,6 +161,126 @@ public final class AgentHub: Sendable {
         }
     }
 
+    // MARK: Power
+
+    /// Routes `action` across the peers (spec §6.4) — the console session's peers newest first, then the
+    /// system peer — and calls `completion` once, on the hub's queue, with how it ended. The hub never
+    /// presses the ACPI button: `.useACPI` hands that back to the caller.
+    public func requestPower(_ action: PowerAction, _ completion: @escaping @Sendable (PowerRoutingOutcome) -> Void) {
+        queue.async { [self] in
+            let begun = state.withLock { state -> Bool in
+                guard !state.power.routing.isRouting else { return false }
+                state.power.completion = completion
+                state.power.routing.begin(action, peers: state.routingPeers)
+                return true
+            }
+            guard begun else { return completion(.busy) }
+            logger.log(.notice, "Routing \(Self.name(action), privacy: .public) across the guest's agents")
+            drainRouting()
+        }
+    }
+
+    /// ``requestPower(_:_:)``, awaited.
+    public func requestPower(_ action: PowerAction) async -> PowerRoutingOutcome {
+        await withCheckedContinuation { continuation in
+            requestPower(action) { continuation.resume(returning: $0) }
+        }
+    }
+
+    /// Carries out the routing's outputs: each ask becomes a request to that peer's connection, each
+    /// progress the snapshot's stage, and the terminal output the caller's outcome.
+    private func drainRouting() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        while let output = state.withLock({ $0.power.routing.pollOutput() }) {
+            switch output {
+            case .ask(let handle, let action):
+                ask(handle, action)
+            case .progress(_, let stage, let apps):
+                state.withLock { state in
+                    state.power.progress?.stage =
+                        switch stage {
+                        case .askingApps: .askingApps
+                        case .waitingOnApps: .waitingOnApps(apps)
+                        }
+                }
+            default:
+                guard let outcome = PowerRoutingOutcome(output) else { continue }
+                let completion = state.withLock { state in
+                    defer {
+                        state.power.completion = nil
+                        state.power.progress = nil
+                    }
+                    return state.power.completion
+                }
+                logger.log(.notice, "Power routing ended: \(String(describing: outcome), privacy: .public)")
+                completion?(outcome)
+            }
+        }
+        publishIfChanged()
+    }
+
+    private func ask(_ handle: PeerHandle, _ action: PowerAction) {
+        // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in the same turn, and a
+        // peer and its connection leave the hub together; so both are present.
+        let (connection, id, record) = state.withLock { state in
+            let connection = state.connections[handle]!
+            let record = state.peers[handle]!
+            let id = state.power.drawID(connection.generation)
+            state.power.requests[id] = handle
+            state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
+            return (connection, id, record)
+        }
+        logger.log(
+            .notice, "Asking the \(Self.name(record), privacy: .public) to \(Self.name(action), privacy: .public)")
+        connection.send(.requestPower(id, action))
+    }
+
+    /// A power request's result, from the connection it was asked of.
+    private func powerResult(_ id: PowerRequestID, _ result: PowerRequestResult) {
+        state.withLock { state in
+            guard let handle = state.power.requests[id] else { return }
+            switch result {
+            case .accepted:
+                state.power.progress?.stage = .accepted
+            case .progress:
+                break
+            case .refused, .indeterminate, .finished, .lostAfterAcceptance:
+                state.power.requests[id] = nil
+            }
+            state.power.routing.handle(result, from: handle, peers: state.routingPeers)
+        }
+        drainRouting()
+    }
+
+    /// The connection `handle` ended. A request asked of it that never reached its endpoint — the driver
+    /// drops what is sent after it shut down — reported nothing, and nothing was done.
+    private func endRequests(of handle: PeerHandle) {
+        let unanswered = state.withLock { state in
+            state.power.requests.filter { $0.value == handle }.map(\.key)
+        }
+        for id in unanswered {
+            powerResult(
+                id,
+                .refused(WireError(.shuttingDown, debugDetail: "the connection ended before the request reached it")))
+        }
+    }
+
+    private static func name(_ action: PowerAction) -> String {
+        switch action {
+        case .shutdown: "shut down"
+        case .restart: "restart"
+        case .unspecified, .UNRECOGNIZED: "act on \(action)"
+        }
+    }
+
+    private static func name(_ record: PeerRecord) -> String {
+        switch record.claim.role {
+        case .systemPeer: "system peer"
+        case .sessionPeer, .host:
+            "session peer (session \(record.state.sessionID), user \(record.state.userName))"
+        }
+    }
+
     private func detachTransport() {
         dispatchPrecondition(condition: .onQueue(queue))
         let attachment = state.withLock { state in
@@ -234,12 +356,14 @@ public final class AgentHub: Sendable {
             state.withLock { $0.peers[handle]?.isResponsive = change == .responsive }
         case .closed:
             state.withLock { $0.closed(handle) }
+            endRequests(of: handle)
         case .log(let delivery):
             // Records change no peer state, so the snapshot is not rebuilt.
             return republish(delivery, from: handle)
-        case .power, .update, .diagnostic:
-            // Nothing asks a peer for power or serves its pulls' progress yet, and the driver logs
-            // diagnostics itself.
+        case .power(let id, let result):
+            return powerResult(id, result)
+        case .update, .diagnostic:
+            // Nothing serves a pull's progress yet, and the driver logs diagnostics itself.
             return
         }
         publishIfChanged()

@@ -46,6 +46,7 @@ struct AgentHubState: Sendable {
     var bundles: [BundledPayload] = []
     var isFrozen = false
     var isClosed = false
+    var power = HubPowerRouting()
     var lastPublished = AgentHubSnapshot.empty
     private var nextConnectedOrder: UInt64 = 0
 
@@ -78,10 +79,41 @@ struct AgentHubState: Sendable {
         peers[handle] = nil
     }
 
+    /// The routing view of every peer whose features are known. An unresponsive peer's POWER is not
+    /// usable: a request to it could only end in the host's wait expiring, which stops the routing as
+    /// indeterminate where the next candidate could have served.
+    var routingPeers: [RoutingPeer] {
+        peers.values.compactMap { record in
+            guard let features = record.features else { return nil }
+            var peer = RoutingPeer(
+                handle: record.handle, role: record.claim.role, state: record.state,
+                connectedOrder: record.connectedOrder, features: features)
+            peer.powerUsable = peer.powerUsable && record.isResponsive
+            return peer
+        }
+    }
+
     var snapshot: AgentHubSnapshot {
         let ordered = peers.values.filter { $0.features != nil }.sorted { $0.connectedOrder > $1.connectedOrder }
+        let features = FeatureStatus.merge(ordered.compactMap(\.features))
         return AgentHubSnapshot(
-            peers: ordered.map(summary), features: FeatureStatus.merge(ordered.compactMap(\.features)))
+            peers: ordered.map(summary), features: features, power: provision(features: features),
+            routing: power.progress)
+    }
+
+    /// The merged POWER entry: the first candidate a shutdown would ask, else the merged absence — with
+    /// `NOT_ON_CONSOLE` for a peer that offers POWER but serves no console session.
+    private func provision(features: FeatureStatusTable) -> PowerProvision {
+        let candidates = routingPeers
+        if let first = PowerRouting.candidates(for: .shutdown, peers: candidates, excluding: []).first,
+            let role = peers[first]?.claim.role
+        {
+            return .agent(role)
+        }
+        switch features[.power] {
+        case .absent(let reason, _): return .absent(reason)
+        case .available: return .absent(.notOnConsole)
+        }
     }
 
     private func summary(_ record: PeerRecord) -> PeerSummary {
