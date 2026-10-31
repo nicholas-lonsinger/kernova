@@ -1,6 +1,6 @@
 # A VZ restore with a USB disk in `storageDevices`
 
-**Date:** 2026-10-30 · **Host:** macOS 27.2 (26B123) · **Guest:** the macOS guest of the FB25379418 repro · **Tracking issue:** #1755
+**Date:** 2026-10-30 · **Host:** macOS 27.2 (26B123) · **Guest:** macOS 26.6.2 (25G83), the FB25379418 repro's guest · **Tracking issue:** #1755
 
 ## Finding
 
