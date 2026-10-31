@@ -129,7 +129,6 @@ final class PowerHarness {
     let systemBus: DBusBusConnection
     let adapter: LinuxPowerAdapter
     let reports = Inbox<PowerInput>()
-    private let applications: URL
 
     init(
         _ role: PeerRole, onConsole: Bool = true, withPolkit: Bool = true, powerCallTimeout: Duration = .seconds(8),
@@ -139,32 +138,25 @@ final class PowerHarness {
         let logind = try FakeLogind(on: bus)
         let polkit = try withPolkit ? FakePolkit(on: bus) : nil
         prepare(logind.recorder, polkit?.state)
-        let applications = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: applications, withIntermediateDirectories: true)
-        try "[Desktop Entry]\nType=Application\nName[de]=Bearbeiter\nName = Example Editor\nExec=editor\n".write(
-            to: applications.appendingPathComponent("\(FakeGnomeSession.editorID).desktop"), atomically: true,
-            encoding: .utf8)
+        let desktopFile = "/applications/\(FakeGnomeSession.editorID).desktop"
+        let desktopEntry =
+            "[Desktop Entry]\nType=Application\nName[de]=Bearbeiter\nName = Example Editor\nExec=editor\n"
         let systemBus = try bus.connect()
         let address = bus.address
         self.bus = bus
         self.logind = logind
         self.polkit = polkit
-        self.applications = applications
         self.systemBus = systemBus
         gnomeSession = try FakeGnomeSession(on: bus)
         adapter = LinuxPowerAdapter(
             role: role, systemBus: systemBus,
-            gnomeSession: GnomeSessionInhibitors(applicationDirectories: [applications.path]) {
-                () throws(DBusConnectError) in try DBusBusConnection(address: address)
-            },
+            gnomeSession: GnomeSessionInhibitors(
+                applicationDirectories: ["/applications"], readFile: { $0 == desktopFile ? desktopEntry : nil }
+            ) { () throws(DBusConnectError) in try DBusBusConnection(address: address) },
             powerCallTimeout: powerCallTimeout)
         adapter.setPeerState(PeerSessionState(console: onConsole ? .on : .off, sessionID: "2", userName: "user"))
         let reports = reports
         adapter.start(reporter: PowerReporter { reports.put($0) })
-    }
-
-    deinit {
-        try? FileManager.default.removeItem(at: applications)
     }
 
     func next() throws -> PowerInput {

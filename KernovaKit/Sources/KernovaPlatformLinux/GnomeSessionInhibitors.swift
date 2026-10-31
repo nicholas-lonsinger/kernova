@@ -28,20 +28,24 @@ public final class GnomeSessionInhibitors: Sendable {
     static let callTimeout: Duration = .seconds(3)
 
     private let applicationDirectories: [String]
+    private let readFile: @Sendable (String) -> String?
     private let connect: @Sendable () throws(DBusConnectError) -> DBusBusConnection
     /// The session-bus connection, made on first use and dropped after a failed call.
     private let connection = Locked<DBusBusConnection?>(nil)
 
     /// gnome-session as reached by `connect`, naming apps from the `.desktop` files in
-    /// `applicationDirectories`, searched in order.
+    /// `applicationDirectories`, searched in order and read by `readFile` (nil for a file it cannot read;
+    /// by default the file system).
     public init(
         applicationDirectories: [String] = GnomeSessionInhibitors.applicationDirectories(
             environment: ProcessInfo.processInfo.environment),
+        readFile: (@Sendable (String) -> String?)? = nil,
         connect: @escaping @Sendable () throws(DBusConnectError) -> DBusBusConnection = {
             () throws(DBusConnectError) in try DBusBusConnection(bus: .session)
         }
     ) {
         self.applicationDirectories = applicationDirectories
+        self.readFile = readFile ?? { LinuxIdentity.readText($0) }
         self.connect = connect
     }
 
@@ -92,7 +96,7 @@ public final class GnomeSessionInhibitors: Sendable {
         guard !appID.isEmpty, !appID.contains("/") else { return nil }
         let file = appID.hasSuffix(".desktop") ? appID : appID + ".desktop"
         for directory in applicationDirectories {
-            guard let text = LinuxIdentity.readText(directory + "/" + file) else { continue }
+            guard let text = readFile(directory + "/" + file) else { continue }
             return Self.desktopEntryName(parsing: text)
         }
         return nil
