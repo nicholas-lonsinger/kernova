@@ -72,6 +72,7 @@ extension KernovaCommand {
             .clone(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
                 outcome: outcome?.outcome,
+                consent: options.consent,
                 waitForOutcome: !noWait)
         }
 

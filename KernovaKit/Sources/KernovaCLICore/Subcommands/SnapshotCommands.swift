@@ -80,14 +80,17 @@ extension KernovaCommand.Snapshot {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
+        /// The request this command line stands for, addressed to `selector`.
+        func request(for selector: VMSelector) -> VMCommandRequest.Verb {
+            .takeSnapshot(selector, name: name, notes: notes, consent: options.consent)
+        }
+
         /// Takes the snapshot and writes the row it produced.
         func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
-            let answer = try client.send(
-                .takeSnapshot(selector, name: name, notes: notes)
-            ).payload()
+            let answer = try client.send(request(for: selector)).payload()
             guard case .snapshot(let taken) = answer else { throw answer.unexpectedAnswer }
             // The same size read `snapshot list` performs, so a script parsing
             // either verb's answer finds one shape.

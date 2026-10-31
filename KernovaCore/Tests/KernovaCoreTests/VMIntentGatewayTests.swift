@@ -316,7 +316,7 @@ struct VMIntentGatewayTests {
         #expect(harness.revealedInLibrary.isEmpty)
         #expect(try await gateway.ipAddress(of: id) == nil)
 
-        let snapshot = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")
+        let snapshot = try await gateway.takeSnapshot(id, name: "Before", notes: "a note", consent: .none)
         #expect(snapshot.name == "Before")
         #expect(snapshot.notes == "a note")
         #expect(vm.snapshotManifest.ordered.map(\.id) == [snapshot.id])
@@ -325,7 +325,7 @@ struct VMIntentGatewayTests {
         #expect(vm.status == .paused)
         try await gateway.resume(id, consent: .none)
         #expect(vm.status == .running)
-        try await gateway.suspend(id)
+        try await gateway.suspend(id, consent: .none)
         #expect(vm.status == .suspended)
 
         #expect(twin.status == .stopped)
@@ -367,10 +367,11 @@ struct VMIntentGatewayTests {
         let harness = WiredCommandCore()
         let vm = harness.register(name: "Wired", phase: .running(sessionID: UUID()))
 
-        await makeGateway(over: harness).quit()
+        try await makeGateway(over: harness).quit(consent: .none)
         try await harness.quitRequested.wait { harness.quitRequests == 1 }
 
-        #expect(harness.quitRequests == 1)
+        // The reminder is the gateway's to give: a Shortcut has nobody to remind.
+        #expect(harness.quitConsents == [Consent([.unplugUSBDisks])])
         #expect(vm.status == .running)
     }
 
@@ -522,6 +523,69 @@ struct VMIntentGatewayTests {
         #expect(virtualization.forceStopCallCount == 1)
         #expect(virtualization.stopCallCount == 0)
         #expect(vm.status == .stopped)
+    }
+
+    /// A Shortcut has nobody to remind that a save unplugs USB disks, so the
+    /// gateway gives the reminder and only the at-risk warning is asked.
+    @Test("Every save asks only the at-risk USB warning, then goes ahead")
+    func savesAskOnlyTheUSBWarning() async throws {
+        let harness = WiredCommandCore()
+        let gateway = makeGateway(over: harness)
+        func holdingADisk(_ name: String, readOnly: Bool) -> VMInstance {
+            let sessionID = UUID()
+            let item = RemovableMediaItem(path: "/Volumes/Media/\(name).img", readOnly: readOnly)
+            let vm = harness.register(name: name, phase: .running(sessionID: sessionID)) {
+                $0.removableMedia = [item]
+            }
+            vm.beginSessionContextForTesting()
+            vm.recordAttachedMedia(
+                RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: readOnly), for: sessionID)
+            return vm
+        }
+        var asked: [ConfirmationKind] = []
+
+        // A live snapshot of a VM whose guest can write a removable medium is
+        // refused before any USB question, so a read-only one shows the
+        // reminder given.
+        let snapshotted = holdingADisk("Snapshotted", readOnly: true)
+        let snapshot = try await VMConsentPolicy.run(prompting: { asked.append($0.kind) }) { consent in
+            try await gateway.takeSnapshot(snapshotted.id, name: "Before", notes: "", consent: consent)
+        }
+        #expect(snapshot.name == "Before")
+        #expect(asked.isEmpty)
+
+        let suspended = holdingADisk("Suspended", readOnly: false)
+        try await VMConsentPolicy.run(prompting: { asked.append($0.kind) }) { consent in
+            try await gateway.suspend(suspended.id, consent: consent)
+        }
+        #expect(suspended.status == .suspended)
+
+        _ = holdingADisk("Running", readOnly: false)
+        try await VMConsentPolicy.run(prompting: { asked.append($0.kind) }) { consent in
+            try await gateway.quit(consent: consent)
+        }
+        try await harness.quitRequested.wait { harness.quitRequests == 1 }
+
+        #expect(asked == [.unplugUSBDisksAtRisk, .unplugUSBDisksAtRisk])
+        #expect(harness.quitConsents == [Consent([.unplugUSBDisksAtRisk, .unplugUSBDisks])])
+    }
+
+    @Test("A clone of a VM holding an at-risk USB disk refuses without consent")
+    func cloneRefusesWithoutUSBConsent() async throws {
+        let harness = WiredCommandCore()
+        let sessionID = UUID()
+        let item = RemovableMediaItem(path: "/Volumes/Media/backup.img", readOnly: false)
+        let vm = harness.register(name: "Source", phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [item]
+        }
+        vm.beginSessionContextForTesting()
+        vm.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: false), for: sessionID)
+
+        let refusal = try await #require(throws: CommandError.self) {
+            _ = try await makeGateway(over: harness).clone(vm.id, outcome: .newMachine, consent: .none)
+        }
+        #expect(refusal.confirmationPrompt?.kind == .unplugUSBDisksAtRisk)
     }
 
     @Test("A step refusal is never answered by confirming")

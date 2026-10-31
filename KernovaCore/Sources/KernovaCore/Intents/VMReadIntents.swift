@@ -104,7 +104,9 @@ struct TakeSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let snapshot = try await gateway.takeSnapshot(vm.id, name: name, notes: notes)
+        let snapshot = try await runWithConsent { consent in
+            try await gateway.takeSnapshot(vm.id, name: name, notes: notes, consent: consent)
+        }
         return .result(value: snapshot.name)
     }
 }

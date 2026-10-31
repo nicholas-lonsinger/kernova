@@ -260,6 +260,25 @@ struct CLIArgumentParsingTests {
         #expect(named.notes == "26.1 beta")
     }
 
+    @Test("A capture and a quit carry --yes as every consent")
+    func takeAndQuitCarryYes() throws {
+        let take = try #require(
+            try parse(["snapshot", "take", "Alpha"]) as? KernovaCommand.Snapshot.Take)
+        #expect(
+            take.request(for: .idOrName("Alpha"))
+                == .takeSnapshot(.idOrName("Alpha"), name: "", notes: "", consent: .none))
+        let consented = try #require(
+            try parse(["snapshot", "take", "Alpha", "--yes"]) as? KernovaCommand.Snapshot.Take)
+        #expect(
+            consented.request(for: .idOrName("Alpha"))
+                == .takeSnapshot(.idOrName("Alpha"), name: "", notes: "", consent: .all))
+
+        let quit = try #require(try parse(["quit"]) as? KernovaCommand.Quit)
+        #expect(quit.request == .quit(consent: .none))
+        let quitAnyway = try #require(try parse(["quit", "--yes"]) as? KernovaCommand.Quit)
+        #expect(quitAnyway.request == .quit(consent: .all))
+    }
+
     @Test("--id reads both arguments of a snapshot verb as identifiers")
     func snapshotVerbsCarryTheIDFlag() throws {
         let rename = try #require(

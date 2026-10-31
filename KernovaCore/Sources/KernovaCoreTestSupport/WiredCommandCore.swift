@@ -50,8 +50,10 @@ final class WiredCommandCore {
     private(set) var revealedInLibrary: [UUID] = []
     /// Each VM ``VMCommandCore/revealInFinder`` selected in the Finder.
     private(set) var revealedInFinder: [UUID] = []
+    /// The consent each ``VMCommandCore/requestQuit`` fired with.
+    private(set) var quitConsents: [Consent] = []
     /// How many times ``VMCommandCore/requestQuit`` fired.
-    private(set) var quitRequests = 0
+    var quitRequests: Int { quitConsents.count }
     /// Fires each time ``quitRequests`` rises: the core requests the quit from
     /// a later main-actor turn, so a test awaits it.
     let quitRequested = AsyncGate()
@@ -137,8 +139,8 @@ final class WiredCommandCore {
         core.surfaceDisplay = { [weak self] in self?.surfacedDisplays.append($0.id) }
         core.revealInLibrary = { [weak self] in self?.revealedInLibrary.append($0) }
         core.revealInFinder = { [weak self] in self?.revealedInFinder.append($0.id) }
-        core.requestQuit = { [weak self] _ in
-            self?.quitRequests += 1
+        core.requestQuit = { [weak self] consent in
+            self?.quitConsents.append(consent)
             self?.quitRequested.notify()
         }
         core.onFailure = { [weak self] failure, _ in

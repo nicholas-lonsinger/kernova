@@ -502,7 +502,7 @@ struct VMScriptingGatewayTests {
         #expect(virtualization.resumeCallCount == 1)
         #expect(resuming.status == .running)
 
-        try await gateway.suspend([.name("Suspending")])
+        try await gateway.suspend([.name("Suspending")], confirmation: false)
         #expect(virtualization.saveCallCount == 1)
         #expect(suspending.status == .suspended)
 
@@ -1163,7 +1163,7 @@ struct VMScriptingGatewayTests {
         try await gateway.restart([.name("Restarting")], confirmation: false, givingUpAfter: nil)
         try await gateway.stop([.name("Stopping")], method: .graceful, confirmation: false, givingUpAfter: nil)
         try await gateway.pause([.name("Pausing")])
-        try await gateway.suspend([.name("Suspending")])
+        try await gateway.suspend([.name("Suspending")], confirmation: false)
         try await gateway.reveal([])
 
         #expect(preparations.count == 0)

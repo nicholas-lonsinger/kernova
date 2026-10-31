@@ -188,7 +188,9 @@ extension KernovaCommand {
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
             if let group = groups.target { return .groupAction(.suspend, group: group) }
-            return .suspend(try SelectorParsing.selector(from: vm ?? "", forcingID: options.id))
+            return .suspend(
+                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id),
+                consent: options.consent)
         }
 
         /// Suspends the VM, or every running one in the group.
