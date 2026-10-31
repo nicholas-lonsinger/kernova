@@ -29,6 +29,13 @@ final class StubVMInstanceRoster: VMAdmissionPeers {
         override: VMIdentityOverride
     ) -> VMIdentityConflict? { nil }
 
+    /// The sessions owed a removable-media reconcile, in the order they were.
+    private(set) var owedMediaReconciles: [UUID] = []
+
+    func oweRemovableMediaReconcile(to instance: VMInstance, for sessionID: UUID) {
+        owedMediaReconciles.append(sessionID)
+    }
+
     private func wirePeers() {
         for instance in instances { instance.peers = self }
     }

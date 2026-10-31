@@ -40,13 +40,11 @@ final class VMLibraryConfigurationPolicy {
     /// Pushes the change to a running VM: the hot-toggleable fields through
     /// ``VMInstance/applyLivePolicy(oldConfig:newConfig:)``, an edit's
     /// `removableMedia` change through the reconcile it owes a live session;
-    /// everything else waits for the next start. A dropped installer entry's
-    /// copy goes with it.
+    /// everything else waits for the next start.
     func committed(
         on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration,
         under authority: VMEditPermit.Authority
     ) {
-        GuestAgentDiskCopies.removeCopies(droppedFrom: old, to: new, in: instance.bundleLayout)
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
         removableMedia.apply(for: instance, old: old, new: new, under: authority)
         // A live switch onto an app-managed network starts a guest worth

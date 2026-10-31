@@ -541,7 +541,7 @@ final class VMScriptingGateway {
 
     func suspend(_ selectors: [VMSelector]) async throws {
         try await perform(.suspend, on: selectors) {
-            try await self.commands.suspend($0)
+            try await self.commands.suspend($0, consent: Consent([.unplugUSBDisks]))
         }
     }
 

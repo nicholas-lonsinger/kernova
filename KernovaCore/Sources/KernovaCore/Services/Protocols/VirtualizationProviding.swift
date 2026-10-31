@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// How a start reached the guest — the bring-up admission chose, reported so
 /// no caller has to predict it.
@@ -65,9 +66,10 @@ package protocol VirtualizationProviding: Sendable {
     ) async throws -> VMOperationEnding<Void>
 
     /// Writes the guest's state to the bundle's suspend slot and ends the
-    /// session.
+    /// session, once the USB question the save asks under `consent` is
+    /// answered (``USBSaveDecision``); an open one fails `.asStarted`.
     func save(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext
+        _ instance: VMInstance, _ context: borrowing VMOperationContext, consent: Consent
     ) async throws -> VMOperationEnding<Void>
 
     /// Captures `snapshot` in `context`'s mode — copies of the bundle's disks,
@@ -76,18 +78,20 @@ package protocol VirtualizationProviding: Sendable {
     ///
     /// Answers the snapshot, of the kind the mode takes, carrying the
     /// ``VMSnapshot/macAddress`` of the configuration the capture wrote.
+    /// A live capture asks the USB question a save asks, under `consent`.
     func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
-        snapshot: VMSnapshotCaptureRequest
+        snapshot: VMSnapshotCaptureRequest, consent: Consent
     ) async throws -> VMOperationEnding<VMSnapshot>
 
     /// Copies a live VM into a clone as a warm capture: `prepare` lays down
     /// the clone's bundle, then one pause writes the guest's memory into
-    /// `saveFileURL` — after taking every passthrough accessory off — and runs
+    /// `saveFileURL` — after unplugging every hot-pluggable USB device, once
+    /// the USB question the save asks under `consent` is answered — and runs
     /// `copy`, so the disks and the memory describe one instant. Leaves the
     /// guest as it was found: running stays running, paused stays paused.
     func copyLive(
-        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext, consent: Consent,
         savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
         copy: () async throws -> Void

@@ -134,7 +134,7 @@ package final class VMCommandCore {
     ///
     /// A hook rather than a call, for the reason ``surfaceDisplay`` states: the
     /// quit is an AppKit termination, and the core performs none.
-    var requestQuit: (() -> Void)?
+    var requestQuit: ((Consent) -> Void)?
 
     /// What the user's own attaches and detaches mean for what a guest takes
     /// back on its own: told of each, so the menu, the CLI and the pairing
@@ -223,8 +223,8 @@ package final class VMCommandCore {
         library.onAgentBecameCurrent = { [weak self] instance in
             self?.detachGuestAgentDisk(from: instance)
         }
-        // A power-off takes the installer disk, its copy and the virtio copy
-        // with it; a suspend keeps them for the resume.
+        // A power-off takes the installer disk and the virtio copy with it; a
+        // suspend keeps them for the resume.
         library.onGuestPoweredOff = { [weak self] instance in
             self?.detachGuestAgentDisk(from: instance)
             GuestAgentDiskCopies.removeAll(in: instance.bundleLayout)

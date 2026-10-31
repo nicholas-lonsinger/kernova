@@ -419,6 +419,10 @@ package actor VMSession: VMSessionOperating {
         }
     }
 
+    package func usbDeviceIDs() -> [UUID] {
+        vm.usbControllers.first?.usbDevices.map(\.uuid) ?? []
+    }
+
     /// Detaches the USB device carrying `uuid`, throwing
     /// `VMSessionError.usbDeviceNotFound` when the controller doesn't hold it.
     package func detachUSBDevice(uuid: UUID) async throws {

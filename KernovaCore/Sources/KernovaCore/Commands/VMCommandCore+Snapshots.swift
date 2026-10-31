@@ -20,13 +20,15 @@ extension VMCommandCore {
     // MARK: - Take
 
     /// Captures a snapshot; `asEphemeralBaseline` also turns Ephemeral Mode on
-    /// with it as the baseline, written inside the capture.
+    /// with it as the baseline, written inside the capture. A live capture
+    /// asks the USB question a save asks, under `consent`.
     @discardableResult
     func takeSnapshot(
-        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool = false
+        _ selector: VMSelector, name: String, notes: String, consent: Consent,
+        asEphemeralBaseline: Bool = false
     ) async throws -> SnapshotSummary {
         try await takeSnapshot(
-            try resolve(selector), name: name, notes: notes,
+            try resolve(selector), name: name, notes: notes, consent: consent,
             asEphemeralBaseline: asEphemeralBaseline)
     }
 
@@ -37,11 +39,13 @@ extension VMCommandCore {
     /// stop, or suspend while it is up.
     @discardableResult
     func takeSnapshot(
-        _ instance: VMInstance, name: String, notes: String, asEphemeralBaseline: Bool = false
+        _ instance: VMInstance, name: String, notes: String, consent: Consent,
+        asEphemeralBaseline: Bool = false
     ) async throws -> SnapshotSummary {
         try require(.takeSnapshot, on: instance)
+        try USBSaveDecision.require(consent, toSave: instance, as: .takeSnapshot)
         var baselineFailure: (any Error)?
-        let snapshot = try await captureSnapshot(instance, name: name, notes: notes) {
+        let snapshot = try await captureSnapshot(instance, name: name, notes: notes, consent: consent) {
             permit, captured in
             guard asEphemeralBaseline else { return }
             // The snapshot stands as a restore point whether or not the mode
@@ -77,7 +81,7 @@ extension VMCommandCore {
     /// is decided afresh once it lands, so it never captures what the return
     /// was to discard.
     private func captureSnapshot(
-        _ instance: VMInstance, name: String, notes: String,
+        _ instance: VMInstance, name: String, notes: String, consent: Consent,
         alsoRecord: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
     ) async throws -> VMSnapshot {
         let landed = CapturedSnapshot()
@@ -87,7 +91,7 @@ extension VMCommandCore {
                 [weak self, weak instance] outcome in
                 guard let self, let instance else { throw CancellationError() }
                 try self.launchCapture(
-                    instance, name: name, notes: notes, resolving: outcome
+                    instance, name: name, notes: notes, consent: consent, resolving: outcome
                 ) { permit, captured in
                     landed.snapshot = captured
                     alsoRecord(permit, captured)
@@ -115,11 +119,12 @@ extension VMCommandCore {
         var snapshot: VMSnapshot?
     }
 
-    /// Launches ``captureSnapshot(_:name:notes:alsoRecord:)``'s capture,
+    /// Launches ``captureSnapshot(_:name:notes:consent:alsoRecord:)``'s capture,
     /// decided against the VM as it stands, resolving `outcome`; `alsoRecord`
     /// runs once the snapshot is listed.
     private func launchCapture(
-        _ instance: VMInstance, name: String, notes: String, resolving outcome: VMOutcome,
+        _ instance: VMInstance, name: String, notes: String, consent: Consent,
+        resolving outcome: VMOutcome,
         alsoRecord: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void
     ) throws {
         // Stamped at confirm time, not when the caller decided: the VM can
@@ -139,7 +144,7 @@ extension VMCommandCore {
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
         try lifecycle.launchTakeSnapshot(
-            instance, mode: mode, snapshot: snapshot, resolving: outcome
+            instance, mode: mode, snapshot: snapshot, consent: consent, resolving: outcome
         ) { [weak self] permit, captured in
             guard let self else { throw CancellationError() }
             try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }

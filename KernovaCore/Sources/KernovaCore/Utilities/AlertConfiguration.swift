@@ -46,11 +46,19 @@ package struct AlertConfiguration {
     package let title: String
     package let message: String
     package let buttons: [AlertButton]
+    /// "Don't remind me again", AppKit's own suppression checkbox, and what
+    /// checking it records — run before the chosen button's action, whichever
+    /// it is. `nil` for an alert that offers none.
+    package let suppression: (title: String, record: @MainActor () -> Void)?
 
-    package init(title: String, message: String, buttons: [AlertButton]) {
+    package init(
+        title: String, message: String, buttons: [AlertButton],
+        suppression: (title: String, record: @MainActor () -> Void)? = nil
+    ) {
         self.title = title
         self.message = message
         self.buttons = buttons
+        self.suppression = suppression
     }
 
     /// Draws a core confirmation.
@@ -63,11 +71,15 @@ package struct AlertConfiguration {
     /// button is never Return, a two-button alert reads Cancel then its action,
     /// and a three-button one lays out as AppKit's own Save / Cancel / Don't
     /// Save does, the destructive action on the leading edge.
+    ///
+    /// A prompt that offers suppression shows the checkbox when `suppress` is
+    /// given, which it records.
     package init(
         confirming prompt: ConfirmationPrompt,
         confirm: @escaping () -> Void,
         alternative: ((ConfirmationAlternative) -> Void)? = nil,
-        dismiss: @escaping () -> Void = {}
+        dismiss: @escaping () -> Void = {},
+        suppress: (@MainActor () -> Void)? = nil
     ) {
         if !prompt.alternatives.isEmpty, alternative == nil {
             Self.logger.log(
@@ -85,7 +97,9 @@ package struct AlertConfiguration {
         }
         self.init(
             title: prompt.title, message: prompt.message,
-            buttons: Self.buttons(actions, dismissTitle: prompt.dismissTitle, dismiss: dismiss))
+            buttons: Self.buttons(actions, dismissTitle: prompt.dismissTitle, dismiss: dismiss),
+            suppression: prompt.offersSuppression
+                ? suppress.map { ("Don\u{2019}t remind me again", $0) } : nil)
     }
 
     /// Draws the routes a step refusal names, each button reading the route

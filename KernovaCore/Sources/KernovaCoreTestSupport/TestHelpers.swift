@@ -750,17 +750,20 @@ extension VMMemorySize {
 }
 
 extension VMLifecycleCoordinator {
-    /// ``launchTakeSnapshot(_:mode:snapshot:resolving:record:)`` awaited,
+    /// ``launchTakeSnapshot(_:mode:snapshot:consent:resolving:record:)`` awaited,
     /// answering the snapshot that landed — for a test that drives a capture
     /// to its end.
     @MainActor
     func takeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
+        consent: Consent = .all,
         record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
         let outcome = VMOutcome()
         let landed = LandedSnapshot()
-        try launchTakeSnapshot(instance, mode: mode, snapshot: snapshot, resolving: outcome) {
+        try launchTakeSnapshot(
+            instance, mode: mode, snapshot: snapshot, consent: consent, resolving: outcome
+        ) {
             permit, captured in
             try record(permit, captured)
             landed.snapshot = captured

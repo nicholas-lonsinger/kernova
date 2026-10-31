@@ -78,6 +78,9 @@ package struct USBDeviceDescriptor: Sendable, Equatable {
 
 /// The USB-IF base class codes, as they are named to a person.
 enum USBClassCode {
+    /// The mass storage class, which a disk declares.
+    static let massStorage: UInt8 = 0x08
+
     /// The USB-IF name for `code`, or `nil` for one the spec does not assign.
     ///
     /// `0x00` is absent: it is not a class, it is the statement that
@@ -90,7 +93,7 @@ enum USBClassCode {
         case 0x05: "Physical"
         case 0x06: "Imaging"
         case 0x07: "Printer"
-        case 0x08: "Mass storage"
+        case massStorage: "Mass storage"
         case 0x09: "Hub"
         case 0x0A: "Communications data"
         case 0x0B: "Smart card"
@@ -131,20 +134,27 @@ enum USBConfigurationDescriptor {
     /// its own: a flash drive's is mass storage, and "Composite" names nothing
     /// the user would recognise.
     static func firstInterfaceClass(in data: Data) -> UInt8? {
+        interfaceClasses(in: data).first
+    }
+
+    /// `bInterfaceClass` of every whole interface descriptor in `data`, in
+    /// order, up to the first descriptor the bytes cannot carry.
+    static func interfaceClasses(in data: Data) -> [UInt8] {
         let bytes = [UInt8](data)
+        var classes: [UInt8] = []
         var offset = 0
         while offset + 1 < bytes.count {
             let length = Int(bytes[offset])
             // A zero length would loop forever, and a descriptor running past
             // the buffer is not one this can read.
-            guard length >= 2, offset + length <= bytes.count else { return nil }
+            guard length >= 2, offset + length <= bytes.count else { break }
             if bytes[offset + 1] == interfaceDescriptorType,
                 bytes[offset] >= interfaceDescriptorLength
             {
-                return bytes[offset + interfaceClassOffset]
+                classes.append(bytes[offset + interfaceClassOffset])
             }
             offset += length
         }
-        return nil
+        return classes
     }
 }

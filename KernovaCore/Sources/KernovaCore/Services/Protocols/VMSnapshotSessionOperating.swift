@@ -14,12 +14,14 @@ package protocol VMSnapshotSessionOperating: Sendable {
     func resumeIfPaused(_ execution: borrowing VMGuestExecution) async throws
     /// Writes the guest's state into `url`. Only ``VMLiveStateCapture`` holds
     /// a ``VMLiveStateCapture/SaveGrant``, so every save is one of its entry
-    /// points, which take the passthrough accessories off first.
+    /// points, which unplug every hot-pluggable USB device first.
     func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws
     func restoreMachineState(from url: URL) async throws
     func resume(_ execution: borrowing VMGuestExecution) async throws
-    /// Detaches the USB device carrying `uuid`. A save calls it for every
-    /// passthrough accessory before writing state — see
-    /// ``VMLiveStateCapture/suspendState(_:session:to:)``.
+    /// The `uuid` of every device on the USB controller, in its order; none
+    /// for a session with no USB controller.
+    func usbDeviceIDs() async throws -> [UUID]
+    /// Detaches the USB device carrying `uuid`, throwing
+    /// ``VMSessionError/usbDeviceNotFound`` when the controller holds none.
     func detachUSBDevice(uuid: UUID) async throws
 }

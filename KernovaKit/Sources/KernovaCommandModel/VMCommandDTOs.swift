@@ -452,6 +452,12 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     /// Starting a VM while another one with the same machine identity is
     /// active.
     case startBesideSharedMachineIdentity
+    /// Unplugging a live VM's USB disks before its state is saved — the
+    /// reminder, which every automation door gives up front.
+    case unplugUSBDisks
+    /// Unplugging a writable USB disk the guest has not ejected, which may
+    /// lose what the guest has not yet written to it.
+    case unplugUSBDisksAtRisk
 }
 
 /// The confirmations a caller has given for one call of a verb.
@@ -537,6 +543,9 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     /// Other ways to satisfy the confirmation, each re-issuing the verb
     /// differently.
     public let alternatives: [ConfirmationAlternative]
+    /// Whether a surface that can offers "Don't remind me again" beside the
+    /// confirm action: a reminder, which the user may turn off.
+    public let offersSuppression: Bool
 
     /// Describes one confirmation.
     public init(
@@ -546,7 +555,8 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
         confirmTitle: String,
         confirmIsDestructive: Bool = true,
         dismissTitle: String,
-        alternatives: [ConfirmationAlternative] = []
+        alternatives: [ConfirmationAlternative] = [],
+        offersSuppression: Bool = false
     ) {
         self.kind = kind
         self.title = title
@@ -555,6 +565,7 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
         self.confirmIsDestructive = confirmIsDestructive
         self.dismissTitle = dismissTitle
         self.alternatives = alternatives
+        self.offersSuppression = offersSuppression
     }
 }
 

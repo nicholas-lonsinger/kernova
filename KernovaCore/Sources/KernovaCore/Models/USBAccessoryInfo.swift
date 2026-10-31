@@ -18,6 +18,9 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     /// The receptacle in the words the hardware uses for it, for the one job
     /// the name cannot do alone: telling two identical devices apart.
     let receptacleLabel: String?
+    /// Whether the device or one of its interfaces declares the mass storage
+    /// class: a disk, which a save names before it unplugs it.
+    package let isMassStorage: Bool
 
     package var id: UInt64 { registryID }
 
@@ -46,7 +49,10 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
             displayName: name(
                 descriptor: descriptor, configurationDescriptor: configurationDescriptor,
                 node: node),
-            receptacleLabel: node?.receptacleLabel)
+            receptacleLabel: node?.receptacleLabel,
+            isMassStorage: descriptor.deviceClass == USBClassCode.massStorage
+                || configurationDescriptor.map(USBConfigurationDescriptor.interfaceClasses(in:))?
+                .contains(USBClassCode.massStorage) == true)
     }
 
     /// The keys `held` holds that an accessory arriving in `receptacle` may not

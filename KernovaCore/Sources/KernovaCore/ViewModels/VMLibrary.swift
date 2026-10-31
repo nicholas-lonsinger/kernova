@@ -465,12 +465,19 @@ package final class VMLibrary: VMAdmissionPeers {
     /// Whether the app's termination has begun — from then on, admission
     /// refuses every operation the termination did not ask for.
     ///
-    /// Never cleared: a termination always ends the process.
+    /// Cleared only by ``cancelTermination()``: a termination otherwise ends
+    /// the process.
     private(set) var isTerminating = false
 
     /// Begins the app's termination.
     func beginTermination() {
         isTerminating = true
+    }
+
+    /// Ends a termination the save pass gave up on, so the library takes work
+    /// again.
+    func cancelTermination() {
+        isTerminating = false
     }
 
     /// What keeps this process from passing a host USB accessory through to a
@@ -480,6 +487,10 @@ package final class VMLibrary: VMAdmissionPeers {
     /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
     /// bringing `instance` up under `configuration` would duplicate, unless
     /// `override` waives it.
+    func oweRemovableMediaReconcile(to instance: VMInstance, for sessionID: UUID) {
+        instance.activity.follow(removableMedia.reconcileFollowUp(of: instance, for: sessionID))
+    }
+
     func identityConflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration,
         override: VMIdentityOverride
@@ -894,11 +905,14 @@ package final class VMLibrary: VMAdmissionPeers {
             self.reportNewlyUnreadable()
         }
         // A guest that has just become attachable takes back the accessories
-        // paired with it, and is a running guest whose address can be watched.
+        // paired with it and the removable media its configuration lists —
+        // which a restore never builds — and is a running guest whose address
+        // can be watched.
         instance.activity.onSessionBecameAttachable = { [weak self, weak instance] in
-            guard let self, let instance else { return [] }
+            guard let self, let instance, let sessionID = instance.attachableSessionID else { return [] }
             self.guestAddresses.watch()
-            return self.onSessionBecameAttachable?(instance) ?? []
+            return [self.removableMedia.reconcileFollowUp(of: instance, for: sessionID)]
+                + (self.onSessionBecameAttachable?(instance) ?? [])
         }
     }
 

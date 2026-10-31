@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 @testable import KernovaCore
 
@@ -158,7 +159,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func save(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext
+        _ instance: VMInstance, _ context: borrowing VMOperationContext, consent: Consent
     ) async throws -> VMOperationEnding<Void> {
         // The slot is what makes the VM resumable, so a real one is written:
         // every predicate a suspended VM is judged by reads the file.
@@ -170,7 +171,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
-        snapshot request: VMSnapshotCaptureRequest
+        snapshot request: VMSnapshotCaptureRequest, consent: Consent
     ) async throws -> VMOperationEnding<VMSnapshot> {
         .rest(
             .asStarted,
@@ -180,7 +181,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func copyLive(
-        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext, consent: Consent,
         savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
         copy: () async throws -> Void

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaLogging
 
 /// Runs the lifecycle operations and the guest-setup pipelines — a macOS
@@ -173,14 +174,18 @@ final class VMLifecycleCoordinator {
         }
     }
 
-    /// Suspends the VM to disk.
+    /// Suspends the VM to disk, once the USB question the save asks under
+    /// `consent` is answered (``USBSaveDecision``).
     ///
-    /// The accessories the write ejects stay off, on both outcomes: the guest
-    /// is going away, and a suspend that fails takes the session down with it,
-    /// so there is no guest left to put anything back on.
-    func save(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
+    /// The devices the write unplugs stay off, on both outcomes: the guest is
+    /// going away, and a suspend that fails takes the session down with it,
+    /// so there is no guest left to put anything back on. The restore plugs
+    /// the media back in.
+    func save(
+        _ instance: VMInstance, consent: Consent, origin: VMRequestOrigin = .newWork
+    ) async throws {
         try await instance.activity.perform(.saving, origin: origin) { context in
-            try await virtualizationService.save(instance, context)
+            try await virtualizationService.save(instance, context, consent: consent)
         }
     }
 
@@ -189,14 +194,15 @@ final class VMLifecycleCoordinator {
     /// Captures `snapshot` in `mode` and lists it with `record`, inside one
     /// capture operation, which ends once the snapshot's files are written.
     ///
-    /// A warm capture takes every passthrough accessory off before it writes
-    /// the guest's state, for the reason
-    /// ``VMLiveStateCapture/suspendState(_:session:to:)`` gives. Unlike
-    /// a suspend the guest is still running afterwards, so each one is owed
-    /// back to it as it goes
-    /// (``VMLiveStateCapture/captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)``):
+    /// A warm capture unplugs every hot-pluggable USB device before it writes
+    /// the guest's state, once the USB question it asks under `consent` is
+    /// answered, for the reason ``VMLiveStateCapture/suspendState(_:_:session:to:)``
+    /// gives. Unlike a suspend the guest is still running afterwards, so each
+    /// passthrough accessory is owed back to it as it goes
+    /// (``VMLiveStateCapture/captureLiveState(_:_:session:wasRunning:saveFileURL:captureDisks:)``):
     /// the capture's detach resets the device, macOS assigns it back after a
     /// delay nothing bounds, and that arrival follows the attach to this VM.
+    /// The media come back through the reconcile the capture owes.
     /// `record` that throws leaves nothing behind: unlisted files are files no
     /// surface can reach or remove, so the capture is undone.
     ///
@@ -204,13 +210,13 @@ final class VMLifecycleCoordinator {
     /// `outcome`; `record` is how the caller learns the snapshot that landed.
     func launchTakeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
-        resolving outcome: VMOutcome,
+        consent: Consent, resolving outcome: VMOutcome,
         record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
     ) throws {
         try instance.activity.launchCaptureSnapshot(mode, resolving: outcome) {
             [virtualizationService] context in
             let ending = try await virtualizationService.takeSnapshot(
-                instance, context, snapshot: snapshot)
+                instance, context, snapshot: snapshot, consent: consent)
             switch ending {
             case .failed(let rest, let error):
                 return .failed(rest, error)

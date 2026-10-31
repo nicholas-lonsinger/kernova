@@ -175,7 +175,7 @@ package struct VMCommandEnvelopeRouter {
             try await commands.resume(selector, consent: consent)
             return .ok
         case .suspend(let selector):
-            try await commands.suspend(selector)
+            try await commands.suspend(selector, consent: Consent([.unplugUSBDisks]))
             return .ok
         case .restart(let selector, let timeout, let consent):
             try await commands.restart(selector, timeout: timeout, consent: consent)
@@ -193,7 +193,8 @@ package struct VMCommandEnvelopeRouter {
             return .ok
 
         case .takeSnapshot(let selector, let name, let notes):
-            return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))
+            return .snapshot(
+                try await commands.takeSnapshot(selector, name: name, notes: notes, consent: Consent([.unplugUSBDisks])))
         case .revertToSnapshot(let selector, let snapshot, let consent):
             try await commands.revertToSnapshot(selector, snapshot: snapshot, consent: consent)
             return .ok
@@ -210,7 +211,7 @@ package struct VMCommandEnvelopeRouter {
         case .clone(let selector, let outcome, let waitForOutcome):
             return .summary(
                 try await commands.clone(
-                    selector, outcome: outcome, waitForOutcome: waitForOutcome))
+                    selector, outcome: outcome, consent: Consent([.unplugUSBDisks]), waitForOutcome: waitForOutcome))
         case .rename(let selector, let newName):
             try commands.rename(selector, to: newName)
             return .ok
@@ -255,7 +256,7 @@ package struct VMCommandEnvelopeRouter {
                     selector, assignments: assignments, consent: consent))
 
         case .quit:
-            commands.quit()
+            try commands.quit(consent: Consent([.unplugUSBDisks]))
             return .ok
         }
     }

@@ -179,7 +179,7 @@ package final class VMIntentGateway {
     }
 
     func suspend(_ id: UUID) async throws {
-        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
+        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id), consent: Consent([.unplugUSBDisks])) }
     }
 
     func restart(_ id: UUID, consent: Consent) async throws {
@@ -220,9 +220,9 @@ package final class VMIntentGateway {
     /// Readiness first, like every verb: the library read is what the save pass
     /// has to run over, and a quit racing it would take the process down with
     /// nothing to suspend.
-    func quit() async {
+    func quit() async throws {
         await ready()
-        commands.quit()
+        try commands.quit(consent: Consent([.unplugUSBDisks]))
     }
 
     // MARK: - Snapshots
@@ -230,7 +230,7 @@ package final class VMIntentGateway {
     @discardableResult
     func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
         try await perform(.takeSnapshot, on: id) {
-            try await self.commands.takeSnapshot(.id(id), name: name, notes: notes)
+            try await self.commands.takeSnapshot(.id(id), name: name, notes: notes, consent: Consent([.unplugUSBDisks]))
         }
     }
 
@@ -301,7 +301,7 @@ package final class VMIntentGateway {
     func clone(_ id: UUID, outcome: CloneOutcome?) async throws -> VMEntity {
         try await perform(.clone, on: id) {
             let copy = try await self.commands.clone(
-                .id(id), outcome: outcome, waitForOutcome: false)
+                .id(id), outcome: outcome, consent: Consent([.unplugUSBDisks]), waitForOutcome: false)
             return VMEntity(try self.commands.info(.id(copy.id)))
         }
     }

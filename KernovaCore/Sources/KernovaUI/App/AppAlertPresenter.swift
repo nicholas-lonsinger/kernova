@@ -453,7 +453,7 @@ final class AppAlertPresenter {
             showAlert(
                 configurations.installerMountedConfig(
                     instance.name, guestOS: instance.configuration.guestOS, purpose: purpose, delivery: delivery,
-                    copy: copyToPasteboard),
+                    copy: { _ = copyToPasteboard($0) }),
                 on: window, onWindowClose: .requeue(entry))
         case .deleteSheet(let delete):
             showDeleteSheet(delete, on: window)
@@ -735,7 +735,7 @@ final class AppAlertPresenter {
         showAlert(
             AlertConfiguration(
                 confirming: request.prompt, confirm: { confirmation(.answered(true)) },
-                dismiss: { confirmation(.answered(false)) }),
+                dismiss: { confirmation(.answered(false)) }, suppress: request.suppress),
             on: window, onWindowClose: .unask { confirmation(.unasked) })
     }
 

@@ -137,7 +137,7 @@ final class WiredCommandCore {
         core.surfaceDisplay = { [weak self] in self?.surfacedDisplays.append($0.id) }
         core.revealInLibrary = { [weak self] in self?.revealedInLibrary.append($0) }
         core.revealInFinder = { [weak self] in self?.revealedInFinder.append($0.id) }
-        core.requestQuit = { [weak self] in
+        core.requestQuit = { [weak self] _ in
             self?.quitRequests += 1
             self?.quitRequested.notify()
         }

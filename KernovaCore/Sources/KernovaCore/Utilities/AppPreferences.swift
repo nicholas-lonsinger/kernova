@@ -32,6 +32,7 @@ package struct AppPreferences {
         static let vmOrder = "vmOrder"
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
+        static let usbUnplugReminderDismissed = "usbUnplugReminderDismissed"
         static let agentInstallPromptDisabled = "agentInstallPromptDisabled"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
@@ -145,6 +146,14 @@ package struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }
 
+    /// Whether the user turned off the reminder that a save of a live VM
+    /// unplugs its USB disks, for every VM. The warning about a disk that may
+    /// lose changes is asked regardless.
+    package var usbUnplugReminderDismissed: Bool {
+        get { defaults.bool(forKey: Keys.usbUnplugReminderDismissed) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.usbUnplugReminderDismissed) }
+    }
+
     /// Whether the sidebar's guest-agent install nudge is turned off for every
     /// VM, defaulting to `false`.
     ///
@@ -218,11 +227,13 @@ package struct AppPreferences {
     /// Re-arms every host-side reminder by clearing its dismissed flag, so each
     /// nag shows again the next time its condition is met.
     ///
-    /// Covers only the menu-bar quit reminder. The guest-agent install nudge —
-    /// app-wide here, per-VM in each bundle configuration — is re-armed as one
+    /// Covers the menu-bar quit reminder and the USB unplug reminder. The
+    /// guest-agent install nudge — app-wide here, per-VM in each bundle
+    /// configuration — is re-armed as one
     /// by `VMLibraryViewModel.resetAllAgentInstallNudges()`.
     package func resetHostReminders() {
         menuBarQuitReminderDismissed = false
+        usbUnplugReminderDismissed = false
     }
 }
 

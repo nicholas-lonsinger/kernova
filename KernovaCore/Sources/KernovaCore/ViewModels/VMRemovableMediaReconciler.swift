@@ -3,9 +3,9 @@ import KernovaLogging
 
 /// Drives a running VM's XHCI removable-media list to whatever its
 /// configuration asks for, inside the operation that holds the VM — a
-/// `.reconcilingMedia` it launches for an edit, or the operation whose own
-/// write changed the list — and settles the configuration on the live list
-/// when VZ refuses.
+/// `.reconcilingMedia` a session is owed (``reconcileFollowUp(of:for:)``), or
+/// the operation whose own write changed the list — and settles the
+/// configuration on the live list when VZ refuses.
 ///
 /// Headless: the configuration write and the alert both leave through hooks,
 /// so every configuration write stays ``VMLibrary``'s.
@@ -49,17 +49,19 @@ final class VMRemovableMediaReconciler {
     }
 
     /// The follow-up that runs a `.reconcilingMedia` pass on `instance` for as
-    /// long as the session `sessionID` names lasts.
+    /// long as the session `sessionID` names lasts — what an edit owes, what
+    /// the edge onto an attachable session owes once a restore built none of
+    /// the media, and what a warm capture owes once it unplugged them.
     ///
-    /// Exempt from the termination's refusal: the edit that owes it was
-    /// admitted first, and a quit waits a reconcile out.
-    private func reconcileFollowUp(of instance: VMInstance, for sessionID: UUID) -> VMFollowUp {
+    /// Exempt from the termination's refusal: what owes it was admitted
+    /// first, and a quit waits a reconcile out.
+    func reconcileFollowUp(of instance: VMInstance, for sessionID: UUID) -> VMFollowUp {
         VMFollowUp(
             scope: .session(sessionID), rank: .ordinary, request: .operation(.reconcilingMedia)
         ) { [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             try instance.activity.launch(
-                .reconcilingMedia, origin: .mediaEditReconcile, resolving: outcome
+                .reconcilingMedia, origin: .mediaReconcile, resolving: outcome
             ) { [weak self] context in
                 await self?.reconcile(context)
                 return .rest(.asStarted, ())
@@ -220,13 +222,17 @@ final class VMRemovableMediaReconciler {
                 // opens the attachment; on success it is registered with the instance
                 // (released at detach or teardown), and released by deinit if it throws.
                 let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
-                // An installer entry names the app's disk; the guest gets the VM's copy of it.
-                let installerCopy = item.installerCopy(in: instance.bundleLayout)
+                // An installer entry is this build's installer disk, which may
+                // not have been made yet in this process.
+                let agents = instance.bundleProducts.guestAgents
+                let installer =
+                    agents.isInstallerDisk(path: item.path)
+                    ? try await agents.installerDisk(for: instance.configuration.guestOS) : nil
                 _ = try await lifecycle.attachRemovableMedia(
                     diskImagePath: item.path,
                     readOnly: item.readOnly,
                     desiredUUID: item.id,
-                    resolvedURL: installerCopy ?? scope?.url,
+                    resolvedURL: installer ?? scope?.url,
                     to: instance,
                     for: sessionID
                 )
@@ -288,10 +294,16 @@ struct RemovableMediaReconcileFailure: LocalizedError {
 
     let items: [Item]
 
+    /// One line per item; an item that failed to attach names the entry the
+    /// settle then removed from the VM.
     var errorDescription: String? {
         items.map { item in
-            let verb = item.operation == .attach ? "attach" : "eject"
-            return "Couldn\u{2019}t \(verb) \u{201C}\(item.name)\u{201D}. \(item.error.localizedDescription)"
+            switch item.operation {
+            case .attach:
+                "Couldn\u{2019}t attach \u{201C}\(item.name)\u{201D}, so it was removed from the virtual machine. \(item.error.localizedDescription)"
+            case .eject:
+                "Couldn\u{2019}t eject \u{201C}\(item.name)\u{201D}. \(item.error.localizedDescription)"
+            }
         }.joined(separator: "\n")
     }
 }

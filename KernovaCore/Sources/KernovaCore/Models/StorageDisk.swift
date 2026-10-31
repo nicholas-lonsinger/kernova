@@ -177,22 +177,13 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
 }
 
 extension RemovableMediaItem {
-    /// `true` when this is a guest-agent installer disk: the bundle at
-    /// `layout` holds the VM's copy of it, whichever build of Kernova made
-    /// that copy, or it names one of `agents`' own installer files, whose copy
-    /// the next bring-up makes (``GuestAgentDiskCopies/ensure(for:in:agents:)``).
+    /// `true` when this is a guest-agent installer disk: it names one of
+    /// `agents`' own installer files.
     ///
     /// The app owns the file, so a "remove" of one must only detach the entry
     /// and never trash the file.
-    package func isInstaller(of agents: BundledGuestAgents, in layout: VMBundleLayout) -> Bool {
-        installerCopy(in: layout) != nil || agents.isInstallerDisk(path: path)
-    }
-
-    /// The VM's copy of this installer disk when the bundle at `layout` holds
-    /// one: the file the guest is attached in place of `path`.
-    package func installerCopy(in layout: VMBundleLayout) -> URL? {
-        let copy = layout.guestAgentDiskCopyURL(for: self)
-        return FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)) ? copy : nil
+    package func isInstaller(of agents: BundledGuestAgents) -> Bool {
+        agents.isInstallerDisk(path: path)
     }
 
     /// Whether `new` is `old` with items removed and nothing else changed:
@@ -235,10 +226,10 @@ package struct ExternalAttachment: Sendable, Equatable {
 }
 
 extension VMConfiguration {
-    /// Drops every installer disk (``RemovableMediaItem/isInstaller(of:in:)``) from the removable-media
+    /// Drops every installer disk (``RemovableMediaItem/isInstaller(of:)``) from the removable-media
     /// list: what Eject Guest Agent Media and a cold boot write.
-    package mutating func removeInstallerDisks(of agents: BundledGuestAgents, in layout: VMBundleLayout) {
-        let kept = (removableMedia ?? []).filter { !$0.isInstaller(of: agents, in: layout) }
+    package mutating func removeInstallerDisks(of agents: BundledGuestAgents) {
+        let kept = (removableMedia ?? []).filter { !$0.isInstaller(of: agents) }
         removableMedia = kept.isEmpty ? nil : kept
     }
 }

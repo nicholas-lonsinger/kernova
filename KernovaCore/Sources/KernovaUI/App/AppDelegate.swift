@@ -87,8 +87,8 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         }
         // The status item's own Quit path, so the command core's quit verb and
         // the affordance a person clicks take the app down the same way.
-        viewModel.onRequestQuit = { [weak self] in
-            self?.termination.requestFullQuit()
+        viewModel.onRequestQuit = { [weak self] consent in
+            self?.termination.requestFullQuit(consentedBy: consent)
         }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)

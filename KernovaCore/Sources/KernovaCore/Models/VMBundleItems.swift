@@ -10,7 +10,7 @@ package enum VMBundleItems {
     /// Every bundle file the saved state restores onto: the disks the guest
     /// boots and stores data on, the firmware state VZ mutates
     /// (`AuxiliaryStorage` on macOS, `EFIVariableStore` on EFI Linux), and the
-    /// VM's copies of the guest-agent installer disks (`GuestAgentDisk`). The
+    /// VM's copy of the virtio guest-agent installer disk (`GuestAgentDisk`). The
     /// bundle's identity files (`HardwareModel`, `MachineIdentifier`) are
     /// absent — they never change, and a revert must not hand the VM a
     /// different identity.
@@ -19,7 +19,7 @@ package enum VMBundleItems {
     /// bundle, and copying them would double storage the user placed elsewhere
     /// on purpose.
     ///
-    /// `layout` is the directory the firmware files and installer copies are looked for in — the VM's
+    /// `layout` is the directory the firmware files and installer copy are looked for in — the VM's
     /// bundle while capturing, the snapshot's own directory while working out
     /// what it holds.
     package static func capturedRelativePaths(

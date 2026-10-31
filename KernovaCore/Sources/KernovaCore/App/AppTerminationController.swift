@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaLogging
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.
@@ -19,12 +20,15 @@ package final class AppTerminationController {
     /// Where a downgraded quit closes the GUI.
     private let residency: any SoftQuitHosting
 
-    /// Latched once a termination save pass has started, so a second quit can't
-    /// start a second one: its save would be refused as busy on the VM the
-    /// first is saving, and the catch would force-stop it mid-save.
+    /// Latched once a termination save pass has started — from the USB
+    /// question it asks first — so a second quit can't start a second one:
+    /// its save would be refused as busy on the VM the first is saving, and
+    /// the catch would force-stop it mid-save.
     ///
-    /// Never reset, matching the quit flags below: every later quit joins the
-    /// pass, which always ends by terminating the app.
+    /// Every later quit joins the pass. It is reset, with the quit flags
+    /// below, only when the pass cancels the quit
+    /// (``cancelTermination(presenting:)``); otherwise the pass ends by
+    /// terminating the app.
     private var isRunningTerminationSavePass = false
 
     /// Latched once that pass has finished, which is what lets the gate answer
@@ -68,19 +72,26 @@ package final class AppTerminationController {
     /// Ends the termination a finished save pass ran for.
     private let endTermination: @MainActor (TerminationEnding) -> Void
 
+    /// Puts the quit's USB question in front of the user, app-modal, and
+    /// answers whether they went ahead; the second argument records "Don't
+    /// remind me again" when they checked it.
+    private let askToUnplug: @MainActor (ConfirmationPrompt, _ suppress: (@MainActor () -> Void)?) async -> Bool
+
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppTermination")
 
     package init(
         viewModel: VMLibraryViewModel, residency: any SoftQuitHosting,
         pendingQuitEvent: @escaping @MainActor () -> QuitEvent?,
         senderProbe: QuitSenderProbe,
-        endTermination: @escaping @MainActor (TerminationEnding) -> Void
+        endTermination: @escaping @MainActor (TerminationEnding) -> Void,
+        askToUnplug: @escaping @MainActor (ConfirmationPrompt, _ suppress: (@MainActor () -> Void)?) async -> Bool
     ) {
         self.viewModel = viewModel
         self.residency = residency
         self.pendingQuitEvent = pendingQuitEvent
         self.senderProbe = senderProbe
         self.endTermination = endTermination
+        self.askToUnplug = askToUnplug
     }
 
     // MARK: - Quit Classification
@@ -358,7 +369,7 @@ package final class AppTerminationController {
             }
             isRunningTerminationSavePass = true
             owesDeferredTerminationReply = true
-            runSavePassThenEndTermination()
+            runSavePassThenEndTermination(consent: nil)
             return .later
         }
     }
@@ -388,8 +399,22 @@ package final class AppTerminationController {
     /// the pass answers it on the way out.
     ///
     /// A second request while the pass runs joins it rather than starting
-    /// another: the pass always ends by ending the termination.
+    /// another: the pass always ends by ending the termination, or by
+    /// cancelling it.
+    ///
+    /// A person's quit: the pass asks the USB question first.
     package func requestFullQuit() {
+        requestFullQuit(consent: nil)
+    }
+
+    /// ``requestFullQuit()`` for an automation door, whose verb already
+    /// decided the USB question under `consent` (``VMCommandCore/quit(consent:)``):
+    /// nothing is asked, and every save carries it.
+    package func requestFullQuit(consentedBy consent: Consent) {
+        requestFullQuit(consent: consent)
+    }
+
+    private func requestFullQuit(consent: Consent?) {
         userRequestedAgentQuit = true
         guard !isRunningTerminationSavePass else {
             Self.logger.log(.notice, "Full quit requested again — joining the save pass already running")
@@ -397,7 +422,7 @@ package final class AppTerminationController {
         }
         Self.logger.log(.notice, "User-requested full quit — saving live guests, then terminating")
         isRunningTerminationSavePass = true
-        runSavePassThenEndTermination()
+        runSavePassThenEndTermination(consent: consent)
     }
 
     /// How a finished save pass ends the termination it ran for.
@@ -407,24 +432,60 @@ package final class AppTerminationController {
         case deferredReply
         /// Ask AppKit to terminate — nothing deferred, so nothing is waiting.
         case terminate
+        /// Answer the reply AppKit is waiting on with a cancel: the quit it
+        /// began does not go ahead.
+        case cancelDeferredReply
+        /// Nothing to answer: a quit the app began itself just doesn't go ahead.
+        case cancelled
     }
 
-    /// Runs the save pass, then ends the termination it ran for.
+    /// Asks the quit's USB question, then runs the save pass and ends the
+    /// termination it ran for.
     ///
     /// The single body both passes share: one this controller started for a
     /// quit the app initiated, and one the gate started for a termination
     /// AppKit began. They differ only in the ending, which
     /// ``owesDeferredTerminationReply`` decides.
     ///
-    /// Begins the library's termination first, so from then on admission
-    /// refuses every operation the pass did not ask for — the launch
-    /// auto-start's next guest, a create's start-after-create, a user's verb —
-    /// and the pass never has to chase a guest brought up behind it.
-    private func runSavePassThenEndTermination() {
+    /// `consent` is what an automation door's verb already decided under;
+    /// `nil` is a person's quit, which asks every live VM's USB question as
+    /// one app-modal alert before anything changes — the warning when any
+    /// disk is at risk, otherwise the reminder unless it is turned off — and
+    /// whose Cancel ends the quit there.
+    private func runSavePassThenEndTermination(consent given: Consent?) {
+        let consent = given ?? viewModel.remindingAsPreferred(.none)
+        let decisions = viewModel.instances.filter(\.hasLiveSession).map {
+            ($0.name, USBSaveDecision.decide(USBSaveFacts($0), consent: consent))
+        }
+        guard given == nil, let prompt = USBSavePrompt.prompt(for: decisions, action: .quit) else {
+            startSavePass(consent: consent)
+            return
+        }
+        Task { @MainActor in
+            guard await self.askToUnplug(prompt, self.viewModel.suppressingReminder(prompt)) else {
+                Self.logger.log(.notice, "Termination cancelled at the USB question")
+                self.cancelTermination(presenting: nil)
+                return
+            }
+            self.startSavePass(consent: consent.adding(prompt.kind))
+        }
+    }
+
+    /// Begins the library's termination, then saves every live VM under
+    /// `consent` and ends the termination.
+    ///
+    /// Begins the termination first, so from then on admission refuses every
+    /// operation the pass did not ask for — the launch auto-start's next
+    /// guest, a create's start-after-create, a user's verb — and the pass
+    /// never has to chase a guest brought up behind it.
+    private func startSavePass(consent: Consent) {
         viewModel.beginTermination()
         viewModel.abandonArrivalsForTermination()
         Task { @MainActor in
-            await self.runTerminationSavePass()
+            if let refused = await self.runTerminationSavePass(consent: consent) {
+                self.cancelTermination(presenting: refused)
+                return
+            }
             // A drop/odoc delivered during the async save window above can
             // register a fresh arrival, so sweep again before leaving or its
             // staged tree waits for the next launch's reclaim.
@@ -433,6 +494,25 @@ package final class AppTerminationController {
             let ending: TerminationEnding = self.owesDeferredTerminationReply ? .deferredReply : .terminate
             self.owesDeferredTerminationReply = false
             self.endTermination(ending)
+        }
+    }
+
+    /// Gives the quit up: the library takes work again, every latch a quit set
+    /// is cleared so the next quit is decided afresh, the reply AppKit may be
+    /// waiting on is a cancel, and a save's question that stopped the pass is
+    /// shown about its VM.
+    private func cancelTermination(presenting refused: (VMInstance, any Error)?) {
+        viewModel.cancelTermination()
+        isRunningTerminationSavePass = false
+        userRequestedAgentQuit = false
+        externalQuitRequiresTermination = false
+        terminationIsTCCRevocation = false
+        relaunchAfterTermination = false
+        let owed = owesDeferredTerminationReply
+        owesDeferredTerminationReply = false
+        endTermination(owed ? .cancelDeferredReply : .cancelled)
+        if let (instance, error) = refused {
+            viewModel.present(error, about: .vm(instance))
         }
     }
 
@@ -455,17 +535,28 @@ package final class AppTerminationController {
     /// Each session is saved at most once: a force stop that failed leaves the
     /// same session live, and re-selecting it would loop forever, while a VM
     /// brought back live by a revert holds a new session and is saved again.
-    private func runTerminationSavePass() async {
+    ///
+    /// A save whose USB question `consent` does not answer — a disk the quit's
+    /// question never named — stops the pass at once, answering that VM and
+    /// the question: the quit is cancelled rather than the guest force-stopped.
+    private func runTerminationSavePass(consent: Consent) async -> (VMInstance, any Error)? {
         var handled: Set<UUID> = []
         var savedCount = 0
         var failedCount = 0
         while true {
             if let (instance, sessionID) = nextSessionToSave(excluding: handled) {
                 handled.insert(sessionID)
-                if await saveForTermination(instance) {
+                switch await saveForTermination(instance, consent: consent) {
+                case .saved:
                     savedCount += 1
-                } else {
+                case .failed:
                     failedCount += 1
+                case .asked(let question):
+                    Self.logger.log(
+                        .notice,
+                        "Termination cancelled: '\(instance.name, privacy: .public)' has USB disks the quit's question did not cover"
+                    )
+                    return (instance, question)
                 }
                 continue
             }
@@ -480,6 +571,7 @@ package final class AppTerminationController {
             .notice,
             "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed"
         )
+        return nil
     }
 
     /// The first VM settled live on a session not in `handled`, and that
@@ -494,26 +586,36 @@ package final class AppTerminationController {
         return nil
     }
 
-    /// Save-suspends one VM for termination, force-stopping it when the save
-    /// fails and left a guest still live, so a half-live VM can't outlive the
-    /// process.
+    /// How one VM's termination save ended.
+    private enum TerminationSave {
+        case saved
+        case failed
+        /// Asked a USB question before anything was touched, the guest still
+        /// running.
+        case asked(CommandError)
+    }
+
+    /// Save-suspends one VM for termination under `consent`, force-stopping it
+    /// when the save fails and left a guest still live, so a half-live VM
+    /// can't outlive the process — except a save that asked its USB question,
+    /// which the pass answers by cancelling the quit.
     ///
     /// A save that failed on its own terms ended its session on the way out,
     /// which is why the termination is asked for only where a Force Stop is
     /// still admitted: the VM it is owed to is one handed back live.
-    ///
-    /// - Returns: `true` when the state was saved.
-    private func saveForTermination(_ instance: VMInstance) async -> Bool {
+    private func saveForTermination(_ instance: VMInstance, consent: Consent) async -> TerminationSave {
         do {
-            try await viewModel.saveForTermination(instance)
-            return true
+            try await viewModel.saveForTermination(instance, consent: consent)
+            return .saved
+        } catch let question as CommandError where question.confirmationPrompt != nil {
+            return .asked(question)
         } catch {
             Self.logger.log(
                 .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
             guard instance.activity.decide(.sessionAction(.forceStop), posture: .commit) == .admit
-            else { return false }
+            else { return .failed }
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {
@@ -522,7 +624,7 @@ package final class AppTerminationController {
                     "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                 )
             }
-            return false
+            return .failed
         }
     }
 

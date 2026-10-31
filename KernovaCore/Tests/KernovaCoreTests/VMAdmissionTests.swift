@@ -373,11 +373,11 @@ struct VMAdmissionTests {
         (.sessionEndRevert, .operation(.capturingSnapshot(.stopped)), "TIIIIIR"),
         (.sessionEndRevert, .operation(.deletingSnapshot), "TTTTTTR"),
         (.sessionEndRevert, .operation(.discardingSavedState), "IIITIIR"),
-        (.mediaEditReconcile, .operation(.reconcilingMedia), "IIIIAAR"),
-        (.mediaEditReconcile, .start(recovery: false), "TTTTIIR"),
-        (.mediaEditReconcile, .operation(.pausing), "IIIITIR"),
-        (.mediaEditReconcile, .operation(.saving), "IIIITTR"),
-        (.mediaEditReconcile, .edit(.hotPlugMedia), "AAAITTR"),
+        (.mediaReconcile, .operation(.reconcilingMedia), "IIIIAAR"),
+        (.mediaReconcile, .start(recovery: false), "TTTTIIR"),
+        (.mediaReconcile, .operation(.pausing), "IIIITIR"),
+        (.mediaReconcile, .operation(.saving), "IIIITTR"),
+        (.mediaReconcile, .edit(.hotPlugMedia), "AAAITTR"),
     ]
 
     @Test(
@@ -396,7 +396,7 @@ struct VMAdmissionTests {
     func exemptOriginWidensNothingElse(row: Int) {
         let (request, _) = Self.settledTable[row]
         let asNewWork = Self.settledCells(request, .plain, terminating: true)
-        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaEditReconcile]
+        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaReconcile]
         where !origin.exempts(request) {
             #expect(
                 Self.settledCells(request, .plain, terminating: true, origin: origin) == asNewWork,
@@ -407,7 +407,7 @@ struct VMAdmissionTests {
     @Test("Outside the termination, an origin changes no decision", arguments: settledTable.indices)
     func originIsInertOutsideTheTermination(row: Int) {
         let (request, expected) = Self.settledTable[row]
-        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaEditReconcile] {
+        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaReconcile] {
             #expect(Self.settledCells(request, .plain, origin: origin) == expected, "\(request) \(origin)")
         }
     }

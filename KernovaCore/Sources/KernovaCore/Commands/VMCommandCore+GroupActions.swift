@@ -197,7 +197,11 @@ extension VMCommandCore {
             let turn = takeStartTurn(on: instance, in: set, resolving: launched)
             outcome = report(turn, ended: await launched.ended(), on: instance)
         case .suspend:
-            outcome = await settle(.suspend, on: instance, in: set) { try await self.suspend(instance) }
+            outcome = await settle(.suspend, on: instance, in: set) {
+                // An unattended door: the reminder is given, and a VM with a
+                // disk at risk is passed by and reported.
+                try await self.suspend(instance, consent: Consent([.unplugUSBDisks]))
+            }
         case .stop:
             outcome = await settle(.stop, on: instance, in: set) {
                 try await self.stop(instance, disposition: .graceful, consent: .none)

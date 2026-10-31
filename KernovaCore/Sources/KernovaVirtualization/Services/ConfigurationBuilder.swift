@@ -50,12 +50,26 @@ struct ConfigurationBuilder: Sendable {
     /// Whose installer image a guest that takes it over virtio is given.
     let guestAgents: BundledGuestAgents
 
+    /// What a build brings the guest up by, which decides whether it lists
+    /// the configuration's removable media.
+    enum Purpose {
+        /// A cold boot, which lists them: a hot-plug is refused until the
+        /// guest's firmware is up.
+        case coldBoot
+        /// The restore of a saved state, which lists none: every save unplugs
+        /// them first (``VMLiveStateCapture``), and the session plugs them
+        /// back in once it can take one.
+        case restore
+    }
+
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM
-    /// configuration and bundle URL, off the caller's actor: the build reads
-    /// files and can block on a vmnet network's materialization.
+    /// configuration and bundle URL for `purpose`, off the caller's actor: the
+    /// build reads files and can block on a vmnet network's materialization.
     @concurrent
-    func build(from config: VMConfiguration, bundleURL: URL) async throws -> sending BuildResult {
-        try assemble(from: config, bundleURL: bundleURL, validate: true)
+    func build(
+        from config: VMConfiguration, bundleURL: URL, for purpose: Purpose
+    ) async throws -> sending BuildResult {
+        try assemble(from: config, bundleURL: bundleURL, for: purpose, validate: true)
     }
 
     /// Assembles the `BuildResult` with optional VZ validation.
@@ -64,7 +78,9 @@ struct ConfigurationBuilder: Sendable {
     /// `vzConfig.validate()` throws `VZErrorDomain Code=2` ("Virtualization is
     /// not available on this hardware") — GitHub's macOS runners are themselves
     /// nested VMs without virtualization support.
-    func assemble(from config: VMConfiguration, bundleURL: URL, validate: Bool) throws -> BuildResult {
+    func assemble(
+        from config: VMConfiguration, bundleURL: URL, for purpose: Purpose = .coldBoot, validate: Bool
+    ) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
         Self.logger.log(
@@ -91,7 +107,11 @@ struct ConfigurationBuilder: Sendable {
         configureUSBControllers(vzConfig)
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
         let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
-        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config, bundleURL: bundleURL)
+        let coldRemovableMedia =
+            switch purpose {
+            case .coldBoot: try configureRemovableMedia(vzConfig, config: config)
+            case .restore: [RemovableMediaDeviceInfo]()
+            }
         let sessionNetworks = vmnetNetworks.sessionNetworks(ownedBy: config.id)
         try configureNetwork(vzConfig, config: config, vmnetNetworks: sessionNetworks)
         configureEntropy(vzConfig)
@@ -481,8 +501,7 @@ struct ConfigurationBuilder: Sendable {
     /// runtime tracking in `instance.liveRemovableMedia`.
     private func configureRemovableMedia(
         _ vzConfig: VZVirtualMachineConfiguration,
-        config: VMConfiguration,
-        bundleURL: URL
+        config: VMConfiguration
     ) throws -> [RemovableMediaDeviceInfo] {
         guard let items = config.removableMedia, !items.isEmpty else { return [] }
         guard let xhci = vzConfig.usbControllers.first else {
@@ -492,12 +511,9 @@ struct ConfigurationBuilder: Sendable {
 
         var infos: [RemovableMediaDeviceInfo] = []
         var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
-        let layout = VMBundleLayout(bundleURL: bundleURL)
         for item in items {
-            // An installer entry names the app's disk; the guest gets the VM's copy of it.
-            let path = item.installerCopy(in: layout)?.path(percentEncoded: false) ?? item.path
             let resolved = try ConfigurationPaths.resolveFile(
-                at: path, context: "Removable media '\(item.label)'",
+                at: item.path, context: "Removable media '\(item.label)'",
                 requireWritable: !item.readOnly,
                 notFound: .removableMediaNotFound(
                     id: item.id, path: item.path, label: item.label),

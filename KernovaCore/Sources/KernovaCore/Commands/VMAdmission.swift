@@ -623,11 +623,11 @@ package enum VMRequestOrigin: Sendable, Equatable {
     /// which a quit waits out rather than refuses — so a guest that powers off
     /// during one never rests on the disks the mode discards.
     case sessionEndRevert
-    /// The reconcile a removable-media edit admitted before the termination
-    /// owes a live session, which a quit waits out rather than refuses — so
-    /// the save that follows never pins a device list the configuration has
-    /// left.
-    case mediaEditReconcile
+    /// The removable-media reconcile a live session was owed before the
+    /// termination — by an edit, at the edge it became attachable, or by a
+    /// warm capture that unplugged its disks — which a quit waits out rather
+    /// than refuses.
+    case mediaReconcile
 
     /// Whether this origin exempts `request` from the termination's refusal.
     func exempts(_ request: VMAdmission.Request) -> Bool {
@@ -639,7 +639,7 @@ package enum VMRequestOrigin: Sendable, Equatable {
         case .sessionEndRevert:
             guard case .operation(.bringUp(.reverting)) = request else { return false }
             return true
-        case .mediaEditReconcile:
+        case .mediaReconcile:
             return request == .operation(.reconcilingMedia)
         }
     }
@@ -706,4 +706,8 @@ protocol VMAdmissionPeers: VMInstanceRoster {
         for instance: VMInstance, bringingUp configuration: VMConfiguration,
         override: VMIdentityOverride
     ) -> VMIdentityConflict?
+
+    /// Owes `instance`'s session `sessionID` the reconcile that plugs its
+    /// configured removable media back in, once whatever holds the VM frees it.
+    func oweRemovableMediaReconcile(to instance: VMInstance, for sessionID: UUID)
 }

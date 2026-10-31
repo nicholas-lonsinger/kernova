@@ -1,5 +1,6 @@
 import Cocoa
 import KernovaAppRegistry
+import KernovaCommandModel
 import KernovaCore
 
 /// What ``AppTerminationController`` reads from and asks of AppKit: the quit
@@ -11,7 +12,19 @@ extension AppTerminationController {
     convenience init(viewModel: VMLibraryViewModel, residency: any SoftQuitHosting) {
         self.init(
             viewModel: viewModel, residency: residency, pendingQuitEvent: Self.currentQuitEvent,
-            senderProbe: .runningProcesses, endTermination: Self.end)
+            senderProbe: .runningProcesses, endTermination: Self.end, askToUnplug: Self.askAppModally)
+    }
+
+    /// Asks `prompt` as an app-modal alert: a quit is about every VM, and may
+    /// come with no window open.
+    static func askAppModally(
+        _ prompt: ConfirmationPrompt, suppress: (@MainActor () -> Void)?
+    ) async -> Bool {
+        var confirmed = false
+        runAppModalAlert(
+            AlertConfiguration(
+                confirming: prompt, confirm: { confirmed = true }, suppress: suppress))
+        return confirmed
     }
 
     /// Whether `event` is the Standard Suite's quit.
@@ -38,6 +51,10 @@ extension AppTerminationController {
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         case .terminate:
             NSApp.terminate(nil)
+        case .cancelDeferredReply:
+            NSApplication.shared.reply(toApplicationShouldTerminate: false)
+        case .cancelled:
+            break
         }
     }
 }
