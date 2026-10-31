@@ -69,26 +69,6 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .failed(message: "The disk is full."))
     }
 
-    @Test("A suspend whose state would not restore leaves the guest running and the slot as it was")
-    func refusedSuspendLeavesTheGuestRunning() async throws {
-        let sessionID = UUID()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
-        instance.beginSessionContextForTesting()
-        let session = MockSnapshotSession(guestState: .running)
-        let above = UUID()
-        await session.setDevicesAboveGap(asIs: [above], removing: [above])
-        // A slot already there, which a refusal must not touch.
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        await #expect(throws: VMLiveStateCapture.SaveRefusal.self) {
-            try await suspend(instance, over: session)
-        }
-
-        #expect(instance.phase == .running(sessionID: sessionID))
-        #expect(instance.hasSaveFile)
-        #expect(await session.calls.isEmpty)
-    }
-
     @Test("A guest that goes away mid-suspend drops the slot and rests where its end put it")
     func suspendOverAVanishingGuestDropsTheSlot() async throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))

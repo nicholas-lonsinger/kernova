@@ -283,51 +283,6 @@ struct AppTerminationGateTests {
         #expect(stuck.phase == .suspended)
     }
 
-    @Test("A quit whose save is refused is cancelled, the guest left running and the refusal shown")
-    func refusedSaveCancelsTheQuit() async throws {
-        let (controller, viewModel, spy) = makeFullQuit()
-        let presenter = MockVMLibraryPresenting()
-        viewModel.presenter = presenter
-        let virtualization = try #require(
-            viewModel.library.lifecycle.virtualizationService as? MockVirtualizationService)
-        let refusal = VMLiveStateCapture.SaveRefusal.usbPortGap(below: ["KERNOVA_AGENT"], leftByAccessories: false)
-        virtualization.saveRefusal = refusal
-        let sessionID = UUID()
-        let instance = admitPeer(named: "Live", to: viewModel)
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-
-        controller.requestFullQuit()
-        try await spy.ended.wait { spy.endings.count == 1 }
-
-        // Nothing deferred this quit, so there is no reply to cancel.
-        #expect(spy.endings == [.cancelled])
-        #expect(instance.phase == .running(sessionID: sessionID))
-        #expect(virtualization.forceStopCallCount == 0)
-        #expect(presenter.errors == [refusal.localizedDescription])
-        // The next quit is decided afresh, and runs its own pass.
-        virtualization.saveRefusal = nil
-        controller.requestFullQuit()
-        try await spy.ended.wait { spy.endings.count == 2 }
-        #expect(spy.endings.last == .terminate)
-        #expect(instance.phase == .suspended)
-    }
-
-    @Test("A quit AppKit deferred is answered with a cancel when a save is refused")
-    func refusedSaveCancelsADeferredQuit() async throws {
-        let (controller, viewModel, spy) = makeFullQuit()
-        let virtualization = try #require(
-            viewModel.library.lifecycle.virtualizationService as? MockVirtualizationService)
-        virtualization.saveRefusal = .usbPortGap(below: ["KERNOVA_AGENT"], leftByAccessories: false)
-        let instance = admitPeer(named: "Live", to: viewModel)
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        controller.requestFullQuit()
-        #expect(controller.handleTerminationRequest() == .later)
-        try await spy.ended.wait { spy.endings.count == 1 }
-
-        #expect(spy.endings == [.cancelDeferredReply])
-    }
-
     @Test("A resident app that stays in the menu bar downgrades a quit to a GUI close")
     func residentQuitClosesTheGUI() async throws {
         let spy = SoftQuitSpy()

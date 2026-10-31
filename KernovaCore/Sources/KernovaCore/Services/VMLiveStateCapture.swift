@@ -53,61 +53,6 @@ package enum VMLiveStateCapture {
         fileprivate init() {}
     }
 
-    /// A save refused before anything was taken off, paused or written,
-    /// because the state it would write would not restore: the guest runs on
-    /// as it was.
-    package enum SaveRefusal: LocalizedError, Equatable {
-        /// The USB ports would have a gap below the devices named
-        /// (``USBPortLayout``): one already there, or, with
-        /// `leftByAccessories`, one taking the passthrough accessories off
-        /// would leave.
-        case usbPortGap(below: [String], leftByAccessories: Bool)
-
-        package var errorDescription: String? {
-            switch self {
-            case .usbPortGap(let devices, let leftByAccessories):
-                let names = ListFormatter.localizedString(byJoining: devices.map { "\u{201C}\($0)\u{201D}" })
-                let gap =
-                    leftByAccessories
-                    ? "saving takes its USB accessories off, which leaves a gap in its USB ports below \(names)"
-                    : "its USB ports have a gap below \(names)"
-                return "Kernova can't save this virtual machine's state: \(gap), and a saved state with a gap in "
-                    + "its USB ports doesn't restore. Detach \(names) and try again, or shut the virtual machine "
-                    + "down instead."
-            }
-        }
-    }
-
-    /// Refuses a save whose state, once every passthrough accessory is taken
-    /// off, would not restore, naming the devices above the gap.
-    private static func requireRestorable(
-        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
-    ) async throws {
-        let instance = context.instance
-        let accessories = Set(instance.liveUSBAccessories.map(\.deviceID))
-        let above = await session.usbDevicesAboveGap(removing: accessories)
-        guard !above.isEmpty else { return }
-        let leftByAccessories = await session.usbDevicesAboveGap(removing: []).isEmpty
-        let names = above.map { usbDeviceName($0, on: instance) }
-        logger.log(
-            .error,
-            "Refused to save '\(instance.name, privacy: .public)': a gap in the USB ports below \(names.joined(separator: ", "), privacy: .public)\(leftByAccessories ? " once the accessories are off" : "", privacy: .public)"
-        )
-        throw SaveRefusal.usbPortGap(below: names, leftByAccessories: leftByAccessories)
-    }
-
-    /// What the user knows the USB device carrying `id` as: its removable
-    /// medium's or disk's label.
-    private static func usbDeviceName(_ id: UUID, on instance: VMInstance) -> String {
-        if let item = instance.configuration.removableMedia?.first(where: { $0.id == id }) { return item.label }
-        if let disk = instance.configuration.effectiveStorageDisks(layout: instance.bundleLayout).first(where: {
-            $0.id == id
-        }) {
-            return disk.label
-        }
-        return "a USB device"
-    }
-
     /// Writes the guest's state, as a suspend does, into `url`: every
     /// passthrough USB accessory taken off first, then the guest paused.
     ///
@@ -124,7 +69,6 @@ package enum VMLiveStateCapture {
     package static func suspendState(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
     ) async throws {
-        try await requireRestorable(context, session: session)
         try await detachUSBAccessories(context, session: session)
         try await writeState(context, session: session, to: url)
     }
@@ -149,7 +93,6 @@ package enum VMLiveStateCapture {
         // disks copy still leaves a complete capture, which the resume, a no-op
         // on a guest no longer paused, must not refuse.
         let execution = try capture.operation.liveExecution()
-        try await requireRestorable(capture.operation, session: session)
         try await detachUSBAccessories(owingReturns: capture, session: session)
         try await writeState(capture.operation, session: session, to: saveFileURL)
         try await captureDisks()

@@ -23,9 +23,8 @@ package final class AppTerminationController {
     /// start a second one: its save would be refused as busy on the VM the
     /// first is saving, and the catch would force-stop it mid-save.
     ///
-    /// Every later quit joins the pass. It is reset, with the quit flags below,
-    /// only when the pass cancels the quit (``cancelTermination(_:refusal:)``);
-    /// otherwise the pass ends by terminating the app.
+    /// Never reset, matching the quit flags below: every later quit joins the
+    /// pass, which always ends by terminating the app.
     private var isRunningTerminationSavePass = false
 
     /// Latched once that pass has finished, which is what lets the gate answer
@@ -408,11 +407,6 @@ package final class AppTerminationController {
         case deferredReply
         /// Ask AppKit to terminate — nothing deferred, so nothing is waiting.
         case terminate
-        /// Answer the reply AppKit is waiting on with a cancel: the quit it
-        /// began does not go ahead.
-        case cancelDeferredReply
-        /// Nothing to answer: a quit the app began itself just doesn't go ahead.
-        case cancelled
     }
 
     /// Runs the save pass, then ends the termination it ran for.
@@ -430,10 +424,7 @@ package final class AppTerminationController {
         viewModel.beginTermination()
         viewModel.abandonArrivalsForTermination()
         Task { @MainActor in
-            if let (instance, refusal) = await self.runTerminationSavePass() {
-                self.cancelTermination(instance, refusal: refusal)
-                return
-            }
+            await self.runTerminationSavePass()
             // A drop/odoc delivered during the async save window above can
             // register a fresh arrival, so sweep again before leaving or its
             // staged tree waits for the next launch's reclaim.
@@ -464,28 +455,17 @@ package final class AppTerminationController {
     /// Each session is saved at most once: a force stop that failed leaves the
     /// same session live, and re-selecting it would loop forever, while a VM
     /// brought back live by a revert holds a new session and is saved again.
-    ///
-    /// A save refused because its state would not restore stops the pass at
-    /// once, answering that VM and its refusal: the quit is cancelled rather
-    /// than the guest force-stopped.
-    private func runTerminationSavePass() async -> (VMInstance, VMLiveStateCapture.SaveRefusal)? {
+    private func runTerminationSavePass() async {
         var handled: Set<UUID> = []
         var savedCount = 0
         var failedCount = 0
         while true {
             if let (instance, sessionID) = nextSessionToSave(excluding: handled) {
                 handled.insert(sessionID)
-                switch await saveForTermination(instance) {
-                case .saved:
+                if await saveForTermination(instance) {
                     savedCount += 1
-                case .failed:
+                } else {
                     failedCount += 1
-                case .refused(let refusal):
-                    Self.logger.log(
-                        .notice,
-                        "Termination cancelled: '\(instance.name, privacy: .public)' can't be saved in a state that restores"
-                    )
-                    return (instance, refusal)
                 }
                 continue
             }
@@ -500,24 +480,6 @@ package final class AppTerminationController {
             .notice,
             "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed"
         )
-        return nil
-    }
-
-    /// Gives the quit up for `instance`, whose save was refused: the library
-    /// takes work again, every latch a quit set is cleared so the next quit is
-    /// decided afresh, the reply AppKit may be waiting on is a cancel, and the
-    /// refusal is shown about that VM.
-    private func cancelTermination(_ instance: VMInstance, refusal: VMLiveStateCapture.SaveRefusal) {
-        viewModel.cancelTermination()
-        isRunningTerminationSavePass = false
-        userRequestedAgentQuit = false
-        externalQuitRequiresTermination = false
-        terminationIsTCCRevocation = false
-        relaunchAfterTermination = false
-        let owed = owesDeferredTerminationReply
-        owesDeferredTerminationReply = false
-        endTermination(owed ? .cancelDeferredReply : .cancelled)
-        viewModel.present(refusal, about: .vm(instance))
     }
 
     /// The first VM settled live on a session not in `handled`, and that
@@ -532,35 +494,26 @@ package final class AppTerminationController {
         return nil
     }
 
-    /// How one VM's termination save ended.
-    private enum TerminationSave {
-        case saved
-        case failed
-        /// Refused before anything was touched, the guest still running.
-        case refused(VMLiveStateCapture.SaveRefusal)
-    }
-
     /// Save-suspends one VM for termination, force-stopping it when the save
     /// fails and left a guest still live, so a half-live VM can't outlive the
-    /// process — except a save refused because its state would not restore,
-    /// which the pass answers by cancelling the quit.
+    /// process.
     ///
     /// A save that failed on its own terms ended its session on the way out,
     /// which is why the termination is asked for only where a Force Stop is
     /// still admitted: the VM it is owed to is one handed back live.
-    private func saveForTermination(_ instance: VMInstance) async -> TerminationSave {
+    ///
+    /// - Returns: `true` when the state was saved.
+    private func saveForTermination(_ instance: VMInstance) async -> Bool {
         do {
             try await viewModel.saveForTermination(instance)
-            return .saved
-        } catch let refusal as VMLiveStateCapture.SaveRefusal {
-            return .refused(refusal)
+            return true
         } catch {
             Self.logger.log(
                 .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
             guard instance.activity.decide(.sessionAction(.forceStop), posture: .commit) == .admit
-            else { return .failed }
+            else { return false }
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {
@@ -569,7 +522,7 @@ package final class AppTerminationController {
                     "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                 )
             }
-            return .failed
+            return false
         }
     }
 

@@ -111,7 +111,7 @@ struct VMRemovableMediaReconcilerTests {
         }
     }
 
-    @Test("Items added together attach in the list's order, the order their USB ports and a restore follow")
+    @Test("Items added together attach in the list's order")
     func addsAttachInListOrder() async throws {
         let mock = MockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)

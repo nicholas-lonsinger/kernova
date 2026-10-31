@@ -100,9 +100,6 @@ package final class VMLibraryViewModel {
 
     package func beginTermination() { library.beginTermination() }
 
-    /// ``VMLibrary/cancelTermination()``.
-    package func cancelTermination() { library.cancelTermination() }
-
     /// ``VMLibrary/startLibrary()``, answering the VMs its read found marked
     /// to start automatically.
     @discardableResult
@@ -1140,10 +1137,9 @@ package final class VMLibraryViewModel {
         await run(on: instance) { try await self.commands.suspend(.id(instance.id)) }
     }
 
-    /// Suspends a VM for the termination save pass, throwing the save's own
-    /// error on failure.
+    /// Suspends a VM for the termination save pass, throwing on failure.
     package func saveForTermination(_ instance: VMInstance) async throws {
-        try await commands.suspendForTermination(instance)
+        try await commands.suspend(instance, origin: .terminationSave)
     }
 
     /// Force-stops a VM, throwing on failure — the termination save pass's

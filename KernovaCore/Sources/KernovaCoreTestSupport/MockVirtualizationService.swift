@@ -57,10 +57,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// real one can: the session ends under the write.
     var guestStopsDuringSave = false
 
-    /// The refusal a suspend answers with, as the real one does for a save
-    /// that would not restore: the guest left running.
-    var saveRefusal: VMLiveStateCapture.SaveRefusal?
-
     /// The status the bring-up running `start` was admitted from — what a
     /// caller that hands a VM off to a boot handed over.
     var statusAtStart: VMStatus?
@@ -177,7 +173,6 @@ final class MockVirtualizationService: VirtualizationProviding {
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         saveCallCount += 1
-        if let saveRefusal { return .failed(.asStarted, saveRefusal) }
         if let error = saveError {
             // A write that threw left a truncated slot, which the real service
             // drops before it rests the VM.

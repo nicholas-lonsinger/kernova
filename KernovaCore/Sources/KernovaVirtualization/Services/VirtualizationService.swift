@@ -271,10 +271,6 @@ package final class VirtualizationService {
         guard context.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         do {
             try await VMLiveStateCapture.suspendState(context, session: session, to: context.bundle.saveFileURL)
-        } catch let refusal as VMLiveStateCapture.SaveRefusal {
-            // Refused before anything was touched: the guest runs on, and the
-            // slot is as it was.
-            return .failed(.asStarted, refusal)
         } catch {
             logger.log(
                 .error,

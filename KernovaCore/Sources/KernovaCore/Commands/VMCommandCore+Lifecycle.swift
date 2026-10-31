@@ -1042,9 +1042,9 @@ extension VMCommandCore {
         try await suspend(try resolve(selector))
     }
 
-    func suspend(_ instance: VMInstance) async throws {
+    func suspend(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
         do {
-            try await lifecycle.save(instance, origin: .newWork)
+            try await lifecycle.save(instance, origin: origin)
         } catch {
             logger.log(
                 .error,
@@ -1052,13 +1052,6 @@ extension VMCommandCore {
             )
             throw failure(error, verb: .suspend, on: instance)
         }
-    }
-
-    /// Suspends `instance` for the termination save pass, throwing the save's
-    /// own error unwrapped, so the pass tells a refused save
-    /// (``VMLiveStateCapture/SaveRefusal``) from a failed one.
-    func suspendForTermination(_ instance: VMInstance) async throws {
-        try await lifecycle.save(instance, origin: .terminationSave)
     }
 
     // MARK: - Restart

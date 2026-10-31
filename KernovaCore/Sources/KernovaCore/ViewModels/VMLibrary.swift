@@ -465,19 +465,12 @@ package final class VMLibrary: VMAdmissionPeers {
     /// Whether the app's termination has begun — from then on, admission
     /// refuses every operation the termination did not ask for.
     ///
-    /// Cleared only by ``cancelTermination()``: a termination otherwise ends
-    /// the process.
+    /// Never cleared: a termination always ends the process.
     private(set) var isTerminating = false
 
     /// Begins the app's termination.
     func beginTermination() {
         isTerminating = true
-    }
-
-    /// Ends a termination the save pass gave up on, so the library takes work
-    /// again.
-    func cancelTermination() {
-        isTerminating = false
     }
 
     /// What keeps this process from passing a host USB accessory through to a

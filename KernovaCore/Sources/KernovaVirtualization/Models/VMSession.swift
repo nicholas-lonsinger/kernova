@@ -24,9 +24,6 @@ private actor VMQueueIsolation {
     func makeSession(
         id: UUID, configuration: sending VZVirtualMachineConfiguration, events: VMSessionEvents
     ) -> VMSession {
-        // The configuration's order is the ports' order: a boot attaches its
-        // devices in it, and a restore rebuilds the devices its save held in it.
-        let usbDevices = configuration.usbControllers.first?.usbDevices.map(\.uuid) ?? []
         let vm = VZVirtualMachine(configuration: configuration, queue: queue)
         // Read outside `assert`: its autoclosure would capture `vm`.
         let vmQueue = vm.queue
@@ -44,8 +41,7 @@ private actor VMQueueIsolation {
             usbAdapter = usb
         }
         return VMSession(
-            id: id, queue: queue, vm: vm, delegateAdapter: adapter, usbDelegateAdapter: usbAdapter,
-            usbPorts: USBPortLayout(starting: usbDevices))
+            id: id, queue: queue, vm: vm, delegateAdapter: adapter, usbDelegateAdapter: usbAdapter)
     }
 }
 
@@ -115,10 +111,6 @@ package actor VMSession: VMSessionOperating {
 
     private let vm: VZVirtualMachine
 
-    /// Where the USB devices sit: those the session started with, then each
-    /// attach this session made.
-    private var usbPorts: USBPortLayout
-
     /// VZ holds its delegate weakly; the session retains it.
     private let delegateAdapter: VMDelegateAdapter
 
@@ -131,9 +123,8 @@ package actor VMSession: VMSessionOperating {
 
     fileprivate init(
         id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine,
-        delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?, usbPorts: USBPortLayout
+        delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?
     ) {
-        self.usbPorts = usbPorts
         self.id = id
         self.queue = queue
         self.vm = vm
@@ -407,13 +398,7 @@ package actor VMSession: VMSessionOperating {
                 }
             }
         }
-        usbPorts.attached(uuid)
         return uuid
-    }
-
-    package func usbDevicesAboveGap(removing removed: Set<UUID>) -> [UUID] {
-        guard let controller = vm.usbControllers.first else { return [] }
-        return usbPorts.devicesAboveGap(controller.usbDevices.map(\.uuid).filter { !removed.contains($0) })
     }
 
     /// Attaches the disk image at `url` as a USB mass storage device, building
