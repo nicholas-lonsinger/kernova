@@ -10,6 +10,8 @@ import KernovaWire
 /// One connection that has said Hello.
 struct PeerRecord: Sendable {
     var handle: PeerHandle
+    /// The connection that said the Hello.
+    var connection: any HostConnectionHandle
     var claim: PeerClaim
     var state: PeerSessionState
     /// Its latest `featuresChanged`; `nil` until the first, which the host endpoint emits with the Hello
@@ -54,9 +56,10 @@ struct AgentHubState: Sendable {
     /// already hold its identity (spec §4.5): every Hello is resolved as it arrives, so no two peers in
     /// the set share a key.
     mutating func helloReceived(_ handle: PeerHandle, claim: PeerClaim, state: PeerSessionState) -> HelloOutcome? {
-        guard connections[handle] != nil else { return nil }
+        guard let connection = connections[handle] else { return nil }
         nextConnectedOrder += 1
-        let incoming = PeerRecord(handle: handle, claim: claim, state: state, connectedOrder: nextConnectedOrder)
+        let incoming = PeerRecord(
+            handle: handle, connection: connection, claim: claim, state: state, connectedOrder: nextConnectedOrder)
         for (existingHandle, existing) in peers {
             switch PeerConflict.resolve(existing: existing.conflictParty, incoming: incoming.conflictParty) {
             case .noConflict:

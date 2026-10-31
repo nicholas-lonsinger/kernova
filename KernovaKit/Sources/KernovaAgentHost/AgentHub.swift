@@ -220,16 +220,22 @@ public final class AgentHub: Sendable {
     }
 
     private func ask(_ handle: PeerHandle, _ action: PowerAction) {
-        // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in the same turn, and a
-        // peer and its connection leave the hub together; so both are present.
-        let (connection, id, record) = state.withLock { state in
-            let connection = state.connections[handle]!
-            let record = state.peers[handle]!
-            let id = state.power.drawID(connection.generation)
+        let asked = state.withLock { state -> (PowerRequestID, PeerRecord)? in
+            // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in this turn, so the
+            // record is present; a miss is answered as a refusal, so the routing moves on either way.
+            guard let record = state.peers[handle] else {
+                state.power.routing.handle(
+                    .refused(WireError(.internal, debugDetail: "the peer left before it was asked")), from: handle,
+                    peers: state.routingPeers)
+                return nil
+            }
+            let id = state.power.drawID(record.connection.generation)
             state.power.requests[id] = handle
             state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
-            return (connection, id, record)
+            return (id, record)
         }
+        guard let (id, record) = asked else { return }
+        let connection = record.connection
         logger.log(
             .notice, "Asking the \(Self.name(record), privacy: .public) to \(Self.name(action), privacy: .public)")
         connection.send(.requestPower(id, action))
