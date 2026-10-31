@@ -1,7 +1,7 @@
 import KernovaAgentCore
 
 /// Where one install scope's files go: the agent's own root, holding its two slots, and the units, autostart
-/// entry, account and polkit rule that run it.
+/// entry, account, polkit rule and udev rule that run and guard it.
 struct InstallLayout: Equatable, Sendable {
     /// `.user` or `.system`.
     let scope: InstallScope
@@ -70,8 +70,11 @@ struct InstallLayout: Equatable, Sendable {
     static let systemAccount = "kernova-agent"
     /// Declares ``systemAccount`` to systemd-sysusers.
     static let sysusersFile = "/etc/sysusers.d/kernova-agent.conf"
-    /// Grants ``systemAccount`` the power actions.
+    /// Grants ``systemAccount`` the power actions, and refuses powering off the VM's USB disks.
     static let polkitRuleFile = "/etc/polkit-1/rules.d/50-kernova-agent.rules"
+    /// Marks the VM's USB disks as ones udisks cannot power off. It sorts after `60-persistent-storage.rules`,
+    /// which sets the `ID_` properties it matches.
+    static let udevRuleFile = "/etc/udev/rules.d/61-kernova-agent.rules"
 
     /// The service that runs the peer.
     var serviceName: String { scope == .system ? "kernova-agent-system.service" : "kernova-agent.service" }

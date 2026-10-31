@@ -152,8 +152,14 @@ enum UnitFiles {
         #"u \#(InstallLayout.systemAccount) - "Kernova guest agent" \#(layout.root) -"#
     }
 
-    /// The polkit rule granting the system peer's account the four power actions and nothing else: no
-    /// `*-ignore-inhibit`, so a block inhibitor still stops it.
+    /// The polkit rules. The first grants the system peer's account the four power actions and nothing else:
+    /// no `*-ignore-inhibit`, so a block inhibitor still stops it.
+    ///
+    /// The second refuses udisks' `Drive.PowerOff` on the VM's USB disks, which crashes Virtualization's
+    /// VirtualMachine process. ``udevRule`` hides the action; this refuses a caller that asks anyway, as
+    /// `udisksctl power-off` does, since udisksd does not check `CanPowerOff` before acting. udisks documents
+    /// `drive.vendor` and `drive.model` as polkit variables holding `Drive:Vendor` and `Drive:Model`. polkit
+    /// authorizes root without consulting rules.
     static let polkitRule = """
         // Written by kernova-agent install --system.
         polkit.addRule(function(action, subject) {
@@ -165,6 +171,25 @@ enum UnitFiles {
                 return polkit.Result.YES;
             }
         });
+
+        polkit.addRule(function(action, subject) {
+            if ((action.id == "org.freedesktop.udisks2.power-off-drive" ||
+                 action.id == "org.freedesktop.udisks2.power-off-drive-system" ||
+                 action.id == "org.freedesktop.udisks2.power-off-drive-other-seat") &&
+                action.lookup("drive.vendor") == "Apple" &&
+                action.lookup("drive.model") == "Virtual Disk") {
+                return polkit.Result.NO;
+            }
+        });
+
+        """
+
+    /// The udev rule that sets udisks' documented `UDISKS_CAN_POWER_OFF` override to 0 on the VM's USB disks,
+    /// so `Drive:CanPowerOff` is false and GNOME Files offers no Safely Remove Drive. Plain eject, udisks'
+    /// `Drive.Eject`, stays offered and is unaffected.
+    static let udevRule = """
+        # Written by kernova-agent install --system.
+        ACTION!="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_VENDOR}=="Apple", ENV{ID_MODEL}=="Virtual_Disk", ENV{UDISKS_CAN_POWER_OFF}="0"
 
         """
 

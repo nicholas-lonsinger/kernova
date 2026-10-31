@@ -39,6 +39,11 @@ struct InstallPlanTests {
             ])
         #expect(
             plan.after.map(\.arguments) == [
+                ["udevadm", "control", "--reload"],
+                [
+                    "udevadm", "trigger", "--action=change", "--subsystem-match=block",
+                    "--property-match=ID_MODEL=Virtual_Disk",
+                ],
                 ["systemctl", "daemon-reload"],
                 ["systemctl", "enable", "--now", "kernova-agent-rollback.timer"],
                 ["systemctl", "enable", "kernova-agent-system.service"],
@@ -106,6 +111,10 @@ struct InstallPlanTests {
                 "  write /etc/sysusers.d/kernova-agent.conf",
                 "  make directory /etc/polkit-1/rules.d, if missing",
                 "  write /etc/polkit-1/rules.d/50-kernova-agent.rules",
+                "  make directory /etc/udev/rules.d, if missing",
+                "  write /etc/udev/rules.d/61-kernova-agent.rules",
+                "  run udevadm control --reload",
+                "  run udevadm trigger --action=change --subsystem-match=block --property-match=ID_MODEL=Virtual_Disk",
                 "  run systemctl daemon-reload",
                 "  run systemctl enable --now kernova-agent-rollback.timer",
                 "  run systemctl enable kernova-agent-system.service",
@@ -124,9 +133,28 @@ struct InstallPlanTests {
                 "  remove /etc/systemd/system/kernova-agent-rollback.timer, if present",
                 "  remove /etc/systemd/system/kernova-agent-rollback.service, if present",
                 "  remove /etc/polkit-1/rules.d/50-kernova-agent.rules, if present",
+                "  remove /etc/udev/rules.d/61-kernova-agent.rules, if present",
                 "  remove /etc/sysusers.d/kernova-agent.conf, if present",
                 "  remove /opt/kernova-agent and everything in it, if present",
+                "  run udevadm control --reload",
+                "  run udevadm trigger --action=change --subsystem-match=block --property-match=ID_MODEL=Virtual_Disk",
                 "  run systemctl daemon-reload",
             ])
+    }
+
+    @Test(
+        "A user install and uninstall touch no udev rule, and the install says only --system writes the USB disk guard"
+    )
+    func userScopeHasNoUSBGuard() {
+        let install = InstallPlan.install(Self.user)
+        let uninstall = InstallPlan.uninstall(Self.user)
+        #expect(!install.writes.contains { Self.path(of: $0).hasPrefix("/etc/") })
+        #expect(!(install.after + uninstall.after).contains { $0.arguments.first == "udevadm" })
+        #expect(
+            InstallPlan.dryRun(install, heading: "h").last
+                == "Only install --system writes the rules that stop this guest powering off the VM's USB disks, which crashes the VM; they live in /etc, which this install does not write."
+        )
+        #expect(uninstall.notes.isEmpty)
+        #expect(InstallPlan.install(Self.system).notes.isEmpty)
     }
 }
