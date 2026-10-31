@@ -69,7 +69,10 @@ struct CloneVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<VMEntity> {
-        .result(value: try await gateway.clone(vm.id, outcome: outcome.outcome))
+        .result(
+            value: try await runWithConsent { consent in
+                try await gateway.clone(vm.id, outcome: outcome.outcome, consent: consent)
+            })
     }
 }
 

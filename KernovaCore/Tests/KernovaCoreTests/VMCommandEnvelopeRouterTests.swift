@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 15)
+        #expect(VMCommandRequest.currentProtocolVersion == 16)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -392,7 +392,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(
-            .takeSnapshot(.id(instance.id), name: "Fresh", notes: ""))
+            .takeSnapshot(.id(instance.id), name: "Fresh", notes: "", consent: .none))
 
         guard case .snapshot(let snapshot) = response.result else {
             Issue.record("expected a snapshot, got \(response.result)")
@@ -814,7 +814,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, name: "Source")
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
+            .clone(.id(instance.id), outcome: .newMachine, consent: .none, waitForOutcome: true))
 
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
@@ -832,7 +832,7 @@ struct VMCommandEnvelopeRouterTests {
         harness.storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
+            .clone(.id(instance.id), outcome: .newMachine, consent: .none, waitForOutcome: true))
 
         guard case .operationFailed(let verb, _, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -852,7 +852,7 @@ struct VMCommandEnvelopeRouterTests {
         defer { hold.signal() }
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
+            .clone(.id(instance.id), outcome: .newMachine, consent: .none, waitForOutcome: false))
 
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
@@ -873,7 +873,7 @@ struct VMCommandEnvelopeRouterTests {
         harness.storage.setCloneHold(hold)
         let waiting = Task {
             try await harness.transport.send(
-                .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
+                .clone(.id(instance.id), outcome: .newMachine, consent: .none, waitForOutcome: true))
         }
         // Held inside the copy, so the cancel is what the settle finds rather
         // than a race with it.
@@ -902,7 +902,7 @@ struct VMCommandEnvelopeRouterTests {
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
+            .clone(.id(instance.id), outcome: .newMachine, consent: .none, waitForOutcome: false))
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return
@@ -932,7 +932,7 @@ struct VMCommandEnvelopeRouterTests {
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
+            .clone(.id(instance.id), outcome: .newMachine, consent: .none, waitForOutcome: false))
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return
@@ -1036,10 +1036,81 @@ struct VMCommandEnvelopeRouterTests {
     func quitCrossesTheWire() async throws {
         let harness = makeHarness()
 
-        #expect(try await harness.transport.send(.quit).result == .ok)
+        #expect(try await harness.transport.send(.quit(consent: .none)).result == .ok)
 
         try await harness.wired.quitRequested.wait { harness.wired.quitRequests > 0 }
-        #expect(harness.wired.quitRequests == 1)
+        #expect(harness.wired.quitConsents == [Consent([.unplugUSBDisks])])
+    }
+
+    /// A running VM holding one USB disk: a writable one every save warns
+    /// about, a read-only one only the reminder covers.
+    private func makeVMHoldingADisk(in harness: Harness, readOnly: Bool) -> VMInstance {
+        let sessionID = UUID()
+        let item = RemovableMediaItem(path: externalPath("disk.img"), readOnly: readOnly)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [item]
+        }
+        instance.beginSessionContextForTesting()
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: readOnly), for: sessionID)
+        return instance
+    }
+
+    /// The confirmation a response refused for, if it refused for one.
+    private func askedKind(_ response: VMCommandResponse) -> ConfirmationKind? {
+        guard case .confirmationRequired(let prompt) = response.failure else { return nil }
+        return prompt.kind
+    }
+
+    /// A live snapshot of a VM whose guest can write a removable medium is
+    /// refused as a stopped-VM change before any USB question, so the
+    /// snapshot's consent is shown through the reminder the router gives.
+    @Test("A save over the wire without consent asks the at-risk USB warning")
+    func savesWithoutConsentAskTheUSBWarning() async throws {
+        let harness = makeHarness()
+        let instance = makeVMHoldingADisk(in: harness, readOnly: false)
+        let selector = VMSelector.id(instance.id)
+
+        let verbs: [VMCommandRequest.Verb] = [
+            .suspend(selector, consent: .none),
+            .clone(selector, outcome: .newMachine, consent: .none, waitForOutcome: true),
+            .quit(consent: .none),
+        ]
+        for verb in verbs {
+            let response = try await harness.transport.send(verb)
+            #expect(askedKind(response) == .unplugUSBDisksAtRisk, "\(verb.verb)")
+        }
+        #expect(instance.status == .running)
+        #expect(harness.wired.quitRequests == 0)
+    }
+
+    @Test("A save over the wire given every consent unplugs an at-risk USB disk")
+    func savesWithConsentProceed() async throws {
+        let harness = makeHarness()
+        let suspended = makeVMHoldingADisk(in: harness, readOnly: false)
+        #expect(
+            try await harness.transport.send(.suspend(.id(suspended.id), consent: .all)).result == .ok)
+        #expect(suspended.status == .suspended)
+
+        _ = makeVMHoldingADisk(in: harness, readOnly: false)
+        #expect(try await harness.transport.send(.quit(consent: .all)).result == .ok)
+        try await harness.wired.quitRequested.wait { harness.wired.quitRequests > 0 }
+        #expect(harness.wired.quitConsents == [.all])
+    }
+
+    @Test("The router gives the USB reminder itself: a read-only disk's save asks nothing")
+    func routerGivesTheUSBReminder() async throws {
+        let harness = makeHarness()
+        let snapshotted = makeVMHoldingADisk(in: harness, readOnly: true)
+        let response = try await harness.transport.send(
+            .takeSnapshot(.id(snapshotted.id), name: "Fresh", notes: "", consent: .none))
+        #expect(response.failure == nil)
+        #expect(snapshotted.snapshotManifest.ordered.map(\.name) == ["Fresh"])
+
+        let suspended = makeVMHoldingADisk(in: harness, readOnly: true)
+        #expect(
+            try await harness.transport.send(.suspend(.id(suspended.id), consent: .none)).result == .ok)
+        #expect(suspended.status == .suspended)
     }
 
     // MARK: - Configuration

@@ -232,6 +232,9 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Unplug a USB disk the guest can write to, which may lose changes the guest has not written yet.">
+				<cocoa key="Confirmation"/>
+			</parameter>
 		</command>
 
 		<command name="reveal" code="KrnvRevl" description="Bring a virtual machine in front of the user, whatever state it is in.">

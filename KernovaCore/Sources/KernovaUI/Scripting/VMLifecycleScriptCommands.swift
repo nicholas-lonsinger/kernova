@@ -190,11 +190,11 @@ final class VMResumeScriptCommand: VMScriptCommand {
     }
 }
 
-/// `suspend virtual machine …`
+/// `suspend virtual machine … [with confirmation]`
 @objc(VMSuspendScriptCommand)
 final class VMSuspendScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.suspend(selectors)
+        try await gateway.suspend(selectors, confirmation: flag("Confirmation"))
     }
 }
 

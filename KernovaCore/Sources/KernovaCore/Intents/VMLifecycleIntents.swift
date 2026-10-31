@@ -129,7 +129,9 @@ struct SuspendVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.suspend(vm.id)
+        try await runWithConsent { consent in
+            try await gateway.suspend(vm.id, consent: consent)
+        }
         return .result()
     }
 }

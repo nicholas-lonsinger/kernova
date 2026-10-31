@@ -10,7 +10,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 15
+    public static let currentProtocolVersion = 16
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -67,7 +67,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             VMSelector, disposition: StopDisposition, consent: Consent, timeout: TimeInterval?)
         case pause(VMSelector)
         case resume(VMSelector, consent: Consent)
-        case suspend(VMSelector)
+        case suspend(VMSelector, consent: Consent)
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
         case restart(VMSelector, timeout: TimeInterval?, consent: Consent)
@@ -79,7 +79,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// Selects the VM's bundle in the Finder, which is what comes forward.
         case showInFinder(VMSelector)
 
-        case takeSnapshot(VMSelector, name: String, notes: String)
+        case takeSnapshot(VMSelector, name: String, notes: String, consent: Consent)
         case revertToSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case deleteSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
@@ -88,7 +88,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// `outcome` `nil` follows the app's clone preference.
         /// `waitForOutcome` answers the settled VM, or throws the copy's
         /// failure; without it the row the copy fills is answered at once.
-        case clone(VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool)
+        case clone(VMSelector, outcome: CloneOutcome?, consent: Consent, waitForOutcome: Bool)
         case rename(VMSelector, newName: String)
         case delete(VMSelector, permanently: Bool, alsoRemoving: [UUID], consent: Consent)
         /// `path` is read as this Mac names it; the app obtains the authority to
@@ -127,7 +127,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
         /// Quits Kernova the way the status item's Quit does, save-suspending
         /// running and paused VMs on the way out.
-        case quit
+        case quit(consent: Consent)
 
         /// Which verb this is, for a transport mapping onto its own naming.
         public var verb: VMVerb {

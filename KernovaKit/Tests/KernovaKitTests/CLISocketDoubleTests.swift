@@ -15,7 +15,7 @@ struct CLISocketDoubleTests {
         defer { client.close() }
         client.waitForFrames(upTo: testWaitBackstop)
         listener.serve([[VMCommandResponse(result: .ok)]], holdingOpen: true)
-        try client.post(.quit)
+        try client.post(.quit(consent: .none))
         // Answered, so the serve loop has accepted and is now reading for a
         // request that never comes.
         #expect(try client.nextFrame()?.result == .ok)
