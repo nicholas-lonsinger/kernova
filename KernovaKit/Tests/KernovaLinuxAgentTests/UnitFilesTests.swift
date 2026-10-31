@@ -1,3 +1,4 @@
+import KernovaAgentCore
 import Testing
 
 @testable import KernovaLinuxAgent
