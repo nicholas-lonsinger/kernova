@@ -473,4 +473,35 @@ struct AppAlertConfigurationsTests {
         // The warm wording, which promises a replacement session, must not leak.
         #expect(!alert.message.contains("replaced by"))
     }
+
+    @Test("A Linux guest's disk alert gives its command and copies it, where a macOS guest's names Finder")
+    func installerMountedOnLinux() {
+        let (configurations, _) = makeConfigurations()
+        var copied: [String] = []
+        let install = configurations.installerMountedConfig(
+            "Ubuntu", guestOS: .linux, purpose: .install, delivery: .usb
+        ) { copied.append($0) }
+        #expect(install.message.contains(LinuxAgentDisk.installCommand))
+        // The command mounts the disk itself where the desktop has not; the lines after it serve a guest with no desktop.
+        #expect(install.message.contains(LinuxAgentDisk.installCommandPrecondition))
+        #expect(install.message.contains(LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")))
+        #expect(install.buttons.map(\.title) == ["Copy Command", "Done"])
+        #expect(install.buttons.first?.role == .default)
+        install.buttons.first?.action()
+        #expect(copied == [LinuxAgentDisk.installCommand])
+
+        let manage = configurations.installerMountedConfig(
+            "Ubuntu", guestOS: .linux, purpose: .manage, delivery: .usb
+        ) { copied.append($0) }
+        #expect(manage.message.contains(LinuxAgentDisk.uninstallCommand))
+        #expect(manage.message.contains("Adding --system to either also installs or removes the system service."))
+        manage.buttons.last?.action()
+        #expect(copied.last == LinuxAgentDisk.uninstallCommand)
+
+        let macOS = configurations.installerMountedConfig(
+            "Sequoia", guestOS: .macOS, purpose: .install, delivery: .usb
+        ) { copied.append($0) }
+        #expect(macOS.message.contains("Finder"))
+        #expect(macOS.buttons.map(\.title) == ["OK"])
+    }
 }

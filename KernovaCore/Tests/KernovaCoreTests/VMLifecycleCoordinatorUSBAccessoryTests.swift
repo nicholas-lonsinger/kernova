@@ -291,8 +291,9 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
                     before.filter { !still.contains($0.deviceID) }.map(\.accessory.registryID))
                 service.accessories.removeAll { ejected.contains($0.registryID) }
             }
-            try await VMLiveStateCapture.detachUSBAccessories(
-                owingReturns: context, session: session)
+            try await VMLiveStateCapture.captureLiveState(
+                context, session: session, wasRunning: false, saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+            ) {}
         }
     }
 

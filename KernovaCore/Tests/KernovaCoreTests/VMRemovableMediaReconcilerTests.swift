@@ -111,6 +111,21 @@ struct VMRemovableMediaReconcilerTests {
         }
     }
 
+    @Test("Items added together attach in the list's order")
+    func addsAttachInListOrder() async throws {
+        let mock = MockRemovableMediaDeviceService()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let (instance, _) = makeRunningInstance(in: harness)
+        let paths = (0..<6).map { "/tmp/disk-\($0).iso" }
+
+        harness.library.editConfiguration(of: instance, as: .hotPlugMedia) {
+            $0.removableMedia = paths.map { RemovableMediaItem(path: $0, readOnly: true) }
+        }
+
+        try await waitForChange { instance.liveRemovableMedia.count == paths.count }
+        #expect(mock.attachedPaths == paths)
+    }
+
     @Test("apply attaches a new removable item when added to the list")
     func liveRemovableAddAttaches() async throws {
         let mock = MockRemovableMediaDeviceService()

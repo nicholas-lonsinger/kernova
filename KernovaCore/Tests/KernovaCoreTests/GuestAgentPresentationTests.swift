@@ -106,7 +106,7 @@ struct GuestAgentPresentationTests {
         #expect(unlabelled.hub?.peers.first?.state == "Connected")
     }
 
-    @Test("Agents all unresponsive read as unresponsive; one responsive agent keeps the presentation current")
+    @Test("Any unresponsive agent makes the presentation unresponsive, and its line says so")
     func hubResponsiveness() {
         let unresponsive = GuestAgentPresentation(
             hub: Self.snapshot([
@@ -114,8 +114,9 @@ struct GuestAgentPresentationTests {
             ]))
         #expect(unresponsive.status == .unresponsive(version: "1.1"))
         let mixed = GuestAgentPresentation(
-            hub: Self.snapshot([Self.peer(2, version: "1.1", isResponsive: false), Self.peer(1, role: .systemPeer)]))
-        #expect(mixed.status == .current(version: "1.1"))
+            hub: Self.snapshot([Self.peer(2, role: .systemPeer), Self.peer(1, version: "0.9", isResponsive: false)]))
+        #expect(mixed.status == .unresponsive(version: "0.9"))
+        #expect(mixed.hub?.peers.map(\.state) == ["Up to date", "Not responding"])
     }
 
     @Test("A session agent with no user name is named by its role")

@@ -11,10 +11,13 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
 
     package func attach(
         diskImagePath: String,
+        attaching file: URL?,
         readOnly: Bool,
         desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> RemovableMediaDeviceInfo {
+        let name = URL(fileURLWithPath: diskImagePath).lastPathComponent
+        let attachedPath = file?.path(percentEncoded: false) ?? diskImagePath
         guard let session = instance.session else {
             Self.logger.log(
                 .error,
@@ -30,25 +33,25 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
 
         let resolved: PathValidation.ResolvedPath
         do {
-            resolved = try PathValidation.resolveFile(at: diskImagePath, requireWritable: !readOnly)
+            resolved = try PathValidation.resolveFile(at: attachedPath, requireWritable: !readOnly)
             resolved.logResolution(logger: Self.logger, context: "USB disk image")
         } catch {
-            let basename = URL(fileURLWithPath: diskImagePath).lastPathComponent
+            let basename = URL(fileURLWithPath: attachedPath).lastPathComponent
             switch error {
             case .notFound:
                 Self.logger.log(.error, "USB disk image not found: '\(basename, privacy: .public)'")
-                throw RemovableMediaDeviceError.diskImageNotFound(diskImagePath)
+                throw RemovableMediaDeviceError.diskImageNotFound(attachedPath)
             case .unexpectedType:
                 Self.logger.log(.error, "USB disk image path is a directory: '\(basename, privacy: .public)'")
-                throw RemovableMediaDeviceError.diskImageIsDirectory(diskImagePath)
+                throw RemovableMediaDeviceError.diskImageIsDirectory(attachedPath)
             case .notWritable:
                 Self.logger.log(.error, "USB disk image is not writable: '\(basename, privacy: .public)'")
-                throw RemovableMediaDeviceError.diskImageNotWritable(diskImagePath)
+                throw RemovableMediaDeviceError.diskImageNotWritable(attachedPath)
             case .notReadable:
                 Self.logger.log(
                     .fault, "Unexpected .notReadable from resolveFile for '\(basename, privacy: .public)'")
                 assertionFailure("resolveFile should never throw .notReadable")
-                throw RemovableMediaDeviceError.diskImageNotFound(diskImagePath)
+                throw RemovableMediaDeviceError.diskImageNotFound(attachedPath)
             }
         }
 
@@ -59,22 +62,23 @@ package final class RemovableMediaDeviceService: RemovableMediaAttaching {
         } catch let error as VMSessionError {
             Self.logger.log(
                 .error,
-                "Cannot attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+                "Cannot attach USB device '\(name, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             throw RemovableMediaDeviceError.noUSBController
         } catch {
             Self.logger.log(
                 .error,
-                "Failed to attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to attach USB device '\(name, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
 
         let info = RemovableMediaDeviceInfo(id: uuid, path: diskImagePath, readOnly: readOnly)
 
+        let source = url.lastPathComponent == name ? "" : " from '\(url.lastPathComponent)'"
         Self.logger.log(
             .notice,
-            "Attached USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
+            "Attached USB device '\(info.displayName, privacy: .public)'\(source, privacy: .public) to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
         )
         return info
     }

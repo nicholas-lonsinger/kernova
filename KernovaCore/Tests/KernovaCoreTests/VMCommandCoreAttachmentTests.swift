@@ -20,12 +20,14 @@ struct VMCommandCoreAttachmentTests {
 
     private func makeHarness(
         diskImages: MockDiskImageService = MockDiskImageService(),
-        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement)
+        usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
+        bundleProducts: AppBundleProducts = .testing
     ) -> Harness {
         Harness(
             WiredCommandCore(
                 virtualization: MockVirtualizationService(), diskImages: diskImages,
-                usbAccessoryPassthrough: usbAccessoryPassthrough, preferences: preferences))
+                usbAccessoryPassthrough: usbAccessoryPassthrough, preferences: preferences,
+                bundleProducts: bundleProducts))
     }
 
     @discardableResult
@@ -1373,22 +1375,130 @@ struct VMCommandCoreAttachmentTests {
     // MARK: - Guest agent disk
 
     @Test("Mounting attaches the installer once and reports it present on a second call")
-    func mountGuestAgentDiskIsIdempotent() throws {
+    func mountGuestAgentDiskIsIdempotent() async throws {
         let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
 
-        #expect(try harness.core.mountGuestAgentDisk(.id(instance.id)) == .attached(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .attached(.usb))
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
 
-        #expect(try harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
         #expect(instance.configuration.removableMedia?.count == 1)
     }
 
+    @Test("A Linux guest gets the agent's disk, made once and labelled as the guest shows it")
+    func mountLinuxAgentDisk() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 5000).write(to: agent)
+        let cache = GuestAgentDiskCache(
+            directory: scratch.url.appending(path: "GuestAgentDisks"), files: LinuxAgentDisk.bundledFiles)
+        let harness = makeHarness(
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgents: .linux(agent: agent, disk: cache)))
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(AgentHubProbe())
+
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .attached(.usb))
+        let item = try #require(instance.configuration.removableMedia?.first)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(item.path == cache.url.path(percentEncoded: false))
+        #expect(item.label == "KERNOVA_AGENT")
+        #expect(item.readOnly)
+        #expect(instance.hasGuestAgentInstallerMounted)
+        let image = try Data(contentsOf: cache.url)
+        #expect(image.count % 2048 == 0)
+        #expect(String(decoding: image[16 * 2048 + 40..<16 * 2048 + 53], as: UTF8.self) == "KERNOVA_AGENT")
+
+        // The guest gets the VM's own copy of the disk, with the disk's bytes.
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
+        #expect(try Data(contentsOf: copy) == image)
+        try await waitForChange { !instance.liveRemovableMedia.isEmpty }
+        #expect(harness.removableMedia.lastAttachedPath == copy.path(percentEncoded: false))
+        // An update rewriting the app's disk leaves the VM's copy as it was.
+        try Data("a later build's disk".utf8).write(to: cache.url)
+        #expect(try Data(contentsOf: copy) == image)
+
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
+        // The disk is the app's, so a VM's delete never offers to trash it.
+        #expect(await harness.core.externalAttachments(for: instance).isEmpty)
+
+        // An eject takes the entry and the copy.
+        instance.onAgentBecameCurrent?()
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
+    }
+
+    @Test("A guest's power-off takes the installer disk's entry and the VM's copy")
+    func powerOffRemovesTheInstallerCopy() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS)
+        instance.beginSessionContextForTesting()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id))
+        try await waitForChange { instance.phase == .running(sessionID: sessionID) }
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(
+            for: try #require(instance.configuration.removableMedia?.first))
+        #expect(FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
+
+        instance.handleSessionEvent(.guestDidStop)
+        try await waitForChange { instance.phase == .stopped }
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
+    }
+
+    /// A running macOS VM holding an installer entry another build of Kernova
+    /// attached: it names that build's DMG, and the bundle holds its copy.
+    private func otherBuildsInstaller(in harness: Harness) throws -> (VMInstance, RemovableMediaItem, URL) {
+        let item = RemovableMediaItem(
+            path: "/Applications/Other Kernova.app/Contents/Resources/KernovaMacOSAgent.dmg", readOnly: true,
+            label: "Kernova Guest Agent")
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS) {
+            $0.removableMedia = [item]
+        }
+        instance.beginSessionContextForTesting()
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
+        try FileManager.default.createDirectory(
+            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("the other build's disk".utf8).write(to: copy)
+        return (instance, item, copy)
+    }
+
+    @Test("An entry whose copy the bundle holds is the installer, whichever build attached it")
+    func anotherBuildsInstallerIsStillTheInstaller() async throws {
+        let harness = makeHarness()
+        let (instance, item, _) = try otherBuildsInstaller(in: harness)
+
+        #expect(instance.isGuestAgentInstaller(item))
+        #expect(instance.hasGuestAgentInstallerMounted)
+        // The other build's DMG is the app's, never offered to the trash.
+        #expect(await harness.core.externalAttachments(for: instance).isEmpty)
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
+    }
+
+    @Test("The Storage panel's Eject and Remove take an installer entry's copy with it")
+    func storageEditsRemoveTheInstallerCopy() async throws {
+        let harness = makeHarness()
+        let (ejected, ejectedItem, ejectedCopy) = try otherBuildsInstaller(in: harness)
+        try harness.core.ejectRemovableMedia(.id(ejected.id), item: ejectedItem.id)
+        #expect(ejected.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: ejectedCopy.path(percentEncoded: false)))
+
+        let (removed, removedItem, removedCopy) = try otherBuildsInstaller(in: harness)
+        try await harness.core.removeRemovableMedia(
+            .id(removed.id), item: removedItem.id, trashFile: true, consent: .all)
+        #expect(removed.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: removedCopy.path(percentEncoded: false)))
+    }
+
     @Test("A guest that takes the disk on virtio attaches nothing and says so")
-    func mountGuestAgentDiskOnVirtioGuest() throws {
+    func mountGuestAgentDiskOnVirtioGuest() async throws {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS
@@ -1396,13 +1506,13 @@ struct VMCommandCoreAttachmentTests {
             $0.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         }
 
-        #expect(try harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.virtio))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.virtio))
         #expect(instance.configuration.removableMedia == nil)
         #expect(instance.configuration.storageDisks == nil)
     }
 
     @Test("Unmounting drops the installer entry, and an agent handshake does it unasked")
-    func unmountGuestAgentDisk() throws {
+    func unmountGuestAgentDisk() async throws {
         let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
         let harness = makeHarness()
@@ -1417,7 +1527,7 @@ struct VMCommandCoreAttachmentTests {
 
         // The auto-eject the core wires onto the library fires the same detach
         // when the agent it carries handshakes as current.
-        try harness.core.mountGuestAgentDisk(.id(instance.id))
+        try await harness.core.mountGuestAgentDisk(.id(instance.id))
         instance.onAgentBecameCurrent?()
         #expect(instance.configuration.removableMedia == nil)
     }
@@ -1484,21 +1594,20 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
-    @Test("A VM with no live session to look inside refuses the guest agent disk")
-    func guestAgentDiskNeedsALiveMacOSGuest() async throws {
+    @Test("A VM with no live session to look inside refuses the guest agent disk, as does a build without it")
+    func guestAgentDiskNeedsALiveSession() async throws {
         let harness = makeHarness()
         let stopped = makeInstance(in: harness, name: "Stopped", guestOS: .macOS)
-        let linux = makeInstance(in: harness, name: "Linux", phase: .running(sessionID: UUID()))
+        let stoppedLinux = makeInstance(in: harness, name: "Stopped Linux")
+        // `.testing` bundles no Linux agent.
+        let unbundled = makeInstance(in: harness, name: "Linux", phase: .running(sessionID: UUID()))
 
-        #expect(throws: CommandError.self) {
-            _ = try harness.core.mountGuestAgentDisk(.id(stopped.id))
+        for instance in [stopped, stoppedLinux, unbundled] {
+            await #expect(throws: CommandError.self) {
+                _ = try await harness.core.mountGuestAgentDisk(.id(instance.id))
+            }
+            #expect(instance.configuration.removableMedia == nil)
         }
-        #expect(throws: CommandError.self) {
-            _ = try harness.core.mountGuestAgentDisk(.id(linux.id))
-        }
-
-        #expect(stopped.configuration.removableMedia == nil)
-        #expect(linux.configuration.removableMedia == nil)
     }
 
     // MARK: - Start-failure recovery

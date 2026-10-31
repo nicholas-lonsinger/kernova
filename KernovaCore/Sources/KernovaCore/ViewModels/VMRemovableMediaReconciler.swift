@@ -176,9 +176,10 @@ final class VMRemovableMediaReconciler {
                 toAttach.append(desired)
             }
         }
-        // Iterate the deduped dictionary, not `target`, so a config with
-        // duplicate ids can't queue two attaches for the same UUID.
-        for targetItem in targetByID.values where trackedByID[targetItem.id] == nil {
+        // Each id once, so a config with duplicate ids can't queue two attaches
+        // for one UUID.
+        var queued = Set(toAttach.map(\.id))
+        for targetItem in target where trackedByID[targetItem.id] == nil && queued.insert(targetItem.id).inserted {
             toAttach.append(targetItem)
         }
 
@@ -219,11 +220,13 @@ final class VMRemovableMediaReconciler {
                 // opens the attachment; on success it is registered with the instance
                 // (released at detach or teardown), and released by deinit if it throws.
                 let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
+                // An installer entry names the app's disk; the guest gets the VM's copy of it.
+                let installerCopy = item.installerCopy(in: instance.bundleLayout)
                 _ = try await lifecycle.attachRemovableMedia(
                     diskImagePath: item.path,
                     readOnly: item.readOnly,
                     desiredUUID: item.id,
-                    resolvedURL: scope?.url,
+                    resolvedURL: installerCopy ?? scope?.url,
                     to: instance,
                     for: sessionID
                 )

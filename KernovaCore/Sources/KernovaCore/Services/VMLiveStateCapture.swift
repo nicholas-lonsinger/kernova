@@ -12,9 +12,9 @@ package enum VMLiveStateCapture {
 
     /// The one body every capture from a live VM runs: `prepare` lays down
     /// the destination before the guest is touched, then inside one pause the
-    /// guest's memory is written where `savingStateTo` says — every
-    /// passthrough USB accessory taken off first and owed back — and `copy`
-    /// copies the disks beside it.
+    /// guest's memory is written where `savingStateTo` says — through
+    /// ``captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)`` —
+    /// and `copy` copies the disks beside it.
     ///
     /// Answers the guest put back the way it was found, or — on a failure,
     /// which leaves whatever `prepare` laid down for the caller to discard —
@@ -32,10 +32,8 @@ package enum VMLiveStateCapture {
             } ?? false
         do {
             let prepared = try await prepare()
-            try await detachUSBAccessories(owingReturns: capture, session: session)
             try await captureLiveState(
-                session: session, execution: capture.operation.liveExecution(),
-                wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
+                capture, session: session, wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
             ) {
                 try await copy(prepared)
             }
@@ -47,31 +45,85 @@ package enum VMLiveStateCapture {
         return .rest(.live(wasRunning ? .running : .paused), ())
     }
 
-    /// Takes every passthrough USB accessory off the VM `context` holds before
-    /// its state is written.
+    // MARK: Writing a live guest's state
+
+    /// What `saveMachineState` takes, which only this file can make: the two
+    /// entry points below are then the only way to write a live guest's state.
+    package struct SaveGrant: Sendable {
+        fileprivate init() {}
+    }
+
+    /// Writes the guest's state, as a suspend does, into `url`: every
+    /// passthrough USB accessory taken off first, then the guest paused.
     ///
-    /// A saved state holding a passthrough device restores two ways
-    /// (docs/research/2026-10-02-vz-restore-matches-usb-passthrough-devices.md).
-    /// Naming the device under the `uuid` it was saved with is the one
+    /// No saved state holds host hardware. A passthrough device restores two
+    /// ways (docs/research/2026-10-02-vz-restore-matches-usb-passthrough-devices.md):
+    /// naming it under the `uuid` it was saved with is the one
     /// `VZUSBDeviceConfiguration.uuid` documents, but VZ checks nothing about
     /// the hardware behind that `uuid`, and the resumed guest would trust its
-    /// cached view of a drive the Mac or another VM may have written since.
-    /// Leaving the device out restored on the one host build measured, and no
-    /// vendor documents it. Detaching before the write keeps every saved state
-    /// free of host hardware, so a restore rests on neither. Both save paths
-    /// call this — the warm capture through
-    /// ``detachUSBAccessories(owingReturns:session:)`` — and a new one must too.
+    /// cached view of a drive the Mac or another VM may have written since;
+    /// leaving it out restored on the one host build measured, and no vendor
+    /// documents it. Taking it off before the write keeps a restore resting on
+    /// neither. An installer disk stays attached: what the guest holds is the
+    /// VM's own copy, whose bytes nothing changes (``GuestAgentDiskCopies``).
+    package static func suspendState(
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
+    ) async throws {
+        try await detachUSBAccessories(context, session: session)
+        try await writeState(context, session: session, to: url)
+    }
+
+    /// Writes the guest's live state into `saveFileURL` as a warm capture
+    /// does, copies the disks beside it, and leaves the guest executing only
+    /// if it was found executing. Each passthrough accessory taken off is owed
+    /// back to the guest, which keeps running.
+    ///
+    /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
+    /// which does not record who paused the guest: an unconditional call
+    /// restarts a guest the user paused before asking for the snapshot, while
+    /// the VM is reported as paused.
+    package static func captureLiveState(
+        _ capture: borrowing VMCaptureContext,
+        session: any VMSnapshotSessionOperating,
+        wasRunning: Bool,
+        saveFileURL: URL,
+        captureDisks: () async throws -> Void
+    ) async throws {
+        // Taken before the guest is touched: a session that ends while the
+        // disks copy still leaves a complete capture, which the resume, a no-op
+        // on a guest no longer paused, must not refuse.
+        let execution = try capture.operation.liveExecution()
+        try await detachUSBAccessories(owingReturns: capture, session: session)
+        try await writeState(capture.operation, session: session, to: saveFileURL)
+        try await captureDisks()
+        if wasRunning {
+            try await session.resumeIfPaused(execution)
+        }
+    }
+
+    /// Pauses the guest and writes its state into `url`: the one call to
+    /// `saveMachineState`.
+    private static func writeState(
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
+    ) async throws {
+        try await session.pauseIfRunning()
+        try await session.saveMachineState(to: url, SaveGrant())
+    }
+
+    /// Takes every passthrough USB accessory off the VM `context` holds before
+    /// its state is written, for the reason
+    /// ``suspendState(_:session:to:)`` gives.
     ///
     /// A device the controller no longer holds is a success — an unplug got
     /// there first, and the post-condition already holds. Anything else throws:
     /// a state still carrying a passthrough device restores only by one of the
-    /// two ways above, so the save fails where the user can see it rather than
+    /// two ways, so the save fails where the user can see it rather than
     /// write one.
     ///
     /// Each accessory is released as its device leaves, and the one that threw
     /// is kept, so what the guest still holds afterwards is exactly what this
     /// never reached.
-    package static func detachUSBAccessories(
+    private static func detachUSBAccessories(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
     ) async throws {
         for item in context.instance.liveUSBAccessories {
@@ -84,7 +136,7 @@ package enum VMLiveStateCapture {
     /// (``VMCaptureContext/oweReturn(of:)``) just before its own detach —
     /// macOS can assign it back before the detach returns — and forgiven if
     /// that detach throws, so what is owed is exactly what the sweep took off.
-    package static func detachUSBAccessories(
+    private static func detachUSBAccessories(
         owingReturns capture: borrowing VMCaptureContext, session: any VMSnapshotSessionOperating
     ) async throws {
         let instance = capture.operation.instance
@@ -127,31 +179,6 @@ package enum VMLiveStateCapture {
             )
         }
         context.releaseAccessory(deviceID: item.deviceID)
-    }
-
-    /// Writes the guest's live state into `saveFileURL`, copies the disks
-    /// beside it, and leaves the guest executing only if it was found
-    /// executing.
-    ///
-    /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
-    /// which does not record who paused the guest: an unconditional call
-    /// restarts a guest the user paused before asking for the snapshot, while
-    /// the VM is reported as paused.
-    ///
-    /// `execution` is the live session's own (``VMOperationContext/liveExecution()``).
-    package static func captureLiveState(
-        session: any VMSnapshotSessionOperating,
-        execution: borrowing VMGuestExecution,
-        wasRunning: Bool,
-        saveFileURL: URL,
-        captureDisks: () async throws -> Void
-    ) async throws {
-        try await session.pauseIfRunning()
-        try await session.saveMachineState(to: saveFileURL)
-        try await captureDisks()
-        if wasRunning {
-            try await session.resumeIfPaused(execution)
-        }
     }
 
     /// Where a live guest is left after a warm capture failed.

@@ -185,12 +185,17 @@ package final class VMInstance {
             ) -> VMLibrary.SettingsWrite
         )?
 
-    /// Fired when the guest agent handshakes a new version that is current
-    /// (matches or exceeds what the host bundles) — i.e. an install/update just
-    /// completed.
+    /// Fired when a guest agent the host bundles arrives — an install or
+    /// update just completed: the macOS agent handshaking a new version that is
+    /// current (matches or exceeds what the host bundles), or a peer of the
+    /// agent hub whose payload is the bundled one.
     ///
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
+
+    /// Fired once a power-off has rested the VM: its guest-agent disk and the
+    /// VM's copy of it go with the session.
+    @ObservationIgnored var onGuestPoweredOff: (@MainActor () -> Void)?
 
     // MARK: - Session Projection
 
@@ -247,7 +252,18 @@ package final class VMInstance {
                     lastSeenAgentVersion: lastSeenAgentVersion,
                     agentExpectedButMissing: context.agentExpectedButMissing))
         case .linux:
-            return context.hasAgentTransport ? GuestAgentPresentation(hub: agentHubSnapshot) : nil
+            return reachesGuestAgent ? GuestAgentPresentation(hub: agentHubSnapshot) : nil
+        }
+    }
+
+    /// Whether this VM's session has a channel to a guest agent: a macOS
+    /// session always does, through its control service; a Linux one once the
+    /// session attached the agent hub a transport. Admission, and through
+    /// ``agentPresentation`` every surface, decide the installer disk from it.
+    var reachesGuestAgent: Bool {
+        switch configuration.guestOS {
+        case .macOS: true
+        case .linux: sessionContext?.hasAgentTransport ?? false
         }
     }
 
@@ -265,7 +281,22 @@ package final class VMInstance {
     @ObservationIgnored package let agentHub: AgentHub
 
     /// The hub's latest snapshot, as it publishes it to the main actor.
-    package private(set) var agentHubSnapshot = AgentHubSnapshot.empty
+    ///
+    /// A peer arriving whose payload is the one the host bundles for it fires
+    /// ``onAgentBecameCurrent``, as the macOS agent's Hello of a new current
+    /// version does.
+    package private(set) var agentHubSnapshot = AgentHubSnapshot.empty {
+        didSet {
+            if Self.connectsCurrentPeer(from: oldValue, to: agentHubSnapshot) { onAgentBecameCurrent?() }
+        }
+    }
+
+    /// Whether `new` holds a peer `old` does not whose payload is the one the
+    /// host bundles.
+    static func connectsCurrentPeer(from old: AgentHubSnapshot, to new: AgentHubSnapshot) -> Bool {
+        let known = Set(old.peers.map(\.handle))
+        return new.peers.contains { $0.standing == .current && !known.contains($0.handle) }
+    }
 
     #if DEBUG
     /// Lands `snapshot` as the hub's publish does; tests only.
@@ -396,11 +427,16 @@ package final class VMInstance {
         return disks.count == 1 && disks[0].id == disk.id
     }
 
-    /// `true` when the bundled Guest Agent installer DMG is in this VM's
+    /// `true` when a guest-agent installer disk is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        guard let path = bundleProducts.guestAgents.macOSInstallerPath else { return false }
-        return (configuration.removableMedia ?? []).contains { $0.path == path }
+        (configuration.removableMedia ?? []).contains { isGuestAgentInstaller($0) }
+    }
+
+    /// Whether `item` is a guest-agent installer disk on this VM
+    /// (``RemovableMediaItem/isInstaller(of:in:)``).
+    package func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
+        item.isInstaller(of: bundleProducts.guestAgents, in: bundleLayout)
     }
 
     var diskImageURL: URL { bundleLayout.diskImageURL }
@@ -592,6 +628,7 @@ package final class VMInstance {
             networkEnabled: configuration.networkEnabled,
             savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            reachesGuestAgent: reachesGuestAgent,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbPassthroughGap: peers?.usbPassthroughGap,
             writesOutsideBundle: configuration.writesOutsideBundle,
@@ -768,9 +805,17 @@ package final class VMInstance {
     /// Throws what kept the record from landing, so no session runs in a
     /// shape the bundle does not record.
     package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
-        if configuration.deviceShape != .current {
-            try bringUp.operation.permit.updateConfiguration { $0.deviceShape = .current }.get()
+        let agents = bundleProducts.guestAgents
+        let layout = bundleLayout
+        if configuration.deviceShape != .current || hasGuestAgentInstallerMounted {
+            try bringUp.operation.permit.updateConfiguration {
+                $0.deviceShape = .current
+                // The disk was the last session's; this one starts without it.
+                $0.removeInstallerDisks(of: agents, in: layout)
+            }.get()
         }
+        // Each boot that attaches an installer disk makes its own copy.
+        GuestAgentDiskCopies.removeAll(in: bundleLayout)
         return effectiveConfiguration
     }
 
@@ -823,6 +868,7 @@ package final class VMInstance {
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
+        onGuestPoweredOff?()
     }
 
     /// Called by ``activity`` once an operation of `kind` has ended with the

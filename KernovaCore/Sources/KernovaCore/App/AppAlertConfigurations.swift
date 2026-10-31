@@ -286,9 +286,16 @@ package struct AppAlertConfigurations {
         }
     }
 
+    /// What the user does with the disk just put in front of `vmName`, a
+    /// `guestOS` guest: open it in Finder for macOS; run its command in a
+    /// terminal for Linux, which `copy` puts on the host pasteboard.
     package func installerMountedConfig(
-        _ vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
+        _ vmName: String, guestOS: VMGuestOS, purpose: GuestAgentInstallerPurpose,
+        delivery: GuestAgentDiskDelivery, copy: @escaping (String) -> Void
     ) -> AlertConfiguration {
+        if guestOS == .linux {
+            return linuxInstallerMountedConfig(vmName, purpose: purpose, copy: copy)
+        }
         let nextStep: String
         switch purpose {
         case .install:
@@ -316,5 +323,40 @@ package struct AppAlertConfigurations {
             message:
                 "\(lead) Inside the VM, open the “\(BundledGuestAgents.macOSDiskLabel)” disk in Finder and \(nextStep)"
         )
+    }
+
+    /// The Linux disk's alert: the commands that mount the disk where the
+    /// desktop has not and install or remove the agent from it, each with a
+    /// button that copies it, and the lines that mount it on a guest with no
+    /// desktop.
+    private func linuxInstallerMountedConfig(
+        _ vmName: String, purpose: GuestAgentInstallerPurpose, copy: @escaping (String) -> Void
+    ) -> AlertConfiguration {
+        let lead = "The Kernova guest agent disk has been attached to \(vmName) as a USB disk."
+        let install = LinuxAgentDisk.installCommand
+        let headless =
+            "A guest with no desktop does not mount the disk. There, mount it and install the system service:\n\n"
+            + LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")
+        switch purpose {
+        case .install:
+            return AlertConfiguration(
+                title: "Installer Mounted",
+                message: "\(lead) \(LinuxAgentDisk.installCommandPrecondition)\n\n\(install)\n\n\(headless)",
+                buttons: [
+                    AlertButton("Copy Command", role: .default) { copy(install) },
+                    AlertButton("Done", role: .cancel),
+                ])
+        case .manage:
+            let uninstall = LinuxAgentDisk.uninstallCommand
+            return AlertConfiguration(
+                title: "Guest Agent Disk Attached",
+                message:
+                    "\(lead) Open a terminal in the guest. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)\n\nAdding --system to either also installs or removes the system service.\n\n\(headless)",
+                buttons: [
+                    AlertButton("Copy Install Command", role: .default) { copy(install) },
+                    AlertButton("Done", role: .cancel),
+                    AlertButton("Copy Uninstall Command") { copy(uninstall) },
+                ])
+        }
     }
 }

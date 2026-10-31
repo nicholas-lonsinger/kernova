@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentCore
+import KernovaCommandModel
 import KernovaLogging
 import KernovaWire
 import Synchronization
@@ -61,10 +62,14 @@ package struct BundledGuestAgents: Sendable {
     /// Every entry, by what it installs onto.
     package let entries: [BundledGuestAgentKey: BundledGuestAgentEntry]
 
+    /// Where the Linux agent's installer disk is made.
+    package let linuxDisk: GuestAgentDiskCache
+
     private let digests: FileDigests
 
-    package init(entries: [BundledGuestAgentKey: BundledGuestAgentEntry]) {
+    package init(entries: [BundledGuestAgentKey: BundledGuestAgentEntry], linuxDisk: GuestAgentDiskCache) {
         self.entries = entries
+        self.linuxDisk = linuxDisk
         self.digests = FileDigests()
     }
 
@@ -76,7 +81,7 @@ package struct BundledGuestAgents: Sendable {
             Self.logger.log(.fault, "\(Self.linuxAgentPath, privacy: .public) missing from app bundle")
             assertionFailure("\(Self.linuxAgentPath) missing — check the 'Embed Linux Guest Agent' build phase")
         }
-        self.init(entries: entries)
+        self.init(entries: entries, linuxDisk: .production)
     }
 
     /// The entries for the files `bundle` carries.
@@ -139,6 +144,44 @@ package struct BundledGuestAgents: Sendable {
         return nil
     }
 
+    // MARK: Installer disks
+
+    /// Whether this build bundles an installer disk for a `guestOS` guest: the macOS agent's DMG, or the
+    /// Linux agent the disk is made from.
+    package func bundlesInstallerDisk(for guestOS: VMGuestOS) -> Bool {
+        switch guestOS {
+        case .macOS: macOS != nil
+        case .linux: entry(.linux, .arm64, .user) != nil
+        }
+    }
+
+    /// The installer disk for a `guestOS` guest: the macOS agent's DMG, or the Linux agent's disk, made on
+    /// this process's first ask; nil when ``bundlesInstallerDisk(for:)`` is false.
+    package func installerDisk(for guestOS: VMGuestOS) async throws -> URL? {
+        switch guestOS {
+        case .macOS:
+            return macOSInstallerDiskImageURL
+        case .linux:
+            guard let agent = entry(.linux, .arm64, .user) else { return nil }
+            return try await linuxDisk.disk(agent: agent.fileURL)
+        }
+    }
+
+    /// The label an attachment of `guestOS`'s installer disk carries: the volume name the guest shows.
+    package static func installerDiskLabel(for guestOS: VMGuestOS) -> String {
+        switch guestOS {
+        case .macOS: macOSDiskLabel
+        case .linux: LinuxAgentDisk.volumeLabel
+        }
+    }
+
+    /// Whether `path` names one of the installer disks: an app-owned file, which detaching never trashes
+    /// and deleting a VM never offers.
+    package func isInstallerDisk(path: String) -> Bool {
+        path == macOSInstallerDiskImageURL?.path(percentEncoded: false)
+            || path == linuxDisk.url.path(percentEncoded: false)
+    }
+
     // MARK: The macOS agent
 
     /// The macOS agent's entry, the one of user scope on arm64.
@@ -155,11 +198,6 @@ package struct BundledGuestAgents: Sendable {
     /// The macOS agent's installer DMG, or `nil` when none is bundled.
     package var macOSInstallerDiskImageURL: URL? {
         macOS?.fileURL
-    }
-
-    /// Filesystem path of the macOS agent's installer DMG, if bundled.
-    var macOSInstallerPath: String? {
-        macOSInstallerDiskImageURL?.path(percentEncoded: false)
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "BundledGuestAgents")

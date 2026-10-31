@@ -18,17 +18,19 @@ import KernovaDigest
 /// the running system and its own executable, never read from metadata.
 public enum LinuxIdentity {
     /// The system peer's install root.
-    public static let systemInstallRoot = "/var/lib/kernova-agent"
+    public static let systemInstallRoot = "/opt/kernova-agent"
 
     /// The claim of an agent in `role` labelled `versionLabel`, run from the executable `/proc/self/exe`
     /// names. Its payload hash is that file's SHA-256.
     public static func current(role: PeerRole, versionLabel: String) throws(LinuxIdentityError) -> PeerClaim {
         guard let executable = canonicalPath("/proc/self/exe") else { throw .executableUnreadable(errno) }
         let release = osRelease()
-        let userRoot = userInstallRoot(environment: ProcessInfo.processInfo.environment).flatMap(canonicalPath)
         return PeerClaim(
             role: role,
-            scope: scope(ofExecutable: executable, systemRoot: canonicalPath(systemInstallRoot), userRoot: userRoot),
+            scope: scope(ofExecutable: executable, systemRoot: canonicalPath(systemInstallRoot)) { path in
+                var info = stat()
+                return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+            },
             os: .linux,
             osVersion: release["VERSION_ID"] ?? "", osBuild: kernelRelease(), osDistribution: distribution(release),
             architecture: architecture, payloadHash: Data(try sha256(ofFileAt: "/proc/self/exe")),
@@ -46,16 +48,22 @@ public enum LinuxIdentity {
         #endif
     }
 
-    /// Where the agent is installed, judged by where `executable` lives: `.system` under `systemRoot`
-    /// (`/var/lib/kernova-agent`), `.user` under `userRoot` (`userInstallRoot(environment:)`), and
-    /// `.unspecified` anywhere else, as a development build run in place is. Every path is canonical, as
-    /// realpath(3) gives it, since `/proc/self/exe` resolves every symlink; a nil root does not exist.
-    public static func scope(ofExecutable executable: String, systemRoot: String?, userRoot: String?)
+    /// Where the agent is installed, judged by the install layout `executable` sits in, never by an
+    /// environment variable: a slot, `<root>/slots/<slot>/kernova-agent`, of a root holding `state.json`
+    /// (`isFile` answers for a path) is `.system` when the root is `systemRoot` (`/opt/kernova-agent`)
+    /// and `.user` anywhere else. Anything else is `.unspecified`, as a development build run in place is.
+    /// Every path is canonical, as realpath(3) gives it, since `/proc/self/exe` resolves every symlink; a nil
+    /// system root does not exist.
+    public static func scope(ofExecutable executable: String, systemRoot: String?, isFile: (String) -> Bool)
         -> InstallScope
     {
-        if let systemRoot, executable.hasPrefix(systemRoot + "/") { return .system }
-        if let userRoot, executable.hasPrefix(userRoot + "/") { return .user }
-        return .unspecified
+        var components = executable.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count >= 5, components.removeLast() == "kernova-agent" else { return .unspecified }
+        components.removeLast()
+        guard components.removeLast() == "slots" else { return .unspecified }
+        let root = components.joined(separator: "/")
+        guard !root.isEmpty, isFile(root + "/state.json") else { return .unspecified }
+        return root == systemRoot ? .system : .user
     }
 
     /// The user install root, `${XDG_DATA_HOME:-$HOME/.local/share}/kernova-agent`; nil with neither set.

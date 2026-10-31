@@ -77,7 +77,7 @@ struct BundledGuestAgentsTests {
     func linuxMissing() async throws {
         let entries = BundledGuestAgents.entries(in: try bundle([:]), versionLabel: "1.2 (34)")
         #expect(entries.isEmpty)
-        #expect(await BundledGuestAgents(entries: entries).payloads(for: .linux).isEmpty)
+        #expect(await BundledGuestAgents(entries: entries, linuxDisk: .testing).payloads(for: .linux).isEmpty)
     }
 
     @Test("The macOS agent is its installer DMG and version, and offers no in-band payload")
@@ -93,7 +93,7 @@ struct BundledGuestAgentsTests {
         #expect(dmg.lastPathComponent == "KernovaMacOSAgent.dmg")
         #expect(agents.entry(.macOS, .arm64, .user)?.kind == .installerDisk(version: "3.1"))
         #expect(await agents.payloads(for: .macOS).isEmpty)
-        #expect(RemovableMediaItem(path: dmg.path(percentEncoded: false), readOnly: true).isInstaller(of: agents))
+        #expect(agents.isInstallerDisk(path: dmg.path(percentEncoded: false)))
     }
 
     // MARK: The hub's provider

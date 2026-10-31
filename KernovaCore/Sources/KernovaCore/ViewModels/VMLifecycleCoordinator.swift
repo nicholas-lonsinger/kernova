@@ -191,10 +191,10 @@ final class VMLifecycleCoordinator {
     ///
     /// A warm capture takes every passthrough accessory off before it writes
     /// the guest's state, for the reason
-    /// ``VMLiveStateCapture/detachUSBAccessories(_:session:)`` gives. Unlike
+    /// ``VMLiveStateCapture/suspendState(_:session:to:)`` gives. Unlike
     /// a suspend the guest is still running afterwards, so each one is owed
     /// back to it as it goes
-    /// (``VMLiveStateCapture/detachUSBAccessories(owingReturns:session:)``):
+    /// (``VMLiveStateCapture/captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)``):
     /// the capture's detach resets the device, macOS assigns it back after a
     /// delay nothing bounds, and that arrival follows the attach to this VM.
     /// `record` that throws leaves nothing behind: unlisted files are files no
@@ -949,16 +949,14 @@ final class VMLifecycleCoordinator {
     ) async throws -> RemovableMediaDeviceInfo {
         guard instance.liveSessionID == sessionID else { throw RemovableMediaDeviceError.noVirtualMachine }
         let info = try await removableMediaDeviceService.attach(
-            diskImagePath: resolvedURL?.path(percentEncoded: false) ?? diskImagePath,
+            diskImagePath: diskImagePath,
+            attaching: resolvedURL,
             readOnly: readOnly,
             desiredUUID: desiredUUID,
             to: instance
         )
-        let tracked = RemovableMediaDeviceInfo(
-            id: info.id, path: diskImagePath, readOnly: info.readOnly,
-            attachedAt: info.attachedAt)
-        instance.recordAttachedMedia(tracked, for: sessionID)
-        return tracked
+        instance.recordAttachedMedia(info, for: sessionID)
+        return info
     }
 
     /// Detaches a device the session `sessionID` names is holding, and clears

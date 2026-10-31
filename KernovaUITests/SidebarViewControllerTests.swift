@@ -31,9 +31,9 @@ struct SidebarViewControllerTests {
         self.preferences = makeTestPreferences()
     }
 
-    private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
-        -> VMLibraryViewModel
-    {
+    private func makeViewModel(
+        storageService: MockVMStorageService = MockVMStorageService(), bundleProducts: AppBundleProducts = .testing
+    ) -> VMLibraryViewModel {
         VMLibraryViewModel(
             storageService: storageService,
             diskImageService: MockDiskImageService(),
@@ -53,7 +53,7 @@ struct SidebarViewControllerTests {
             entitlements: .entitled,
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(),
-            bundleProducts: .testing
+            bundleProducts: bundleProducts
         )
     }
 
@@ -102,24 +102,53 @@ struct SidebarViewControllerTests {
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
-    @Test("Agent indicator shows for a Linux guest while a Kernova agent is connected, and hides with none")
+    private static func peer(
+        _ handle: UInt64, role: PeerRole = .sessionPeer, standing: PeerSummary.Standing = .current
+    ) -> PeerSummary {
+        PeerSummary(
+            handle: PeerHandle(rawValue: handle), role: role, scope: role == .systemPeer ? .system : .user, os: .linux,
+            sessionID: role == .systemPeer ? "" : "2", userName: role == .systemPeer ? "" : "pbear", console: .on,
+            versionLabel: "1.0", standing: standing, isResponsive: true)
+    }
+
+    @Test("A Linux guest's indicator follows the status rule a macOS guest's does")
     func agentShownForLinuxWithAnAgent() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
+        // None connected: waiting, shown.
         #expect(instance.agentPresentation?.status == .waiting)
+        #expect(visibleAgentStatus(for: instance) == .waiting)
+
+        // Every agent current: hidden.
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [Self.peer(1), Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([])))
         #expect(visibleAgentStatus(for: instance) == nil)
 
+        // One outdated: shown, as outdated.
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(
                 peers: [
-                    PeerSummary(
-                        handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
-                        userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
-                ], features: FeatureStatus.merge([])))
-        #expect(visibleAgentStatus(for: instance) == .current(version: "1.0"))
+                    Self.peer(1), Self.peer(3, role: .systemPeer, standing: .outdated(offeredVersionLabel: "2.0")),
+                ],
+                features: FeatureStatus.merge([])))
+        #expect(visibleAgentStatus(for: instance) == .outdated(installed: "1.0", bundled: "2.0"))
 
-        instance.publishAgentHubSnapshotForTesting(.empty)
-        #expect(visibleAgentStatus(for: instance) == nil)
+        // Waiting with the nudge dismissed: hidden.
+        let dismissed = VMInstanceFixture.make(
+            guestOS: .linux, phase: .running(sessionID: UUID()),
+            hostState: VMHostState(agentInstallNudgeDismissed: true))
+        dismissed.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(dismissed.agentPresentation?.status == .waiting)
+        #expect(visibleAgentStatus(for: dismissed) == nil)
+    }
+
+    @Test("A waiting Linux guest's indicator follows the install nudge as a macOS guest's does")
+    func linuxWaitingFollowsTheNudge() {
+        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(
+            SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: true) == nil)
     }
 
     @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
@@ -288,13 +317,69 @@ struct SidebarViewControllerTests {
         #expect(badge.status == .waiting)
         #expect(!badge.isInstallerMounted)
 
-        viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.toggleGuestAgentDisk(on: instance)
         #expect(instance.hasGuestAgentInstallerMounted)
         #expect(instance.agentPresentation?.status == .waiting)
 
         // The cell's observation applies on a later main-actor turn, with no
         // observable of its own to await.
         try await waitUntil { badge.isInstallerMounted }
+    }
+
+    /// A Linux guest's agent connects only after its install, so the badge has
+    /// to be there before any agent is: it carries the disk's install command.
+    @Test("A waiting Linux guest's badge offers the attached disk's install command")
+    func linuxBadgeOffersTheInstallCommand() async throws {
+        let scratch = TestScratchDirectory.forCase(prefix: "LinuxAgentBadge")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 4096).write(to: agent)
+        let products = AppBundleProducts(
+            bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+            guestAgents: .linux(
+                agent: agent,
+                disk: GuestAgentDiskCache(
+                    directory: scratch.url.appending(path: "GuestAgentDisks"), files: LinuxAgentDisk.bundledFiles)))
+        let viewModel = makeViewModel(bundleProducts: products)
+        let instance = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        await viewModel.toggleGuestAgentDisk(on: instance)
+        #expect(instance.hasGuestAgentInstallerMounted)
+        let cell = makeRow(instance: instance, isBusy: false) {
+            GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+        }
+
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+        #expect(badge.status == .waiting)
+        #expect(badge.isInstallerMounted)
+        let control = try #require(badge.diskControl)
+        #expect(control.title == "Eject Guest Agent Media")
+        #expect(control.installCommand == LinuxAgentDisk.installCommand)
+
+        let popover = AgentStatusPopoverContentViewController()
+        popover.update(
+            presentation: badge.presentation, isInstallerMounted: badge.isInstallerMounted, diskControl: control,
+            vmName: instance.name, hasDismissAction: badge.hasDismissAction)
+        popover.loadViewIfNeeded()
+        let texts = visibleTexts(in: popover.view)
+        #expect(texts.first == "Set up the Kernova guest agent")
+        #expect(texts.contains(LinuxAgentDisk.installCommandPrecondition))
+        #expect(texts.contains(LinuxAgentDisk.installCommand))
+        #expect(
+            firstSubview(NSButton.self, in: popover.view) { $0.title == "Eject Guest Agent Media" }?.isHidden == false)
+        #expect(
+            firstSubview(NSButton.self, in: popover.view) { $0.accessibilityLabel() == "Copy Install Command" }?
+                .isHidden == false)
+    }
+
+    /// The text of every label on screen, in document order: none under a hidden view.
+    private func visibleTexts(in view: NSView) -> [String] {
+        guard !view.isHidden else { return [] }
+        var texts: [String] = []
+        if let field = view as? NSTextField, !field.isEditable { texts.append(field.stringValue) }
+        for subview in view.subviews { texts += visibleTexts(in: subview) }
+        return texts
     }
 
     /// The preference lives in Settings, so it changes while every row is up.

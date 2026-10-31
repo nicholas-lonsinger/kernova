@@ -91,7 +91,7 @@ struct ConfigurationBuilder: Sendable {
         configureUSBControllers(vzConfig)
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
         let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
-        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
+        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config, bundleURL: bundleURL)
         let sessionNetworks = vmnetNetworks.sessionNetworks(ownedBy: config.id)
         try configureNetwork(vzConfig, config: config, vmnetNetworks: sessionNetworks)
         configureEntropy(vzConfig)
@@ -424,8 +424,9 @@ struct ConfigurationBuilder: Sendable {
             return false
         }
 
-        let disk = Self.guestAgentDisk(
-            installerPath: installerURL.path(percentEncoded: false), bundleURL: bundleURL)
+        // The VM's copy, made by the bring-up, never the app's shared file.
+        let copy = VMBundleLayout(bundleURL: bundleURL).guestAgentVirtioDiskURL(of: installerURL)
+        let disk = Self.guestAgentDisk(installerPath: copy.path(percentEncoded: false), bundleURL: bundleURL)
         do {
             let resolved = try ConfigurationPaths.resolveFile(
                 at: disk.path, context: "Guest agent disk",
@@ -480,7 +481,8 @@ struct ConfigurationBuilder: Sendable {
     /// runtime tracking in `instance.liveRemovableMedia`.
     private func configureRemovableMedia(
         _ vzConfig: VZVirtualMachineConfiguration,
-        config: VMConfiguration
+        config: VMConfiguration,
+        bundleURL: URL
     ) throws -> [RemovableMediaDeviceInfo] {
         guard let items = config.removableMedia, !items.isEmpty else { return [] }
         guard let xhci = vzConfig.usbControllers.first else {
@@ -490,9 +492,12 @@ struct ConfigurationBuilder: Sendable {
 
         var infos: [RemovableMediaDeviceInfo] = []
         var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
+        let layout = VMBundleLayout(bundleURL: bundleURL)
         for item in items {
+            // An installer entry names the app's disk; the guest gets the VM's copy of it.
+            let path = item.installerCopy(in: layout)?.path(percentEncoded: false) ?? item.path
             let resolved = try ConfigurationPaths.resolveFile(
-                at: item.path, context: "Removable media '\(item.label)'",
+                at: path, context: "Removable media '\(item.label)'",
                 requireWritable: !item.readOnly,
                 notFound: .removableMediaNotFound(
                     id: item.id, path: item.path, label: item.label),
@@ -501,10 +506,9 @@ struct ConfigurationBuilder: Sendable {
                 notWritable: .removableMediaNotWritable(
                     id: item.id, path: item.path, label: item.label))
 
-            let attachment: VZDiskImageStorageDeviceAttachment
+            let usbConfig: VZUSBMassStorageDeviceConfiguration
             do {
-                attachment = try VZDiskImageStorageDeviceAttachment(
-                    url: resolved.url, readOnly: item.readOnly)
+                usbConfig = try Self.massStorageDevice(url: resolved.url, readOnly: item.readOnly, uuid: item.id)
             } catch {
                 Self.logger.log(
                     .error,
@@ -517,8 +521,6 @@ struct ConfigurationBuilder: Sendable {
                     underlying: error)
             }
 
-            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-            usbConfig.uuid = item.id
             attached.append(usbConfig)
             infos.append(RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
 
@@ -529,6 +531,16 @@ struct ConfigurationBuilder: Sendable {
         }
         xhci.usbDevices = attached
         return infos
+    }
+
+    /// The USB mass storage device a removable medium attaches as, at a boot and
+    /// in a live attach alike, under `uuid` when given: the identity a saved
+    /// state's restore matches it by.
+    static func massStorageDevice(url: URL, readOnly: Bool, uuid: UUID?) throws -> VZUSBMassStorageDeviceConfiguration {
+        let device = VZUSBMassStorageDeviceConfiguration(
+            attachment: try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly))
+        if let uuid { device.uuid = uuid }
+        return device
     }
 
     /// Synthesizes the guest-agent installer's disk entry.

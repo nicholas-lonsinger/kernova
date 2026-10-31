@@ -140,6 +140,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// Whether the app last found another running copy of Kernova holding the
     /// VM, which is at rest in the copy answering.
     public let heldByAnotherCopy: Bool
+    /// Each guest agent connected through the agent hub, newest first;
+    /// empty for a guest whose agents the hub doesn't serve.
+    public let agents: [VMAgentLine]
 
     /// Describes one VM.
     public init(
@@ -162,7 +165,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         guestAgent: VMGuestAgentBucket?,
         stateBucket: VMStateBucket,
         bundlePath: String,
-        heldByAnotherCopy: Bool
+        heldByAnotherCopy: Bool,
+        agents: [VMAgentLine] = []
     ) {
         self.id = id
         self.name = name
@@ -184,6 +188,28 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.stateBucket = stateBucket
         self.bundlePath = bundlePath
         self.heldByAnotherCopy = heldByAnotherCopy
+        self.agents = agents
+    }
+}
+
+/// One guest agent connected through the agent hub.
+public struct VMAgentLine: Codable, Sendable, Hashable {
+    /// Which agent: `session`, one GUI session's, or `system`, the guest's as a whole.
+    public let role: String
+    /// The user a session agent runs for, `nil` for the system agent or one that names none.
+    public let user: String?
+    /// The version the agent reports, empty when it reports none.
+    public let version: String
+    /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated` or
+    /// `unresponsive`.
+    public let status: String
+
+    /// Describes one agent.
+    public init(role: String, user: String?, version: String, status: String) {
+        self.role = role
+        self.user = user
+        self.version = version
+        self.status = status
     }
 }
 

@@ -7,9 +7,10 @@ package enum VMBundleItems {
 
     /// The bundle-relative paths a snapshot captures alongside the saved state.
     ///
-    /// Every file the guest writes through that lives in the bundle: the disks
-    /// it boots and stores data on, plus the firmware state VZ mutates
-    /// (`AuxiliaryStorage` on macOS, `EFIVariableStore` on EFI Linux). The
+    /// Every bundle file the saved state restores onto: the disks the guest
+    /// boots and stores data on, the firmware state VZ mutates
+    /// (`AuxiliaryStorage` on macOS, `EFIVariableStore` on EFI Linux), and the
+    /// VM's copies of the guest-agent installer disks (`GuestAgentDisk`). The
     /// bundle's identity files (`HardwareModel`, `MachineIdentifier`) are
     /// absent — they never change, and a revert must not hand the VM a
     /// different identity.
@@ -18,7 +19,7 @@ package enum VMBundleItems {
     /// bundle, and copying them would double storage the user placed elsewhere
     /// on purpose.
     ///
-    /// `layout` is the directory the firmware files are looked for in — the VM's
+    /// `layout` is the directory the firmware files and installer copies are looked for in — the VM's
     /// bundle while capturing, the snapshot's own directory while working out
     /// what it holds.
     package static func capturedRelativePaths(
@@ -26,12 +27,13 @@ package enum VMBundleItems {
     ) -> [String] {
         let disks = configuration.effectiveStorageDisks(layout: layout)
         var paths = disks.filter(\.isInternal).map(\.path)
-        for firmware in [
+        for item in [
             VMBundleLayout.auxiliaryStorageRelativePath, VMBundleLayout.efiVariableStoreRelativePath,
+            VMBundleLayout.guestAgentDiskRelativePath,
         ] {
-            let url = layout.bundleURL.appendingPathComponent(firmware)
+            let url = layout.bundleURL.appendingPathComponent(item)
             if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
-                paths.append(firmware)
+                paths.append(item)
             }
         }
         return paths

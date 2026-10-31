@@ -468,6 +468,38 @@ struct ConfigurationBuilderTests {
         #expect(xhci.usbDevices.first is VZUSBMassStorageDeviceConfiguration)
     }
 
+    @Test(
+        "An installer entry attaches the VM's copy of the disk, never the shared file, whichever build named it",
+        arguments: [false, true])
+    func installerEntryAttachesTheBundleCopy(namedByAnotherBuild: Bool) throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        let shared = scratch.url.appendingPathComponent("KernovaMacOSAgent.dmg")
+        try Data("shared".utf8).write(to: shared)
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let item = RemovableMediaItem(path: shared.path(percentEncoded: false), readOnly: true)
+        let copy = layout.guestAgentDiskCopyURL(for: item)
+
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        config.removableMedia = [item]
+        // Another build's installer is no file of this build's.
+        let builder =
+            namedByAnotherBuild
+            ? ConfigurationBuilder.testing() : ConfigurationBuilder.testing(guestAgentInstaller: shared)
+
+        try FileManager.default.createDirectory(
+            at: layout.guestAgentDiskDirectoryURL, withIntermediateDirectories: true)
+        try Data(count: 1_048_576).write(to: copy)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        let device = try #require(
+            result.configuration.usbControllers.first?.usbDevices.first as? VZUSBMassStorageDeviceConfiguration)
+        let attachment = try #require(device.attachment as? VZDiskImageStorageDeviceAttachment)
+        #expect(attachment.url.standardizedFileURL == copy.standardizedFileURL)
+        // The tracked identity stays the installer's.
+        #expect(result.products.coldRemovableMedia.map(\.path) == [shared.path(percentEncoded: false)])
+    }
+
     @Test("Removable media returns coldRemovableMedia infos with matching UUIDs")
     func removableMediaReturnsDeviceInfos() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
@@ -1468,6 +1500,12 @@ struct ConfigurationBuilderTests {
     func subFloorGuestGetsVirtioAgentDisk() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
+        // The bring-up makes the VM's copy; the build attaches it.
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let copy = layout.guestAgentVirtioDiskURL(of: agentURL)
+        try FileManager.default.createDirectory(
+            at: layout.guestAgentDiskDirectoryURL, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: agentURL, to: copy)
 
         let builder = ConfigurationBuilder.testing(guestAgentInstaller: agentURL)
         let result = try builder.assemble(
@@ -1479,9 +1517,7 @@ struct ConfigurationBuilderTests {
         let agentDevice = try #require(vz.storageDevices.last as? VZVirtioBlockDeviceConfiguration)
         let attachment = try #require(agentDevice.attachment as? VZDiskImageStorageDeviceAttachment)
         #expect(attachment.isReadOnly)
-        #expect(
-            attachment.url.standardizedFileURL.path(percentEncoded: false)
-                == agentURL.standardizedFileURL.path(percentEncoded: false))
+        #expect(attachment.url.standardizedFileURL == copy.standardizedFileURL)
         // The whole point of the virtio path: nothing lands on the USB bus.
         #expect(vz.usbControllers.first?.usbDevices.isEmpty == true)
     }

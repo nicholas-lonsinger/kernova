@@ -47,6 +47,10 @@ enum AgentShell {
             runPeer(.sessionPeer, label: label)
         case .system:
             runPeer(.systemPeer, label: label)
+        case .install(let request):
+            runInstaller(request, uninstalling: false, label: label)
+        case .uninstall(let request):
+            runInstaller(request, uninstalling: true, label: label)
         }
     }
 
@@ -180,7 +184,7 @@ enum AgentShell {
         exit(1)
     }
 
-    private static func writeError(_ text: String) {
+    static func writeError(_ text: String) {
         var line = text + "\n"
         line.withUTF8 { bytes in _ = write(2, bytes.baseAddress, bytes.count) }
     }

@@ -605,7 +605,7 @@ struct ClipboardAgentDiskControlTests {
         _ = vc.view
         #expect(vc.agentDiskControlTitleForTesting == "Install Guest Agent…")
 
-        viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.toggleGuestAgentDisk(on: instance)
         #expect(instance.hasGuestAgentInstallerMounted)
 
         // Genuine no-signal predicate: the observed effect is a button's title,

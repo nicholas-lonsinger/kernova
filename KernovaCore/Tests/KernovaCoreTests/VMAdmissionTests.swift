@@ -37,6 +37,7 @@ struct VMAdmissionTests {
         /// The saved state restores after a membership move — a NAT VM's.
         var survivesMembershipMove = false
         var writesOutsideBundle = false
+        var reachesGuestAgent = true
 
         static let plain = Variant()
         static let natNetwork = Variant(survivesMembershipMove: true)
@@ -47,12 +48,13 @@ struct VMAdmissionTests {
         static let noNetwork = Variant(networkEnabled: false)
         static let noClipboard = Variant(clipboardSharing: false)
         static let writesOutsideBundle = Variant(writesOutsideBundle: true)
+        static let noAgentChannel = Variant(guestOS: .linux, reachesGuestAgent: false)
 
         var description: String {
             "\(guestOS) setup=\(pendingSetup) usbGap=\(String(describing: usbPassthroughGap)) "
                 + "network=\(networkEnabled) clipboard=\(clipboardSharing) "
                 + "survivesMembershipMove=\(survivesMembershipMove) "
-                + "writesOutsideBundle=\(writesOutsideBundle)"
+                + "writesOutsideBundle=\(writesOutsideBundle) reachesGuestAgent=\(reachesGuestAgent)"
         }
     }
 
@@ -63,7 +65,7 @@ struct VMAdmissionTests {
             hasSaveFile: slot, hasSnapshots: true, guestOS: variant.guestOS,
             networkEnabled: variant.networkEnabled,
             savedStateSurvivesMembershipMove: variant.survivesMembershipMove,
-            clipboardSharingEnabled: variant.clipboardSharing,
+            clipboardSharingEnabled: variant.clipboardSharing, reachesGuestAgent: variant.reachesGuestAgent,
             hasPendingGuestSetup: variant.pendingSetup, usbPassthroughGap: variant.usbPassthroughGap,
             writesOutsideBundle: variant.writesOutsideBundle, identityConflict: nil,
             accessoryHolder: nil, terminating: terminating,
@@ -175,11 +177,13 @@ struct VMAdmissionTests {
     /// The settled answers where a fact other than the phase decides: the same
     /// columns, under the named variant.
     nonisolated private static let settledFactTable: [(Variant, VMAdmission.Request, String)] = [
-        // Recovery and the guest-agent disk are macOS's; a plain Start is
+        // Recovery is macOS's; a plain Start and the guest-agent disk are
         // every guest's.
         (.linux, .start(recovery: true), "IIIIIIR"),
         (.linux, .start(recovery: false), "AAAAIIR"),
-        (.linux, .affordance(.guestAgentDisk), "IIIIIIR"),
+        (.linux, .affordance(.guestAgentDisk), "IIIIAAR"),
+        // A session with no channel to an agent has nothing to install into.
+        (.noAgentChannel, .affordance(.guestAgentDisk), "IIIIIIR"),
         // A pending setup is what a Start runs, and nothing else boots the
         // VM until it has run — a saved state still restores.
         (.pendingSetup, .start(recovery: false), "AAAAIIR"),

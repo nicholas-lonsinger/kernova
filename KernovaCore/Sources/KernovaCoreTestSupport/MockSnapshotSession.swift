@@ -87,7 +87,7 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         detachedUSBDeviceIDs.append(uuid)
     }
 
-    func saveMachineState(to url: URL) async throws {
+    func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {
         calls.append("saveMachineState")
         savedStateURLs.append(url)
         if let saveError { throw saveError }

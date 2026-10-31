@@ -451,7 +451,9 @@ final class AppAlertPresenter {
                 on: window, onWindowClose: .requeue(entry))
         case .installerMounted(let instance, let purpose, let delivery):
             showAlert(
-                configurations.installerMountedConfig(instance.name, purpose: purpose, delivery: delivery),
+                configurations.installerMountedConfig(
+                    instance.name, guestOS: instance.configuration.guestOS, purpose: purpose, delivery: delivery,
+                    copy: copyToPasteboard),
                 on: window, onWindowClose: .requeue(entry))
         case .deleteSheet(let delete):
             showDeleteSheet(delete, on: window)

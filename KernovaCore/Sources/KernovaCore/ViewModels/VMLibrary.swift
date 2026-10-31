@@ -92,6 +92,9 @@ package final class VMLibrary: VMAdmissionPeers {
     /// installer auto-eject.
     @ObservationIgnored var onAgentBecameCurrent: ((VMInstance) -> Void)?
 
+    /// Fires once a power-off has rested a VM, for the installer disk's removal.
+    @ObservationIgnored var onGuestPoweredOff: ((VMInstance) -> Void)?
+
     /// Fires when a VM's session is found to have ended with its changes
     /// unsettled, answering the baseline revert an Ephemeral Mode VM owes.
     @ObservationIgnored var onUnsettledSession: ((VMInstance) -> [VMFollowUp])?
@@ -874,6 +877,10 @@ package final class VMLibrary: VMAdmissionPeers {
         instance.onAgentBecameCurrent = { [weak self, weak instance] in
             guard let self, let instance else { return }
             self.onAgentBecameCurrent?(instance)
+        }
+        instance.onGuestPoweredOff = { [weak self, weak instance] in
+            guard let self, let instance else { return }
+            self.onGuestPoweredOff?(instance)
         }
         // An Ephemeral Mode VM's session ends in the return to its baseline.
         instance.activity.onUnsettledSession = { [weak self, weak instance] in

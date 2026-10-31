@@ -52,7 +52,7 @@ enum TableRenderer {
         if let mac = info.macAddress { fields.append(("MAC Address", [mac])) }
         fields.append(("IP Address", [render(info.ipAddress)]))
         fields.append(contentsOf: [
-            ("Guest Agent", [info.agentStatus ?? "\u{2013}"]),
+            ("Guest Agent", [info.agentStatus ?? "\u{2013}"] + info.agents.map(render)),
             ("Saved State", [info.hasSavedState ? "Yes" : "No"]),
             ("Ephemeral", [info.isEphemeral ? "Yes" : "No"]),
             ("Snapshots", [String(info.snapshotCount)]),
@@ -280,5 +280,13 @@ enum TableRenderer {
                 .trimmingCharacters(in: .whitespaces)
         }
         return ([line(headings)] + rows.map(line)).joined(separator: "\n")
+    }
+
+    /// One hub agent's line under the agent status: which agent, how it stands, and its version.
+    private static func render(_ agent: VMAgentLine) -> String {
+        let name =
+            agent.role == "system"
+            ? "System service" : agent.user.map { "Session agent \u{2014} \($0)" } ?? "Session agent"
+        return agent.version.isEmpty ? "\(name): \(agent.status)" : "\(name): \(agent.status), \(agent.version)"
     }
 }

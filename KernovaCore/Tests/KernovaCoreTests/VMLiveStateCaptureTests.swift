@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
 import Testing
@@ -13,19 +14,29 @@ import Testing
 struct VMLiveStateCaptureTests {
     // MARK: - Snapshot capture
 
+    /// Runs ``VMLiveStateCapture/captureLiveState(_:session:wasRunning:saveFileURL:captureDisks:)`` in a
+    /// live capture of a running VM.
+    private func capture(
+        _ session: MockSnapshotSession, wasRunning: Bool, captureDisks: @escaping @MainActor () async -> Void = {}
+    ) async throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        try await instance.activity.launchedCapture(.live) { context in
+            try await VMLiveStateCapture.captureLiveState(
+                context, session: session, wasRunning: wasRunning,
+                saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+            ) {
+                await captureDisks()
+            }
+            return .rest(.asStarted, ())
+        }
+    }
+
     @Test("A capture puts a running guest back to running")
     func captureResumesAGuestItPaused() async throws {
         let session = MockSnapshotSession(guestState: .running)
         var stateWhileCapturing: MockSnapshotSession.GuestState?
 
-        try await withLiveGuestExecution { execution in
-            try await VMLiveStateCapture.captureLiveState(
-                session: session, execution: execution, wasRunning: true,
-                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-            ) {
-                stateWhileCapturing = await session.guestState
-            }
-        }
+        try await capture(session, wasRunning: true) { stateWhileCapturing = await session.guestState }
 
         #expect(stateWhileCapturing == .paused)
         let finalState = await session.guestState
@@ -38,12 +49,7 @@ struct VMLiveStateCaptureTests {
         // here restarts the guest while the VM is reported as paused.
         let session = MockSnapshotSession(guestState: .paused)
 
-        try await withLiveGuestExecution { execution in
-            try await VMLiveStateCapture.captureLiveState(
-                session: session, execution: execution, wasRunning: false,
-                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-            ) {}
-        }
+        try await capture(session, wasRunning: false)
 
         let finalState = await session.guestState
         let calls = await session.calls
@@ -58,12 +64,7 @@ struct VMLiveStateCaptureTests {
         var captured = false
 
         await #expect(throws: VMSnapshotError.self) {
-            try await withLiveGuestExecution { execution in
-                try await VMLiveStateCapture.captureLiveState(
-                    session: session, execution: execution, wasRunning: true,
-                    saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
-                ) { captured = true }
-            }
+            try await capture(session, wasRunning: true) { captured = true }
         }
 
         #expect(!captured)
@@ -79,14 +80,15 @@ struct VMLiveStateCaptureTests {
         let instance: VMInstance
         let deviceIDs: [UUID]
 
-        /// Runs the sweep inside a save operation holding the VM, as both save
-        /// paths do, leaving the guest live whatever the sweep did so what it
-        /// still holds can be read.
+        /// Writes the guest's state inside a save operation holding the VM, as a
+        /// suspend does, leaving the guest live whatever the sweep did so what
+        /// it still holds can be read.
         @MainActor
         func sweep(_ session: MockSnapshotSession) async throws {
             try await instance.activity.perform(.saving) { context in
                 do {
-                    try await VMLiveStateCapture.detachUSBAccessories(context, session: session)
+                    try await VMLiveStateCapture.suspendState(
+                        context, session: session, to: URL(filePath: "/var/empty/save.vzvmsave"))
                     return .rest(.asStarted, ())
                 } catch {
                     return .failed(.asStarted, error)
@@ -191,8 +193,9 @@ struct VMLiveStateCaptureTests {
 
         await #expect(throws: VMSessionError.self) {
             try await fixture.instance.activity.launchedCapture(.live) { context in
-                try await VMLiveStateCapture.detachUSBAccessories(
-                    owingReturns: context, session: session)
+                try await VMLiveStateCapture.captureLiveState(
+                    context, session: session, wasRunning: false, saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+                ) {}
                 return .rest(.asStarted, ())
             }
         }
@@ -225,7 +228,7 @@ struct VMLiveStateCaptureTests {
         try await fixture.sweep(session)
 
         let calls = await session.calls
-        #expect(calls.isEmpty)
+        #expect(calls == ["pauseIfRunning", "saveMachineState"])
     }
 }
 

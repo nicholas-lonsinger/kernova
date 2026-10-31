@@ -5,11 +5,16 @@ import Foundation
 package protocol RemovableMediaAttaching: Sendable {
     /// Attaches a disk image as a USB mass storage device.
     ///
+    /// `diskImagePath` is the device's identity, what the returned info and
+    /// every log of it name; `file`, when supplied, is what is actually
+    /// attached (a bookmark's resolution, a VM's installer-disk copy).
+    ///
     /// `desiredUUID` overrides the auto-generated device UUID so the runtime
     /// device matches a persisted `RemovableMediaItem.id` for save-state restore
     /// matching; `nil` for ad-hoc attaches.
     func attach(
         diskImagePath: String,
+        attaching file: URL?,
         readOnly: Bool,
         desiredUUID: UUID?,
         to instance: VMInstance

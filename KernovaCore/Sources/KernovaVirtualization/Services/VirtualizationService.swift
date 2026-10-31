@@ -16,6 +16,9 @@ package final class VirtualizationService {
 
     private let configBuilder: ConfigurationBuilder
 
+    /// The guest agents this build bundles, whose installer disk a configuration may carry.
+    private let guestAgents: BundledGuestAgents
+
     /// Whether this Mac's protected data is readable right now — `false` while
     /// the user is locked out — which a failed restore reports alongside its
     /// error.
@@ -29,6 +32,7 @@ package final class VirtualizationService {
         configBuilder = ConfigurationBuilder(
             bridgedInterfaces: bridgedInterfaces, vmnetNetworks: vmnetNetworks,
             vmnetAttachments: vmnetAttachments, entitlements: entitlements, guestAgents: guestAgents)
+        self.guestAgents = guestAgents
         self.isProtectedDataAvailable = isProtectedDataAvailable
     }
 
@@ -266,9 +270,7 @@ package final class VirtualizationService {
     ) async throws -> VMOperationEnding<Void> {
         guard context.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         do {
-            try await VMLiveStateCapture.detachUSBAccessories(context, session: session)
-            try await session.pauseIfRunning()
-            try await session.saveMachineState(to: context.bundle.saveFileURL)
+            try await VMLiveStateCapture.suspendState(context, session: session, to: context.bundle.saveFileURL)
         } catch {
             logger.log(
                 .error,
@@ -402,8 +404,8 @@ package final class VirtualizationService {
 
     /// Copies a live VM into a clone through ``VMLiveStateCapture/captureWarm(_:_:session:prepare:savingStateTo:copy:)``:
     /// `prepare` lays down the clone's staged bundle, and `copy` copies the
-    /// files the guest writes into it inside the pause that writes the
-    /// guest's memory to `saveFileURL` first.
+    /// files the saved state restores onto into it inside the pause that
+    /// writes the guest's memory to `saveFileURL` first.
     package func copyLive(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         savingStateTo saveFileURL: URL,
@@ -584,11 +586,14 @@ package final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds `config` into a VZ configuration, first creating the EFI variable
-    /// store an EFI boot reads when the bundle holds none.
+    /// Builds `config` into a VZ configuration, first making the VM's copy of
+    /// each installer disk it attaches that the bundle lacks and creating the
+    /// EFI variable store an EFI boot reads when the bundle holds none.
     private func buildConfiguration(
         _ config: VMConfiguration, _ context: borrowing VMOperationContext
     ) async throws -> sending ConfigurationBuilder.BuildResult {
+        try await GuestAgentDiskCopies.ensure(
+            for: config, in: VMBundleLayout(bundleURL: context.bundle.url), agents: guestAgents)
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }

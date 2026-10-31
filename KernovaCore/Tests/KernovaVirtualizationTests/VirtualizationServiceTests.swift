@@ -368,6 +368,90 @@ struct VirtualizationServiceTests {
         }.value()
     }
 
+    /// A Linux agent whose disk is written into `scratch`, and a service and products bundling it.
+    private func linuxAgentProducts() throws -> (VirtualizationService, AppBundleProducts, GuestAgentDiskCache) {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 4096).write(to: agent)
+        // This bundle carries none of KernovaCore's resources, so the disk's other files are stand-ins.
+        let files = scratch.url.appending(path: "LinuxAgentDisk")
+        try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+        for name in ["agent-disk.sh", "README.txt", "LICENSES.txt"] {
+            try Data(name.utf8).write(to: files.appending(path: name))
+        }
+        let cache = GuestAgentDiskCache(directory: scratch.url.appending(path: "GuestAgentDisks"), files: files)
+        // The app's disk, as the agent's first mount leaves it.
+        try FileManager.default.createDirectory(
+            at: cache.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("the app's disk".utf8).write(to: cache.url)
+        let products = AppBundleProducts(
+            bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+            guestAgents: .linux(agent: agent, disk: cache))
+        let service = VirtualizationService(
+            vmnetNetworks: VmnetNetworkService.scripted(), vmnetAttachments: MockVmnetAttachments().maker,
+            bridgedInterfaces: MockBridgedInterfaceProvider(), entitlements: .unentitled,
+            guestAgents: products.guestAgents, isProtectedDataAvailable: { true })
+        return (service, products, cache)
+    }
+
+    @Test("A cold boot starts without the installer disk the last session had, and drops its copy")
+    func coldBootStartsWithoutTheInstallerDisk() async throws {
+        let (service, products, cache) = try linuxAgentProducts()
+        let library = makeWiredLibrary(bundleProducts: products)
+        defer { withExtendedLifetime(library) {} }
+        let item = RemovableMediaItem(path: cache.url.path(percentEncoded: false), readOnly: true)
+        let instance = library.registerFixture(phase: .stopped) { $0.removableMedia = [item] }
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
+        try FileManager.default.createDirectory(
+            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("the last session's copy".utf8).write(to: copy)
+
+        // The bundle holds no real disk image, so the boot fails at the
+        // configuration build, after the configuration is settled.
+        await #expect(throws: ConfigurationBuilderError.self) { try await start(instance, on: service) }
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
+    }
+
+    @Test("A restore leaves the copy the state was saved with as it was, whatever the app's disk holds now")
+    func restoreKeepsTheSavedCopy() async throws {
+        let (service, products, cache) = try linuxAgentProducts()
+        let path = cache.url.path(percentEncoded: false)
+        let item = RemovableMediaItem(path: path, readOnly: true)
+        let instance = VMInstanceFixture.make(phase: .suspended, bundleProducts: products) {
+            $0.removableMedia = [item]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
+        try FileManager.default.createDirectory(
+            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("the saved copy".utf8).write(to: copy)
+        try Data("a later build's disk".utf8).write(to: cache.url)
+
+        // The bring-up's copy step leaves the saved copy alone; the build then
+        // stops at the bundle's missing main disk.
+        await #expect(throws: ConfigurationBuilderError.self) {
+            try await start(instance, .restoringSavedState, on: service)
+        }
+
+        #expect(try Data(contentsOf: copy) == Data("the saved copy".utf8))
+        #expect(instance.configuration.removableMedia?.map(\.path) == [path])
+    }
+
+    @Test("A boot that attaches the virtio DMG attaches its own copy of it")
+    func virtioBootMakesItsOwnCopy() async throws {
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .stopped) {
+            $0.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
+        }
+        let dmg = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
+
+        await #expect(throws: (any Error).self) { try await start(instance) }
+
+        let copy = instance.bundleLayout.guestAgentVirtioDiskURL(of: dmg)
+        #expect(try Data(contentsOf: copy) == Data(contentsOf: dmg))
+    }
+
     @Test("A cold boot that fails before the guest executes leaves the marker as it was")
     func failedColdBootLeavesTheMarker() async throws {
         let instance = VMInstanceFixture.make(phase: .stopped)
@@ -489,6 +573,30 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
+    @Test("A warm snapshot carries the VM's copy of the installer disk with its other files")
+    func warmSnapshotCarriesTheInstallerCopy() async throws {
+        let store = MockVMBundleMachineFiles()
+        let library = makeWiredLibrary(machineFiles: store)
+        let sessionID = UUID()
+        let path = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL).path(percentEncoded: false)
+        let installer = RemovableMediaItem(path: path, readOnly: true)
+        let instance = library.registerFixture(guestOS: .macOS, phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [installer]
+        }
+        instance.beginSessionContextForTesting()
+        try await GuestAgentDiskCopies.make(
+            of: URL(filePath: path), at: instance.bundleLayout.guestAgentDiskCopyURL(for: installer))
+
+        let captured = try await captureWarm(
+            instance, snapshot: VMSnapshotCaptureRequest(name: "With the disk"),
+            session: MockSnapshotSession(guestState: .running))
+
+        #expect(store.capturedPaths[captured.id]?.contains(VMBundleLayout.guestAgentDiskRelativePath) == true)
+        #expect(store.capturedConfiguration(for: captured.id)?.removableMedia == [installer])
+        // The guest keeps its disk: the capture neither detached nor moved it.
+        #expect(instance.configuration.removableMedia == [installer])
+    }
+
     @Test("A capture of a live-paused guest hands it back live-paused")
     func warmCaptureRestoresTheLivePausedPhase() async throws {
         let sessionID = UUID()
@@ -579,6 +687,24 @@ struct VirtualizationServiceTests {
             instance: instance, snapshot: snapshot,
             capturedConfiguration: capturedConfiguration,
             library: library)
+    }
+
+    @Test("A revert to a state captured with the installer disk gives the VM its own copy from the snapshot's")
+    func revertGivesTheVMItsOwnCopy() async throws {
+        let fixture = try makeRevertFixture()
+        let layout = fixture.instance.bundleLayout
+        let item = RemovableMediaItem(path: "/app/agent.iso", readOnly: true)
+        let snapshotCopy = layout.snapshotLayout(id: fixture.snapshot.id).guestAgentDiskCopyURL(for: item)
+        try FileManager.default.createDirectory(
+            at: snapshotCopy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("the snapshot's copy".utf8).write(to: snapshotCopy)
+
+        try await revert(fixture)
+
+        let copy = layout.guestAgentDiskCopyURL(for: item)
+        #expect(try Data(contentsOf: copy) == Data("the snapshot's copy".utf8))
+        // The snapshot keeps its own, for the next revert.
+        #expect(FileManager.default.fileExists(atPath: snapshotCopy.path(percentEncoded: false)))
     }
 
     /// Reverts `fixture`'s VM to `snapshot` — the fixture's own unless named —
@@ -965,8 +1091,10 @@ struct VirtualizationServiceTests {
     /// Brings `instance` up by `kind` inside the bring-up the VM admits,
     /// running the real start body.
     private func start(
-        _ instance: VMInstance, _ kind: VMGuestStartKind = .starting(recovery: false)
+        _ instance: VMInstance, _ kind: VMGuestStartKind = .starting(recovery: false),
+        on service: VirtualizationService? = nil
     ) async throws {
+        let service = service ?? self.service
         try await instance.activity.launchStartGuest(kind) { context in
             switch try await service.start(instance, context, provisioning: nil) {
             case .rest(let rest, _): .rest(rest, ())

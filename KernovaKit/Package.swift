@@ -96,6 +96,17 @@ var targets: [Target] = [
         name: "KernovaDigest",
         swiftSettings: sharedSwiftSettings
     ),
+    // An ISO 9660 image writer with Rock Ridge, for the disks the host hands a guest. It imports nothing.
+    .target(
+        name: "KernovaISO9660",
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The scratch directory of the test targets that cannot reach `KernovaTestSupport`
+    // (Tools/check-test-seams.sh).
+    .target(
+        name: "KernovaPortableTestSupport",
+        swiftSettings: sharedSwiftSettings
+    ),
     // The Linux agent's display version. Tools/build-linux-guest-agent.sh
     // writes the label the C file includes; without it the label reads
     // "development".
@@ -173,7 +184,7 @@ var targets: [Target] = [
     ),
     .testTarget(
         name: "KernovaLinuxAgentTests",
-        dependencies: ["KernovaLinuxAgent", "KernovaAgentCore"],
+        dependencies: ["KernovaLinuxAgent", "KernovaAgentCore", "KernovaPortableTestSupport"],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The
@@ -204,7 +215,9 @@ var targets: [Target] = [
     // (Tools/check-test-seams.sh).
     .testTarget(
         name: "KernovaPortableTests",
-        dependencies: ["KernovaLogging", "KernovaSynchronization", "KernovaDigest"],
+        dependencies: [
+            "KernovaLogging", "KernovaSynchronization", "KernovaDigest", "KernovaISO9660", "KernovaPortableTestSupport",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
 ]
@@ -231,6 +244,8 @@ products += [
     .library(
         name: "KernovaAgentHost",
         targets: ["KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX"]),
+    // The writer the app makes the Linux agent's disk with, for KernovaCore.
+    .library(name: "KernovaISO9660", targets: ["KernovaISO9660"]),
 ]
 
 dependencies += [

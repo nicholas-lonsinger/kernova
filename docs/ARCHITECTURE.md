@@ -117,6 +117,11 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   `KernovaAgentHost`) per `VMInstance`, beside the macOS ports above; each
   session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`
   is what every agent-status surface reads.
+- Guest-agent installer disks: `BundledGuestAgents` (one of `AppBundleProducts`)
+  hands `VMCommandCore.mountGuestAgentDisk` the macOS agent's bundled DMG, or the
+  Linux agent's ISO, which `GuestAgentDiskCache` writes into Application Support
+  with KernovaKit's `KernovaISO9660`; the guest is attached the VM's own copy,
+  which `GuestAgentDiskCopies` keeps in the bundle.
 - Clipboard: `ClipboardServicing` unifies `VsockClipboardService` and
   `SpiceClipboardService` (Linux) behind `VMInstance.clipboardService`;
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host

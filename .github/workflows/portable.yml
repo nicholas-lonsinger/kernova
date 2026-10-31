@@ -64,9 +64,9 @@ jobs:
           fetch-depth: 1
 
       # KernovaPlatformLinuxTests start their own dbus-daemon; the agent's
-      # check reads `file`.
-      - name: Install dbus-daemon and file
-        run: apt-get update && apt-get install --yes --no-install-recommends dbus file
+      # check reads `file`; ISO9660WriterTests read the image back with xorriso.
+      - name: Install dbus-daemon, file and xorriso
+        run: apt-get update && apt-get install --yes --no-install-recommends dbus file xorriso
 
       - name: Build
         run: swift build --package-path KernovaKit

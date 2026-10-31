@@ -239,7 +239,7 @@ package actor VMSession: VMSessionOperating {
         }
     }
 
-    package func saveMachineState(to url: URL) async throws {
+    package func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.saveMachineStateTo(url: url) { error in
                 if let error {
@@ -405,22 +405,15 @@ package actor VMSession: VMSessionOperating {
     /// the device on the queue through ``attachUSBDevice(_:)``.
     package func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID {
         try await attachUSBDevice {
-            let attachment: VZDiskImageStorageDeviceAttachment
+            let usbConfig: VZUSBMassStorageDeviceConfiguration
             do {
-                attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
+                usbConfig = try ConfigurationBuilder.massStorageDevice(url: url, readOnly: readOnly, uuid: uuid)
             } catch {
                 Self.logger.log(
                     .error,
                     "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw error
-            }
-            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-            if let uuid {
-                // Override the framework-generated UUID so the live device
-                // matches the caller's persisted identity (e.g.
-                // `RemovableMediaItem.id`) for save-state restore matching.
-                usbConfig.uuid = uuid
             }
             return VZUSBMassStorageDevice(configuration: usbConfig)
         }
