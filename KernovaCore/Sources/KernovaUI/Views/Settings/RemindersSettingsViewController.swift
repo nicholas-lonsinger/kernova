@@ -9,7 +9,8 @@ import KernovaLogging
 /// **ON = the reminder is shown** (its dismissed flag is `false`), matching the
 /// VM Settings pane's "Show install reminder" toggle.
 ///
-/// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
+/// The app-wide *Menu Bar Quit Reminder* and *USB Unplug Reminder* are backed
+/// by `AppPreferences`; the
 /// app-wide *Guest Agent Install Reminder* by
 /// `VMLibraryViewModel.agentInstallPromptDisabled`, which overrides every
 /// per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
@@ -35,6 +36,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     private var heightCap: NSLayoutConstraint?
 
     private let menuBarQuitSwitch = NSSwitch()
+    private let usbUnplugSwitch = NSSwitch()
     private let agentInstallSwitch = NSSwitch()
 
     /// The persistent container in the content stack that holds either the
@@ -76,6 +78,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         menuBarQuitSwitch.controlSize = .small
         menuBarQuitSwitch.target = self
         menuBarQuitSwitch.action = #selector(menuBarQuitToggled)
+        usbUnplugSwitch.controlSize = .small
+        usbUnplugSwitch.target = self
+        usbUnplugSwitch.action = #selector(usbUnplugToggled)
         agentInstallSwitch.controlSize = .small
         agentInstallSwitch.target = self
         agentInstallSwitch.action = #selector(agentInstallToggled)
@@ -84,6 +89,16 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             makeGroupedFormCardRow(
                 "Menu bar quit reminder", control: menuBarQuitSwitch,
                 info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")])
+        ])
+        let usbUnplugCard = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow(
+                "USB unplug reminder", control: usbUnplugSwitch,
+                info: [
+                    .body(
+                        "Shown when you suspend, snapshot, clone or quit a running virtual machine "
+                            + "with USB disks plugged in, which Kernova unplugs first and plugs back "
+                            + "in afterwards. A disk that may lose changes is always asked about.")
+                ])
         ])
 
         // The governing control of the Virtual Machine Reminders section, so it
@@ -118,6 +133,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let content = NSStackView(views: [
             makeGroupedFormSectionHeader("App Reminders"),
             menuBarCard,
+            usbUnplugCard,
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             agentInstallCard,
             vmGroup,
@@ -126,12 +142,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
-        content.setCustomSpacing(Spacing.section, after: menuBarCard)
+        content.setCustomSpacing(Spacing.section, after: usbUnplugCard)
         content.setCustomSpacing(Spacing.section, after: vmGroup)
 
         // Full-width members. The reset button is excluded so it hugs its
         // intrinsic width at the leading edge.
-        for member in [menuBarCard, agentInstallCard, vmGroup] {
+        for member in [menuBarCard, usbUnplugCard, agentInstallCard, vmGroup] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 
@@ -286,6 +302,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// install reminder is off; it just can't be changed until that goes back on.
     private func refreshSwitches() {
         menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
+        usbUnplugSwitch.state = preferences.usbUnplugReminderDismissed ? .off : .on
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
@@ -306,6 +323,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     @objc private func menuBarQuitToggled() {
         preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
+    }
+
+    @objc private func usbUnplugToggled() {
+        preferences.usbUnplugReminderDismissed = (usbUnplugSwitch.state == .off)
     }
 
     @objc private func agentInstallToggled() {

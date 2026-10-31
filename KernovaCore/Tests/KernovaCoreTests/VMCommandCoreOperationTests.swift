@@ -68,7 +68,9 @@ struct VMCommandCoreOperationTests {
         try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
         #expect(virtualization.stopCallCount == 1)
 
-        let refused = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
+        let refused = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id), consent: .all)
+        }
         #expect(refused.isBusy)
         #expect(instance.phase == held)
         #expect(virtualization.saveCallCount == 0)
@@ -77,7 +79,7 @@ struct VMCommandCoreOperationTests {
         try await attach.value
         #expect(instance.phase == .running(sessionID: session))
 
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
         #expect(virtualization.saveCallCount == 1)
         #expect(instance.phase == .suspended)
     }
@@ -98,7 +100,9 @@ struct VMCommandCoreOperationTests {
         try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
         #expect(virtualization.requestStopCallCount == 1)
 
-        let refused = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
+        let refused = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id), consent: .all)
+        }
         #expect(refused.isBusy)
         #expect(instance.phase == held)
 
@@ -106,7 +110,7 @@ struct VMCommandCoreOperationTests {
         try await pause.value
         #expect(instance.phase == .livePaused(sessionID: session))
 
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
         #expect(instance.phase == .suspended)
     }
 
@@ -239,12 +243,12 @@ struct VMCommandCoreOperationTests {
         await #expect(throws: notFound) {
             try await harness.core.stop(instance, disposition: .force, consent: .all)
         }
-        await #expect(throws: notFound) { try await harness.core.suspend(instance) }
+        await #expect(throws: notFound) { try await harness.core.suspend(instance, consent: .all) }
         // No capture mode is left to name a request for, so this one refuses
         // with the state rather than the removal — refused all the same, and
         // offering nothing.
         let snapshotRefusal = try await #require(throws: CommandError.self) {
-            _ = try await harness.core.takeSnapshot(instance, name: "Late", notes: "")
+            _ = try await harness.core.takeSnapshot(instance, name: "Late", notes: "", consent: .all)
         }
         if case .invalidState(let vm, let current, let allowed, _) = snapshotRefusal {
             #expect(vm.id == instance.id)

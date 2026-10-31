@@ -248,12 +248,37 @@ struct CLIVerbWireTests {
         }
     }
 
-    @Test("suspend crosses as the verb that saves the session")
+    @Test("suspend crosses as the verb that saves the session, --yes as every consent")
     func suspendSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(
             ["suspend", "Alpha"], answering: accepted)
+        #expect(exchanged.sent == [.suspend(.idOrName("Alpha"), consent: .none)])
 
-        #expect(exchanged.sent == [.suspend(.idOrName("Alpha"))])
+        let anyway = try CLIWire.exchange(["suspend", "Alpha", "--yes"], answering: accepted)
+        #expect(anyway.sent == [.suspend(.idOrName("Alpha"), consent: .all)])
+    }
+
+    @Test("A suspend refused for a USB disk that may lose changes says how to give consent")
+    func suspendOfAnAtRiskDiskSaysHowToConsent() throws {
+        let exchanged = try CLIWire.exchange(
+            ["suspend", "Alpha"],
+            answering: VMCommandResponse(
+                result: .failure(
+                    .confirmationRequired(
+                        prompt: ConfirmationPrompt(
+                            kind: .unplugUSBDisksAtRisk,
+                            title: "\u{201C}Backup\u{201D} may lose changes",
+                            message: "Kernova unplugs USB disks from \u{201C}Alpha\u{201D} before it suspends.",
+                            confirmTitle: "Suspend Anyway", dismissTitle: "Cancel")))))
+
+        do {
+            _ = try exchanged.answer.payload()
+            Issue.record("expected a confirmation refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .refusedByState)
+            #expect(failure.message.contains("\u{201C}Alpha\u{201D} before it suspends"))
+            #expect(failure.message.hasSuffix("Pass --yes to do it anyway."))
+        }
     }
 
     @Test("pause crosses as the verb that holds the guest in memory")

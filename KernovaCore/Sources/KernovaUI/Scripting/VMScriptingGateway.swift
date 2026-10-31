@@ -539,9 +539,14 @@ final class VMScriptingGateway {
         }
     }
 
-    func suspend(_ selectors: [VMSelector]) async throws {
-        try await perform(.suspend, on: selectors) {
-            try await self.commands.suspend($0)
+    /// Suspends each VM, with `confirmation` as the consent to unplug a USB
+    /// disk that may lose changes; the reminder that it unplugs them is a
+    /// script's to give up front.
+    func suspend(_ selectors: [VMSelector], confirmation: Bool) async throws {
+        try await perform(.suspend, on: selectors) { selector in
+            try await Self.consenting(confirmation) { consent in
+                try await self.commands.suspend(selector, consent: consent.adding(.unplugUSBDisks))
+            }
         }
     }
 

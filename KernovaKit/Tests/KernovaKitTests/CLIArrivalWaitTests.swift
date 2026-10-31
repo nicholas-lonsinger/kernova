@@ -22,14 +22,22 @@ struct CLIArrivalWaitTests {
     func cloneWaitsInItsOwnRequest() throws {
         #expect(
             try clone(["Alpha"]).request()
-                == .clone(.idOrName("Alpha"), outcome: nil, waitForOutcome: true))
+                == .clone(.idOrName("Alpha"), outcome: nil, consent: .none, waitForOutcome: true))
+    }
+
+    @Test("A clone carries --yes as every consent")
+    func cloneCarriesYes() throws {
+        #expect(
+            try clone(["Alpha", "--yes"]).request()
+                == .clone(.idOrName("Alpha"), outcome: nil, consent: .all, waitForOutcome: true))
     }
 
     @Test("--no-wait asks the app not to wait, rather than skipping a second request")
     func noWaitAsksForNoWait() throws {
         #expect(
             try clone(["Alpha", "--no-wait", "--exact-copy"]).request()
-                == .clone(.idOrName("Alpha"), outcome: .exactCopy, waitForOutcome: false))
+                == .clone(
+                    .idOrName("Alpha"), outcome: .exactCopy, consent: .none, waitForOutcome: false))
     }
 
     @Test("An import waits in its one request, and --timeout bounds that request end to end")

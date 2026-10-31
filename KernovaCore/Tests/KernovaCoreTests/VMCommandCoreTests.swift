@@ -262,7 +262,7 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.resumeCallCount == 1)
 
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
         #expect(harness.virtualization.saveCallCount == 1)
     }
 
@@ -1732,7 +1732,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let summary = try await harness.core.takeSnapshot(
-            .id(instance.id), name: "  Fresh  ", notes: " a note ")
+            .id(instance.id), name: "  Fresh  ", notes: " a note ", consent: .all)
 
         #expect(summary.name == "Fresh")
         #expect(summary.notes == "a note")
@@ -1749,7 +1749,7 @@ struct VMCommandCoreTests {
 
         let error = try await #require(throws: CommandError.self) {
             _ = try await harness.core.takeSnapshot(
-                .id(instance.id), name: "Too late", notes: "")
+                .id(instance.id), name: "Too late", notes: "", consent: .all)
         }
         #expect(error.isBusy || error.isInvalidState)
         #expect(instance.snapshotManifest.isEmpty)
@@ -1771,7 +1771,7 @@ struct VMCommandCoreTests {
         // still settling, which is something the user can wait out rather than
         // a state the VM is not in.
         let take = try await #require(throws: CommandError.self) {
-            _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Now", notes: "")
+            _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Now", notes: "", consent: .all)
         }
         #expect(take.isBusy)
         let revert = try await #require(throws: CommandError.self) {
@@ -1797,7 +1797,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let error = try await #require(throws: CommandError.self) {
-            _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Doomed", notes: "")
+            _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Doomed", notes: "", consent: .all)
         }
         guard case .operationFailed(let verb, _, _, _) = error else {
             Issue.record("expected an operation failure, got \(error)")
@@ -1822,7 +1822,7 @@ struct VMCommandCoreTests {
         #expect(instance.snapshotCaptureMode == nil)
 
         let error = try await #require(throws: CommandError.self) {
-            _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Warm", notes: "")
+            _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Warm", notes: "", consent: .all)
         }
         guard case .changeTakesStoppedVM(_, _, let change) = error else {
             Issue.record("expected a stopped-VM refusal, got \(error)")
@@ -1847,7 +1847,7 @@ struct VMCommandCoreTests {
         }
         #expect(instance.snapshotCaptureMode == .stopped)
 
-        let summary = try await harness.core.takeSnapshot(.id(instance.id), name: "Cold", notes: "")
+        let summary = try await harness.core.takeSnapshot(.id(instance.id), name: "Cold", notes: "", consent: .all)
 
         #expect(summary.kind == "cold")
         #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Cold"])
@@ -2056,7 +2056,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Source")
 
         let summary = try await harness.core.clone(
-            .id(instance.id), outcome: .newMachine, waitForOutcome: true)
+            .id(instance.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
 
         #expect(harness.library.instances.count == 2)
         #expect(harness.library.instances.contains { $0.id == summary.id })
@@ -2067,7 +2067,7 @@ struct VMCommandCoreTests {
         #expect(
             try await #require(throws: CommandError.self) {
                 _ = try await harness.core.clone(
-                    .id(instance.id), outcome: .newMachine, waitForOutcome: false)
+                    .id(instance.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
             }.isBusy)
         #expect(harness.library.arrivals.isEmpty)
     }
@@ -2082,7 +2082,7 @@ struct VMCommandCoreTests {
         harness.storage.setPublishHold(publishHold)
 
         let summary = try await harness.core.clone(
-            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
 
         let arrival = try #require(harness.library.arrivals.first)
         #expect(arrival.id == summary.id)
@@ -2113,7 +2113,7 @@ struct VMCommandCoreTests {
         let hold = DispatchSemaphore(value: 0)
         harness.storage.setCloneHold(hold)
         let clone = try await harness.core.clone(
-            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
 
         let deleteError = try await #require(throws: CommandError.self) {
             try await harness.core.delete(
@@ -2371,7 +2371,7 @@ struct VMCommandCoreTests {
     @Test("The quit verb asks the adapter once, on a later turn than the call")
     func quitDefersToTheAdapter() async throws {
         let harness = makeHarness()
-        harness.core.quit()
+        try harness.core.quit(consent: .all)
 
         // Deferred: a transport waiting on this verb has to get its
         // answer written before the process starts going down.
@@ -2379,6 +2379,29 @@ struct VMCommandCoreTests {
 
         try await harness.quitRequested.wait { harness.quitRequests == 1 }
         #expect(harness.quitRequests == 1)
+    }
+
+    @Test("The quit verb refuses, naming the disk, while a live VM holds one at risk, and quits nothing")
+    func quitRefusesADiskAtRisk() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let data = RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false, label: "Data")
+        let instance = makeInstance(in: harness, name: "Ubuntu", phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [data]
+        }
+        instance.beginSessionContextForTesting()
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: data.id, path: data.path, readOnly: false), for: sessionID)
+
+        let error = try #require(throws: CommandError.self) {
+            try harness.core.quit(consent: Consent([.unplugUSBDisks]))
+        }
+
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .unplugUSBDisksAtRisk)
+        #expect(prompt.message.contains("\u{201C}Data\u{201D} from \u{201C}Ubuntu\u{201D} may lose changes"))
+        await drainMainQueue()
+        #expect(harness.quitRequests == 0)
     }
 
     // MARK: - Events
@@ -2558,7 +2581,7 @@ struct VMCommandCoreTests {
         var events = VMLibraryEventReader(harness.core.events())
 
         let summary = try await harness.core.clone(
-            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {
@@ -2587,7 +2610,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let withMain = makeInstance(in: harness, name: "With Main") { $0.storageDisks = nil }
         _ = try await harness.core.clone(
-            .id(withMain.id), outcome: .newMachine, waitForOutcome: true)
+            .id(withMain.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
         #expect(harness.storage.lastCloneRelativePaths?.contains("Disk.asif") == true)
 
         let withoutMain = makeInstance(in: harness, name: "Without Main") {
@@ -2596,7 +2619,7 @@ struct VMCommandCoreTests {
             ]
         }
         _ = try await harness.core.clone(
-            .id(withoutMain.id), outcome: .newMachine, waitForOutcome: true)
+            .id(withoutMain.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
         #expect(harness.storage.lastCloneRelativePaths?.contains("Disk.asif") == false)
     }
 
@@ -3355,7 +3378,7 @@ struct VMCommandCoreTests {
 
         #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         let clone = try #require(throws: CommandError.self) {
-            _ = try harness.core.beginClone(.id(instance.id), outcome: .exactCopy)
+            _ = try harness.core.beginClone(.id(instance.id), outcome: .exactCopy, consent: .all)
         }
         #expect(clone.isBusy)
 

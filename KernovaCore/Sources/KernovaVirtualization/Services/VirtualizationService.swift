@@ -147,7 +147,7 @@ package final class VirtualizationService {
         // the session between attempts, taking this context's scopes with it.
         instance.beginSessionContext(context, bootedIntoRecovery: bootIntoRecovery)
         let result = try await buildConfiguration(
-            try instance.coldBootConfiguration(context), context.operation)
+            try instance.coldBootConfiguration(context), context.operation, for: .coldBoot)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -251,26 +251,37 @@ package final class VirtualizationService {
 
     // MARK: - Save
 
-    /// Writes the guest's state to the bundle's suspend slot (pause, then
-    /// save) and ends the session.
+    /// Writes the guest's state to the bundle's suspend slot (unplug, pause,
+    /// then save) and ends the session — unless the USB question the save
+    /// asks under `consent` (``USBSaveDecision``) is still open, which leaves
+    /// the guest running and the slot as it was.
     package func save(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext
+        _ instance: VMInstance, _ context: borrowing VMOperationContext, consent: Consent
     ) async throws -> VMOperationEnding<Void> {
         guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
-        return try await Self.save(instance, context, session: session)
+        return try await Self.save(instance, context, consent: consent, session: session)
     }
 
-    /// ``save(_:_:)`` over the VZ operations it needs rather than a concrete
-    /// session — like ``captureWarmSnapshot(_:_:snapshot:session:)``, so the
-    /// slot it drops when the write fails or the guest goes away under it is
-    /// reachable without a real `VZVirtualMachine`.
+    /// ``save(_:_:consent:)`` over the VZ operations it needs rather than a
+    /// concrete session — like ``captureWarmSnapshot(_:_:snapshot:consent:session:)``,
+    /// so the slot it drops when the write fails or the guest goes away under
+    /// it is reachable without a real `VZVirtualMachine`.
     package static func save(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        _ instance: VMInstance, _ context: borrowing VMOperationContext, consent: Consent,
         session: any VMSnapshotSessionOperating
     ) async throws -> VMOperationEnding<Void> {
         guard context.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
+        let approval: VMLiveStateCapture.UnplugApproval
         do {
-            try await VMLiveStateCapture.suspendState(context, session: session, to: context.bundle.saveFileURL)
+            approval = try VMLiveStateCapture.approve(consent, toSave: instance, as: .suspend)
+        } catch {
+            // Asked before anything was touched: the guest runs on, and the
+            // slot is as it was.
+            return .failed(.asStarted, error)
+        }
+        do {
+            try await VMLiveStateCapture.suspendState(
+                context, approval, session: session, to: context.bundle.saveFileURL)
         } catch {
             logger.log(
                 .error,
@@ -298,9 +309,9 @@ package final class VirtualizationService {
             )
             return .rest(.afterSessionEnd, ())
         }
-        // No sidecar metadata is needed beside the save file: removable media
-        // carry stable UUIDs and storage disks stable virtio block identifiers
-        // in `config`, and VZ matches both on restore.
+        // No sidecar metadata is needed beside the save file: the state holds
+        // no hot-plugged USB device, and storage disks carry stable
+        // identifiers in `config`, which VZ matches on restore.
         context.parkedSession()
         context.endSession()
         logger.log(.notice, "Saved state for VM '\(instance.name, privacy: .public)'")
@@ -323,7 +334,7 @@ package final class VirtualizationService {
     /// worst, or at rest.
     package func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
-        snapshot request: VMSnapshotCaptureRequest
+        snapshot request: VMSnapshotCaptureRequest, consent: Consent
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let mode = context.mode
         Self.logger.log(
@@ -337,7 +348,7 @@ package final class VirtualizationService {
                 throw VirtualizationError.noVirtualMachine
             }
             return try await Self.captureWarmSnapshot(
-                instance, context, snapshot: request, session: session)
+                instance, context, snapshot: request, consent: consent, session: session)
         case .suspended:
             return try await takeSuspendedSnapshot(instance, context.operation, snapshot: snapshot)
         case .stopped:
@@ -354,7 +365,8 @@ package final class VirtualizationService {
     /// `VZVirtualMachine` needs.
     static func captureWarmSnapshot(
         _ instance: VMInstance, _ capture: borrowing VMCaptureContext,
-        snapshot request: VMSnapshotCaptureRequest, session: any VMSnapshotSessionOperating
+        snapshot request: VMSnapshotCaptureRequest, consent: Consent,
+        session: any VMSnapshotSessionOperating
     ) async throws -> VMOperationEnding<VMSnapshot> {
         guard capture.operation.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         let snapshot = request.record(capturedIn: .live)
@@ -362,7 +374,7 @@ package final class VirtualizationService {
         let snapshotID = snapshot.id
 
         let captured = await VMLiveStateCapture.captureWarm(
-            instance, capture, session: session,
+            instance, capture, consent: consent, as: .takeSnapshot, session: session,
             prepare: {
                 try await capture.operation.bundle.prepareSnapshot(
                     snapshotID, configuration: configuration)
@@ -402,12 +414,12 @@ package final class VirtualizationService {
         return .rest(rest, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
     }
 
-    /// Copies a live VM into a clone through ``VMLiveStateCapture/captureWarm(_:_:session:prepare:savingStateTo:copy:)``:
+    /// Copies a live VM into a clone through ``VMLiveStateCapture/captureWarm(_:_:consent:as:session:prepare:savingStateTo:copy:)``:
     /// `prepare` lays down the clone's staged bundle, and `copy` copies the
     /// files the saved state restores onto into it inside the pause that
     /// writes the guest's memory to `saveFileURL` first.
     package func copyLive(
-        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext, consent: Consent,
         savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
         copy: () async throws -> Void
@@ -416,7 +428,7 @@ package final class VirtualizationService {
             throw VirtualizationError.noVirtualMachine
         }
         let ending = await VMLiveStateCapture.captureWarm(
-            instance, context, session: session, prepare: prepare,
+            instance, context, consent: consent, as: .clone, session: session, prepare: prepare,
             savingStateTo: { saveFileURL }, copy: copy)
         switch ending {
         case .failed(_, let error):
@@ -586,18 +598,20 @@ package final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds `config` into a VZ configuration, first making the VM's copy of
-    /// each installer disk it attaches that the bundle lacks and creating the
-    /// EFI variable store an EFI boot reads when the bundle holds none.
+    /// Builds `config` into a VZ configuration for `purpose`, first making the
+    /// VM's copy of the virtio installer disk it attaches when the bundle
+    /// lacks it and creating the EFI variable store an EFI boot reads when the
+    /// bundle holds none.
     private func buildConfiguration(
-        _ config: VMConfiguration, _ context: borrowing VMOperationContext
+        _ config: VMConfiguration, _ context: borrowing VMOperationContext,
+        for purpose: ConfigurationBuilder.Purpose
     ) async throws -> sending ConfigurationBuilder.BuildResult {
         try await GuestAgentDiskCopies.ensure(
             for: config, in: VMBundleLayout(bundleURL: context.bundle.url), agents: guestAgents)
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }
-        return try await configBuilder.build(from: config, bundleURL: context.bundle.url)
+        return try await configBuilder.build(from: config, bundleURL: context.bundle.url, for: purpose)
     }
 
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes,
@@ -650,7 +664,8 @@ package final class VirtualizationService {
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
         instance.beginSessionContext(context)
-        let result = try await buildConfiguration(instance.effectiveConfiguration, context.operation)
+        let result = try await buildConfiguration(
+            instance.effectiveConfiguration, context.operation, for: .restore)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }

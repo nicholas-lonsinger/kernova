@@ -100,6 +100,9 @@ package final class VMLibraryViewModel {
 
     package func beginTermination() { library.beginTermination() }
 
+    /// ``VMLibrary/cancelTermination()``.
+    package func cancelTermination() { library.cancelTermination() }
+
     /// ``VMLibrary/startLibrary()``, answering the VMs its read found marked
     /// to start automatically.
     @discardableResult
@@ -544,9 +547,10 @@ package final class VMLibraryViewModel {
     @ObservationIgnored package var onSurfaceLibrary: (() -> Void)?
 
     /// Asks for the app to be taken down, for the quit verb an automation door
-    /// carries. The app delegate answers it with the same full quit the status
-    /// item's Quit performs.
-    @ObservationIgnored package var onRequestQuit: (() -> Void)?
+    /// carries, under the consent that door gave its VMs' saves. The app
+    /// delegate answers it with the same full quit the status item's Quit
+    /// performs, which asks nothing more.
+    @ObservationIgnored package var onRequestQuit: ((Consent) -> Void)?
 
     /// Asks for a VM's bundle to be selected in the Finder, for the verb that
     /// puts it there. The app delegate answers it with the Workspace call.
@@ -769,8 +773,8 @@ package final class VMLibraryViewModel {
         commands.revealInFinder = { [weak self] instance in
             self?.onRevealInFinder?(instance)
         }
-        commands.requestQuit = { [weak self] in
-            self?.onRequestQuit?()
+        commands.requestQuit = { [weak self] consent in
+            self?.onRequestQuit?(consent)
         }
         commands.displayBootSurface = { [weak self] instance in
             self?.displayBootSurface?(instance)
@@ -1017,7 +1021,8 @@ package final class VMLibraryViewModel {
             presenter.presentConfirmationRequest(
                 ConfirmationRequest(
                     instance: instance, prompt: prompt,
-                    answer: { continuation.resume(returning: $0) }))
+                    answer: { continuation.resume(returning: $0) },
+                    suppress: suppressingReminder(prompt)))
         }
         switch answer {
         case .answered(true): return
@@ -1134,12 +1139,28 @@ package final class VMLibraryViewModel {
     }
 
     package func save(_ instance: VMInstance) async {
-        await run(on: instance) { try await self.commands.suspend(.id(instance.id)) }
+        await runAsking(on: instance, then: nil) { consent in
+            try await self.commands.suspend(.id(instance.id), consent: self.remindingAsPreferred(consent))
+        }
     }
 
-    /// Suspends a VM for the termination save pass, throwing on failure.
-    package func saveForTermination(_ instance: VMInstance) async throws {
-        try await commands.suspend(instance, origin: .terminationSave)
+    /// `consent` plus the USB unplug reminder's, when the user turned that
+    /// reminder off: what every door a person uses gives a save up front.
+    package func remindingAsPreferred(_ consent: Consent) -> Consent {
+        preferences.usbUnplugReminderDismissed ? consent.adding(.unplugUSBDisks) : consent
+    }
+
+    /// What "Don't remind me again" records for `prompt`, `nil` for a prompt
+    /// that offers none.
+    package func suppressingReminder(_ prompt: ConfirmationPrompt) -> (@MainActor () -> Void)? {
+        guard prompt.offersSuppression, prompt.kind == .unplugUSBDisks else { return nil }
+        return { [preferences] in preferences.usbUnplugReminderDismissed = true }
+    }
+
+    /// Suspends a VM for the termination save pass under the consent the quit
+    /// gathered, throwing the save's own error on failure.
+    package func saveForTermination(_ instance: VMInstance, consent: Consent) async throws {
+        try await commands.suspendForTermination(instance, consent: consent)
     }
 
     /// Force-stops a VM, throwing on failure — the termination save pass's
@@ -1168,9 +1189,10 @@ package final class VMLibraryViewModel {
     ) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
-            await self.run(on: instance) {
+            await self.runAsking(on: instance, then: nil) { consent in
                 _ = try await self.commands.takeSnapshot(
                     .id(instance.id), name: name, notes: notes,
+                    consent: self.remindingAsPreferred(consent),
                     asEphemeralBaseline: purpose == .ephemeralBaseline)
             }
         }
@@ -1219,8 +1241,11 @@ package final class VMLibraryViewModel {
     ) async {
         if takingSnapshotFirst {
             do {
+                // The revert's own confirmation already gave up the live
+                // session this capture unplugs the disks from.
                 try await commands.takeSnapshot(
-                    .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "")
+                    .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "",
+                    consent: Consent([.unplugUSBDisks, .unplugUSBDisksAtRisk]))
             } catch {
                 present(error, about: .vm(instance))
                 return
@@ -1382,11 +1407,20 @@ package final class VMLibraryViewModel {
     }
 
     /// Clones `instance` as `outcome`; `nil` follows the clone preference.
+    ///
+    /// Registered in the caller's own turn unless the copy asks the USB
+    /// question first, which is then asked on screen.
     package func cloneVM(_ instance: VMInstance, as outcome: CloneOutcome? = nil) {
+        let clone = { (consent: Consent) throws in
+            _ = try self.commands.beginClone(
+                .id(instance.id), outcome: outcome, consent: self.remindingAsPreferred(consent))
+        }
         do {
-            try commands.beginClone(.id(instance.id), outcome: outcome)
+            try clone(.none)
         } catch let error as CommandError {
-            if case .invalidState = error {
+            if error.confirmationPrompt != nil {
+                Task { await runAsking(on: instance, then: nil) { try clone($0) } }
+            } else if case .invalidState = error {
                 Self.logger.log(
                     .debug,
                     "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
@@ -1733,6 +1767,10 @@ package final class VMLibraryViewModel {
         case .startBesideSharedMachineIdentity:
             // Raised where it could not be asked: the refusal it stands for.
             surfaceError(prompt.message, title: ConflictReason.machineIdentity.title, about: .vm(instance))
+        case .unplugUSBDisks, .unplugUSBDisksAtRisk:
+            // Raised where it could not be asked, or by a save whose disks
+            // changed after its question was answered: the refusal it stands for.
+            surfaceError(prompt.message, title: prompt.title, about: .vm(instance))
         default:
             Self.logger.log(
                 .debug,

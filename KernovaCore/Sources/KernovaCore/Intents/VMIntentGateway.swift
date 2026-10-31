@@ -178,8 +178,13 @@ package final class VMIntentGateway {
         }
     }
 
-    func suspend(_ id: UUID) async throws {
-        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
+    /// Suspends the VM under `consent`, with the reminder that the save
+    /// unplugs its USB disks given — a Shortcut has nobody to remind. The
+    /// same holds for every save below.
+    func suspend(_ id: UUID, consent: Consent) async throws {
+        try await perform(.suspend, on: id) {
+            try await self.commands.suspend(.id(id), consent: consent.adding(.unplugUSBDisks))
+        }
     }
 
     func restart(_ id: UUID, consent: Consent) async throws {
@@ -220,17 +225,20 @@ package final class VMIntentGateway {
     /// Readiness first, like every verb: the library read is what the save pass
     /// has to run over, and a quit racing it would take the process down with
     /// nothing to suspend.
-    func quit() async {
+    func quit(consent: Consent) async throws {
         await ready()
-        commands.quit()
+        try commands.quit(consent: consent.adding(.unplugUSBDisks))
     }
 
     // MARK: - Snapshots
 
     @discardableResult
-    func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
+    func takeSnapshot(
+        _ id: UUID, name: String, notes: String, consent: Consent
+    ) async throws -> SnapshotSummary {
         try await perform(.takeSnapshot, on: id) {
-            try await self.commands.takeSnapshot(.id(id), name: name, notes: notes)
+            try await self.commands.takeSnapshot(
+                .id(id), name: name, notes: notes, consent: consent.adding(.unplugUSBDisks))
         }
     }
 
@@ -298,10 +306,11 @@ package final class VMIntentGateway {
     /// Unwaited, so the clone answers without suspending once its arrival is
     /// registered, and the `info` read is the same main-actor turn — the row is
     /// always there to describe.
-    func clone(_ id: UUID, outcome: CloneOutcome?) async throws -> VMEntity {
+    func clone(_ id: UUID, outcome: CloneOutcome?, consent: Consent) async throws -> VMEntity {
         try await perform(.clone, on: id) {
             let copy = try await self.commands.clone(
-                .id(id), outcome: outcome, waitForOutcome: false)
+                .id(id), outcome: outcome, consent: consent.adding(.unplugUSBDisks),
+                waitForOutcome: false)
             return VMEntity(try self.commands.info(.id(copy.id)))
         }
     }

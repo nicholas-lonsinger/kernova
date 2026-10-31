@@ -69,7 +69,7 @@ struct VMLibraryIntentTests {
         // blocked for the rest of the process; a second signal is harmless.
         defer { hold.signal() }
 
-        let copy = try await makeGateway(wired).clone(source.id, outcome: .exactCopy)
+        let copy = try await makeGateway(wired).clone(source.id, outcome: .exactCopy, consent: .none)
 
         #expect(copy.name == "Wired Copy")
         #expect(copy.status == VMStatus.preparingWireName)
@@ -268,7 +268,7 @@ struct VMLibraryIntentTests {
         let missing = UUID()
 
         await #expect(throws: CommandError.notFound(.id(missing))) {
-            _ = try await makeGateway(wired).clone(missing, outcome: .newMachine)
+            _ = try await makeGateway(wired).clone(missing, outcome: .newMachine, consent: .none)
         }
 
         #expect(wired.library.arrivals.isEmpty)

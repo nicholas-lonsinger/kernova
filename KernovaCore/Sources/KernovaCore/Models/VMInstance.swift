@@ -434,9 +434,9 @@ package final class VMInstance {
     }
 
     /// Whether `item` is a guest-agent installer disk on this VM
-    /// (``RemovableMediaItem/isInstaller(of:in:)``).
+    /// (``RemovableMediaItem/isInstaller(of:)``).
     package func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
-        item.isInstaller(of: bundleProducts.guestAgents, in: bundleLayout)
+        item.isInstaller(of: bundleProducts.guestAgents)
     }
 
     var diskImageURL: URL { bundleLayout.diskImageURL }
@@ -806,15 +806,14 @@ package final class VMInstance {
     /// shape the bundle does not record.
     package func coldBootConfiguration(_ bringUp: borrowing VMBringUpContext) throws -> VMConfiguration {
         let agents = bundleProducts.guestAgents
-        let layout = bundleLayout
         if configuration.deviceShape != .current || hasGuestAgentInstallerMounted {
             try bringUp.operation.permit.updateConfiguration {
                 $0.deviceShape = .current
                 // The disk was the last session's; this one starts without it.
-                $0.removeInstallerDisks(of: agents, in: layout)
+                $0.removeInstallerDisks(of: agents)
             }.get()
         }
-        // Each boot that attaches an installer disk makes its own copy.
+        // Each boot that attaches the virtio installer disk makes its own copy.
         GuestAgentDiskCopies.removeAll(in: bundleLayout)
         return effectiveConfiguration
     }

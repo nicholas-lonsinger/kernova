@@ -14,9 +14,11 @@ extension KernovaCommand {
                 + "the one verb that never starts it. Returns once macOS has released the app, so "
                 + "a line after this one is free to open it again.")
 
-        /// The options every subcommand carries. Quit acts on none of them; it
-        /// carries the group so every verb accepts the same flags.
+        /// The options every subcommand carries; of them, quit acts on `--yes`.
         @OptionGroup var options: GlobalOptions
+
+        /// The request this command line stands for.
+        var request: VMCommandRequest.Verb { .quit(consent: options.consent) }
 
         /// Quits the app and returns once it has gone, or reports success when
         /// there is none to quit.
@@ -24,7 +26,7 @@ extension KernovaCommand {
             let app = try CommandConnection.enclosingApp()
             guard let client = try CommandConnection.openIfRunning(app) else { return }
             defer { client.close() }
-            try client.post(.quit)
+            try client.post(request)
             let answer = try client.nextFrame()
             try Self.outcome(for: answer)
             // `ok` only means the quit was accepted — the save pass still has to

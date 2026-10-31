@@ -127,7 +127,7 @@ package struct VMBundleLayout: Sendable {
 
     static let guestAgentDiskRelativePath = "GuestAgentDisk"
 
-    /// The VM's own copies of the guest-agent installer disks attached to it
+    /// The VM's own copy of the virtio-delivered guest-agent installer disk
     /// (``GuestAgentDiskCopies``).
     ///
     /// The guest never sees the app's shared file: what is attached is a copy
@@ -137,14 +137,6 @@ package struct VMBundleLayout: Sendable {
     /// and a revert writes it back.
     package var guestAgentDiskDirectoryURL: URL {
         bundleURL.appendingPathComponent(Self.guestAgentDiskRelativePath, isDirectory: true)
-    }
-
-    /// The VM's copy of the installer disk `item` attaches, named by the
-    /// entry's `id`: a copy here is what makes the entry an installer
-    /// (``RemovableMediaItem/isInstaller(of:in:)``).
-    package func guestAgentDiskCopyURL(for item: RemovableMediaItem) -> URL {
-        let name = URL(filePath: item.id.uuidString).appendingPathExtension(URL(filePath: item.path).pathExtension)
-        return guestAgentDiskDirectoryURL.appendingPathComponent(name.lastPathComponent, isDirectory: false)
     }
 
     /// The VM's copy of the virtio-delivered installer disk at `source`, which

@@ -392,7 +392,7 @@ struct AppAlertPresenterTests {
                 kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
                 message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
                 confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
-            answer: { answers.value.append($0) })
+            answer: { answers.value.append($0) }, suppress: nil)
     }
 
     /// Holds what the requests under test are answered with.
@@ -837,7 +837,7 @@ struct AppAlertPresenterTests {
                 prompt: ConfirmationPrompt(
                     kind: .startBesideSharedMachineIdentity, title: "Start Anyway?", message: "Twin.",
                     confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
-                answer: { answers.value.append($0) }))
+                answer: { answers.value.append($0) }, suppress: nil))
         #expect(display.attachedSheet != nil)
 
         display.close()

@@ -609,7 +609,9 @@ struct VMCommandCoreAttachmentTests {
         try await diskImages.parked.wait { diskImages.isParked }
         #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
         #expect(instance.status == .running)
-        let suspend = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
+        let suspend = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id), consent: .all)
+        }
         #expect(suspend.isBusy)
         let other = externalPath("other.iso")
         try harness.core.attachRemovableMedia(
@@ -629,7 +631,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.removableMedia.attachCallCount == 2)
         #expect(harness.removableMedia.detachCallCount == 0)
         #expect(Set(instance.liveRemovableMedia.map(\.path)) == [other, path])
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
         #expect(instance.phase == .suspended)
     }
 
@@ -709,13 +711,15 @@ struct VMCommandCoreAttachmentTests {
         try harness.core.ejectRemovableMedia(.id(instance.id), item: item.id)
         // The eject's reconcile holds the VM, so the save cannot tear the
         // session down under the detach.
-        let refusal = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id), consent: .all)
+        }
         #expect(refusal.isBusy)
 
         try await waitForChange { instance.phase.operation == nil }
         #expect(harness.removableMedia.detachCallCount == 1)
         #expect(instance.configuration.removableMedia == nil)
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
         #expect(instance.phase == .suspended)
     }
 
@@ -1311,7 +1315,7 @@ struct VMCommandCoreAttachmentTests {
         let hold = DispatchSemaphore(value: 0)
         harness.storage.setCloneHold(hold)
         let clone = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
 
         let removeError = try await #require(throws: CommandError.self) {
@@ -1415,86 +1419,49 @@ struct VMCommandCoreAttachmentTests {
         #expect(image.count % 2048 == 0)
         #expect(String(decoding: image[16 * 2048 + 40..<16 * 2048 + 53], as: UTF8.self) == "KERNOVA_AGENT")
 
-        // The guest gets the VM's own copy of the disk, with the disk's bytes.
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
-        #expect(try Data(contentsOf: copy) == image)
+        // The guest gets this build's disk itself: no saved state holds it,
+        // so nothing has to keep the bytes a state was saved with.
         try await waitForChange { !instance.liveRemovableMedia.isEmpty }
-        #expect(harness.removableMedia.lastAttachedPath == copy.path(percentEncoded: false))
-        // An update rewriting the app's disk leaves the VM's copy as it was.
-        try Data("a later build's disk".utf8).write(to: cache.url)
-        #expect(try Data(contentsOf: copy) == image)
+        #expect(harness.removableMedia.lastAttachedPath == cache.url.path(percentEncoded: false))
+        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
 
         #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
         // The disk is the app's, so a VM's delete never offers to trash it.
         #expect(await harness.core.externalAttachments(for: instance).isEmpty)
 
-        // An eject takes the entry and the copy.
+        // An eject takes the entry.
         instance.onAgentBecameCurrent?()
         #expect(instance.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
     }
 
-    @Test("A guest's power-off takes the installer disk's entry and the VM's copy")
-    func powerOffRemovesTheInstallerCopy() async throws {
+    @Test("A guest's power-off takes the installer disk's entry")
+    func powerOffRemovesTheInstallerEntry() async throws {
         let harness = makeHarness()
         let sessionID = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS)
         instance.beginSessionContextForTesting()
         try await harness.core.mountGuestAgentDisk(.id(instance.id))
         try await waitForChange { instance.phase == .running(sessionID: sessionID) }
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(
-            for: try #require(instance.configuration.removableMedia?.first))
-        #expect(FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
+        #expect(instance.hasGuestAgentInstallerMounted)
 
         instance.handleSessionEvent(.guestDidStop)
         try await waitForChange { instance.phase == .stopped }
 
         #expect(instance.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
     }
 
-    /// A running macOS VM holding an installer entry another build of Kernova
-    /// attached: it names that build's DMG, and the bundle holds its copy.
-    private func otherBuildsInstaller(in harness: Harness) throws -> (VMInstance, RemovableMediaItem, URL) {
+    @Test("An entry naming another build's installer is no installer of this build's")
+    func anotherBuildsInstallerIsAnOrdinaryMedium() async throws {
+        let harness = makeHarness()
         let item = RemovableMediaItem(
             path: "/Applications/Other Kernova.app/Contents/Resources/KernovaMacOSAgent.dmg", readOnly: true,
             label: "Kernova Guest Agent")
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS) {
             $0.removableMedia = [item]
         }
-        instance.beginSessionContextForTesting()
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
-        try FileManager.default.createDirectory(
-            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("the other build's disk".utf8).write(to: copy)
-        return (instance, item, copy)
-    }
 
-    @Test("An entry whose copy the bundle holds is the installer, whichever build attached it")
-    func anotherBuildsInstallerIsStillTheInstaller() async throws {
-        let harness = makeHarness()
-        let (instance, item, _) = try otherBuildsInstaller(in: harness)
-
-        #expect(instance.isGuestAgentInstaller(item))
-        #expect(instance.hasGuestAgentInstallerMounted)
-        // The other build's DMG is the app's, never offered to the trash.
-        #expect(await harness.core.externalAttachments(for: instance).isEmpty)
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
-    }
-
-    @Test("The Storage panel's Eject and Remove take an installer entry's copy with it")
-    func storageEditsRemoveTheInstallerCopy() async throws {
-        let harness = makeHarness()
-        let (ejected, ejectedItem, ejectedCopy) = try otherBuildsInstaller(in: harness)
-        try harness.core.ejectRemovableMedia(.id(ejected.id), item: ejectedItem.id)
-        #expect(ejected.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: ejectedCopy.path(percentEncoded: false)))
-
-        let (removed, removedItem, removedCopy) = try otherBuildsInstaller(in: harness)
-        try await harness.core.removeRemovableMedia(
-            .id(removed.id), item: removedItem.id, trashFile: true, consent: .all)
-        #expect(removed.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: removedCopy.path(percentEncoded: false)))
+        #expect(!instance.isGuestAgentInstaller(item))
+        #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
     @Test("A guest that takes the disk on virtio attaches nothing and says so")

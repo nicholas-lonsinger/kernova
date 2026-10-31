@@ -196,22 +196,22 @@ extension VMCommandCore {
     /// registered before this call first suspends.
     @discardableResult
     func clone(
-        _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
+        _ selector: VMSelector, outcome: CloneOutcome?, consent: Consent, waitForOutcome: Bool
     ) async throws -> VMSummary {
-        guard waitForOutcome else { return try beginClone(selector, outcome: outcome) }
+        guard waitForOutcome else { return try beginClone(selector, outcome: outcome, consent: consent) }
         return summary(
-            try await awaitOutcome(of: registerClone(selector, outcome: outcome)))
+            try await awaitOutcome(of: registerClone(selector, outcome: outcome, consent: consent)))
     }
 
     /// The clone nobody waits on, which never suspends: the arrival is
     /// registered and its row answered in the caller's own turn.
-    /// ``clone(_:outcome:waitForOutcome:)`` without `waitForOutcome`
+    /// ``clone(_:outcome:consent:waitForOutcome:)`` without `waitForOutcome`
     /// is this.
     @discardableResult
     func beginClone(
-        _ selector: VMSelector, outcome: CloneOutcome?
+        _ selector: VMSelector, outcome: CloneOutcome?, consent: Consent
     ) throws -> VMSummary {
-        let arrival = try registerClone(selector, outcome: outcome)
+        let arrival = try registerClone(selector, outcome: outcome, consent: consent)
         followUnwaited(arrival)
         return summary(arrival)
     }
@@ -224,11 +224,14 @@ extension VMCommandCore {
     /// phase admits (``VMAdmission/cloneMode(phase:facts:)``); the arrival's
     /// write then lays down the clone's configuration. An Exact Copy of a
     /// suspended or live source arrives suspended on the source's saved
-    /// state, and every other clone arrives stopped.
+    /// state, and every other clone arrives stopped. A live source's copy asks
+    /// the USB question a save asks, under `consent`, before anything is
+    /// registered.
     private func registerClone(
-        _ selector: VMSelector, outcome: CloneOutcome?
+        _ selector: VMSelector, outcome: CloneOutcome?, consent: Consent
     ) throws -> VMArrival {
         let instance = try resolve(selector)
+        try USBSaveDecision.require(consent, toSave: instance, as: .clone)
 
         let resolved = outcome ?? preferences.cloneOutcome(for: instance.configuration)
         guard resolved == .exactCopy || instance.configuration.offersNewMachineClone else {
@@ -304,7 +307,7 @@ extension VMCommandCore {
                 guard let self, let instance else { throw CancellationError() }
                 try self.launchCloneCopy(
                     of: instance, outcome: resolved, machineIdentifier: machineIdentifier,
-                    registered: registered, into: staged, resolving: copied)
+                    registered: registered, into: staged, consent: consent, resolving: copied)
             }
         } catch {
             throw failure(error, verb: .clone, on: instance)
@@ -332,7 +335,8 @@ extension VMCommandCore {
     /// source's return to its Ephemeral baseline copies what that left.
     private func launchCloneCopy(
         of instance: VMInstance, outcome resolved: CloneOutcome, machineIdentifier: Data?,
-        registered: VMConfiguration, into staged: VMStagedBundle, resolving outcome: VMOutcome
+        registered: VMConfiguration, into staged: VMStagedBundle, consent: Consent,
+        resolving outcome: VMOutcome
     ) throws {
         let storage = storageService
         let virtualization = lifecycle.virtualizationService
@@ -356,7 +360,7 @@ extension VMCommandCore {
                 // the freeze does not grow with the snapshots an Exact Copy
                 // carries.
                 ending = try await virtualization.copyLive(
-                    context.operation.instance, context,
+                    context.operation.instance, context, consent: consent,
                     savingStateTo: staged.layout.saveFileURL,
                     prepare: {
                         try await Task.detached {

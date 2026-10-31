@@ -951,9 +951,9 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let quits = QuitHookRecorder()
         // What `AppDelegate` answers with `AppTerminationController.requestFullQuit()`.
-        viewModel.onRequestQuit = { quits.record() }
+        viewModel.onRequestQuit = { _ in quits.record() }
 
-        viewModel.commands.quit()
+        try viewModel.commands.quit(consent: .all)
 
         try await quits.gate.wait { quits.count == 1 }
         #expect(quits.count == 1)
@@ -3318,7 +3318,7 @@ struct VMLibraryViewModelTests {
 
     // MARK: - saveForTermination / tryForceStop
 
-    @Test("saveForTermination throws on failure")
+    @Test("saveForTermination throws the save's own error, so the pass can tell a question from a failure")
     func saveForTerminationThrows() async {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
@@ -3326,8 +3326,8 @@ struct VMLibraryViewModelTests {
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        await #expect(throws: CommandError.self) {
-            try await viewModel.saveForTermination(instance)
+        await #expect(throws: VirtualizationError.self) {
+            try await viewModel.saveForTermination(instance, consent: .all)
         }
     }
 
@@ -3344,12 +3344,78 @@ struct VMLibraryViewModelTests {
         viewModel.beginTermination()
 
         await #expect(throws: CommandError.terminating) {
-            try await viewModel.commands.suspend(.id(user.id))
+            try await viewModel.commands.suspend(.id(user.id), consent: .all)
         }
         #expect(user.status == .running)
-        try await viewModel.saveForTermination(quit)
+        try await viewModel.saveForTermination(quit, consent: .all)
         #expect(virtService.saveCallCount == 1)
         #expect(quit.status == .suspended)
+    }
+
+    // MARK: - The USB question a person's save asks
+
+    /// A running VM in `viewModel`'s library whose session holds `media`.
+    private func liveVM(holding media: [RemovableMediaItem], in viewModel: VMLibraryViewModel) -> VMInstance {
+        let instance = viewModel.library.admitFixture(name: "Ubuntu") { $0.removableMedia = media }
+        instance.peers = viewModel.library
+        let sessionID = UUID()
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
+        instance.beginSessionContextForTesting()
+        for item in media {
+            instance.recordAttachedMedia(
+                RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly), for: sessionID)
+        }
+        return instance
+    }
+
+    @Test("Suspend asks the reminder on screen, whose box turns it off for every VM")
+    func suspendAsksTheReminder() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = liveVM(
+            holding: [RemovableMediaItem(path: "/Volumes/Tools.iso", readOnly: true, label: "Tools")], in: viewModel)
+        presenter.confirmationAnswer = .answered(true)
+
+        await viewModel.save(instance)
+
+        let request = try #require(presenter.confirmationRequests.first)
+        #expect(presenter.confirmationRequests.count == 1)
+        #expect(request.prompt.kind == .unplugUSBDisks)
+        #expect(request.instance === instance)
+        #expect(instance.status == .suspended)
+        #expect(virtService.saveConsents.last?.covers(.unplugUSBDisks) == true)
+        let suppress = try #require(request.suppress)
+        suppress()
+        #expect(preferences.usbUnplugReminderDismissed)
+    }
+
+    @Test("With the reminder off, Suspend asks nothing of read-only disks")
+    func turnedOffReminderSuspendsUnasked() async throws {
+        preferences.usbUnplugReminderDismissed = true
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = liveVM(
+            holding: [RemovableMediaItem(path: "/Volumes/Tools.iso", readOnly: true)], in: viewModel)
+
+        await viewModel.save(instance)
+
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(instance.status == .suspended)
+    }
+
+    @Test("A writable disk is warned about even with the reminder off, and Cancel leaves the guest running")
+    func writableDiskWarnsAndCancelKeepsRunning() async throws {
+        preferences.usbUnplugReminderDismissed = true
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = liveVM(
+            holding: [RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false)], in: viewModel)
+        presenter.confirmationAnswer = .answered(false)
+
+        await viewModel.save(instance)
+
+        #expect(presenter.confirmationRequests.map(\.prompt.kind) == [.unplugUSBDisksAtRisk])
+        #expect(presenter.confirmationRequests.first?.suppress == nil)
+        #expect(virtService.saveCallCount == 0)
+        #expect(instance.status == .running)
+        #expect(presenter.errors.isEmpty)
     }
 
     @Test("tryForceStop throws on failure")

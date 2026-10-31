@@ -34,13 +34,30 @@ struct AppTerminationGateTests {
         }
     }
 
-    /// A controller whose terminations end into `endings`, and whose pending
-    /// quit was delivered by `quitEvent`.
+    /// Records each USB question a quit asks and answers it as told.
+    @MainActor
+    private final class UnplugAsker {
+        /// Whether the user goes ahead.
+        var answer = true
+        /// Whether the user checks "Don't remind me again".
+        var checksSuppression = false
+        private(set) var prompts: [ConfirmationPrompt] = []
+
+        func ask(_ prompt: ConfirmationPrompt, _ suppress: (@MainActor () -> Void)?) -> Bool {
+            prompts.append(prompt)
+            if checksSuppression { suppress?() }
+            return answer
+        }
+    }
+
+    /// A controller whose terminations end into `endings`, whose pending quit
+    /// was delivered by `quitEvent`, and whose USB question `asker` answers.
     private func makeController(
         residency: any SoftQuitHosting = SoftQuitSpy(),
         diskImages: MockDiskImageService = MockDiskImageService(),
         endings: EndingSpy = EndingSpy(),
-        quitEvent: AppTerminationController.QuitEvent? = nil
+        quitEvent: AppTerminationController.QuitEvent? = nil,
+        asker: UnplugAsker = UnplugAsker()
     ) -> (AppTerminationController, VMLibraryViewModel) {
         let viewModel = makeLibraryViewModel(preferences: preferences, diskImageService: diskImages)
         let controller = AppTerminationController(
@@ -49,7 +66,8 @@ struct AppTerminationGateTests {
             // Every sender is alive and no application: the shape of
             // `osascript`'s quit.
             senderProbe: .init(isProcessAlive: { _ in true }, bundleID: { _ in nil }),
-            endTermination: { ending in endings.record(ending) })
+            endTermination: { ending in endings.record(ending) },
+            askToUnplug: { prompt, suppress in asker.ask(prompt, suppress) })
         return (controller, viewModel)
     }
 
@@ -128,12 +146,13 @@ struct AppTerminationGateTests {
 
     // MARK: - What a Quit Waits Out
 
-    /// A full quit whose pass records how it ended.
+    /// A full quit whose pass records how it ended, and whose USB question
+    /// `asker` answers.
     private func makeFullQuit(
-        diskImages: MockDiskImageService = MockDiskImageService()
+        diskImages: MockDiskImageService = MockDiskImageService(), asker: UnplugAsker = UnplugAsker()
     ) -> (AppTerminationController, VMLibraryViewModel, EndingSpy) {
         let spy = EndingSpy()
-        let (controller, viewModel) = makeController(diskImages: diskImages, endings: spy)
+        let (controller, viewModel) = makeController(diskImages: diskImages, endings: spy, asker: asker)
         viewModel.keepInMenuBarOnQuit = true
         return (controller, viewModel, spy)
     }
@@ -281,6 +300,164 @@ struct AppTerminationGateTests {
         try await save.value()
         try await spy.ended.wait { spy.endings.count == 1 }
         #expect(stuck.phase == .suspended)
+    }
+
+    // MARK: - The USB question
+
+    /// A live VM named `name` in `viewModel`'s library whose session holds
+    /// `media`.
+    private func admitLive(
+        named name: String, holding media: [RemovableMediaItem], to viewModel: VMLibraryViewModel
+    ) -> VMInstance {
+        let instance = viewModel.library.admitFixture(name: name) { $0.removableMedia = media }
+        instance.peers = viewModel.library
+        let sessionID = UUID()
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
+        instance.beginSessionContextForTesting()
+        for item in media {
+            instance.recordAttachedMedia(
+                RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly), for: sessionID)
+        }
+        return instance
+    }
+
+    private let writable = RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false, label: "Data")
+    private let readOnly = RemovableMediaItem(path: "/Volumes/Tools.iso", readOnly: true, label: "Tools")
+
+    private func virtualization(of viewModel: VMLibraryViewModel) throws -> MockVirtualizationService {
+        try #require(viewModel.library.lifecycle.virtualizationService as? MockVirtualizationService)
+    }
+
+    @Test("A quit asks once for every live VM — the warning, naming only the disks at risk — then saves them all")
+    func quitAsksOnceForEveryVM() async throws {
+        let asker = UnplugAsker()
+        let (controller, viewModel, spy) = makeFullQuit(asker: asker)
+        let first = admitLive(named: "Ubuntu", holding: [writable], to: viewModel)
+        let second = admitLive(named: "Fedora", holding: [readOnly], to: viewModel)
+
+        controller.requestFullQuit()
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        #expect(asker.prompts.count == 1)
+        let prompt = try #require(asker.prompts.first)
+        #expect(prompt.kind == .unplugUSBDisksAtRisk)
+        #expect(prompt.title == "\u{201C}Data\u{201D} may lose changes")
+        #expect(!prompt.message.contains("Tools"))
+        #expect(prompt.confirmTitle == "Quit Anyway")
+        #expect(spy.endings == [.terminate])
+        #expect(first.phase == .suspended)
+        #expect(second.phase == .suspended)
+        #expect(try virtualization(of: viewModel).saveConsents.allSatisfy { $0.covers(.unplugUSBDisksAtRisk) })
+    }
+
+    @Test("Cancel at the quit's question ends the quit before anything changes, and the next quit asks again")
+    func cancelAtTheQuestionChangesNothing() async throws {
+        let asker = UnplugAsker()
+        asker.answer = false
+        let (controller, viewModel, spy) = makeFullQuit(asker: asker)
+        let instance = admitLive(named: "Ubuntu", holding: [writable], to: viewModel)
+        let sessionID = try #require(instance.phase.sessionID)
+
+        controller.requestFullQuit()
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        // Nothing deferred this quit, so there is no reply to cancel.
+        #expect(spy.endings == [.cancelled])
+        #expect(instance.phase == .running(sessionID: sessionID))
+        #expect(!viewModel.library.isTerminating)
+        #expect(try virtualization(of: viewModel).saveCallCount == 0)
+
+        asker.answer = true
+        controller.requestFullQuit()
+        try await spy.ended.wait { spy.endings.count == 2 }
+        #expect(asker.prompts.count == 2)
+        #expect(spy.endings.last == .terminate)
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("A quit AppKit deferred is answered with a cancel when its question is cancelled")
+    func cancelAtTheQuestionCancelsADeferredQuit() async throws {
+        let asker = UnplugAsker()
+        asker.answer = false
+        let (controller, viewModel, spy) = makeFullQuit(asker: asker)
+        _ = admitLive(named: "Ubuntu", holding: [readOnly], to: viewModel)
+
+        controller.requestFullQuit()
+        #expect(controller.handleTerminationRequest() == .later)
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        #expect(spy.endings == [.cancelDeferredReply])
+    }
+
+    @Test("With no disk at risk the quit asks the reminder, whose box turns it off for good")
+    func quitAsksTheReminder() async throws {
+        let asker = UnplugAsker()
+        asker.checksSuppression = true
+        let (controller, viewModel, spy) = makeFullQuit(asker: asker)
+        let instance = admitLive(named: "Ubuntu", holding: [readOnly], to: viewModel)
+
+        controller.requestFullQuit()
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        #expect(asker.prompts.count == 1)
+        let prompt = try #require(asker.prompts.first)
+        #expect(prompt.kind == .unplugUSBDisks)
+        #expect(prompt.offersSuppression)
+        #expect(
+            prompt.message
+                == "Kernova unplugs \u{201C}Tools\u{201D} from \u{201C}Ubuntu\u{201D} before it quits, and plugs it back in when you resume."
+        )
+        #expect(preferences.usbUnplugReminderDismissed)
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("A quit asks nothing of read-only disks once the reminder is turned off")
+    func turnedOffReminderAsksNothing() async throws {
+        preferences.usbUnplugReminderDismissed = true
+        let asker = UnplugAsker()
+        let (controller, viewModel, spy) = makeFullQuit(asker: asker)
+        let instance = admitLive(named: "Ubuntu", holding: [readOnly], to: viewModel)
+
+        controller.requestFullQuit()
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        #expect(asker.prompts.isEmpty)
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("An automation quit asks nothing and saves under the consent its verb decided with")
+    func automationQuitAsksNothing() async throws {
+        let asker = UnplugAsker()
+        let (controller, viewModel, spy) = makeFullQuit(asker: asker)
+        let instance = admitLive(named: "Ubuntu", holding: [readOnly], to: viewModel)
+
+        controller.requestFullQuit(consentedBy: Consent([.unplugUSBDisks]))
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        #expect(asker.prompts.isEmpty)
+        #expect(spy.endings == [.terminate])
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("A save whose disks the quit's consent does not cover cancels the quit, the guest left running")
+    func askingSaveCancelsTheQuit() async throws {
+        let (controller, viewModel, spy) = makeFullQuit()
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        let instance = admitLive(named: "Ubuntu", holding: [writable], to: viewModel)
+        let sessionID = try #require(instance.phase.sessionID)
+
+        // A disk the consent never covered: the shape of one attached after
+        // the question was answered.
+        controller.requestFullQuit(consentedBy: Consent([.unplugUSBDisks]))
+        try await spy.ended.wait { spy.endings.count == 1 }
+
+        #expect(spy.endings == [.cancelled])
+        #expect(instance.phase == .running(sessionID: sessionID))
+        #expect(try virtualization(of: viewModel).forceStopCallCount == 0)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains("Data") == true)
+        #expect(!viewModel.library.isTerminating)
     }
 
     @Test("A resident app that stays in the menu bar downgrades a quit to a GUI close")

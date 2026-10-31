@@ -21,7 +21,7 @@ struct CLIQuitTests {
         // The app answers `ok`, runs its save pass, and only then exits — which
         // is the close the tool is waiting for.
         listener.serve([[VMCommandResponse(result: .ok)]])
-        try client.post(.quit)
+        try client.post(.quit(consent: .none))
 
         let answer = try client.nextFrame()
         #expect(answer?.result == .ok)
@@ -32,6 +32,6 @@ struct CLIQuitTests {
         // nothing it needs runs on an actor this call could be starving. The
         // socket's own receive deadline is the backstop.
         #expect(throws: Never.self) { try KernovaCommand.Quit.awaitExit(of: client) }
-        #expect(try listener.requests().map(\.verb) == [.quit])
+        #expect(try listener.requests().map(\.verb) == [.quit(consent: .none)])
     }
 }

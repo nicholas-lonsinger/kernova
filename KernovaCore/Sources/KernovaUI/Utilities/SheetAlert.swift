@@ -66,6 +66,31 @@ func presentSheetAlert(
     didDismiss: (() -> Void)? = nil,
     completion: (() -> Void)? = nil
 ) -> NSAlert {
+    let alert = makeAlert(sheet)
+    let dismissal = makeSheetAlertDismissal(
+        buttons: sheet.buttons, didDismiss: didDismiss, completion: completion)
+    alert.beginSheetModal(for: window) { response in
+        recordSuppression(of: alert, sheet.configuration)
+        dismissal(response)
+    }
+    return alert
+}
+
+/// Runs `config` as an app-modal alert in front of the user, for a question
+/// about no one window, and fires the chosen button's action once it is
+/// answered.
+@MainActor
+func runAppModalAlert(_ config: AlertConfiguration, presence: any AppPresence) {
+    let alert = makeAlert(SheetAlert(config))
+    presence.activate()
+    let response = alert.runModal()
+    recordSuppression(of: alert, config)
+    dispatchAction(for: response, buttons: config.buttons)
+}
+
+/// The `NSAlert` that draws `sheet`.
+@MainActor
+private func makeAlert(_ sheet: SheetAlert) -> NSAlert {
     assert(
         sheet.buttons.filter { $0.role == .default }.count <= 1,
         "An alert takes at most one Return key: '\(sheet.title)'")
@@ -79,19 +104,24 @@ func presentSheetAlert(
         let nsButton = alert.addButton(withTitle: button.title)
         configureNSAlertButton(nsButton, role: button.role)
     }
+    if let suppression = sheet.suppression {
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = suppression.title
+    }
 
     // After the buttons, so the alert's window is built from the finished
     // layout — reading `alert.window` is what creates it.
     if let responder = sheet.initialFirstResponder {
         alert.window.initialFirstResponder = responder
     }
-
-    let dismissal = makeSheetAlertDismissal(
-        buttons: sheet.buttons, didDismiss: didDismiss, completion: completion)
-    alert.beginSheetModal(for: window) { response in
-        dismissal(response)
-    }
     return alert
+}
+
+/// Records `config`'s suppression when the user checked its box on `alert`.
+@MainActor
+private func recordSuppression(of alert: NSAlert, _ config: AlertConfiguration) {
+    guard let suppression = config.suppression, alert.suppressionButton?.state == .on else { return }
+    suppression.record()
 }
 
 /// ``presentSheetAlert(_:in:didDismiss:completion:)`` for an alert with no

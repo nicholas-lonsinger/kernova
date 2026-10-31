@@ -134,7 +134,7 @@ struct VMCommandCoreArrivalTests {
         storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
         #expect(row.status == VMStatus.preparingWireName)
         let arrival = try #require(harness.library.arrivals.first)
         await arrival.settle()
@@ -155,7 +155,7 @@ struct VMCommandCoreArrivalTests {
         storage.setCloneHold(hold)
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
@@ -174,7 +174,7 @@ struct VMCommandCoreArrivalTests {
         storage.setCloneHold(hold)
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
@@ -207,7 +207,7 @@ struct VMCommandCoreArrivalTests {
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
         let savesBefore = storage.saveConfigurationCallCount
 
         #expect(harness.library.instances.map(\.id) == [source.id])
@@ -240,7 +240,7 @@ struct VMCommandCoreArrivalTests {
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
 
         let addressRefusal = #expect(throws: CommandError.self) {
             try harness.core.ipAddress(of: .id(row.id))
@@ -264,7 +264,7 @@ struct VMCommandCoreArrivalTests {
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
         let arrival = try #require(harness.library.arrivals.first)
 
         let disks = try await harness.core.storageDisks(of: .id(row.id))
@@ -361,7 +361,7 @@ struct VMCommandCoreArrivalTests {
         // against the new VM — a clone here — finds it busy.
         #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         let clone = #expect(throws: CommandError.self) {
-            try core.beginClone(.id(instance.id), outcome: .exactCopy)
+            try core.beginClone(.id(instance.id), outcome: .exactCopy, consent: .all)
         }
         #expect(isBusy(clone))
 
@@ -379,7 +379,7 @@ struct VMCommandCoreArrivalTests {
         storage.setPublishHold(hold)
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
         }
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
@@ -406,7 +406,7 @@ struct VMCommandCoreArrivalTests {
         storage.setDeleteVMBundleError(CocoaError(.fileWriteNoPermission))
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: false)
         let arrival = try #require(harness.library.arrivals.first)
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
 
@@ -427,7 +427,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let clone = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: true)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
         #expect(clone.status == VMStatus.stopped.rawValue)
 
         let refusal = try #require(throws: CommandError.self) {
@@ -457,7 +457,7 @@ struct VMCommandCoreArrivalTests {
             $0.macAddress = mac
         }
         let row = try await harness.core.clone(
-            .id(source.id), outcome: outcome, waitForOutcome: true)
+            .id(source.id), outcome: outcome, consent: .all, waitForOutcome: true)
         let clone = try #require(harness.library.instances.first { $0.id == row.id })
         return clone.configuration
     }
@@ -510,7 +510,7 @@ struct VMCommandCoreArrivalTests {
         }
 
         #expect(throws: CommandError.unsupported(capability: "cloning as a New Machine")) {
-            try harness.core.beginClone(.id(source.id), outcome: .newMachine)
+            try harness.core.beginClone(.id(source.id), outcome: .newMachine, consent: .all)
         }
         #expect(harness.library.entries.map(\.id) == [source.id])
     }
@@ -533,7 +533,7 @@ struct VMCommandCoreArrivalTests {
         try VMInstanceFixture.writeSaveFile(for: source)
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
+            .id(source.id), outcome: .exactCopy, consent: .all, waitForOutcome: true)
 
         let clone = try #require(harness.library.instances.first { $0.id == row.id })
         #expect(clone.phase == .suspended)
@@ -550,7 +550,7 @@ struct VMCommandCoreArrivalTests {
         try VMInstanceFixture.writeSaveFile(for: source)
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: true)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
 
         let clone = try #require(harness.library.instances.first { $0.id == row.id })
         #expect(clone.phase == .stopped)
@@ -579,7 +579,7 @@ struct VMCommandCoreArrivalTests {
         storage.setCloneHold(hold)
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: outcome, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: outcome, consent: .all, waitForOutcome: true)
         }
         // The settled files go first, with the guest untouched.
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
@@ -622,7 +622,7 @@ struct VMCommandCoreArrivalTests {
         harness.virtualization.liveCopySession = session
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: true)
+            .id(source.id), outcome: .newMachine, consent: .all, waitForOutcome: true)
 
         #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
         #expect(await session.guestState == .paused)
@@ -643,7 +643,7 @@ struct VMCommandCoreArrivalTests {
         harness.virtualization.liveCopySession = session
 
         await #expect(throws: CommandError.self) {
-            try await harness.core.clone(.id(source.id), outcome: .exactCopy, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .exactCopy, consent: .all, waitForOutcome: true)
         }
 
         // Only the settled files, before the pause, were copied.
@@ -670,7 +670,7 @@ struct VMCommandCoreArrivalTests {
         if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: source) }
 
         let error = try #require(throws: CommandError.self) {
-            try harness.core.beginClone(.id(source.id), outcome: .exactCopy)
+            try harness.core.beginClone(.id(source.id), outcome: .exactCopy, consent: .all)
         }
         guard case .changeTakesStoppedVM(_, _, let change) = error else {
             Issue.record("expected a stopped-VM refusal, got \(error)")
@@ -696,7 +696,7 @@ struct VMCommandCoreArrivalTests {
         }
 
         let row = try await harness.core.clone(
-            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
+            .id(source.id), outcome: .exactCopy, consent: .all, waitForOutcome: true)
 
         #expect(harness.library.instances.contains { $0.id == row.id })
     }

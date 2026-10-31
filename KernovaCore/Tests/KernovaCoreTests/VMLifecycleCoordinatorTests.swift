@@ -150,7 +150,7 @@ struct VMLifecycleCoordinatorTests {
         // Refused, and against the rest the power-off implies: no guest is
         // left to save.
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await coordinator.save(instance)
+            try await coordinator.save(instance, consent: .all)
         }
         #expect(instance.phase.operation?.kind == .pausing)
 

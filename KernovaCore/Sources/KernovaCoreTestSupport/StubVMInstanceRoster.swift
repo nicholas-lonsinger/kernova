@@ -29,6 +29,9 @@ final class StubVMInstanceRoster: VMAdmissionPeers {
         override: VMIdentityOverride
     ) -> VMIdentityConflict? { nil }
 
+    /// Nothing: with no library there is no reconciler to run one.
+    func oweRemovableMediaReconcile(to instance: VMInstance, for sessionID: UUID) {}
+
     private func wirePeers() {
         for instance in instances { instance.peers = self }
     }

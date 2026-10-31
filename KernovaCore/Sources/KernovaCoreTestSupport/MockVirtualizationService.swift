@@ -27,6 +27,10 @@ final class MockVirtualizationService: VirtualizationProviding {
     var pauseCallCount = 0
     var resumeCallCount = 0
     var saveCallCount = 0
+    /// The consent each save carried, in order.
+    var saveConsents: [Consent] = []
+    /// The consent each snapshot capture carried, in order.
+    var snapshotConsents: [Consent] = []
 
     /// Whether the most recent `start` ran a Recovery boot.
     var lastStartBootIntoRecovery = false
@@ -170,9 +174,16 @@ final class MockVirtualizationService: VirtualizationProviding {
     }
 
     func save(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext
+        _ instance: VMInstance, _ context: borrowing VMOperationContext, consent: Consent
     ) async throws -> VMOperationEnding<Void> {
         saveCallCount += 1
+        saveConsents.append(consent)
+        // The real service's question, decided from the VM as it stands.
+        do {
+            _ = try VMLiveStateCapture.approve(consent, toSave: instance, as: .suspend)
+        } catch {
+            return .failed(.asStarted, error)
+        }
         if let error = saveError {
             // A write that threw left a truncated slot, which the real service
             // drops before it rests the VM.
@@ -202,10 +213,18 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// the VM where it was found.
     func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
-        snapshot request: VMSnapshotCaptureRequest
+        snapshot request: VMSnapshotCaptureRequest, consent: Consent
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let mode = context.mode
         let snapshot = request.record(capturedIn: mode)
+        snapshotConsents.append(consent)
+        if mode == .live {
+            do {
+                _ = try VMLiveStateCapture.approve(consent, toSave: instance, as: .takeSnapshot)
+            } catch {
+                return .failed(.asStarted, error)
+            }
+        }
         // Stands in for what a real warm capture does to the VM mid-flight —
         // notably taking every passthrough accessory off before it writes the
         // guest's state.
@@ -236,7 +255,7 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     /// Runs the real live-capture body over ``liveCopySession``.
     func copyLive(
-        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext, consent: Consent,
         savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
         copy: () async throws -> Void
@@ -250,7 +269,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             liveCopySession
             ?? MockSnapshotSession(guestState: foundPaused ? .paused : .running, writesStateFile: true)
         return await VMLiveStateCapture.captureWarm(
-            instance, context, session: session, prepare: prepare,
+            instance, context, consent: consent, as: .clone, session: session, prepare: prepare,
             savingStateTo: { saveFileURL }, copy: copy)
     }
 

@@ -735,7 +735,7 @@ final class AppAlertPresenter {
         showAlert(
             AlertConfiguration(
                 confirming: request.prompt, confirm: { confirmation(.answered(true)) },
-                dismiss: { confirmation(.answered(false)) }),
+                dismiss: { confirmation(.answered(false)) }, suppress: request.suppress),
             on: window, onWindowClose: .unask { confirmation(.unasked) })
     }
 

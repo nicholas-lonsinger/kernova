@@ -17,7 +17,9 @@ struct QuitKernovaIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        await gateway.quit()
+        try await runWithConsent { consent in
+            try await gateway.quit(consent: consent)
+        }
         return .result()
     }
 }

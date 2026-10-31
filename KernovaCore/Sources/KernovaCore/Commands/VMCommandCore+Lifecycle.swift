@@ -1037,14 +1037,18 @@ extension VMCommandCore {
         }
     }
 
-    /// Save-suspends the VM to its bundle's suspend slot.
-    package func suspend(_ selector: VMSelector) async throws {
-        try await suspend(try resolve(selector))
+    /// Save-suspends the VM to its bundle's suspend slot, once the USB
+    /// question the save asks under `consent` is answered (``USBSaveDecision``).
+    package func suspend(_ selector: VMSelector, consent: Consent) async throws {
+        try await suspend(try resolve(selector), consent: consent)
     }
 
-    func suspend(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
+    func suspend(_ instance: VMInstance, consent: Consent) async throws {
+        // Asked before the save is admitted, so a question leaves nothing
+        // behind; the save decides again against the VM it holds.
+        try USBSaveDecision.require(consent, toSave: instance, as: .suspend)
         do {
-            try await lifecycle.save(instance, origin: origin)
+            try await lifecycle.save(instance, consent: consent)
         } catch {
             logger.log(
                 .error,
@@ -1052,6 +1056,13 @@ extension VMCommandCore {
             )
             throw failure(error, verb: .suspend, on: instance)
         }
+    }
+
+    /// Suspends `instance` for the termination save pass under the consent
+    /// the quit gathered, throwing the save's own error unwrapped, so the pass
+    /// tells a question the save asked from a failed save.
+    func suspendForTermination(_ instance: VMInstance, consent: Consent) async throws {
+        try await lifecycle.save(instance, consent: consent, origin: .terminationSave)
     }
 
     // MARK: - Restart
@@ -1249,21 +1260,28 @@ extension VMCommandCore {
     /// Quits Kernova — the explicit quit every out-of-process door shares,
     /// save-suspending running and paused VMs on the way out.
     ///
-    /// Presents nothing and asks nothing: the caller typed the quit, so there
-    /// is no consent left to gather.
+    /// Presents nothing: the USB question every live VM's save asks under
+    /// `consent` (``USBSaveDecision``) is decided here, before anything
+    /// starts, and one still open is thrown as one refusal naming every disk.
     ///
     /// Fires the quit from a later main-actor turn, so a transport waiting on
     /// this verb has its answer encoded and handed over before the app starts
     /// going down — a client left reading a socket that simply closed cannot
     /// tell success from a crash.
-    func quit() {
+    func quit(consent: Consent) throws {
+        let decisions = library.instances.filter(\.hasLiveSession).map {
+            ($0.name, USBSaveDecision.decide(USBSaveFacts($0), consent: consent))
+        }
+        if let prompt = USBSavePrompt.prompt(for: decisions, action: .quit) {
+            throw CommandError.confirmationRequired(prompt)
+        }
         logger.log(.notice, "Quit requested from a command front door")
         guard let requestQuit else {
             logger.log(.fault, "No adapter is wired to take the app down")
             assertionFailure("No adapter is wired to take the app down")
             return
         }
-        Task { @MainActor in requestQuit() }
+        Task { @MainActor in requestQuit(consent) }
     }
 
     // MARK: - Storage Disk Lookup

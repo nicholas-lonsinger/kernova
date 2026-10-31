@@ -215,6 +215,35 @@ struct VMLifecycleScriptCommandsTests {
         #expect(alpha.status == .running)
     }
 
+    @Test("suspend with confirmation unplugs a USB disk that may lose changes; without, it asks")
+    func suspendPassesItsConfirmation() async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let sessionID = UUID()
+        let item = RemovableMediaItem(path: "/Volumes/Media/backup.img", readOnly: false)
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [item]
+        }
+        alpha.beginSessionContextForTesting()
+        alpha.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: false), for: sessionID)
+        let unconfirmed = try makeCommand(VMSuspendScriptCommand.init(commandDescription:), code: "Susp")
+        let confirmed = try makeCommand(
+            VMSuspendScriptCommand.init(commandDescription:), code: "Susp",
+            arguments: ["Confirmation": true])
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await unconfirmed.run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(refusal.confirmationPrompt?.kind == .unplugUSBDisksAtRisk)
+        #expect(virtualization.saveCallCount == 0)
+
+        try await confirmed.run(makeGateway(wired), on: [.name("Alpha")])
+
+        #expect(virtualization.saveCallCount == 1)
+        #expect(alpha.status == .suspended)
+    }
+
     @Test("pause, resume, suspend and reveal each reach their verb")
     func plainVerbsReachTheCore() async throws {
         let virtualization = MockVirtualizationService()

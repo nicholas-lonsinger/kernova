@@ -78,12 +78,25 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         beforeDetach = work
     }
 
+    /// What the USB controller holds, in its order; a detach takes its device
+    /// off.
+    private(set) var usbDevices: [UUID] = []
+
+    func setUSBDevices(_ deviceIDs: [UUID]) {
+        usbDevices = deviceIDs
+    }
+
+    func usbDeviceIDs() -> [UUID] {
+        usbDevices
+    }
+
     func detachUSBDevice(uuid: UUID) async throws {
         calls.append("detachUSBDevice")
         await beforeDetach?(uuid)
         if let detachError, detachErrorDeviceID == nil || detachErrorDeviceID == uuid {
             throw detachError
         }
+        usbDevices.removeAll { $0 == uuid }
         detachedUSBDeviceIDs.append(uuid)
     }
 

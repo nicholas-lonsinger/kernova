@@ -5,9 +5,10 @@ import KernovaCommandModel
 extension AppIntent {
     /// Runs a verb, raising the framework's own confirmation for each consent
     /// it refuses without (``VMConsentPolicy/run(prompting:_:)``), labelled
-    /// with the core's own words.
+    /// with the core's own words, and answers what the verb returned.
     @MainActor
-    func runWithConsent(_ body: (Consent) async throws -> Void) async throws {
+    @discardableResult
+    func runWithConsent<Value>(_ body: (Consent) async throws -> Value) async throws -> Value {
         try await VMConsentPolicy.run(prompting: { try await confirm($0) }, body)
     }
 

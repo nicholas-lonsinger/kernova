@@ -23,12 +23,14 @@ package enum VMConsentPolicy {
     /// words. Every other failure is rethrown untouched — as is a refusal
     /// `prompting` itself declines to answer, which is how a door with nobody
     /// to ask says the consent was never given, and a refusal for a kind
-    /// already given, which is the answer not having taken.
+    /// already given, which is the answer not having taken. Answers what the
+    /// run that succeeded returned.
     @MainActor
-    package static func run(
+    @discardableResult
+    package static func run<Value>(
         prompting: (ConfirmationPrompt) async throws -> Void,
-        _ body: (Consent) async throws -> Void
-    ) async throws {
+        _ body: (Consent) async throws -> Value
+    ) async throws -> Value {
         try await run(
             prompting: prompting,
             choosingRoute: { throw CommandError.stepRequired($0) },
@@ -51,18 +53,18 @@ package enum VMConsentPolicy {
     /// step refusal naming no route. What `choosingRoute` or `taking` throws
     /// ends the run: how a door says nobody chose, and a step that failed.
     @MainActor
-    static func run(
+    @discardableResult
+    static func run<Value>(
         prompting: (ConfirmationPrompt) async throws -> Void,
         choosingRoute: (StepRequirement) async throws -> StepRoute,
         taking: (CommandStep) async throws -> Void,
-        _ body: (Consent, StepRoute.Ending) async throws -> Void
-    ) async throws {
+        _ body: (Consent, StepRoute.Ending) async throws -> Value
+    ) async throws -> Value {
         var consent = Consent.none
         var ending: StepRoute.Ending?
         while true {
             do {
-                try await body(consent, ending ?? .refusedVerb)
-                return
+                return try await body(consent, ending ?? .refusedVerb)
             } catch let error as CommandError {
                 if let prompt = error.confirmationPrompt, !consent.covers(prompt.kind) {
                     try await prompting(prompt)

@@ -144,6 +144,8 @@ package struct ConfirmationRequest {
     package let prompt: ConfirmationPrompt
     /// Answers the prompt: `true` to go ahead, `false` to walk away.
     package let answer: @MainActor (PresenterAnswer<Bool>) -> Void
+    /// What "Don't remind me again" records, for a prompt that offers it.
+    package let suppress: (@MainActor () -> Void)?
 }
 
 /// The routes a refusal a verb the user started raised names, put to the
