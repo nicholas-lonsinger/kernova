@@ -9,21 +9,27 @@ import KernovaCore
 extension AppTerminationController {
     /// A controller wired to the process's own Apple Event manager, running
     /// applications and `NSApp`.
-    convenience init(viewModel: VMLibraryViewModel, residency: any SoftQuitHosting) {
+    convenience init(
+        viewModel: VMLibraryViewModel, residency: any SoftQuitHosting, presence: any AppPresence
+    ) {
         self.init(
             viewModel: viewModel, residency: residency, pendingQuitEvent: Self.currentQuitEvent,
-            senderProbe: .runningProcesses, endTermination: Self.end, askToUnplug: Self.askAppModally)
+            senderProbe: .runningProcesses, endTermination: Self.end,
+            askToUnplug: { prompt, suppress in
+                Self.askAppModally(prompt, suppress: suppress, presence: presence)
+            })
     }
 
     /// Asks `prompt` as an app-modal alert: a quit is about every VM, and may
     /// come with no window open.
     static func askAppModally(
-        _ prompt: ConfirmationPrompt, suppress: (@MainActor () -> Void)?
-    ) async -> Bool {
+        _ prompt: ConfirmationPrompt, suppress: (@MainActor () -> Void)?, presence: any AppPresence
+    ) -> Bool {
         var confirmed = false
         runAppModalAlert(
             AlertConfiguration(
-                confirming: prompt, confirm: { confirmed = true }, suppress: suppress))
+                confirming: prompt, confirm: { confirmed = true }, suppress: suppress),
+            presence: presence)
         return confirmed
     }
 

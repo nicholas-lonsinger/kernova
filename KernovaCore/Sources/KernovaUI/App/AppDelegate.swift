@@ -76,7 +76,8 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
             viewModel: viewModel, windows: windows, heldAlerts: alerts.held, presence: presence)
         self.lifecycle = lifecycle
         self.mainMenu = MainMenuController(viewModel: viewModel, windows: windows)
-        self.termination = AppTerminationController(viewModel: viewModel, residency: lifecycle)
+        self.termination = AppTerminationController(
+            viewModel: viewModel, residency: lifecycle, presence: presence)
 
         super.init()
 

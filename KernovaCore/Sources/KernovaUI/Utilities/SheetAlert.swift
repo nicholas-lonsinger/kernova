@@ -76,12 +76,13 @@ func presentSheetAlert(
     return alert
 }
 
-/// Runs `config` as an app-modal alert, for a question about no one window,
-/// and fires the chosen button's action once it is answered.
+/// Runs `config` as an app-modal alert in front of the user, for a question
+/// about no one window, and fires the chosen button's action once it is
+/// answered.
 @MainActor
-func runAppModalAlert(_ config: AlertConfiguration) {
+func runAppModalAlert(_ config: AlertConfiguration, presence: any AppPresence) {
     let alert = makeAlert(SheetAlert(config))
-    NSApp.activate()
+    presence.activate()
     let response = alert.runModal()
     recordSuppression(of: alert, config)
     dispatchAction(for: response, buttons: config.buttons)

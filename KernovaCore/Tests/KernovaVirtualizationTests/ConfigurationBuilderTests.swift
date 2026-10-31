@@ -74,7 +74,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: VMConfiguration.testLinux(), bundleURL: bundleURL)
+            try await builder.build(from: VMConfiguration.testLinux(), bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e
@@ -114,7 +114,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .missingKernelPath = e
@@ -132,7 +132,7 @@ struct ConfigurationBuilderTests {
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         let builder = ConfigurationBuilder.testing()
         await #expect(throws: (any Error).self) {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         }
     }
 
@@ -147,7 +147,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             // The entry is named the way the Sharing pane names its row.
             guard let e = error as? ConfigurationBuilderError,
@@ -171,7 +171,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotADirectory = e
@@ -200,7 +200,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotWritable(_, _, let label) = e
@@ -224,7 +224,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotFound = e
@@ -249,7 +249,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotADirectory = e
@@ -306,7 +306,7 @@ struct ConfigurationBuilderTests {
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink should be resolved and accepted.
         do {
-            _ = try await builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -327,7 +327,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelNotFound = e
@@ -352,7 +352,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .initrdNotFound = e
@@ -376,7 +376,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaNotFound = e
@@ -406,7 +406,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaAttachFailed(let id, let path, let label, _) = e
@@ -436,7 +436,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskAttachFailed(let id, let path, let label, _) = e
@@ -557,7 +557,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaNotWritable = e
@@ -641,7 +641,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e
@@ -673,7 +673,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskPathIsDirectory = e
@@ -701,7 +701,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotWritable = e
@@ -729,7 +729,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         do {
-            _ = try await builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -759,7 +759,7 @@ struct ConfigurationBuilderTests {
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — shared directory validation should pass.
         do {
-            _ = try await builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -786,7 +786,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelPathIsDirectory = e
@@ -814,7 +814,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .initrdPathIsDirectory = e
@@ -839,7 +839,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .removableMediaPathIsDirectory = e
@@ -867,7 +867,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .kernelPathIsDirectory = e
@@ -897,7 +897,7 @@ struct ConfigurationBuilderTests {
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink to kernel file should be resolved and accepted.
         do {
-            _ = try await builder.build(from: config, bundleURL: bundleURL)
+            _ = try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } catch let error as ConfigurationBuilderError {
             expectNoPathValidationError(error)
         } catch {
@@ -1408,7 +1408,7 @@ struct ConfigurationBuilderTests {
 
         let builder = ConfigurationBuilder.testing()
         await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
+            try await builder.build(from: config, bundleURL: bundleURL, for: .coldBoot)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .storageDiskNotFound = e
