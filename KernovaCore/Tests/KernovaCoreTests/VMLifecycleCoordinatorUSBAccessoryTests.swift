@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 
@@ -291,8 +292,12 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
                     before.filter { !still.contains($0.deviceID) }.map(\.accessory.registryID))
                 service.accessories.removeAll { ejected.contains($0.registryID) }
             }
+            // The controller holds what the guest does.
+            await session.setUSBDevices(before.map(\.deviceID))
             try await VMLiveStateCapture.captureLiveState(
-                context, session: session, wasRunning: false, saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
+                context,
+                try VMLiveStateCapture.approve(.all, toSave: context.operation.instance, as: .takeSnapshot),
+                session: session, wasRunning: false, saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
             ) {}
         }
     }

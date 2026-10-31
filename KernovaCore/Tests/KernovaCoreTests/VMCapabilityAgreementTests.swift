@@ -77,10 +77,10 @@ struct VMCapabilityAgreementTests {
         case .restart: try await core.restart(vm, timeout: 1, consent: .none)
         case .pause: try await core.pause(vm)
         case .resume: try await core.resume(vm, consent: .none)
-        case .suspend: try await core.suspend(vm)
+        case .suspend: try await core.suspend(vm, consent: .all)
         case .open: try core.open(vm)
         case .reveal: try core.reveal(vm)
-        case .takeSnapshot: _ = try await core.takeSnapshot(vm, name: "Agreement", notes: "")
+        case .takeSnapshot: _ = try await core.takeSnapshot(vm, name: "Agreement", notes: "", consent: .all)
         case .revertToSnapshot:
             try await core.revertToSnapshot(
                 vm, snapshot: snapshot.id, consent: .none)
@@ -127,7 +127,7 @@ struct VMCapabilityAgreementTests {
                             ? "common" : "isolated")
                 ],
                 consent: .all)
-        case .clone: try core.beginClone(vm, outcome: .newMachine)
+        case .clone: try core.beginClone(vm, outcome: .newMachine, consent: .all)
         case .rename: try core.rename(vm, to: "Renamed VM")
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)
         case .showInFinder: try core.showInFinder(vm)

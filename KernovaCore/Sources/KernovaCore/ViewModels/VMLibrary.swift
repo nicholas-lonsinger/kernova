@@ -488,7 +488,8 @@ package final class VMLibrary: VMAdmissionPeers {
     /// bringing `instance` up under `configuration` would duplicate, unless
     /// `override` waives it.
     func oweRemovableMediaReconcile(to instance: VMInstance, for sessionID: UUID) {
-        instance.activity.follow(removableMedia.reconcileFollowUp(of: instance, for: sessionID))
+        guard let owed = removableMedia.reconcileFollowUpIfOwed(of: instance, for: sessionID) else { return }
+        instance.activity.follow(owed)
     }
 
     func identityConflict(
@@ -911,7 +912,7 @@ package final class VMLibrary: VMAdmissionPeers {
         instance.activity.onSessionBecameAttachable = { [weak self, weak instance] in
             guard let self, let instance, let sessionID = instance.attachableSessionID else { return [] }
             self.guestAddresses.watch()
-            return [self.removableMedia.reconcileFollowUp(of: instance, for: sessionID)]
+            return [self.removableMedia.reconcileFollowUpIfOwed(of: instance, for: sessionID)].compactMap { $0 }
                 + (self.onSessionBecameAttachable?(instance) ?? [])
         }
     }

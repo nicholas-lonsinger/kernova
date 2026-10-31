@@ -252,6 +252,42 @@ struct VMCommandCoreGroupActionTests {
         #expect(report.undone.isEmpty)
     }
 
+    @Test("Group Suspend passes by a VM with a disk at risk, reporting the question, and suspends the rest")
+    func groupSuspendPassesByADiskAtRisk() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let data = RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false, label: "Data")
+        let tools = RemovableMediaItem(path: "/Volumes/Tools.iso", readOnly: true, label: "Tools")
+        let atRisk = makeInstance(in: harness, name: "At Risk", phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [data]
+        }
+        atRisk.beginSessionContextForTesting()
+        atRisk.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: data.id, path: data.path, readOnly: false), for: sessionID)
+        let readOnlySession = UUID()
+        let reminded = makeInstance(in: harness, name: "Reminded", phase: .running(sessionID: readOnlySession)) {
+            $0.removableMedia = [tools]
+        }
+        reminded.beginSessionContextForTesting()
+        reminded.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: tools.id, path: tools.path, readOnly: true), for: readOnlySession)
+        try harness.library.organization.createFolder(named: "One", members: [atRisk.id, reminded.id])
+
+        let report = try await harness.core.groupAction(.suspend, on: VMGroupReference(.folder, named: "One"))
+
+        guard case .needsAnswer(.suspend, let question) = report.results[0].outcome,
+            case .confirmationRequired(let prompt) = question
+        else {
+            Issue.record("expected the question, got \(report.results[0].outcome)")
+            return
+        }
+        #expect(prompt.kind == .unplugUSBDisksAtRisk)
+        #expect(atRisk.phase == .running(sessionID: sessionID))
+        // The reminder is the door's own to give.
+        #expect(report.results[1].outcome == .done(verb: .suspend))
+        #expect(reminded.status == .suspended)
+    }
+
     @Test("A group the library does not list is refused before any VM is acted on")
     func unknownGroupIsRefused() async throws {
         let harness = makeHarness()

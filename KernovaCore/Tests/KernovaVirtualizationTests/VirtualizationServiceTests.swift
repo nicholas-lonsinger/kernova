@@ -47,7 +47,7 @@ struct VirtualizationServiceTests {
     /// admits.
     private func suspend(_ instance: VMInstance, over session: MockSnapshotSession) async throws {
         try await instance.activity.perform(.saving) { context in
-            try await VirtualizationService.save(instance, context, session: session)
+            try await VirtualizationService.save(instance, context, consent: .all, session: session)
         }
     }
 
@@ -67,6 +67,34 @@ struct VirtualizationServiceTests {
         #expect(error?.localizedDescription == "The disk is full.")
         #expect(!instance.hasSaveFile)
         #expect(instance.phase == .failed(message: "The disk is full."))
+    }
+
+    @Test("A suspend whose USB question is still open leaves the guest running and the slot as it was")
+    func suspendAskingLeavesTheGuestRunning() async throws {
+        let sessionID = UUID()
+        let data = RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false, label: "Data")
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID)) {
+            $0.removableMedia = [data]
+        }
+        instance.beginSessionContextForTesting()
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: data.id, path: data.path, readOnly: false), for: sessionID)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setUSBDevices([data.id])
+        // A slot already there, which a refusal must not touch.
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        let error = await #expect(throws: CommandError.self) {
+            try await instance.activity.perform(.saving) { context in
+                try await VirtualizationService.save(
+                    instance, context, consent: Consent([.unplugUSBDisks]), session: session)
+            }
+        }
+
+        #expect(error?.confirmationPrompt?.kind == .unplugUSBDisksAtRisk)
+        #expect(instance.phase == .running(sessionID: sessionID))
+        #expect(instance.hasSaveFile)
+        #expect(await session.calls.isEmpty)
     }
 
     @Test("A guest that goes away mid-suspend drops the slot and rests where its end put it")
@@ -121,7 +149,7 @@ struct VirtualizationServiceTests {
         await #expect(throws: (any Error).self) {
             try await instance.activity.perform(.saving) { context in
                 instance.rebind(to: moved)
-                return try await VirtualizationService.save(instance, context, session: session)
+                return try await VirtualizationService.save(instance, context, consent: .all, session: session)
             }
         }
 
@@ -146,7 +174,7 @@ struct VirtualizationServiceTests {
         }
 
         try await instance.activity.perform(.saving) { context in
-            try await VirtualizationService.save(instance, context, session: session)
+            try await VirtualizationService.save(instance, context, consent: .all, session: session)
         }
 
         #expect(await session.savedStateURLs == [original.saveFileURL])
@@ -394,28 +422,24 @@ struct VirtualizationServiceTests {
         return (service, products, cache)
     }
 
-    @Test("A cold boot starts without the installer disk the last session had, and drops its copy")
+    @Test("A cold boot starts without the installer disk the last session had")
     func coldBootStartsWithoutTheInstallerDisk() async throws {
         let (service, products, cache) = try linuxAgentProducts()
         let library = makeWiredLibrary(bundleProducts: products)
         defer { withExtendedLifetime(library) {} }
         let item = RemovableMediaItem(path: cache.url.path(percentEncoded: false), readOnly: true)
         let instance = library.registerFixture(phase: .stopped) { $0.removableMedia = [item] }
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
-        try FileManager.default.createDirectory(
-            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("the last session's copy".utf8).write(to: copy)
+        try FileManager.default.createDirectory(at: instance.bundleURL, withIntermediateDirectories: true)
 
         // The bundle holds no real disk image, so the boot fails at the
         // configuration build, after the configuration is settled.
         await #expect(throws: ConfigurationBuilderError.self) { try await start(instance, on: service) }
 
         #expect(instance.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
     }
 
-    @Test("A restore leaves the copy the state was saved with as it was, whatever the app's disk holds now")
-    func restoreKeepsTheSavedCopy() async throws {
+    @Test("A restore keeps the installer entry for the reconcile to plug back in, and builds no copy of it")
+    func restoreKeepsTheInstallerEntry() async throws {
         let (service, products, cache) = try linuxAgentProducts()
         let path = cache.url.path(percentEncoded: false)
         let item = RemovableMediaItem(path: path, readOnly: true)
@@ -423,20 +447,14 @@ struct VirtualizationServiceTests {
             $0.removableMedia = [item]
         }
         try VMInstanceFixture.writeSaveFile(for: instance)
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
-        try FileManager.default.createDirectory(
-            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("the saved copy".utf8).write(to: copy)
-        try Data("a later build's disk".utf8).write(to: cache.url)
 
-        // The bring-up's copy step leaves the saved copy alone; the build then
-        // stops at the bundle's missing main disk.
+        // The build stops at the bundle's missing main disk.
         await #expect(throws: ConfigurationBuilderError.self) {
             try await start(instance, .restoringSavedState, on: service)
         }
 
-        #expect(try Data(contentsOf: copy) == Data("the saved copy".utf8))
         #expect(instance.configuration.removableMedia?.map(\.path) == [path])
+        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
     }
 
     @Test("A boot that attaches the virtio DMG attaches its own copy of it")
@@ -515,7 +533,7 @@ struct VirtualizationServiceTests {
     ) async throws -> VMSnapshot {
         try await instance.activity.launchedCapture(.live) { context in
             try await VirtualizationService.captureWarmSnapshot(
-                instance, context, snapshot: snapshot, session: session)
+                instance, context, snapshot: snapshot, consent: .all, session: session)
         }
     }
 
@@ -573,8 +591,8 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
-    @Test("A warm snapshot carries the VM's copy of the installer disk with its other files")
-    func warmSnapshotCarriesTheInstallerCopy() async throws {
+    @Test("A warm snapshot unplugs the installer disk, and keeps its entry for the reconcile to plug back in")
+    func warmSnapshotUnplugsTheInstallerDisk() async throws {
         let store = MockVMBundleMachineFiles()
         let library = makeWiredLibrary(machineFiles: store)
         let sessionID = UUID()
@@ -584,16 +602,16 @@ struct VirtualizationServiceTests {
             $0.removableMedia = [installer]
         }
         instance.beginSessionContextForTesting()
-        try await GuestAgentDiskCopies.make(
-            of: URL(filePath: path), at: instance.bundleLayout.guestAgentDiskCopyURL(for: installer))
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: installer.id, path: path, readOnly: true), for: sessionID)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setUSBDevices([installer.id])
 
         let captured = try await captureWarm(
-            instance, snapshot: VMSnapshotCaptureRequest(name: "With the disk"),
-            session: MockSnapshotSession(guestState: .running))
+            instance, snapshot: VMSnapshotCaptureRequest(name: "With the disk"), session: session)
 
-        #expect(store.capturedPaths[captured.id]?.contains(VMBundleLayout.guestAgentDiskRelativePath) == true)
+        #expect(await session.detachedUSBDeviceIDs == [installer.id])
         #expect(store.capturedConfiguration(for: captured.id)?.removableMedia == [installer])
-        // The guest keeps its disk: the capture neither detached nor moved it.
         #expect(instance.configuration.removableMedia == [installer])
     }
 
@@ -689,19 +707,19 @@ struct VirtualizationServiceTests {
             library: library)
     }
 
-    @Test("A revert to a state captured with the installer disk gives the VM its own copy from the snapshot's")
+    @Test("A revert to a state captured with the virtio installer disk gives the VM its own copy from the snapshot's")
     func revertGivesTheVMItsOwnCopy() async throws {
         let fixture = try makeRevertFixture()
         let layout = fixture.instance.bundleLayout
-        let item = RemovableMediaItem(path: "/app/agent.iso", readOnly: true)
-        let snapshotCopy = layout.snapshotLayout(id: fixture.snapshot.id).guestAgentDiskCopyURL(for: item)
+        let dmg = URL(filePath: "/app/agent.dmg")
+        let snapshotCopy = layout.snapshotLayout(id: fixture.snapshot.id).guestAgentVirtioDiskURL(of: dmg)
         try FileManager.default.createDirectory(
             at: snapshotCopy.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("the snapshot's copy".utf8).write(to: snapshotCopy)
 
         try await revert(fixture)
 
-        let copy = layout.guestAgentDiskCopyURL(for: item)
+        let copy = layout.guestAgentVirtioDiskURL(of: dmg)
         #expect(try Data(contentsOf: copy) == Data("the snapshot's copy".utf8))
         // The snapshot keeps its own, for the next revert.
         #expect(FileManager.default.fileExists(atPath: snapshotCopy.path(percentEncoded: false)))
@@ -733,7 +751,7 @@ struct VirtualizationServiceTests {
     ) async throws -> VMSnapshot {
         let mode = try #require(instance.snapshotCaptureMode)
         return try await instance.activity.launchedCapture(mode) { context in
-            try await service.takeSnapshot(instance, context, snapshot: snapshot)
+            try await service.takeSnapshot(instance, context, snapshot: snapshot, consent: .all)
         }
     }
 
@@ -1037,7 +1055,7 @@ struct VirtualizationServiceTests {
             try await fixture.instance.activity.launchedCapture(.suspended) { context in
                 try await service.takeSnapshot(
                     fixture.instance, context,
-                    snapshot: VMSnapshotCaptureRequest(name: "No slot"))
+                    snapshot: VMSnapshotCaptureRequest(name: "No slot"), consent: .all)
             }
         }
         // The admission re-read the bundle and found no slot to rest on.

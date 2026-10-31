@@ -367,7 +367,7 @@ struct VMIntentGatewayTests {
         let harness = WiredCommandCore()
         let vm = harness.register(name: "Wired", phase: .running(sessionID: UUID()))
 
-        await makeGateway(over: harness).quit()
+        try await makeGateway(over: harness).quit()
         try await harness.quitRequested.wait { harness.quitRequests == 1 }
 
         #expect(harness.quitRequests == 1)

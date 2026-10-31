@@ -88,7 +88,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let menuBarCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow(
                 "Menu bar quit reminder", control: menuBarQuitSwitch,
-                info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")]),
+                info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")])
+        ])
+        let usbUnplugCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow(
                 "USB unplug reminder", control: usbUnplugSwitch,
                 info: [
@@ -96,7 +98,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
                         "Shown when you suspend, snapshot, clone or quit a running virtual machine "
                             + "with USB disks plugged in, which Kernova unplugs first and plugs back "
                             + "in afterwards. A disk that may lose changes is always asked about.")
-                ]),
+                ])
         ])
 
         // The governing control of the Virtual Machine Reminders section, so it
@@ -131,6 +133,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let content = NSStackView(views: [
             makeGroupedFormSectionHeader("App Reminders"),
             menuBarCard,
+            usbUnplugCard,
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             agentInstallCard,
             vmGroup,
@@ -139,12 +142,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
-        content.setCustomSpacing(Spacing.section, after: menuBarCard)
+        content.setCustomSpacing(Spacing.section, after: usbUnplugCard)
         content.setCustomSpacing(Spacing.section, after: vmGroup)
 
         // Full-width members. The reset button is excluded so it hugs its
         // intrinsic width at the leading edge.
-        for member in [menuBarCard, agentInstallCard, vmGroup] {
+        for member in [menuBarCard, usbUnplugCard, agentInstallCard, vmGroup] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 

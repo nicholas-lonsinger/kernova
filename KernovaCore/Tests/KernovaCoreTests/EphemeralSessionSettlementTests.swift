@@ -217,7 +217,7 @@ struct EphemeralSessionSettlementTests {
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
 
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
         await harness.library.waitForRevertsToSettle()
 
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
@@ -252,7 +252,7 @@ struct EphemeralSessionSettlementTests {
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
         let (instance, _, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
 
-        try await harness.core.suspend(.id(instance.id))
+        try await harness.core.suspend(.id(instance.id), consent: .all)
 
         #expect(instance.phase == .suspended)
         #expect(!instance.hostState.hasUnsettledSession)
@@ -588,7 +588,7 @@ struct EphemeralSessionSettlementTests {
         let (instance, baseline, _) = try makeVM(in: harness, unsettled: true)
 
         let captured = try await harness.core.takeSnapshot(
-            .id(instance.id), name: "After", notes: "")
+            .id(instance.id), name: "After", notes: "", consent: .all)
 
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
         // Suspended on the warm baseline's saved state, which the capture took.
@@ -606,7 +606,7 @@ struct EphemeralSessionSettlementTests {
         harness.machineFiles.setCapturedConfiguration(captured, for: baseline.id)
 
         let summary = try await harness.core.clone(
-            .id(instance.id), outcome: .exactCopy, waitForOutcome: true)
+            .id(instance.id), outcome: .exactCopy, consent: .all, waitForOutcome: true)
 
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
         let clone = try #require(harness.library.instances.first { $0.id == summary.id })
@@ -623,7 +623,7 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.hostState.hasUnsettledSession)
 
         let summary = try await harness.core.clone(
-            .id(instance.id), outcome: .exactCopy, waitForOutcome: true)
+            .id(instance.id), outcome: .exactCopy, consent: .all, waitForOutcome: true)
 
         let clone = try #require(harness.library.instances.first { $0.id == summary.id })
         #expect(!clone.hostState.hasUnsettledSession)
@@ -725,7 +725,7 @@ struct EphemeralSessionSettlementTests {
             case .resume:
                 try await harness.core.resume(.id(instance.id), consent: .none)
             case .takeSnapshot:
-                _ = try await harness.core.takeSnapshot(.id(instance.id), name: "After", notes: "")
+                _ = try await harness.core.takeSnapshot(.id(instance.id), name: "After", notes: "", consent: .all)
             }
         }
         // Waiting behind the revert: queued, and nothing run.
@@ -813,7 +813,7 @@ struct EphemeralSessionSettlementTests {
             preferences: preferences)
 
         let summary = try await harness.core.takeSnapshot(
-            .id(instance.id), name: "Clean", notes: "", asEphemeralBaseline: true)
+            .id(instance.id), name: "Clean", notes: "", consent: .all, asEphemeralBaseline: true)
 
         #expect(instance.hostState.ephemeralBaselineSnapshotID == summary.id)
         #expect(virtualization.revertCallCount == 0)

@@ -48,10 +48,28 @@ final class VMRemovableMediaReconciler {
         instance.activity.follow(reconcileFollowUp(of: instance, for: sessionID))
     }
 
+    /// ``reconcileFollowUp(of:for:)`` when `instance`'s live list differs from
+    /// its configuration — what the edge onto an attachable session owes once
+    /// a restore built none of the media, and what a warm capture owes once it
+    /// unplugged them — and `nil` when the two already match, as after a cold
+    /// boot.
+    func reconcileFollowUpIfOwed(of instance: VMInstance, for sessionID: UUID) -> VMFollowUp? {
+        struct Medium: Hashable {
+            let id: UUID
+            let path: String
+            let readOnly: Bool
+        }
+        let configured = (instance.configuration.removableMedia ?? []).map {
+            Medium(id: $0.id, path: $0.path, readOnly: $0.readOnly)
+        }
+        let live = instance.liveRemovableMedia.map { Medium(id: $0.id, path: $0.path, readOnly: $0.readOnly) }
+        guard Set(configured) != Set(live) else { return nil }
+        return reconcileFollowUp(of: instance, for: sessionID)
+    }
+
     /// The follow-up that runs a `.reconcilingMedia` pass on `instance` for as
-    /// long as the session `sessionID` names lasts — what an edit owes, what
-    /// the edge onto an attachable session owes once a restore built none of
-    /// the media, and what a warm capture owes once it unplugged them.
+    /// long as the session `sessionID` names lasts: what an edit owes, and
+    /// what ``reconcileFollowUpIfOwed(of:for:)`` answers.
     ///
     /// Exempt from the termination's refusal: what owes it was admitted
     /// first, and a quit waits a reconcile out.

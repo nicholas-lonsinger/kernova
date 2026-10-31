@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 
@@ -124,6 +125,84 @@ struct VMRemovableMediaReconcilerTests {
 
         try await waitForChange { instance.liveRemovableMedia.count == paths.count }
         #expect(mock.attachedPaths == paths)
+    }
+
+    // MARK: - Plugging back in
+
+    /// Runs the follow-ups the edge onto an attachable session owes `instance`.
+    private func reachAttachableEdge(_ instance: VMInstance) {
+        for followUp in instance.activity.onSessionBecameAttachable?() ?? [] {
+            instance.activity.follow(followUp)
+        }
+    }
+
+    @Test("The edge onto a restored session plugs every configured medium back in, in the list's order")
+    func theAttachableEdgePlugsTheMediaBackIn() async throws {
+        let mock = MockRemovableMediaDeviceService()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let paths = ["/tmp/Data.img", "/tmp/Tools.iso"]
+        // A restore builds none of them, so the session starts holding none.
+        let (instance, _) = makeRunningInstance(in: harness) {
+            $0.removableMedia = paths.map { RemovableMediaItem(path: $0, readOnly: true) }
+        }
+
+        reachAttachableEdge(instance)
+
+        try await waitForChange { instance.liveRemovableMedia.count == paths.count }
+        #expect(mock.attachedPaths == paths)
+        #expect(!failures.showError)
+    }
+
+    @Test("The edge onto a cold-booted session finds its media attached and attaches nothing")
+    func theAttachableEdgeAfterAColdBootDoesNothing() async throws {
+        let mock = MockRemovableMediaDeviceService()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let item = RemovableMediaItem(path: "/tmp/Tools.iso", readOnly: true)
+        let (instance, sessionID) = makeRunningInstance(in: harness) { $0.removableMedia = [item] }
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
+
+        reachAttachableEdge(instance)
+        await waitForObservedChange { !isReconciling(instance) }
+
+        #expect(mock.attachCallCount == 0)
+        #expect(mock.detachCallCount == 0)
+    }
+
+    @Test("A medium that can't be plugged back in is removed from the VM, and the alert says so")
+    func aMissingImageAtReplugIsRemoved() async throws {
+        let mock = MockRemovableMediaDeviceService()
+        mock.attachErrorsByPath["/tmp/Gone.img"] = RemovableMediaDeviceError.diskImageNotFound("/tmp/Gone.img")
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let kept = RemovableMediaItem(path: "/tmp/Tools.iso", readOnly: true, label: "Tools")
+        let gone = RemovableMediaItem(path: "/tmp/Gone.img", readOnly: false, label: "Gone")
+        let (instance, _) = makeRunningInstance(in: harness) { $0.removableMedia = [gone, kept] }
+
+        reachAttachableEdge(instance)
+        await waitForObservedChange { !isReconciling(instance) }
+
+        #expect(instance.configuration.removableMedia == [kept])
+        #expect(harness.saved(instance)?.removableMedia == [kept])
+        #expect(
+            failures.errorMessage?.hasPrefix(
+                "Couldn\u{2019}t attach \u{201C}Gone\u{201D}, so it was removed from the virtual machine.") == true)
+    }
+
+    @Test("An installer entry is plugged back in from this build's installer disk")
+    func anInstallerEntryReplugsThisBuildsDisk() async throws {
+        let mock = MockRemovableMediaDeviceService()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let installer = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
+        let instance = harness.library.registerFixture(guestOS: .macOS) {
+            $0.removableMedia = [RemovableMediaItem(path: installer.path(percentEncoded: false), readOnly: true)]
+        }
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+
+        reachAttachableEdge(instance)
+
+        try await waitForChange { instance.liveRemovableMedia.count == 1 }
+        #expect(mock.lastAttachedPath == installer.path(percentEncoded: false))
     }
 
     @Test("apply attaches a new removable item when added to the list")
@@ -651,9 +730,7 @@ struct VMRemovableMediaReconcilerTests {
     @Test("A save issued right after an edit is refused as busy until the pass ends")
     func saveIssuedAfterAnEditIsRefusedUntilThePassEnds() async throws {
         // The reported shape: an edit, then Suspend in the same breath. The
-        // save must not tear the session down under the pass its edit started,
-        // or the saved state carries a device set the configuration no longer
-        // describes.
+        // save must not tear the session down under the pass its edit started.
         let mock = SuspendingMockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let (instance, _) = makeRunningInstance(in: harness)
@@ -663,14 +740,14 @@ struct VMRemovableMediaReconcilerTests {
         try await mock.waitUntilSuspended()
 
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.reconcilingMedia))) {
-            try await harness.lifecycle.save(instance)
+            try await harness.lifecycle.save(instance, consent: .all)
         }
         #expect(harness.virtualization.saveCallCount == 0)
         #expect(instance.hasLiveSession)
 
         mock.resumeSuspended()
         await waitForObservedChange { !isReconciling(instance) }
-        try await harness.lifecycle.save(instance)
+        try await harness.lifecycle.save(instance, consent: .all)
         #expect(mock.attachCallCount == 1)
         #expect(mock.completedOperationCount == 1)
         #expect(harness.virtualization.saveCallCount == 1)

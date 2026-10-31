@@ -27,7 +27,7 @@ struct ValidatedConfigurationTests {
         var config = VMConfiguration.testLinux()
         config.clipboardSharingEnabled = true
 
-        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL, for: .coldBoot)
 
         #expect(result.products.clipboardInputPipe != nil)
         #expect(result.products.clipboardOutputPipe != nil)
@@ -42,7 +42,7 @@ struct ValidatedConfigurationTests {
         var config = VMConfiguration.testLinux()
         config.clipboardSharingEnabled = false
 
-        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL, for: .coldBoot)
 
         #expect(result.products.clipboardInputPipe == nil)
         #expect(result.products.clipboardOutputPipe == nil)
@@ -59,7 +59,7 @@ struct ValidatedConfigurationTests {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         var config = VMConfiguration.testLinux()
         config.networkEnabled = networkEnabled
-        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL, for: .coldBoot)
 
         let session = await VMSession.make(
             configuration: result.configuration, events: VMSessionEvents(handle: { _, _ in }))
@@ -109,7 +109,7 @@ struct ValidatedConfigurationTests {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
         var config = VMConfiguration.testLinux()
         config.deviceShape = deviceShape
-        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL)
+        let result = try await ConfigurationBuilder.testing().build(from: config, bundleURL: bundleURL, for: .coldBoot)
         let session = await VMSession.make(
             configuration: result.configuration, events: VMSessionEvents(handle: { _, _ in }))
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: session.id))

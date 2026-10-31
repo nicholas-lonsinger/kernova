@@ -120,8 +120,13 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 - Guest-agent installer disks: `BundledGuestAgents` (one of `AppBundleProducts`)
   hands `VMCommandCore.mountGuestAgentDisk` the macOS agent's bundled DMG, or the
   Linux agent's ISO, which `GuestAgentDiskCache` writes into Application Support
-  with KernovaKit's `KernovaISO9660`; the guest is attached the VM's own copy,
-  which `GuestAgentDiskCopies` keeps in the bundle.
+  with KernovaKit's `KernovaISO9660`. A USB delivery attaches that file; a
+  virtio delivery attaches the VM's own copy, which `GuestAgentDiskCopies`
+  keeps in the bundle.
+- USB disks at a save: `VMLiveStateCapture` unplugs every hot-pluggable USB
+  device before it writes a live guest's state, once `USBSaveDecision` has
+  decided the question it asks; the restore builds no removable media, and
+  `VMRemovableMediaReconciler` plugs them back in.
 - Clipboard: `ClipboardServicing` unifies `VsockClipboardService` and
   `SpiceClipboardService` (Linux) behind `VMInstance.clipboardService`;
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host

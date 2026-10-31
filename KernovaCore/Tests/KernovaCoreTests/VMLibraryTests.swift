@@ -311,9 +311,15 @@ struct VMLibraryTests {
     // MARK: - Configuration Writes
 
     /// Puts `instance` live on a session no lifecycle call holds.
+    /// Places `instance` live on a session holding the removable media its
+    /// configuration lists, as a cold boot leaves it — so the edge onto the
+    /// session owes no reconcile.
     private func placeRunning(_ instance: VMInstance) {
+        let context = instance.beginSessionContextForTesting()
+        context.liveRemovableMedia = (instance.configuration.removableMedia ?? []).map {
+            RemovableMediaDeviceInfo(id: $0.id, path: $0.path, readOnly: $0.readOnly)
+        }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
     }
 
     @Test("A request whose save fails changes nothing, in memory or on the running VM")

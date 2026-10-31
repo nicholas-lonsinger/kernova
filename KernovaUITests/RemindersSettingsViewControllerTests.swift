@@ -154,18 +154,23 @@ struct RemindersSettingsViewControllerTests {
 
         #expect(findLabel(withText: "Menu bar quit reminder", in: controller.view) != nil)
         #expect(findLabel(withText: "Guest agent install reminder", in: controller.view) != nil)
-        // Two app-wide switches plus one per VM.
-        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
+        #expect(findLabel(withText: "USB unplug reminder", in: controller.view) != nil)
+        // Three app-wide switches plus one per VM.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 5)
 
         let menuBarToggle = try #require(
             switches(action: "menuBarQuitToggled", in: controller).first)
         let agentToggle = try #require(
             switches(action: "agentInstallToggled", in: controller).first)
+        let usbToggle = try #require(switches(action: "usbUnplugToggled", in: controller).first)
         let menuBarCard = try #require(enclosingGroupedFormCard(of: menuBarToggle))
         let agentCard = try #require(enclosingGroupedFormCard(of: agentToggle))
+        let usbCard = try #require(enclosingGroupedFormCard(of: usbToggle))
         #expect(menuBarCard !== agentCard)
+        #expect(usbCard !== menuBarCard)
         #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
         #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
+        #expect(allSubviews(NSSwitch.self, in: usbCard).count == 1)
     }
 
     /// Apple's guidance for showing that one control governs others is to indent

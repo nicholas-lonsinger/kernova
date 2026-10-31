@@ -469,35 +469,30 @@ struct ConfigurationBuilderTests {
     }
 
     @Test(
-        "An installer entry attaches the VM's copy of the disk, never the shared file, whichever build named it",
-        arguments: [false, true])
-    func installerEntryAttachesTheBundleCopy(namedByAnotherBuild: Bool) throws {
+        "A restore lists no removable medium and keeps USB boot storage; a cold boot lists every medium",
+        arguments: [ConfigurationBuilder.Purpose.coldBoot, .restore])
+    func restoreListsNoRemovableMedia(purpose: ConfigurationBuilder.Purpose) throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-        let shared = scratch.url.appendingPathComponent("KernovaMacOSAgent.dmg")
-        try Data("shared".utf8).write(to: shared)
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        let item = RemovableMediaItem(path: shared.path(percentEncoded: false), readOnly: true)
-        let copy = layout.guestAgentDiskCopyURL(for: item)
-
+        let image = scratch.url.appendingPathComponent("Data.img")
+        try Data(count: 1_048_576).write(to: image)
+        let boot = scratch.url.appendingPathComponent("Live.iso")
+        try Data(count: 1_048_576).write(to: boot)
         var config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        config.removableMedia = [item]
-        // Another build's installer is no file of this build's.
-        let builder =
-            namedByAnotherBuild
-            ? ConfigurationBuilder.testing() : ConfigurationBuilder.testing(guestAgentInstaller: shared)
+        config.storageDisks = [
+            StorageDisk(path: "Disk.asif", isInternal: true),
+            StorageDisk(path: boot.path(percentEncoded: false), readOnly: true, kind: .usbMassStorage),
+        ]
+        config.removableMedia = [RemovableMediaItem(path: image.path(percentEncoded: false), readOnly: false)]
 
-        try FileManager.default.createDirectory(
-            at: layout.guestAgentDiskDirectoryURL, withIntermediateDirectories: true)
-        try Data(count: 1_048_576).write(to: copy)
-        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-        let device = try #require(
-            result.configuration.usbControllers.first?.usbDevices.first as? VZUSBMassStorageDeviceConfiguration)
-        let attachment = try #require(device.attachment as? VZDiskImageStorageDeviceAttachment)
-        #expect(attachment.url.standardizedFileURL == copy.standardizedFileURL)
-        // The tracked identity stays the installer's.
-        #expect(result.products.coldRemovableMedia.map(\.path) == [shared.path(percentEncoded: false)])
+        let result = try ConfigurationBuilder.testing().assemble(
+            from: config, bundleURL: bundleURL, for: purpose, validate: false)
+
+        let listed = purpose == .coldBoot ? 1 : 0
+        #expect(result.configuration.usbControllers.first?.usbDevices.count == listed)
+        #expect(result.products.coldRemovableMedia.count == listed)
+        #expect(result.configuration.storageDevices.contains { $0 is VZUSBMassStorageDeviceConfiguration })
     }
 
     @Test("Removable media returns coldRemovableMedia infos with matching UUIDs")

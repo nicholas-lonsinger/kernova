@@ -708,6 +708,7 @@ protocol VMAdmissionPeers: VMInstanceRoster {
     ) -> VMIdentityConflict?
 
     /// Owes `instance`'s session `sessionID` the reconcile that plugs its
-    /// configured removable media back in, once whatever holds the VM frees it.
+    /// configured removable media back in, once whatever holds the VM frees it —
+    /// nothing when its live list already matches them.
     func oweRemovableMediaReconcile(to instance: VMInstance, for sessionID: UUID)
 }

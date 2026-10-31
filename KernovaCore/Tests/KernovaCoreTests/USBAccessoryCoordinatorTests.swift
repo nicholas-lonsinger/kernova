@@ -461,8 +461,12 @@ struct USBAccessoryCoordinatorTests {
         _ instance: VMInstance, service: MockUSBAccessoryService, gate: GatedStep? = nil
     ) async throws {
         try await instance.activity.launchedCapture(.live) { context in
+            // The controller holds what the guest does.
+            let session = MockSnapshotSession(guestState: .running)
+            await session.setUSBDevices(instance.liveUSBAccessories.map(\.deviceID))
             try await VMLiveStateCapture.captureLiveState(
-                context, session: MockSnapshotSession(guestState: .running), wasRunning: false,
+                context, try VMLiveStateCapture.approve(.all, toSave: instance, as: .takeSnapshot),
+                session: session, wasRunning: false,
                 saveFileURL: URL(filePath: "/var/empty/save.vzvmsave")
             ) {}
             service.accessories.removeAll()
