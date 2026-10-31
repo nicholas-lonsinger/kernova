@@ -6,6 +6,7 @@ import Foundation
 
 import KernovaAgentCore
 import KernovaWire
+import SwiftProtobuf
 
 /// One scripted input of a transcript, in its `in` line's text form.
 package enum TranscriptInput: Sendable, Equatable {
@@ -592,8 +593,11 @@ package final class Duet {
 
     static func row(_ time: UInt64, _ tag: String, _ rest: String) -> String {
         let stamp = "t=\(time)"
-        return stamp.padding(toLength: max(9, stamp.count + 1), withPad: " ", startingAt: 0)
-            + tag.padding(toLength: 8, withPad: " ", startingAt: 0) + rest
+        return padded(stamp, to: max(9, stamp.count + 1)) + padded(tag, to: 8) + rest
+    }
+
+    private static func padded(_ text: String, to width: Int) -> String {
+        text.count >= width ? String(text.prefix(width)) : text + String(repeating: " ", count: width - text.count)
     }
 }
 

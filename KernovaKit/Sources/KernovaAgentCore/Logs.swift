@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaWire
+import SwiftProtobuf
 
 /// What the peer's log sink and runtime report.
 public enum LogInput: Sendable, Equatable {

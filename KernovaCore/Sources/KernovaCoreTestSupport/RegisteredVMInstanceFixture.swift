@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 
 @testable import KernovaCore
@@ -18,12 +19,12 @@ enum RegisteredVMInstanceFixture {
     static func register(
         name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, snapshots: [VMSnapshot] = [],
         library: VMLibrary, preferences: AppPreferences,
-        hostState: VMHostState = VMHostState(),
+        hostState: VMHostState = VMHostState(), agentConnector: (any HostConnectionMaking)? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         library.registerFixture(
             name: name, guestOS: guestOS, phase: phase, preferences: preferences, hostState: hostState,
-            snapshots: VMSnapshotManifest(snapshots: snapshots),
+            snapshots: VMSnapshotManifest(snapshots: snapshots), agentConnector: agentConnector,
             mutate: {
                 $0.networkEnabled = false
                 mutate(&$0)

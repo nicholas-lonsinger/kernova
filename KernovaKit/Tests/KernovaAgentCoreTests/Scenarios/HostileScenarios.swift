@@ -7,6 +7,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentSimulation
 import KernovaWire
+import SwiftProtobuf
 import Testing
 
 /// One hostile row: a real endpoint against a far side's raw bytes, each seed

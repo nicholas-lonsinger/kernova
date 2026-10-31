@@ -1,6 +1,9 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -24,7 +27,8 @@ struct EphemeralSessionSettlementTests {
     private func makeVM(
         in harness: WiredCommandCore, baseline kind: VMSnapshotKind = .warm,
         other otherKind: VMSnapshotKind = .cold, ephemeral: Bool = true, unsettled: Bool = false,
-        phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
+        phase: VMLifecyclePhase = .stopped, agentConnector: (any HostConnectionMaking)? = nil,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) throws -> (instance: VMInstance, baseline: VMSnapshot, other: VMSnapshot) {
         // The newer of the two, so it is the one an enable pins.
         let baseline = VMSnapshot(
@@ -37,7 +41,8 @@ struct EphemeralSessionSettlementTests {
         hostState.hasUnsettledSession = unsettled
         let instance = RegisteredVMInstanceFixture.register(
             name: "Throwaway", phase: .stopped, guestOS: .linux, snapshots: [baseline, other],
-            library: harness.library, preferences: preferences, hostState: hostState, mutate: mutate)
+            library: harness.library, preferences: preferences, hostState: hostState,
+            agentConnector: agentConnector, mutate: mutate)
         // What each snapshot's own config.json holds, so a revert reads it back
         // and a bring-up after it finds the baseline readable.
         for snapshot in [baseline, other] {
@@ -391,6 +396,36 @@ struct EphemeralSessionSettlementTests {
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
         // The baseline's saved state the revert installed, not the session's disks.
         #expect(virtualization.lastStartRoute == .restoredSavedState)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A Restart a guest agent takes keeps an Ephemeral VM's session and boots it, with no revert")
+    func restartThroughAnAgentKeepsTheSession() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let probe = AgentHubProbe()
+        let session = UUID()
+        let (instance, _, _) = try makeVM(in: harness, phase: .running(sessionID: session), agentConnector: probe)
+        instance.agentHub.attach(
+            probe, policy: PolicySnapshot(), republisher: GuestLogRepublisher(vmLabel: instance.name))
+        try await probe.changed.wait { probe.isStarted }
+        #expect(probe.connectPowerPeer { _ in [.accepted, .finished(.handedOff)] } != nil)
+        try await waitForChange { instance.agentHubSnapshot.power == .agent(.sessionPeer) }
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        }
+        try await probe.changed.wait { probe.powerRequests.count == 1 }
+        // The observed mark first: the continuations are not observed, so
+        // only its clearing can wake the wait.
+        try await waitForChange { !instance.activity.isRequestingStop && instance.activity.liveSessionContinues }
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await restart.value
+
+        #expect(probe.powerRequests.map(\.action) == [.shutdown])
+        #expect(virtualization.stopCallCount == 0)
+        #expect(virtualization.revertCallCount == 0)
+        #expect(virtualization.lastStartRoute == .coldBoot)
         #expect(instance.status == .running)
     }
 

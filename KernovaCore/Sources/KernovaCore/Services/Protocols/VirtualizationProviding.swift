@@ -33,9 +33,9 @@ package enum GuestStartRoute: Equatable, Sendable {
 /// The Virtualization work each lifecycle operation's body runs.
 ///
 /// Every method runs inside the operation ``VMActivity`` admitted, under its
-/// context, and answers where the VM rests. Stop and Force Stop are plain VZ
-/// calls that ``VMActivity/requestStop(_:)`` and ``VMActivity/forceStop(_:)``
-/// make once they have admitted the session action.
+/// context, and answers where the VM rests. Stop's ACPI press and Force Stop
+/// are plain VZ calls, made once ``VMActivity/requestStop(_:)`` and
+/// ``VMActivity/forceStop(_:)`` have admitted the session action.
 @MainActor
 package protocol VirtualizationProviding: Sendable {
     /// Brings the guest up the way `context`'s kind names — a cold boot, a

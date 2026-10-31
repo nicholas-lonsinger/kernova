@@ -1,4 +1,5 @@
 import KernovaTestSupport
+import SwiftProtobuf
 import Testing
 
 @testable import KernovaKit

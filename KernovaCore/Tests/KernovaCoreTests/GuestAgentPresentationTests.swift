@@ -45,6 +45,9 @@ struct GuestAgentPresentationTests {
             presentation.hub?.capabilities == [
                 .init(title: "Status", isAvailable: false, detail: "No Kernova agent is connected."),
                 .init(title: "Guest logs in Console", isAvailable: false, detail: "No Kernova agent is connected."),
+                .init(
+                    title: "Shut down and restart from Kernova", isAvailable: false,
+                    detail: "No Kernova agent is connected."),
             ])
     }
 
@@ -57,6 +60,9 @@ struct GuestAgentPresentationTests {
             presentation.hub?.capabilities == [
                 .init(title: "Status", isAvailable: true, detail: "Connected"),
                 .init(title: "Guest logs in Console", isAvailable: true, detail: "On"),
+                .init(
+                    title: "Shut down and restart from Kernova", isAvailable: false,
+                    detail: "No Kernova agent is connected."),
             ])
     }
 
@@ -72,7 +78,7 @@ struct GuestAgentPresentationTests {
         let presentation = GuestAgentPresentation(
             hub: Self.snapshot([Self.peer(1)], logs: .absent(reason, debugDetail: "")))
         #expect(
-            presentation.hub?.capabilities.last
+            presentation.hub?.capabilities.first { $0.title == "Guest logs in Console" }
                 == .init(title: "Guest logs in Console", isAvailable: false, detail: detail))
     }
 
@@ -123,6 +129,64 @@ struct GuestAgentPresentationTests {
     func sessionPeerWithoutUserName() {
         let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, userName: "")]))
         #expect(presentation.hub?.peers.first?.title == "Session agent")
+    }
+
+    private static func powerRow(
+        _ power: PowerProvision, routing: PowerRoutingProgress? = nil
+    ) -> GuestAgentPresentation.CapabilityRow? {
+        let snapshot = AgentHubSnapshot(
+            peers: [Self.peer(1)], features: FeatureStatus.merge([]), power: power, routing: routing)
+        return GuestAgentPresentation(hub: snapshot).hub?.capabilities.first {
+            $0.title == "Shut down and restart from Kernova"
+        }
+    }
+
+    @Test(
+        "The shutdown row names the agent a Stop or Restart would ask",
+        arguments: [(PeerRole.sessionPeer, "Through the session agent"), (.systemPeer, "Through the system service")])
+    func powerRowAgent(role: PeerRole, detail: String) {
+        #expect(
+            Self.powerRow(.agent(role))
+                == .init(title: "Shut down and restart from Kernova", isAvailable: true, detail: detail))
+    }
+
+    @Test(
+        "The shutdown row says why no agent would take a shutdown",
+        arguments: [
+            (
+                AbsenceReason.notOnConsole,
+                "Available while someone is logged in at the guest\u{2019}s screen, or with the system service installed."
+            ),
+            (.notPermitted, "The guest doesn\u{2019}t permit its agents to shut it down."),
+            (.missingOsComponent, "This guest has no polkit."),
+            (.noAgent, "No Kernova agent is connected."),
+            (.disabledByPolicy, "Turned off in Settings."),
+            (.versionMismatch, "The agent is out of date."),
+            (.notImplemented, "This agent doesn't offer it."),
+        ])
+    func powerRowAbsent(reason: AbsenceReason, detail: String) {
+        #expect(
+            Self.powerRow(.absent(reason))
+                == .init(title: "Shut down and restart from Kernova", isAvailable: false, detail: detail))
+    }
+
+    @Test(
+        "While a shutdown is routed, the shutdown row shows its stage, whatever agent the next one would ask",
+        arguments: [
+            (PowerRoutingProgress.Stage.asking, "Shutting down\u{2026}"),
+            (.accepted, "Shutting down\u{2026}"),
+            (.askingApps, "Asking apps to quit\u{2026}"),
+            (.waitingOnApps([AppValue(displayName: "Text Editor")]), "Waiting on Text Editor"),
+            (
+                .waitingOnApps([AppValue(displayName: "Text Editor"), AppValue(displayName: "Terminal")]),
+                "Waiting on Text Editor and Terminal"
+            ),
+        ])
+    func powerRowRouting(stage: PowerRoutingProgress.Stage, detail: String) {
+        let routing = PowerRoutingProgress(action: .shutdown, role: .sessionPeer, stage: stage)
+        #expect(
+            Self.powerRow(.absent(.notOnConsole), routing: routing)
+                == .init(title: "Shut down and restart from Kernova", isAvailable: true, detail: detail))
     }
 
     @Test("Each absence reason reads as what it means")

@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import SwiftProtobuf
 import KernovaSynchronization
 
 /// Why a transfer's data connection stopped.
