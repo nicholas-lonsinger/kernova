@@ -1208,20 +1208,40 @@ package final class VMActivity {
     /// waiting on it.
     func requestStop(_ send: () async throws -> Void) async throws {
         try requireAdmitted(.sessionAction(.requestStop))
-        if let live = liveSessionID { withdrawContinuations(of: live) }
-        try await send()
+        guard let live = liveSessionID else { throw VMAdmissionRefusal(refusal: .invalidState) }
+        withdrawContinuations(of: live)
+        try await sending(on: live, send)
     }
 
     /// A Restart's own graceful stop: admitted as ``requestStop(_:)`` is, but
     /// owing `boot` to the end of the live session as its continuation
     /// (``follow(_:continuing:)``) rather than withdrawing any — so a second
-    /// Restart's request joins the first's end instead of cancelling it.
+    /// Restart's request, admitted once the first's `send` has returned, joins
+    /// the first's end instead of cancelling it.
     func requestStop(
         continuingWith boot: VMFollowUp, _ send: () async throws -> Void
     ) async throws {
         try requireAdmitted(.sessionAction(.requestStop))
         guard let live = liveSessionID else { throw VMAdmissionRefusal(refusal: .invalidState) }
         follow(boot, continuing: live)
+        try await sending(on: live, send)
+    }
+
+    /// The session whose graceful stop request is being sent: set from an
+    /// admitted ``requestStop(_:)`` until its `send` returns, so admission
+    /// refuses a second one on that session meanwhile
+    /// (``VMAdmission/Refusal/stopRequestInFlight``).
+    private var stopRequestSession: UUID?
+
+    /// Whether the live session's graceful stop request is being sent.
+    var isRequestingStop: Bool { stopRequestSession != nil && stopRequestSession == liveSessionID }
+
+    /// Runs `send` as session `live`'s stop request in flight. Only the
+    /// request that marked a session unmarks it, so one still returning from
+    /// a session that has ended leaves the next session's mark alone.
+    private func sending(on live: UUID, _ send: () async throws -> Void) async throws {
+        stopRequestSession = live
+        defer { if stopRequestSession == live { stopRequestSession = nil } }
         try await send()
     }
 

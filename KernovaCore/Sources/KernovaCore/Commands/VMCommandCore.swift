@@ -407,6 +407,8 @@ package final class VMCommandCore {
             .terminating
         case .heldByAnotherCopy:
             .heldByAnotherCopy(vm: summary(instance))
+        case .stopRequestInFlight:
+            .busy(vm: summary(instance), operation: "asking its guest to shut down")
         case .ephemeralBaselineUnreadable:
             .operationFailed(
                 verb: verb ?? .start,

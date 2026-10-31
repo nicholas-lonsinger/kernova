@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaSynchronization
+import KernovaWire
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -20,6 +21,8 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         var policies: [PolicySnapshot] = []
         var bundles: [[BundledPayload]] = []
         var handlers: [(queue: DispatchQueue, handler: @Sendable (HostEvent) -> Void)] = []
+        /// How each power peer answers a power request, by connection index.
+        var powerAnswers: [Int: @Sendable (PowerAction) -> [PowerRequestResult]] = [:]
         var shutdowns = 0
     }
 
@@ -52,6 +55,41 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     package func deliver(_ event: HostEvent, fromConnection index: Int) {
         let (queue, handler) = state.withLock { $0.handlers[index] }
         queue.async { handler(event) }
+    }
+
+    /// The console session's peer a ``connectPowerPeer(claim:state:answering:)`` says Hello as by default.
+    package static let consoleSessionPeer = (
+        claim: PeerClaim(role: .sessionPeer, scope: .user, os: .linux, architecture: .arm64),
+        state: PeerSessionState(console: .on, sessionID: "2", userName: "pbear")
+    )
+
+    /// Opens a connection that says Hello as `claim` in `state` and offers POWER for shutdown and restart,
+    /// answering its index (from 0, in accept order), or `nil` when the hub refused it.
+    ///
+    /// Each power request the hub sends it is answered with `answering`'s results for its action, in order;
+    /// with no `answering`, the test answers through ``deliver(_:fromConnection:)``.
+    package func connectPowerPeer(
+        claim: PeerClaim = consoleSessionPeer.claim, state peerState: PeerSessionState = consoleSessionPeer.state,
+        answering: (@Sendable (PowerAction) -> [PowerRequestResult])? = nil
+    ) -> Int? {
+        guard connect() else { return nil }
+        let index = state.withLock { state in
+            let index = state.handlers.count - 1
+            state.powerAnswers[index] = answering
+            return index
+        }
+        let offer = PowerOffer(actions: [.shutdown, .restart]).encoded
+        deliver(.helloReceived(claim, peerState), fromConnection: index)
+        deliver(.featuresChanged(FeatureStatusTable([(.power, .available(offer))])), fromConnection: index)
+        return index
+    }
+
+    /// Every power request sent to any connection, in order.
+    package var powerRequests: [(id: PowerRequestID, action: PowerAction)] {
+        commands.compactMap { command in
+            guard case .requestPower(let id, let action) = command else { return nil }
+            return (id, action)
+        }
     }
 
     // MARK: GuestStreamTransport
@@ -87,7 +125,15 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         func start() {}
 
         func send(_ command: HostCommand) {
-            probe.state.withLock { $0.commands.append(command) }
+            let answer = probe.state.withLock { state in
+                state.commands.append(command)
+                return state.powerAnswers[Int(generation.rawValue) - 1]
+            }
+            if case .requestPower(let id, let action) = command, let answer {
+                for result in answer(action) {
+                    probe.deliver(.power(id, result), fromConnection: Int(generation.rawValue) - 1)
+                }
+            }
             probe.changed.notify()
         }
     }

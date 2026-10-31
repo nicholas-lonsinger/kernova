@@ -639,7 +639,8 @@ package enum GuestSetupKind: Sendable, Equatable {
 
 /// An action on a live session that takes no admission of its own.
 package enum VMSessionAction: Sendable, Equatable {
-    /// The ACPI shutdown request.
+    /// The graceful shutdown request: through the guest's agents, or the ACPI
+    /// button when none takes it.
     case requestStop
     case forceStop
 }
