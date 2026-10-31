@@ -41,6 +41,10 @@ final class FakeLogind: Sendable {
         let vanishedSessions = Mutex<Set<DBusObjectPath>>([])
         /// The user session's `Seat` ID; nil for a session on no seat.
         let userSessionSeat = Mutex<String?>("seat0")
+        /// What ListInhibitors lists.
+        let inhibitors = Mutex(FakeLogind.inhibitors)
+        /// Whether PowerOff and Reboot are answered at all.
+        let answersPower = Mutex(true)
     }
 
     static let inhibitors: [DBusValue] = [
@@ -80,6 +84,7 @@ final class FakeLogind: Sendable {
             replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownMethod", message: "")
         if header.path == Logind.managerPath, header.interface == Logind.managerInterface, let member = header.member {
             recorder.calls.withLock { $0.append((member, body)) }
+            if member == "PowerOff" || member == "Reboot", !recorder.answersPower.withLock({ $0 }) { return nil }
             return manager(call, member: member, body: body, recorder: recorder) ?? unknown
         }
         if let path = header.path, recorder.vanishedSessions.withLock({ $0.contains(path) }) {
@@ -145,7 +150,8 @@ final class FakeLogind: Sendable {
             return .methodReturn(replyingTo: call)
         case ("ListInhibitors", ""):
             let element = DBusType.struct([.string, .string, .string, .string, .uint32, .uint32])
-            return .methodReturn(replyingTo: call, body: [.array(elementType: element, inhibitors)])
+            return .methodReturn(
+                replyingTo: call, body: [.array(elementType: element, recorder.inhibitors.withLock { $0 })])
         case ("GetUser", "u"):
             switch body[0] {
             case .uint32(displayUID): return .methodReturn(replyingTo: call, body: [.objectPath(displayUserPath)])
@@ -162,6 +168,11 @@ final class FakeLogind: Sendable {
         default:
             return nil
         }
+    }
+
+    /// How many times `member` was called on the manager.
+    func callCount(_ member: String) -> Int {
+        recorder.calls.withLock { $0.filter { $0.0 == member }.count }
     }
 
     /// Emits `PropertiesChanged` for `interface` on `path`.
@@ -202,10 +213,10 @@ struct LogindTests {
             name: "org.freedesktop.login1.BlockedByInhibitorLock",
             message: "Operation denied due to active block inhibitor")
         fake.recorder.refusal.withLock { $0 = error }
-        #expect(throws: LogindError.call(.remote(error))) { try logind.powerOff() }
+        #expect(throws: DBusServiceError.call(.remote(error))) { try logind.powerOff() }
     }
 
-    @Test("ListInhibitors maps every field, and the blocking ones are those on shutdown that block this caller")
+    @Test("ListInhibitors maps every field, and the blocking ones are the block and block-weak locks on shutdown")
     func inhibitors() throws {
         let bus = try PrivateBus()
         let fake = try FakeLogind(on: bus)
@@ -221,9 +232,7 @@ struct LogindTests {
         #expect(all[2].what == ["shutdown", "sleep"])
         #expect(all[3].mode == .blockWeak)
 
-        #expect(try logind.shutdownBlockers(forCallerUID: 1000).map(\.who) == ["GNOME Session"])
-        #expect(try logind.shutdownBlockers(forCallerUID: 1001).map(\.who) == ["GNOME Session", "Editor"])
-        #expect(try logind.shutdownBlockers(forCallerUID: 0).map(\.who) == ["GNOME Session"])
+        #expect(try logind.shutdownBlockers().map(\.who) == ["GNOME Session", "Editor"])
     }
 
     @Test("A user's display session is found from its uid, with the session's Id, Active, State and Class")
@@ -251,7 +260,7 @@ struct LogindTests {
         do {
             _ = try logind.user(1002)
             Issue.record("The call returned")
-        } catch LogindError.call(.remote(let error)) {
+        } catch DBusServiceError.call(.remote(let error)) {
             #expect(error.name == "org.freedesktop.login1.NoSuchUser")
         }
     }
@@ -276,7 +285,7 @@ struct LogindTests {
         fake.recorder.activeSession.withLock { $0 = nil }
         #expect(try logind.activeSession(onSeat: seat) == nil)
 
-        #expect(throws: LogindError.self) { try logind.seat("seat1") }
+        #expect(throws: DBusServiceError.self) { try logind.seat("seat1") }
     }
 
     @Test("Observing seat0 delivers each change of its active session")
@@ -285,7 +294,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let seat = try logind.seat("seat0")
-        let inbox = Inbox<Result<LogindSeatChange, LogindError>>()
+        let inbox = Inbox<Result<LogindSeatChange, DBusServiceError>>()
         let subscription = try logind.observeSeat(seat) { inbox.put($0) }
 
         let interface = Logind.seatInterface
@@ -308,7 +317,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let user = try logind.user(FakeLogind.displayUID)
-        let inbox = Inbox<Result<LogindUserChange, LogindError>>()
+        let inbox = Inbox<Result<LogindUserChange, DBusServiceError>>()
         let subscription = try logind.observeUser(user) { inbox.put($0) }
 
         let interface = Logind.userInterface
@@ -334,7 +343,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let path = FakeLogind.userSession.path
-        let inbox = Inbox<Result<LogindSessionChange, LogindError>>()
+        let inbox = Inbox<Result<LogindSessionChange, DBusServiceError>>()
         let subscription = try logind.observeSession(path) { inbox.put($0) }
 
         let interface = Logind.sessionInterface
@@ -355,7 +364,7 @@ struct LogindTests {
         #expect(try inbox.next().get().sessionClass == .user)
 
         try fake.emitChange(on: path, interface: interface, changed: [("Active", .string("yes"))], invalidated: [])
-        #expect(throws: LogindError.valueMismatch(DBusValueMismatch(expected: .boolean, actual: .string))) {
+        #expect(throws: DBusServiceError.valueMismatch(DBusValueMismatch(expected: .boolean, actual: .string))) {
             try inbox.next().get()
         }
         #expect(inbox.isEmpty)

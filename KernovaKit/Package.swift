@@ -87,7 +87,7 @@ var targets: [Target] = [
         name: "KernovaPlatformLinux",
         dependencies: [
             "KernovaDBus", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
-            "KernovaDigest", "KernovaSynchronization", "CKernovaShims",
+            "KernovaDigest", "KernovaSynchronization", "KernovaLogging", "CKernovaShims",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -179,7 +179,9 @@ var targets: [Target] = [
     // target it tests, only for Linux.
     .testTarget(
         name: "KernovaPlatformLinuxTests",
-        dependencies: ["KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime"],
+        dependencies: [
+            "KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     .testTarget(
