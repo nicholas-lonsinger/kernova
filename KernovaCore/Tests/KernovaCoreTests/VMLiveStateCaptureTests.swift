@@ -271,7 +271,8 @@ extension VMLiveStateCaptureTests {
     private func suspend(
         _ instance: VMInstance, over session: MockSnapshotSession, consent: Consent = .all
     ) async throws {
-        try await instance.activity.perform(.saving) { context in
+        try await instance.activity.perform(.saving) {
+            (context: borrowing VMOperationContext) -> VMOperationEnding<Void> in
             let approval: VMLiveStateCapture.UnplugApproval
             do {
                 approval = try VMLiveStateCapture.approve(consent, toSave: instance, as: .suspend)
@@ -373,7 +374,8 @@ extension VMLiveStateCaptureTests {
         arguments: [false, true])
     func aWarmCapturePlugsTheMediaBackIn(copyFails: Bool) async throws {
         let media = MockRemovableMediaDeviceService()
-        let data = RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false, label: "Data")
+        // Read-only: a live snapshot refuses while a writable external disk is attached.
+        let data = RemovableMediaItem(path: "/Volumes/Tools.iso", readOnly: true, label: "Tools")
         let (library, instance, _) = libraryVMHolding(data, media: media)
         defer { withExtendedLifetime(library) {} }
         let session = MockSnapshotSession(guestState: .running)
@@ -391,7 +393,8 @@ extension VMLiveStateCaptureTests {
     @Test("A warm capture whose question is still open touches nothing and plugs nothing in")
     func aRefusedWarmCaptureTouchesNothing() async throws {
         let media = MockRemovableMediaDeviceService()
-        let data = RemovableMediaItem(path: "/Volumes/Data.img", readOnly: false, label: "Data")
+        // Read-only: a live snapshot refuses while a writable external disk is attached.
+        let data = RemovableMediaItem(path: "/Volumes/Tools.iso", readOnly: true, label: "Tools")
         let (library, instance, sessionID) = libraryVMHolding(data, media: media)
         defer { withExtendedLifetime(library) {} }
         let session = MockSnapshotSession(guestState: .running)
@@ -403,7 +406,7 @@ extension VMLiveStateCaptureTests {
             Issue.record("Expected the capture to fail as started, got \(ending)")
             return
         }
-        #expect((error as? CommandError)?.confirmationPrompt?.kind == .unplugUSBDisksAtRisk)
+        #expect((error as? CommandError)?.confirmationPrompt?.kind == .unplugUSBDisks)
         #expect(await session.calls.isEmpty)
         #expect(media.attachCallCount == 0)
         #expect(instance.phase == .running(sessionID: sessionID))
