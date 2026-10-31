@@ -44,9 +44,15 @@ struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatable {
 
     /// The sentence naming the apps that blocked the shutdown.
     private static func blockers(_ apps: [AppValue]) -> String {
-        let names = apps.map { $0.displayName.isEmpty ? $0.identifier : $0.displayName }.filter { !$0.isEmpty }
+        let names = apps.map(\.shownName).filter { !$0.isEmpty }
         guard !names.isEmpty else { return "An app is blocking it." }
         let list = ListFormatter.localizedString(byJoining: names)
         return "\(list) \(names.count == 1 ? "is" : "are") blocking it."
     }
+}
+
+extension AppValue {
+    /// The name the UI shows for the app: its display name, else its
+    /// identifier, since the guest may send either empty.
+    var shownName: String { displayName.isEmpty ? identifier : displayName }
 }

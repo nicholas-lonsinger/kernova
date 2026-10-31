@@ -71,7 +71,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 switch routing.stage {
                 case .askingApps: "Asking apps to quit\u{2026}"
                 case .waitingOnApps(let apps):
-                    "Waiting on \(ListFormatter.localizedString(byJoining: apps.map(\.displayName)))"
+                    "Waiting on \(ListFormatter.localizedString(byJoining: apps.map(\.shownName).filter { !$0.isEmpty }))"
                 case .asking, .accepted: "Shutting down\u{2026}"
                 }
             return CapabilityRow(title: title, isAvailable: true, detail: detail)
