@@ -6,6 +6,7 @@ import Foundation
 
 import KernovaAgentCore
 import KernovaWire
+import SwiftProtobuf
 
 /// A parsed transcript file.
 package struct Transcript: Sendable {

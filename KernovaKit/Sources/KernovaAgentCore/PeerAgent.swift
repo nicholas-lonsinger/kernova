@@ -1,3 +1,5 @@
+import KernovaWire
+
 /// Why a dial failed.
 public enum DialFailure: Error, Sendable, Equatable {
     /// Try again later.

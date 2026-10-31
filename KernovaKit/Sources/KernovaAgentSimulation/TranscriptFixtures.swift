@@ -6,6 +6,7 @@ import Foundation
 
 import KernovaAgentCore
 import KernovaWire
+import SwiftProtobuf
 
 /// The named configurations a transcript's header refers to. A fixture fixes
 /// every identity string, instance id, hash and advert; once a frozen transcript

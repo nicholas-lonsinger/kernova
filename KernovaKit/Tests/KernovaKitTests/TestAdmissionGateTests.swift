@@ -1,5 +1,6 @@
 import Foundation
 import KernovaSynchronization
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaTestSupport
