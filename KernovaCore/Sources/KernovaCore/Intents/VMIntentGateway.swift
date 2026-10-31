@@ -179,7 +179,9 @@ package final class VMIntentGateway {
     }
 
     func suspend(_ id: UUID) async throws {
-        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id), consent: Consent([.unplugUSBDisks])) }
+        try await perform(.suspend, on: id) {
+            try await self.commands.suspend(.id(id), consent: Consent([.unplugUSBDisks]))
+        }
     }
 
     func restart(_ id: UUID, consent: Consent) async throws {

@@ -52,7 +52,8 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
             receptacleLabel: node?.receptacleLabel,
             isMassStorage: descriptor.deviceClass == USBClassCode.massStorage
                 || configurationDescriptor.map(USBConfigurationDescriptor.interfaceClasses(in:))?
-                .contains(USBClassCode.massStorage) == true)
+                    .contains(USBClassCode.massStorage) == true
+        )
     }
 
     /// The keys `held` holds that an accessory arriving in `receptacle` may not
