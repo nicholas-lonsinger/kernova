@@ -104,7 +104,7 @@ struct InstallerTests {
 
     static let systemDirectories = [
         "/opt", "/etc", "/etc/systemd", "/etc/systemd/system", "/etc/sysusers.d", "/etc/polkit-1",
-        "/etc/polkit-1/rules.d",
+        "/etc/polkit-1/rules.d", "/etc/udev", "/etc/udev/rules.d",
     ]
 
     static let systemInstall: [String: String] = Dictionary(
@@ -121,6 +121,7 @@ struct InstallerTests {
         "/etc/systemd/system/kernova-agent-rollback.service": "f0644",
         "/etc/sysusers.d/kernova-agent.conf": "f0644",
         "/etc/polkit-1/rules.d/50-kernova-agent.rules": "f0644",
+        "/etc/udev/rules.d/61-kernova-agent.rules": "f0644",
     ]) { $1 }
 
     private static func checkFiles(_ scratch: Scratch, _ layout: InstallLayout) throws {
@@ -161,7 +162,8 @@ struct InstallerTests {
         // With no systemd tool run, every step but the commands is taken.
         let taken = plan.steps.filter { if case .run = $0 { false } else { true } }
         #expect(reported == taken.map(\.description))
-        #expect(InstallPlan.dryRun(plan, heading: "h") == ["h"] + plan.steps.map { "  " + $0.description })
+        #expect(
+            InstallPlan.dryRun(plan, heading: "h") == ["h"] + plan.steps.map { "  " + $0.description } + plan.notes)
     }
 
     @Test(

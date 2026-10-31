@@ -2,8 +2,8 @@ import Testing
 
 @testable import KernovaLinuxAgent
 
-/// The text of every unit, autostart entry, sysusers line and polkit rule, golden: a change to any of them
-/// changes what every installed guest runs, so it shows here first.
+/// The text of every unit, autostart entry, sysusers line, polkit rule and udev rule, golden: a change to any
+/// of them changes what every installed guest runs, so it shows here first.
 @Suite("The installer's unit files")
 struct UnitFilesTests {
     static let user = InstallLayout.user(
@@ -153,7 +153,9 @@ struct UnitFilesTests {
                 """)
     }
 
-    @Test("polkit grants the account the four power actions and no ignore-inhibit")
+    @Test(
+        "polkit grants the account the four power actions and no ignore-inhibit, and refuses powering off the VM's USB disks"
+    )
     func polkit() {
         #expect(
             UnitFiles.polkitRule == """
@@ -168,8 +170,28 @@ struct UnitFilesTests {
                     }
                 });
 
+                polkit.addRule(function(action, subject) {
+                    if ((action.id == "org.freedesktop.udisks2.power-off-drive" ||
+                         action.id == "org.freedesktop.udisks2.power-off-drive-system" ||
+                         action.id == "org.freedesktop.udisks2.power-off-drive-other-seat") &&
+                        action.lookup("drive.vendor") == "Apple" &&
+                        action.lookup("drive.model") == "Virtual Disk") {
+                        return polkit.Result.NO;
+                    }
+                });
+
                 """)
         #expect(!UnitFiles.polkitRule.contains("ignore-inhibit"))
+    }
+
+    @Test("udev marks only Virtualization's USB disks as ones udisks cannot power off")
+    func udev() {
+        #expect(
+            UnitFiles.udevRule == #"""
+                # Written by kernova-agent install --system.
+                ACTION!="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_VENDOR}=="Apple", ENV{ID_MODEL}=="Virtual_Disk", ENV{UDISKS_CAN_POWER_OFF}="0"
+
+                """#)
     }
 
     @Test("A home with a space, a quote or a percent sign stays one ExecStart word")

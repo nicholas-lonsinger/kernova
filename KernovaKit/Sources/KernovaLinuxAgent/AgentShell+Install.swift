@@ -42,6 +42,7 @@ extension AgentShell {
                 versionLabel: label, account: account)
             try installer.run(plan) { print("kernova-agent: \($0)") }
             print(uninstalling ? "kernova-agent: removed \(scope)." : "kernova-agent: installed \(scope), \(label).")
+            for note in plan.notes { print("kernova-agent: \(note)") }
             exit(0)
         } catch {
             writeError("kernova-agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")

@@ -55,6 +55,8 @@ struct InstallPlan: Equatable {
     var removesRoot = false
     /// Commands run after.
     var after: [Command] = []
+    /// What a dry run lists after the steps, and the installer prints once it has taken them.
+    var notes: [String] = []
 
     /// One thing the installer does.
     enum Step: Equatable {
@@ -124,13 +126,16 @@ struct InstallPlan: Equatable {
                 .file(path: InstallLayout.sysusersFile, mode: 0o644, text: UnitFiles.sysusers(layout)),
                 .directory(path: "/etc/polkit-1/rules.d", mode: 0o755),
                 .file(path: InstallLayout.polkitRuleFile, mode: 0o644, text: UnitFiles.polkitRule),
+                .directory(path: "/etc/udev/rules.d", mode: 0o755),
+                .file(path: InstallLayout.udevRuleFile, mode: 0o644, text: UnitFiles.udevRule),
             ]
-            plan.after = [
-                Command(systemctl + ["daemon-reload"]),
-                Command(systemctl + ["enable", "--now", InstallLayout.rollbackTimerName]),
-                Command(systemctl + ["enable", layout.serviceName]),
-                Command(systemctl + ["restart", layout.serviceName]),
-            ]
+            plan.after =
+                udevReload + [
+                    Command(systemctl + ["daemon-reload"]),
+                    Command(systemctl + ["enable", "--now", InstallLayout.rollbackTimerName]),
+                    Command(systemctl + ["enable", layout.serviceName]),
+                    Command(systemctl + ["restart", layout.serviceName]),
+                ]
         default:
             if let autostart = layout.autostartDirectory {
                 plan.writes += [
@@ -146,6 +151,10 @@ struct InstallPlan: Equatable {
                 Command(systemctl + ["daemon-reload"]),
                 Command(systemctl + ["enable", "--now", InstallLayout.rollbackTimerName]),
                 Command(systemctl + ["restart", layout.serviceName]),
+            ]
+            plan.notes = [
+                "Only install --system writes the rules that stop this guest powering off the VM's USB disks,"
+                    + " which crashes the VM; they live in /etc, which this install does not write."
             ]
         }
         return plan
@@ -171,16 +180,28 @@ struct InstallPlan: Equatable {
             plan.removals.append(autostart + "/" + InstallLayout.autostartName)
         }
         if layout.scope == .system {
-            plan.removals += [InstallLayout.polkitRuleFile, InstallLayout.sysusersFile]
+            plan.removals += [InstallLayout.polkitRuleFile, InstallLayout.udevRuleFile, InstallLayout.sysusersFile]
         }
         plan.removesRoot = true
-        plan.after = [Command(systemctl + ["daemon-reload"])]
+        plan.after = (layout.scope == .system ? udevReload : []) + [Command(systemctl + ["daemon-reload"])]
         return plan
     }
 
-    /// What a dry run of `layout`'s install or uninstall prints, `heading` first: one line per step.
+    /// udev rereads its rules, then reprocesses the block devices ``UnitFiles/udevRule`` matches, so one
+    /// already attached takes the rule as written, or loses it once removed; udisks rereads a device on the
+    /// change event.
+    private static let udevReload = [
+        Command(["udevadm", "control", "--reload"]),
+        Command([
+            "udevadm", "trigger", "--action=change", "--subsystem-match=block",
+            "--property-match=ID_MODEL=Virtual_Disk",
+        ]),
+    ]
+
+    /// What a dry run of `layout`'s install or uninstall prints, `heading` first: one line per step, then the
+    /// notes.
     static func dryRun(_ plan: InstallPlan, heading: String) -> [String] {
-        [heading] + plan.steps.map { "  " + $0.description }
+        [heading] + plan.steps.map { "  " + $0.description } + plan.notes
     }
 
     private static func systemctlPrefix(_ layout: InstallLayout) -> [String] {
