@@ -14,7 +14,8 @@ public enum VMGroupAction: String, Codable, Sendable, Hashable, CaseIterable {
     case suspend
     /// Asks each running guest to shut down.
     case stop
-    /// Shuts each running guest down and starts it again, waiting for each.
+    /// Shuts every running guest down and starts it again, all at once, so a
+    /// guest that holds its shutdown holds back no other.
     case restart
 
     /// The verb a refusal of the whole group names.

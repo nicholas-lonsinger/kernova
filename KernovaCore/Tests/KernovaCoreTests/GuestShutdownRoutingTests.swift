@@ -172,6 +172,43 @@ struct GuestShutdownRoutingTests {
         #expect(idle.status == .stopped)
     }
 
+    @Test("Restart All restarts every running VM at once: a guest that holds its shutdown holds back only the report")
+    func restartAllDoesNotWaitOnAStuckGuest() async throws {
+        // The routed guest's agent takes the shutdown and its session never
+        // ends until the test ends it.
+        let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
+        let otherSession = UUID()
+        let other = fixture.harness.wired.register(name: "Other", phase: .running(sessionID: otherSession))
+        let folder = try fixture.harness.library.organization.createFolder(
+            named: "Lab", members: [fixture.instance.id, other.id])
+        let reported = ReportBox()
+
+        let restartAll = Task { @MainActor in
+            reported.report = try await fixture.harness.core.groupAction(
+                .restart, on: VMGroupReference(.folder, named: folder.id.uuidString))
+        }
+        try await waitForChange {
+            other.status == .running && other.activity.liveSessionID.map { $0 != otherSession } == true
+        }
+        #expect(fixture.instance.activity.liveSessionID == fixture.session)
+        #expect(reported.report == nil)
+
+        fixture.instance.activity.deliverSessionEvent(.guestDidStop, from: fixture.session)
+        try await restartAll.value
+
+        let report = try #require(reported.report)
+        #expect(report.results.map(\.vm.name) == ["Routed", "Other"])
+        #expect(report.results.map(\.outcome) == [.done(verb: .restart), .done(verb: .restart)])
+        #expect(fixture.instance.status == .running)
+        #expect(fixture.harness.virtualization.startCallCount == 2)
+    }
+
+    /// Where a test reads a group action's report once it has come back.
+    @MainActor
+    private final class ReportBox {
+        var report: VMGroupActionReport?
+    }
+
     @Test("Restart All reports a shutdown the guest's apps blocked as undone, naming them")
     func restartAllReportsABlockedShutdown() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.blocked(Self.blocking))] }

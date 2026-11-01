@@ -265,9 +265,9 @@ extension KernovaCommand {
                 + "One whose MAC address another active one uses on the same network is refused "
                 + "there too, printing the command that moves it to a network of its own where it "
                 + "can take it."
-                + "\n\nWith --smart-group or --folder, restarts each running guest in the group, "
-                + "one after another, waiting for each to come back up, and prints a line for "
-                + "each. A paused or suspended virtual machine is skipped, as a group stop skips "
+                + "\n\nWith --smart-group or --folder, restarts every running guest in the group "
+                + "at once and, once each is back up or has failed, prints a line for each; a guest "
+                + "that never shuts down holds the report, not the others' restarts. A paused or suspended virtual machine is skipped, as a group stop skips "
                 + "it; one whose restart would ask something first is skipped too, and a group "
                 + "restart exits 10 when it leaves any it could act on undone.")
 
