@@ -114,7 +114,7 @@ final class LinuxUpdateInstaller: UpdateInstaller {
     func write(_ id: UpdatePullID, _ bytes: Data) {
         queue.async { [self] in
             guard var pull = takePull(for: id), !pull.failed else { return }
-            let failure = Array(bytes).withUnsafeBytes { buffer -> Int32? in
+            let failure = bytes.withUnsafeBytes { buffer -> Int32? in
                 var offset = 0
                 while offset < buffer.count {
                     let count = system.write(pull.file, UnsafeRawBufferPointer(rebasing: buffer[offset...]))
@@ -133,7 +133,7 @@ final class LinuxUpdateInstaller: UpdateInstaller {
                 let code: ErrorCode = failure == ENOSPC ? .diskFull : .writeFailed
                 return report(.failed(id, WireError(code, posixErrno: failure)))
             }
-            pull.hasher.update(Array(bytes))
+            bytes.withUnsafeBytes { pull.hasher.update($0) }
             pull.written += UInt64(bytes.count)
             state.withLock { $0.pull = pull }
             report(.consumed(id, bytes.count))
