@@ -610,7 +610,8 @@ struct VMToolbarManagerTests {
 
     @Test("Pop In label when displayMode is hidden (headless)")
     func popInLabelWhenHidden() {
-        let instance = makeInstance(phase: .stopped)
+        // Headless is a running session's: a VM with none reads inline.
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.displayMode = .hidden
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)

@@ -75,10 +75,38 @@ package final class VMInstance {
 
     /// Where this VM's display currently lives.
     ///
-    /// `VMDisplayPlacementController` owns every transition; the model writes
-    /// this only once the session ends (``sessionDidEnd(afterRunning:)``), to the sole mode a
-    /// sessionless VM can rest in.
-    package var displayMode: VMDisplayMode = .inline
+    /// `VMDisplayPlacementController` is the one writer, in step with the
+    /// display windows it opens and closes. `.hidden` belongs to the session it
+    /// is written in and reads `.inline` once that session ends, so a session's
+    /// end writes nothing here: a window open across a Restart keeps the mode
+    /// it put the VM in.
+    package var displayMode: VMDisplayMode {
+        get {
+            switch displayPlacement {
+            case .inline: .inline
+            case .window(let fullscreen): fullscreen ? .fullscreen : .popOut
+            case .headless(let sessionID): sessionID == liveSessionID ? .hidden : .inline
+            }
+        }
+        set {
+            switch newValue {
+            case .inline: displayPlacement = .inline
+            case .popOut: displayPlacement = .window(fullscreen: false)
+            case .fullscreen: displayPlacement = .window(fullscreen: true)
+            case .hidden: displayPlacement = liveSessionID.map { .headless(sessionID: $0) } ?? .inline
+            }
+        }
+    }
+
+    /// ``displayMode`` as written, a headless display with the session it
+    /// belongs to.
+    private var displayPlacement: DisplayPlacement = .inline
+
+    private enum DisplayPlacement {
+        case inline
+        case window(fullscreen: Bool)
+        case headless(sessionID: UUID)
+    }
 
     package var detailPaneMode: DetailPaneMode = .display
 
@@ -850,9 +878,6 @@ package final class VMInstance {
     /// Called by ``activity`` once the session is released; `afterRunning`
     /// is whether that session ever settled running.
     func sessionDidEnd(afterRunning: Bool) {
-        // A VM with no session has no display to place, and `.hidden`
-        // (headless) has no window whose close would say so.
-        displayMode = .inline
         if afterRunning { recordLastRun(at: Date()) }
     }
 
